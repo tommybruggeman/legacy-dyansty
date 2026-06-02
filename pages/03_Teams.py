@@ -793,6 +793,9 @@ def ensure_active_league_from_user() -> Optional[str]:
             or []
         )
 
+        st.write("DEBUG rows returned:", len(rows))
+        st.write(rows[:3])
+
         if not rows:
             st.error(f"Debug: No league_memberships found for user_id={user_id}")
             return None
@@ -806,7 +809,7 @@ def ensure_active_league_from_user() -> Optional[str]:
         st.error(f"Debug: League lookup failed: {e}")
         return None
 # ---------- roster / caps / transactions loaders ----------
-@st.cache_data(ttl=300, show_spinner=False)
+# @st.cache_data(ttl=300, show_spinner=False)
 def load_owners_df() -> pd.DataFrame:
     league_id = st.session_state.get("active_league_id") or st.session_state.get("import_league_id")
 
@@ -823,6 +826,9 @@ def load_owners_df() -> pd.DataFrame:
             .data
             or []
         )
+
+        st.write("DEBUG league_teams rows:", len(rows))
+        st.write(rows[:3])
 
         df = pd.DataFrame(rows)
 
