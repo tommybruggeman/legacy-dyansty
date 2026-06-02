@@ -29,6 +29,7 @@ st.set_page_config(
 )
 
 render_nav()
+st.caption("Teams page version: owners-table-fix-2026-06-02")
 
 # ---------- paths / env ----------
 PAGES_DIR = Path(__file__).resolve().parent
@@ -1108,6 +1109,11 @@ show_loading_screen(spinner_placeholder, "Loading Team Dashboard...")
 
 ensure_active_league_from_user()
 owners_df = load_owners_df()
+
+st.write("DEBUG active_league_id:", st.session_state.get("active_league_id"))
+st.write("DEBUG import_league_id:", st.session_state.get("import_league_id"))
+st.write("DEBUG owners_df rows:", len(owners_df))
+st.write("DEBUG owners_df columns:", owners_df.columns.tolist())
 
 # REMOVE the "None" owner row + any empties
 if not owners_df.empty and "name" in owners_df.columns:
