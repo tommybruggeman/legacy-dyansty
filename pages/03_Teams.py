@@ -816,10 +816,10 @@ def load_owners_df() -> pd.DataFrame:
 
     try:
         rows = (
-            sb.table("league_teams")
-            .select("owner_name, team_name")
+            sb.table("owners")
+            .select("full_name, display_name, team_name")
             .eq("league_id", league_id)
-            .order("owner_name")
+            .order("team_name")
             .execute()
             .data
             or []
@@ -830,13 +830,23 @@ def load_owners_df() -> pd.DataFrame:
         if df.empty:
             return pd.DataFrame(columns=["handle", "name"])
 
-        df["name"] = df["team_name"].fillna(df["owner_name"])
-        df["handle"] = df["owner_name"]
+        df["name"] = (
+            df["team_name"]
+            .fillna(df["display_name"])
+            .fillna(df["full_name"])
+        )
+
+        df["handle"] = (
+            df["full_name"]
+            .fillna(df["display_name"])
+            .fillna(df["team_name"])
+        )
 
         return df[["handle", "name"]].dropna().drop_duplicates()
 
     except Exception:
         return pd.DataFrame(columns=["handle", "name"])
+
 @st.cache_data(ttl=300, show_spinner=False)
 def load_roster_current() -> pd.DataFrame:
     league_id = st.session_state.get("active_league_id") or st.session_state.get("import_league_id")
