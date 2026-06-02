@@ -29,6 +29,7 @@ st.set_page_config(
 )
 
 render_nav()
+require_login()
 st.caption("Teams page version: owners-table-fix-2026-06-02")
 
 # ---------- paths / env ----------
