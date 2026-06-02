@@ -779,8 +779,6 @@ def ensure_active_league_from_user() -> Optional[str]:
     else:
         user_id = getattr(user, "id", None)
 
-    user_id = user_id or getattr(u, "id", None)
-
     if not sb or not user_id:
         st.error(f"Debug: Could not resolve signed-in user_id. user={user}")
         return None
