@@ -812,6 +812,8 @@ def ensure_active_league_from_user() -> Optional[str]:
 # ---------- roster / caps / transactions loaders ----------
 # @st.cache_data(ttl=300, show_spinner=False)
 def load_owners_df() -> pd.DataFrame:
+    st.error("LOAD_OWNERS_DF CALLED")
+
     league_id = st.session_state.get("active_league_id") or st.session_state.get("import_league_id")
 
     if not sb or not league_id:
