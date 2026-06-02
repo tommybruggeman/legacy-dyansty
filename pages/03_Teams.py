@@ -71,6 +71,9 @@ def _load_env() -> Tuple[str, str, str]:
     )
 
 SUPABASE_URL, SUPABASE_KEY, SLEEPER_LEAGUE_ID = _load_env()
+st.write("DEBUG has SUPABASE_URL:", bool(SUPABASE_URL))
+st.write("DEBUG has SUPABASE_KEY:", bool(SUPABASE_KEY))
+st.write("DEBUG secret keys:", list(st.secrets.keys()))
 
 # ---------- minimal supabase client ----------
 class _Resp:
