@@ -30,8 +30,6 @@ st.set_page_config(
 
 render_nav()
 require_login()
-st.caption("Teams page version: owners-table-fix-2026-06-02")
-
 # ---------- paths / env ----------
 PAGES_DIR = Path(__file__).resolve().parent
 ROOT_DIR = PAGES_DIR.parent
@@ -78,9 +76,6 @@ def _load_env() -> Tuple[str, str, str]:
     )
 
 SUPABASE_URL, SUPABASE_KEY, SLEEPER_LEAGUE_ID = _load_env()
-st.write("DEBUG has SUPABASE_URL:", bool(SUPABASE_URL))
-st.write("DEBUG has SUPABASE_KEY:", bool(SUPABASE_KEY))
-st.write("DEBUG secret keys:", list(st.secrets.keys()))
 
 # ---------- minimal supabase client ----------
 class _Resp:
@@ -804,9 +799,6 @@ def ensure_active_league_from_user() -> Optional[str]:
             or []
         )
 
-        st.write("DEBUG rows returned:", len(rows))
-        st.write(rows[:3])
-
         if not rows:
             st.error(f"Debug: No league_memberships found for user_id={user_id}")
             return None
@@ -820,14 +812,10 @@ def ensure_active_league_from_user() -> Optional[str]:
         st.error(f"Debug: League lookup failed: {e}")
         return None
 # ---------- roster / caps / transactions loaders ----------
-# @st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def load_owners_df() -> pd.DataFrame:
-    st.error("LOAD_OWNERS_DF CALLED")
 
     league_id = st.session_state.get("active_league_id") or st.session_state.get("import_league_id")
-
-    st.write("DEBUG sb exists:", sb is not None)
-    st.write("DEBUG league_id inside load_owners_df:", league_id)
 
     if not sb or not league_id:
 
@@ -843,9 +831,6 @@ def load_owners_df() -> pd.DataFrame:
             .data
             or []
         )
-
-        st.write("DEBUG league_teams rows:", len(rows))
-        st.write(rows[:3])
 
         df = pd.DataFrame(rows)
 
@@ -1122,11 +1107,6 @@ show_loading_screen(spinner_placeholder, "Loading Team Dashboard...")
 
 ensure_active_league_from_user()
 owners_df = load_owners_df()
-
-st.write("DEBUG active_league_id:", st.session_state.get("active_league_id"))
-st.write("DEBUG import_league_id:", st.session_state.get("import_league_id"))
-st.write("DEBUG owners_df rows:", len(owners_df))
-st.write("DEBUG owners_df columns:", owners_df.columns.tolist())
 
 # REMOVE the "None" owner row + any empties
 if not owners_df.empty and "name" in owners_df.columns:
