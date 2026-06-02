@@ -836,7 +836,8 @@ def load_owners_df() -> pd.DataFrame:
 
         return df[["handle", "name"]].dropna().drop_duplicates()
 
-    except Exception:
+    except Exception as e:
+        st.error(f"load_owners_df error: {e}")
         return pd.DataFrame(columns=["handle", "name"])
 
 @st.cache_data(ttl=300, show_spinner=False)
