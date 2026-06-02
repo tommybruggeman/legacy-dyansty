@@ -1,0 +1,425 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import os, sys, argparse, re
+from pathlib import Path
+from typing import Tuple, Optional, List
+
+import pandas as pd
+import requests
+
+# ========== Paths / env (mirror app) ==========
+HERE = Path(__file__).resolve().parent
+ROOT = HERE
+DATA_DIR = ROOT / "data"
+CSV_CURRENT = DATA_DIR / "Current_Standings.csv"  # same file your page uses
+
+def _load_kv(path: Path) -> bool:
+    if not path.exists(): return False
+    for raw in path.read_text().splitlines():
+        if "=" not in raw or raw.strip().startswith("#"): continue
+        k, v = raw.split("=", 1)
+        k, v = k.strip(), v.strip().strip('"').strip("'")
+        if k and os.getenv(k) is None: os.environ[k] = v
+    return True
+
+def _load_env() -> Tuple[str, str, str]:
+    for p in [
+        HERE / "fantasy_env", HERE / ".env",
+        ROOT / "fantasy_env", ROOT / ".env",
+        Path.cwd() / "fantasy_env", Path.cwd() / ".env",
+        Path.cwd() / "pages" / "fantasy_env", Path.cwd() / "pages" / ".env",
+    ]:
+        if _load_kv(p): break
+    return (
+        os.getenv("SUPABASE_URL", "").strip(),
+        os.getenv("SUPABASE_KEY", "").strip(),
+        os.getenv("SLEEPER_LEAGUE_ID", "").strip(),
+    )
+
+SUPABASE_URL, SUPABASE_KEY, SLEEPER_LEAGUE_ID = _load_env()
+
+# ========== tiny Supabase REST client ==========
+class _Resp:  # minimal wrapper
+    def __init__(self, data): self.data = data
+
+class _Table:
+    def __init__(self, base, headers, name):
+        self.base, self.h, self.name = base.rstrip("/"), headers, name
+        self._select, self._order, self._filters, self._limit = "*", None, [], None
+    def select(self, cols="*"): self._select = cols; return self
+    def order(self, col, desc=False): self._order = (col, desc); return self
+    def eq(self, col, val): self._filters.append((col, val)); return self
+    def limit(self, n:int): self._limit = n; return self
+    def execute(self):
+        url = f"{self.base}/rest/v1/{self.name}"
+        params = {"select": self._select}
+        for c, v in self._filters: params[c] = f"eq.{v}"
+        if self._order: params["order"] = f"{self._order[0]}.{'desc' if self._order[1] else 'asc'}"
+        if self._limit: params["limit"] = self._limit
+        r = requests.get(url, headers=self.h, params=params, timeout=25)
+        if r.status_code == 404: return _Resp([])
+        r.raise_for_status(); return _Resp(r.json())
+
+class SB:
+    def __init__(self, url, key):
+        self.url = url.rstrip("/")
+        self.h = {"apikey": key, "Authorization": f"Bearer {key}",
+                  "Content-Type": "application/json", "Accept": "application/json"}
+    def table(self, name): return _Table(self.url, self.h, name)
+
+sb = SB(SUPABASE_URL, SUPABASE_KEY) if (SUPABASE_URL and SUPABASE_KEY) else None
+
+# ========== helpers (match your page) ==========
+NUM_RE = re.compile(r"[^0-9.\-()]")
+def _clean_num(s: str) -> str:
+    s = ("" if s is None else str(s)).strip()
+    if not s: return ""
+    neg = s.startswith("(") and s.endswith(")")
+    s = NUM_RE.sub("", s).replace("(", "").replace(")", "")
+    return "-" + s if neg else s
+
+def as_int(x) -> int:
+    try: return int(float(_clean_num(x)))
+    except: return 0
+
+def as_float(x) -> float:
+    try: return float(_clean_num(x))
+    except: return 0.0
+
+def _ensure_numeric(df: pd.DataFrame, col: str, default=0.0) -> pd.Series:
+    return pd.to_numeric(df.get(col, default), errors="coerce").fillna(default)
+
+def _ordinal(n: int) -> str:
+    if n <= 0: return "—"
+    if 10 <= (n % 100) <= 20: return f"{n}th"
+    return f"{n}{ {1:'st',2:'nd',3:'rd'}.get(n % 10, 'th') }"
+
+def _get_json(url: str):
+    r = requests.get(url, timeout=25)
+    r.raise_for_status()
+    return r.json()
+
+def _norm_key(s: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", s.strip().lower())
+
+def find_col(df: pd.DataFrame, keys: List[str]) -> Optional[str]:
+    """Case/space/punct-insensitive column finder."""
+    if df.empty: return None
+    norm = {_norm_key(c): c for c in df.columns}
+    for k in keys:
+        if k in norm: return norm[k]
+    return None
+
+# ========== owners, roster, caps ==========
+def load_owners_df() -> pd.DataFrame:
+    try:
+        if sb:
+            rows = sb.table("owners").select("*").execute().data or []
+            if rows:
+                df = pd.DataFrame(rows)
+                if {"sleeper_username","display_name"}.issubset(df.columns):
+                    out = df.rename(columns={"sleeper_username":"handle", "display_name":"name"})
+                    out["handle"] = out["handle"].astype(str).str.strip()
+                    out["name"] = out["name"].astype(str).str.strip()
+                    return out[["handle","name"]].dropna().drop_duplicates()
+    except Exception:
+        pass
+    if SLEEPER_LEAGUE_ID:
+        try:
+            users = _get_json(f"https://api.sleeper.app/v1/league/{SLEEPER_LEAGUE_ID}/users")
+            df = pd.DataFrame([{
+                "handle": (u.get("username") or "").strip(),
+                "name": (u.get("display_name") or u.get("username") or "").strip(),
+            } for u in users])
+            return df.dropna().drop_duplicates()
+        except Exception:
+            pass
+    return pd.DataFrame(columns=["handle","name"])
+
+def load_roster_current() -> pd.DataFrame:
+    preferred = ["roster_stage", "v_current_roster", "roster", "team_roster"]
+    for tbl in preferred:
+        try:
+            if sb:
+                rows = sb.table(tbl).select("*").execute().data or []
+                if rows:
+                    df = pd.DataFrame(rows)
+                    df.attrs["__source_table__"] = tbl
+                    return df
+        except Exception:
+            continue
+    return pd.DataFrame()
+
+def load_caps() -> pd.DataFrame:
+    try:
+        if sb:
+            rows = sb.table("v_team_caps").select("*").execute().data or []
+            if rows: return pd.DataFrame(rows)
+    except Exception:
+        pass
+    return pd.DataFrame()
+
+def resolve_cap_for_owner(caps_df: pd.DataFrame,
+                          roster_df: pd.DataFrame,
+                          sel_name: str,
+                          sel_handle: Optional[str]) -> str:
+    if not caps_df.empty:
+        caps_cols_name   = [c for c in caps_df.columns if c.lower() in
+                            {"owner_name","owner","team_owner","team_name","display_name","name"}]
+        caps_cols_handle = [c for c in caps_df.columns if c.lower() in
+                            {"owner_handle","sleeper_handle","sleeper_username","handle"}]
+        mine = pd.DataFrame()
+        for c in caps_cols_name:
+            mine = caps_df[caps_df[c].astype(str).str.strip().eq(sel_name)]
+            if not mine.empty: break
+        if mine.empty and sel_handle:
+            for c in caps_cols_handle:
+                mine = caps_df[caps_df[c].astype(str).str.strip().eq(sel_handle)]
+                if not mine.empty: break
+        if not mine.empty:
+            for cap_col in ["cap_used","cap","current_cap","cap_spend","cap_total"]:
+                if cap_col in mine.columns:
+                    val = float(pd.to_numeric(mine.iloc[0][cap_col], errors="coerce") or 0.0)
+                    return f"${val:.1f}"
+    if not roster_df.empty:
+        name_keys   = ["owner_team_name","owner_name","team_owner","team_name","display_name","name"]
+        handle_keys = ["owner","owner_handle","sleeper_username","sleeper_handle","user_handle"]
+        mine = pd.DataFrame()
+        for c in name_keys:
+            if c in roster_df.columns:
+                mine = roster_df[roster_df[c].astype(str).str.strip().eq(sel_name)]
+                if not mine.empty: break
+        if mine.empty and sel_handle:
+            for c in handle_keys:
+                if c in roster_df.columns:
+                    mine = roster_df[roster_df[c].astype(str).str.strip().eq(sel_handle)]
+                    if not mine.empty: break
+        if not mine.empty:
+            sal_col = None
+            for c in ["salary","cap","salary_usd","cap_hit","sal"]:
+                if c in mine.columns: sal_col = c; break
+            if sal_col:
+                sal = (
+                    pd.to_numeric(
+                        mine[sal_col].astype(str)
+                        .str.replace("$","",regex=False)
+                        .str.replace(",","",regex=False),
+                        errors="coerce"
+                    ).fillna(0.0).sum()
+                )
+                return f"${sal:.1f}"
+    return "—"
+
+# ========== Season standings from CSV (robust) ==========
+def load_current_csv_raw() -> pd.DataFrame:
+    if not CSV_CURRENT.exists(): return pd.DataFrame()
+    try:
+        return pd.read_csv(CSV_CURRENT)
+    except Exception:
+        try:
+            return pd.read_csv(CSV_CURRENT, header=None, dtype=str).fillna("")
+        except Exception:
+            return pd.DataFrame()
+
+def load_csv_standings_normalized() -> pd.DataFrame:
+    df = load_current_csv_raw()
+    if df.empty: return pd.DataFrame()
+
+    # If it already has structured headers, use them; else try to reconstruct like your page fallback
+    header_like = any(_norm_key(c) in {"team","owner","name","manager"} for c in df.columns)
+
+    if not header_like and 1 in df.columns:
+        # embedded-header CSV → rebuild as in your page
+        raw: pd.DataFrame = df
+        # find header row
+        header_idx: Optional[int] = None
+        for i in range(min(10, len(raw))):
+            c1 = str(raw.iat[i, 1]).strip().lower() if raw.shape[1] > 1 else ""
+            c2 = str(raw.iat[i, 2]).strip().lower() if raw.shape[1] > 2 else ""
+            if c1 == "owner" and ("standing points" in c2 or c2 == "points"):
+                header_idx = i; break
+        if header_idx is None:
+            return pd.DataFrame()
+
+        rows = []
+        for r in range(header_idx + 1, len(raw)):
+            rank = str(raw.iat[r, 0]).strip() if raw.shape[1] > 0 else ""
+            team = str(raw.iat[r, 1]).strip() if raw.shape[1] > 1 else ""
+            pts  = str(raw.iat[r, 2]).strip() if raw.shape[1] > 2 else ""
+            pf   = str(raw.iat[r, 3]).strip() if raw.shape[1] > 3 else ""
+            w    = str(raw.iat[r, 4]).strip() if raw.shape[1] > 4 else ""
+            if not rank or not re.match(r"^\d+$", rank): break
+            rows.append({
+                "Team": team, "Points": as_int(pts),
+                "PF": round(as_float(pf),1), "Wins": as_int(w)
+            })
+        df2 = pd.DataFrame(rows)
+    else:
+        df2 = df.copy()
+
+    # Robust column selection (case/spacing/punct insensitive)
+    team_col   = find_col(df2, ["team","owner","name","manager"])
+    points_col = find_col(df2, ["standingpoints","points","leaguepoints","lp"])
+    pf_col     = find_col(df2, ["pf","pointsfor","totalpointsfor"])
+    wins_col   = find_col(df2, ["wins","w"])
+
+    if team_col is None:
+        # last resort: take the first non-numeric column
+        text_cols = [c for c in df2.columns if not pd.api.types.is_numeric_dtype(df2[c])]
+        team_col = text_cols[0] if text_cols else df2.columns[0]
+
+    out = pd.DataFrame()
+    out["Team"] = df2[team_col].astype(str).str.strip()
+
+    if points_col and points_col in df2:
+        out["Points"] = df2[points_col].apply(as_int)
+    else:
+        out["Points"] = 0
+
+    if pf_col and pf_col in df2:
+        out["PF"] = df2[pf_col].apply(as_float).round(1)
+    else:
+        out["PF"] = 0.0
+
+    if wins_col and wins_col in df2:
+        out["Wins"] = df2[wins_col].apply(as_int)
+    else:
+        out["Wins"] = 0
+
+    # Rank the same way your page does (Standing Points then PF)
+    out = out.sort_values(["Points","PF"], ascending=[False, False]).reset_index(drop=True)
+    out["rank"] = out.index + 1
+
+    weeks_played = max(int(out["Wins"].max()), 1)
+    out["Losses"] = (weeks_played - out["Wins"]).clip(lower=0)
+    out["PPG"] = (out["PF"] / weeks_played).round(1)
+
+    return pd.DataFrame({
+        "owner_name": out["Team"],
+        "wins": out["Wins"].astype(int),
+        "losses": out["Losses"].astype(int),
+        "pf": out["PF"].astype(float),
+        "ppg": out["PPG"].astype(float),
+        "rank": out["rank"].astype(int),
+    })
+
+# ========== Sleeper fallback ==========
+def load_sleeper_standings() -> pd.DataFrame:
+    if not SLEEPER_LEAGUE_ID: return pd.DataFrame()
+    try:
+        rosters = _get_json(f"https://api.sleeper.app/v1/league/{SLEEPER_LEAGUE_ID}/rosters")
+        users   = _get_json(f"https://api.sleeper.app/v1/league/{SLEEPER_LEAGUE_ID}/users")
+        uid_to_name   = {u["user_id"]: (u.get("display_name") or u.get("username") or "").strip() for u in users}
+        uid_to_handle = {u["user_id"]: (u.get("username") or "").strip() for u in users}
+        rows = []
+        for r in rosters:
+            uid = r.get("owner_id")
+            owner_name   = uid_to_name.get(uid, f"Roster {r.get('roster_id')}")
+            owner_handle = uid_to_handle.get(uid, "")
+            wins   = int(r.get("settings", {}).get("wins") or 0)
+            losses = int(r.get("settings", {}).get("losses") or 0)
+            pf = float(r.get("settings", {}).get("fpts") or 0.0) + float(r.get("settings", {}).get("fpts_decimal") or 0.0) / 100
+            gp = wins + losses
+            ppg = pf / gp if gp else 0.0
+            rows.append({"owner_name": owner_name, "owner_handle": owner_handle, "wins": wins, "losses": losses, "pf": pf, "ppg": ppg})
+        df = pd.DataFrame(rows)
+        if not df.empty:
+            df = df.sort_values(["wins","pf"], ascending=[False,False]).reset_index(drop=True)
+            df["rank"] = df.index + 1
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+# ========== unified loader (CSV first) ==========
+def load_season_standings() -> tuple[pd.DataFrame, str]:
+    csv_df = load_csv_standings_normalized()
+    if not csv_df.empty:
+        return csv_df, f"csv:{CSV_CURRENT}"
+    if sb:
+        for tbl in ["v_season_standings","season_standings","standings","v_standings"]:
+            try:
+                rows = sb.table(tbl).select("*").execute().data or []
+                if rows: return pd.DataFrame(rows), f"supabase:{tbl}"
+            except Exception:
+                pass
+    return load_sleeper_standings(), "sleeper_api"
+
+# ========== CLI ==========
+def main():
+    parser = argparse.ArgumentParser(description="Diagnose Season Standings → Record/Rank/PF/PPG + Cap (CSV-first).")
+    parser.add_argument("--owner", help='Owner display name, e.g., "Chase Seyforth"')
+    parser.add_argument("--list-owners", action="store_true", help="List owners and exit.")
+    args = parser.parse_args()
+
+    owners = load_owners_df()
+    if owners.empty:
+        print("No owners found (check Supabase owners or SLEEPER_LEAGUE_ID).")
+        sys.exit(1)
+
+    if args.list_owners:
+        print("Owners detected:")
+        for _, r in owners.sort_values("name").iterrows():
+            print(f"  - {r['name']}  (handle: {r['handle']})")
+        return
+
+    if not args.owner:
+        print('Please pass --owner "Display Name" (see --list-owners).'); sys.exit(2)
+
+    sel_name = args.owner.strip()
+    row_o = owners[owners["name"] == sel_name]
+    if row_o.empty:
+        print(f"Owner '{sel_name}' not found in owners."); sys.exit(3)
+    sel_handle = row_o.iloc[0]["handle"]
+
+    roster_df = load_roster_current()
+    caps_df   = load_caps()
+    stand_df, standings_source = load_season_standings()
+
+    print("=== Data Sources ===")
+    print(f"Standings source: {standings_source}")
+    print(f"Roster source:    {'supabase table/view' if not roster_df.empty else 'EMPTY'}")
+    if not roster_df.empty:
+        print(f"Roster actual table: {roster_df.attrs.get('__source_table__','(unknown)')}")
+    print(f"Caps source:      {'v_team_caps' if not caps_df.empty else 'FALLBACK via roster salaries'}")
+    print()
+
+    record_txt, rank_txt, pf_val, ppg_val = "0–0", "—", 0.0, 0.0
+    if stand_df.empty:
+        print("Standings is EMPTY.")
+    else:
+        mine = pd.DataFrame()
+        if "owner_name" in stand_df.columns:
+            mine = stand_df[stand_df["owner_name"].astype(str).str.strip().eq(sel_name)]
+        for alt in ["owner","team","name"]:
+            if mine.empty and alt in stand_df.columns:
+                mine = stand_df[stand_df[alt].astype(str).str.strip().eq(sel_name)]
+        if mine.empty:
+            print(f"Could not match owner '{sel_name}' inside standings.")
+        else:
+            r = mine.iloc[0]
+            # normalize numerics
+            for c in ["wins","losses","pf","ppg","rank"]:
+                if c in stand_df.columns:
+                    stand_df[c] = _ensure_numeric(stand_df, c, 0)
+            w = int(r.get("wins", 0)); l = int(r.get("losses", 0))
+            record_txt = f"{w}–{l}"
+            pf_val = float(r.get("pf", 0.0) or 0.0)
+            ppg_val = float(r.get("ppg", 0.0) or 0.0)
+            rank_txt = _ordinal(int(r.get("rank", 0) or 0))
+
+    cap_txt = resolve_cap_for_owner(caps_df, roster_df, sel_name, sel_handle)
+
+    print("\n=== Mapping Result ===")
+    print(f"Owner:   {sel_name} (handle: {sel_handle})")
+    print(f"Record:  {record_txt}")
+    print(f"Rank:    {rank_txt}")
+    print(f"PF:      {pf_val:.1f}")
+    print(f"PPG:     {ppg_val:.2f}")
+    print(f"Cap:     {cap_txt}")
+
+    if not stand_df.empty:
+        print("\nStandings columns:", list(stand_df.columns))
+
+if __name__ == "__main__":
+    main()

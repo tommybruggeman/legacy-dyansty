@@ -1,0 +1,33 @@
+Legacy Dynasty — V1 Roster/Cap Rules (for app backend)
+
+1) Roster size cap:
+   - Max 22 total players per team (Active + IR + Taxi combined).
+
+2) Taxi Squad:
+   - 1 player per team per year.
+   - Eligibility: rookies only.
+   - Cap accounting: counts as two-thirds (2/3) of contract salary while on Taxi.
+   - Contract-year accounting: if the rookie is placed on Taxi *before the season starts*, that season does NOT decrement contract years.
+   - If activated mid-season, contract year decrements from that season onward.
+
+3) Injured Reserve (IR):
+   - Max 1 player on IR per team.
+   - Cap accounting: counts as half (1/2) of total salary while on IR.
+   - When returning from IR, reverts to full cap accounting pro‑rata.
+
+4) Standings scoring (league result points, not fantasy scoring):
+   - 2 points for a win.
+   - +1 point for beating the league median for the week.
+   - Tiebreaker: season points for the playoffs if the the points are tied
+
+Implementation notes:
+- App will enforce roster-size limits at transaction time (add/activate/move).
+- Cap validations run on every trade/roster change with role-based overrides for commissioner.
+- Contract-year decrement rules evaluated on weekly tick (post-week processing) and on Taxi/IR status changes.
+
+CSV import notes:
+- 'owner_team_name' must match exactly one of the names in legacy_dynasty_teams.csv.
+- 'pos' example values: QB, RB, WR, TE, K, DEF (use your league's set).
+- 'status' must be one of: Active, IR, Taxi.
+- 'rookie' must be 'yes' or 'no' (used for Taxi eligibility check).
+- 'sleeper_id' is optional but recommended for accurate stat joins later.

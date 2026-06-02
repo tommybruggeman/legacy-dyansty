@@ -1,0 +1,1273 @@
+# pages/02_My_Team.py
+# ============================================================
+# Legacy Dynasty — My Team Portal
+# Owner homepage after login
+# - Auto-detects signed-in user's league/team
+# - Shows roster, cap, standings snapshot, picks, activity
+# - Lets owner add/remove players from trade block
+# ============================================================
+
+from __future__ import annotations
+
+import time
+import os
+import sys
+import re
+from pathlib import Path
+from datetime import datetime
+from typing import Optional, Tuple
+
+PAGE_START = time.perf_counter()
+
+def tick(label):
+    print(
+        f"[MY TEAM] {label}: {time.perf_counter() - PAGE_START:.2f}s",
+        flush=True
+    )
+
+import requests
+import pandas as pd
+import streamlit as st
+
+from components.sidebar_nav import render_nav
+from auth import require_login, current_user
+
+# ---------- page ----------
+ICON = Path(__file__).resolve().parents[1] / "assets" / "page_icon.png"
+
+st.set_page_config(
+    page_title="Legacy Dynasty — My Team",
+    page_icon=str(ICON),
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+render_nav()
+tick("page start")
+require_login()
+
+# ---------- paths / env ----------
+PAGES_DIR = Path(__file__).resolve().parent
+ROOT_DIR = PAGES_DIR.parent
+sys.path.append(str(ROOT_DIR))
+sys.path.append(str(ROOT_DIR / "lib"))
+
+DATA_DIR = ROOT_DIR / "data"
+
+
+def _load_kv(path: Path) -> bool:
+    if not path.exists():
+        return False
+
+    for raw in path.read_text().splitlines():
+        if "=" not in raw or raw.strip().startswith("#"):
+            continue
+        k, v = raw.split("=", 1)
+        k = k.strip()
+        v = v.strip().strip('"').strip("'")
+        if k and os.getenv(k) is None:
+            os.environ[k] = v
+
+    return True
+
+
+def _load_env() -> Tuple[str, str, str]:
+    for p in [
+        PAGES_DIR / "fantasy_env",
+        PAGES_DIR / ".env",
+        ROOT_DIR / "fantasy_env",
+        ROOT_DIR / ".env",
+        Path.cwd() / "fantasy_env",
+        Path.cwd() / ".env",
+    ]:
+        if _load_kv(p):
+            break
+
+    return (
+        os.getenv("SUPABASE_URL", "").strip(),
+        (
+            os.getenv("SUPABASE_KEY", "").strip()
+            or os.getenv("SUPABASE_ANON_KEY", "").strip()
+        ),
+        os.getenv("SLEEPER_LEAGUE_ID", "").strip(),
+    )
+
+
+SUPABASE_URL, SUPABASE_KEY, SLEEPER_LEAGUE_ID = _load_env()
+
+
+# ---------- minimal Supabase REST ----------
+class _Resp:
+    def __init__(self, data):
+        self.data = data
+
+
+class _Table:
+    def __init__(self, base: str, headers: dict, name: str):
+        self.base = base.rstrip("/")
+        self.headers = headers
+        self.name = name
+        self._select = "*"
+        self._filters = []
+        self._order = None
+        self._limit = None
+
+    def select(self, cols="*"):
+        self._select = cols
+        return self
+
+    def eq(self, col, val):
+        self._filters.append((col, val))
+        return self
+
+    def order(self, col, desc=False):
+        self._order = (col, desc)
+        return self
+
+    def limit(self, n: int):
+        self._limit = n
+        return self
+
+    def execute(self):
+        url = f"{self.base}/rest/v1/{self.name}"
+        params = {"select": self._select}
+
+        for c, v in self._filters:
+            params[c] = f"eq.{v}"
+
+        if self._order:
+            params["order"] = f"{self._order[0]}.{'desc' if self._order[1] else 'asc'}"
+
+        if self._limit:
+            params["limit"] = self._limit
+
+        r = requests.get(url, headers=self.headers, params=params, timeout=25)
+
+        if r.status_code == 404:
+            return _Resp([])
+
+        r.raise_for_status()
+        return _Resp(r.json())
+
+
+class SB:
+    def __init__(self, url: str, key: str, access_token: Optional[str] = None):
+        self.url = url.rstrip("/")
+        token = access_token or key
+        self.headers = {
+            "apikey": key,
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+
+    def table(self, name: str):
+        return _Table(self.url, self.headers, name)
+
+
+access_token = st.session_state.get("sb_access_token")
+sb = SB(SUPABASE_URL, SUPABASE_KEY, access_token) if SUPABASE_URL and SUPABASE_KEY else None
+
+
+def rest_request(method: str, table: str, params: dict | None = None, json_body=None):
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        raise RuntimeError("Missing Supabase credentials.")
+
+    url = f"{SUPABASE_URL}/rest/v1/{table}"
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "Prefer": "return=representation",
+    }
+
+    r = requests.request(
+        method,
+        url,
+        headers=headers,
+        params=params,
+        json=json_body,
+        timeout=25,
+    )
+    r.raise_for_status()
+
+    try:
+        return r.json()
+    except Exception:
+        return []
+
+
+# ---------- CSS ----------
+st.markdown(
+    """
+<style>
+:root{
+  --bg:#061311;
+  --panel:#101E1D;
+  --panel2:#0C1917;
+  --gold:#E2BC5B;
+  --goldSoft:rgba(226,188,91,.36);
+  --text:#FFF5E7;
+  --muted:#9DA89C;
+  --rule:rgba(202,167,74,.12);
+  --shadow:0 4px 18px rgba(0,0,0,.32);
+}
+
+html, body, [data-testid="stAppViewContainer"]{
+  background:var(--bg);
+  color:var(--text);
+}
+
+.block-container{
+  padding-top:58px;
+}
+
+.hero{
+  background:
+    radial-gradient(100% 160% at 10% 0%, rgba(226,188,91,.18), transparent 45%),
+    linear-gradient(135deg, #10201E 0%, #081513 100%);
+  border:1px solid var(--goldSoft);
+  border-radius:22px;
+  padding:22px 24px;
+  box-shadow:var(--shadow);
+  margin-bottom:16px;
+}
+
+.hero-kicker{
+  color:var(--muted);
+  text-transform:uppercase;
+  font-size:.72rem;
+  letter-spacing:.08em;
+  font-weight:800;
+}
+
+.hero-title{
+  color:var(--text);
+  font-size:2rem;
+  font-weight:900;
+  margin-top:2px;
+  line-height:1.1;
+}
+
+.hero-sub{
+  color:rgba(255,245,231,.72);
+  font-size:.88rem;
+  margin-top:6px;
+}
+
+.card{
+  position:relative;
+  background:radial-gradient(120% 140% at 20% 0%, var(--panel) 0%, var(--panel2) 100%);
+  border:1px solid var(--goldSoft);
+  border-radius:18px;
+  box-shadow:var(--shadow);
+  padding:15px 16px;
+  box-sizing:border-box;
+}
+
+.card::before{
+  content:"";
+  position:absolute;
+  top:7px;
+  left:8px;
+  right:8px;
+  height:2px;
+  border-radius:999px;
+  background:linear-gradient(90deg, transparent, rgba(226,188,91,.62), transparent);
+}
+
+.card h3{
+  margin:0 0 10px 0;
+  font-size:.98rem;
+  font-weight:900;
+}
+
+.metric-title{
+  color:var(--muted);
+  font-size:.7rem;
+  text-transform:uppercase;
+  letter-spacing:.05em;
+}
+
+.metric-value{
+  color:var(--gold);
+  font-size:1.4rem;
+  font-weight:950;
+  line-height:1.1;
+  margin-top:4px;
+}
+
+.metric-sub{
+  color:rgba(255,245,231,.62);
+  font-size:.72rem;
+  margin-top:3px;
+}
+
+.roster-panel{
+  max-height:570px;
+  overflow-y:auto;
+}
+
+.roster-header,
+.roster-row{
+  display:grid;
+  grid-template-columns:52px minmax(0, 1fr) 70px 78px;
+  gap:8px;
+  align-items:center;
+}
+
+.roster-header{
+  color:rgba(255,245,231,.6);
+  font-size:.65rem;
+  text-transform:uppercase;
+  letter-spacing:.04em;
+  border-bottom:1px solid var(--rule);
+  padding-bottom:7px;
+}
+
+.roster-row{
+  padding:8px 0;
+  border-bottom:1px solid var(--rule);
+}
+
+.pos-pill{
+  display:inline-flex;
+  justify-content:center;
+  min-width:34px;
+  padding:2px 8px;
+  border-radius:999px;
+  background:rgba(226,188,91,.12);
+  border:1px solid rgba(226,188,91,.38);
+  color:var(--text);
+  font-size:.64rem;
+  font-weight:900;
+}
+
+.player-name{
+  font-size:.88rem;
+  font-weight:750;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+.small-cell{
+  font-size:.74rem;
+  text-align:right;
+  color:rgba(255,245,231,.78);
+}
+
+.activity-item{
+  padding:8px 0;
+  border-bottom:1px solid var(--rule);
+  font-size:.78rem;
+}
+
+.activity-item small{
+  display:block;
+  color:rgba(255,245,231,.48);
+  font-size:.62rem;
+  margin-top:2px;
+}
+
+.pick-item,
+.trade-item{
+  padding:7px 0;
+  border-bottom:1px solid var(--rule);
+  font-size:.78rem;
+}
+
+.empty{
+  font-size:.75rem;
+  color:rgba(255,245,231,.58);
+}
+
+[data-testid="stButton"] button{
+  border-radius:999px !important;
+  border:1px solid rgba(226,188,91,.55) !important;
+  background:rgba(226,188,91,.12) !important;
+  color:#FFF5E7 !important;
+  font-weight:800 !important;
+}
+
+[data-testid="stTextInput"] input,
+[data-testid="stTextArea"] textarea,
+[data-testid="stSelectbox"] [data-baseweb="select"]{
+  background:rgba(255,255,255,.035) !important;
+  border:1px solid rgba(226,188,91,.25) !important;
+  color:#FFF5E7 !important;
+  border-radius:12px !important;
+}
+
+.cap-hover-card {
+  position: relative;
+  cursor: help;
+  overflow: visible;
+  z-index: 10;
+}
+
+.cap-tooltip {
+  display: none;
+  position: absolute;
+  top: 100%;
+  margin-top: 8px;
+  right: 0;
+  width: 220px;
+  background: #101E1D;
+  border: 1px solid rgba(226,188,91,.45);
+  border-radius: 14px;
+  padding: 12px;
+  box-shadow: 0 12px 28px rgba(0,0,0,.45);
+  z-index: 9999;
+}
+
+.cap-hover-card:hover .cap-tooltip {
+  display: block;
+}
+
+.cap-tooltip div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: .72rem;
+  padding: 4px 0;
+  color: #FFF5E7;
+}
+
+.cap-tooltip hr {
+  border: 0;
+  border-top: 1px solid rgba(226,188,91,.25);
+  margin: 6px 0;
+}
+
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
+
+# ---------- helpers ----------
+_NUM_RE = re.compile(r"[^0-9.\-()]")
+
+
+def clean_num(s) -> str:
+    s = ("" if s is None else str(s)).strip()
+    if not s:
+        return ""
+    neg = s.startswith("(") and s.endswith(")")
+    s = _NUM_RE.sub("", s).replace("(", "").replace(")", "")
+    return "-" + s if neg else s
+
+
+def as_float(x) -> float:
+    try:
+        return float(clean_num(x))
+    except Exception:
+        return 0.0
+
+
+def ordinal(n: int) -> str:
+    if n <= 0:
+        return "—"
+    if 10 <= n % 100 <= 20:
+        return f"{n}th"
+    return f"{n}{ {1:'st', 2:'nd', 3:'rd'}.get(n % 10, 'th') }"
+
+
+def get_user_id() -> Optional[str]:
+    user = current_user()
+
+    if isinstance(user, dict):
+        return user.get("id") or user.get("user_id")
+
+    return getattr(user, "id", None)
+
+def ensure_active_league_from_user() -> Optional[str]:
+    if st.session_state.get("active_league_id"):
+        return st.session_state["active_league_id"]
+
+    user_id = get_user_id()
+
+    if not sb or not user_id:
+        return None
+
+    rows = (
+        sb.table("league_memberships")
+        .select("league_id, role")
+        .eq("user_id", user_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+
+    if not rows:
+        return None
+
+    st.session_state["active_league_id"] = rows[0].get("league_id")
+    st.session_state["role"] = rows[0].get("role")
+
+    return st.session_state["active_league_id"]
+
+def resolve_my_team_uncached(user_id: str) -> dict | None:
+    league_id = ensure_active_league_from_user()
+
+    if not sb or not league_id or not user_id:
+        return None
+
+    membership_rows = (
+        sb.table("league_memberships")
+        .select("*")
+        .eq("league_id", league_id)
+        .eq("user_id", user_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+
+    if not membership_rows:
+        return None
+
+    membership = membership_rows[0]
+
+    team_id = membership.get("team_id") or membership.get("league_team_id")
+
+    if team_id:
+        team_rows = (
+            sb.table("league_teams")
+            .select("*")
+            .eq("id", team_id)
+            .eq("league_id", league_id)
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+
+        if team_rows:
+            team = team_rows[0]
+            return {
+                "league_id": league_id,
+                "team_id": team.get("id"),
+                "team_name": team.get("team_name") or team.get("owner_name"),
+                "owner_name": team.get("owner_name"),
+                "role": membership.get("role"),
+            }
+
+    owner_name = membership.get("owner_name") or membership.get("sleeper_username")
+    team_name = membership.get("team_name")
+
+    if owner_name:
+        team_rows = (
+            sb.table("league_teams")
+            .select("*")
+            .eq("league_id", league_id)
+            .eq("owner_name", owner_name)
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+
+        if team_rows:
+            team = team_rows[0]
+            return {
+                "league_id": league_id,
+                "team_id": team.get("id"),
+                "team_name": team.get("team_name") or team_name or team.get("owner_name"),
+                "owner_name": team.get("owner_name"),
+                "role": membership.get("role"),
+            }
+
+    return None
+
+
+def get_cached_my_team():
+    if "my_team_context" in st.session_state:
+        return st.session_state["my_team_context"]
+
+    user_id = get_user_id()
+
+    if not user_id:
+        return None
+
+    my_team = resolve_my_team_uncached(user_id)
+
+    if my_team:
+        st.session_state["my_team_context"] = my_team
+        st.session_state["active_league_id"] = my_team["league_id"]
+        st.session_state["role"] = my_team.get("role")
+
+    return my_team
+
+# ---------- data loaders ----------
+@st.cache_data(ttl=60, show_spinner=False)
+def load_roster(league_id: str) -> pd.DataFrame:
+    if not sb:
+        return pd.DataFrame()
+
+    rows = (
+        sb.table("contracts")
+        .select(
+            "id, league_id, owner_name, player_name, player_position, "
+            "contract_years_left, contract_total_years, salary, sleeper_player_id"
+        )
+        .eq("league_id", league_id)
+        .order("player_position")
+        .order("player_name")
+        .execute()
+        .data
+        or []
+    )
+
+    df = pd.DataFrame(rows)
+
+    if df.empty:
+        return df
+
+    return df.rename(
+        columns={
+            "owner_name": "owner",
+            "player_name": "player",
+            "player_position": "pos",
+            "contract_years_left": "years",
+            "sleeper_player_id": "sleeper_id",
+        }
+    )
+
+@st.cache_data(ttl=60, show_spinner=False)
+def load_caps() -> pd.DataFrame:
+    if not sb:
+        return pd.DataFrame()
+
+    try:
+        rows = sb.table("v_team_caps").select("*").execute().data or []
+        return pd.DataFrame(rows)
+    except Exception:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=60, show_spinner=False)
+def load_draft_picks() -> pd.DataFrame:
+    if not sb:
+        return pd.DataFrame()
+
+    try:
+        rows = (
+            sb.table("draft_picks")
+            .select("*")
+            .order("season")
+            .order("round")
+            .execute()
+            .data
+            or []
+        )
+        return pd.DataFrame(rows)
+    except Exception:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=60, show_spinner=False)
+def load_transactions(limit: int = 300) -> pd.DataFrame:
+    if not sb:
+        return pd.DataFrame()
+
+    try:
+        rows = (
+            sb.table("transactions_enriched")
+            .select("*")
+            .order("ts", desc=True)
+            .limit(limit)
+            .execute()
+            .data
+            or []
+        )
+        return pd.DataFrame(rows)
+    except Exception:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=60, show_spinner=False)
+def load_trade_block(league_id: str, owner_name: str) -> pd.DataFrame:
+    if not sb:
+        return pd.DataFrame()
+
+    try:
+        rows = (
+            sb.table("trade_block")
+            .select("*")
+            .eq("league_id", league_id)
+            .eq("owner", owner_name)
+            .execute()
+            .data
+            or []
+        )
+        return pd.DataFrame(rows)
+    except Exception:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=60, show_spinner=False)
+def load_cap_adjustments(
+    league_id: str,
+    owner_name: str,
+    season: int = 2026
+) -> pd.DataFrame:
+    if not sb:
+        return pd.DataFrame()
+
+    try:
+        rows = (
+            sb.table("cap_adjustments")
+            .select("*")
+            .eq("league_id", league_id)
+            .eq("owner_name", owner_name)
+            .eq("season", season)
+            .execute()
+            .data
+            or []
+        )
+        return pd.DataFrame(rows)
+    except Exception:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=60, show_spinner=False)
+def load_cached_standings(league_id: str) -> pd.DataFrame:
+    if not sb:
+        return pd.DataFrame()
+
+    try:
+        rows = (
+            sb.table("league_standings")
+            .select("*")
+            .eq("league_id", league_id)
+            .execute()
+            .data
+            or []
+        )
+        return pd.DataFrame(rows)
+    except Exception:
+        return pd.DataFrame()
+
+# ---------- live standings ----------
+def compute_live_standings() -> pd.DataFrame:
+    if not SLEEPER_LEAGUE_ID:
+        return pd.DataFrame()
+
+    try:
+        rid_to_name = roster_id_to_name(SLEEPER_LEAGUE_ID)
+    except Exception:
+        return pd.DataFrame()
+
+    latest = current_nfl_week()
+    rows = []
+
+    for wk in range(1, latest + 1):
+        try:
+            matchups = get_json(
+                f"https://api.sleeper.app/v1/league/{SLEEPER_LEAGUE_ID}/matchups/{wk}"
+            ) or []
+        except Exception:
+            continue
+
+        by_mid = {}
+        for m in matchups:
+            mid = m.get("matchup_id")
+            if mid is not None:
+                by_mid.setdefault(mid, []).append(m)
+
+        week_rows = []
+
+        for pair in by_mid.values():
+            if len(pair) < 2:
+                continue
+
+            a, b = pair[0], pair[1]
+            pa = as_float(a.get("points"))
+            pb = as_float(b.get("points"))
+
+            sa = as_float(a.get("starters_points"))
+            sbp = as_float(b.get("starters_points"))
+
+            if pa < 10 <= sa:
+                pa = sa
+            if pb < 10 <= sbp:
+                pb = sbp
+
+            na = rid_to_name.get(a.get("roster_id"), f"Roster {a.get('roster_id')}")
+            nb = rid_to_name.get(b.get("roster_id"), f"Roster {b.get('roster_id')}")
+
+            week_rows.append({"owner": na, "score": pa, "opp": pb, "win": 1 if pa > pb else 0})
+            week_rows.append({"owner": nb, "score": pb, "opp": pa, "win": 1 if pb > pa else 0})
+
+        if not week_rows:
+            continue
+
+        wdf = pd.DataFrame(week_rows)
+
+        if wdf["score"].abs().sum() == 0:
+            continue
+
+        wdf = wdf.sort_values("score", ascending=False).reset_index(drop=True)
+        wdf["top5"] = 0
+        wdf.loc[: min(4, len(wdf) - 1), "top5"] = 1
+        wdf["standing_points"] = (2 * wdf["win"] + wdf["top5"]).astype(int)
+
+        rows.append(wdf)
+
+    if not rows:
+        return pd.DataFrame()
+
+    big = pd.concat(rows, ignore_index=True)
+
+    out = big.groupby("owner", as_index=False).agg(
+        wins=("win", "sum"),
+        games=("score", "count"),
+        pf=("score", "sum"),
+        pa=("opp", "sum"),
+        standing_points=("standing_points", "sum"),
+    )
+
+    out["losses"] = out["games"] - out["wins"]
+    out["ppg"] = out["pf"] / out["games"]
+    out = out.sort_values(["standing_points", "pf"], ascending=[False, False]).reset_index(drop=True)
+    out["rank"] = out.index + 1
+
+    return out
+
+
+def match_owner_row(df: pd.DataFrame, owner_name: str) -> pd.DataFrame:
+    if df.empty or not owner_name:
+        return pd.DataFrame()
+
+    name_col = "owner" if "owner" in df.columns else "Team" if "Team" in df.columns else None
+
+    if not name_col:
+        return pd.DataFrame()
+
+    exact = df[df[name_col].astype(str).str.lower().eq(str(owner_name).lower())]
+    if not exact.empty:
+        return exact.iloc[:1]
+
+    contains = df[df[name_col].astype(str).str.contains(str(owner_name), case=False, na=False)]
+    if not contains.empty:
+        return contains.iloc[:1]
+
+    return pd.DataFrame()
+
+# ---------- load current owner ----------
+my_team = get_cached_my_team()
+tick("after resolve_my_team")
+
+if not my_team:
+    st.error(
+        "No team is assigned to this login yet. The commissioner needs to connect this user to a league team."
+    )
+
+    with st.expander("Debug info"):
+        st.write("Current user:", current_user())
+        st.write("active_league_id:", st.session_state.get("active_league_id"))
+
+    st.stop()
+
+spinner_placeholder = st.empty()
+
+spinner_placeholder.markdown(
+    """
+<style>
+.legacy-loader-wrap {
+    height: 70vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+}
+.legacy-loader {
+    width: 70px;
+    height: 70px;
+    border: 6px solid rgba(226,188,91,.25);
+    border-top: 6px solid #E2BC5B;
+    border-radius: 50%;
+    animation: legacy-spin 1s linear infinite;
+}
+.legacy-loader-text {
+    margin-top: 22px;
+    font-size: 1.35rem;
+    font-weight: 800;
+    color: #F5EBD7;
+}
+@keyframes legacy-spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+</style>
+
+<div class="legacy-loader-wrap">
+    <div class="legacy-loader"></div>
+    <div class="legacy-loader-text">Loading Your Team...</div>
+</div>
+""",
+    unsafe_allow_html=True,
+)
+
+if not my_team:
+    st.error("No team is assigned to this login yet. The commissioner needs to connect this user to a league team.")
+    st.stop()
+
+league_id = my_team["league_id"]
+team_name = my_team["team_name"] or "My Team"
+owner_name = my_team["owner_name"] or team_name
+role = my_team.get("role") or "owner"
+
+roster_df = load_roster(league_id)
+tick("after load_roster")
+
+caps_df = load_caps()
+tick("after load_caps")
+
+picks_df = load_draft_picks()
+tick("after load_draft_picks")
+
+tx_df = load_transactions()
+tick("after load_transactions")
+
+trade_df = load_trade_block(league_id, owner_name)
+tick("after load_trade_block")
+
+cap_adj_df = load_cap_adjustments(league_id, owner_name)
+tick("after load_cap_adjustments")
+
+stand_df = load_cached_standings(league_id)
+tick("after load_cached_standings")
+
+spinner_placeholder.empty()
+
+my_roster = pd.DataFrame()
+if not roster_df.empty:
+    my_roster = roster_df[
+        roster_df["owner"].astype(str).str.strip().str.lower().eq(str(owner_name).strip().lower())
+    ].copy()
+
+# ---------- metrics ----------
+record_txt = "0 – 0"
+standing_txt = "—"
+standing_points = 0
+ppg = 0.0
+
+row = match_owner_row(stand_df, owner_name)
+if not row.empty:
+    r = row.iloc[0]
+    record_txt = f"{int(r.get('wins', 0))} – {int(r.get('losses', 0))}"
+    standing_points = int(r.get("standing_points", 0) or 0)
+    ppg = float(r.get("ppg", 0) or 0)
+    standing_txt = ordinal(int(r.get("rank", 0) or 0))
+
+
+active_salary = 0.0
+
+if not my_roster.empty and "salary" in my_roster.columns:
+    active_salary = (
+        pd.to_numeric(my_roster["salary"], errors="coerce")
+        .fillna(0)
+        .sum()
+    )
+
+trade_carryover = 0.0
+drop_charge = 0.0
+taxi_adjustment = 0.0
+ir_adjustment = 0.0
+manual_adjustment = 0.0
+
+if not cap_adj_df.empty:
+    trade_carryover = cap_adj_df.loc[
+        cap_adj_df["adjustment_type"] == "trade_carryover",
+        "amount"
+    ].sum()
+
+    drop_charge = cap_adj_df.loc[
+        cap_adj_df["adjustment_type"] == "dropped_player_charge",
+        "amount"
+    ].sum()
+
+    taxi_adjustment = cap_adj_df.loc[
+        cap_adj_df["adjustment_type"] == "taxi_adjustment",
+        "amount"
+    ].sum()
+
+    ir_adjustment = cap_adj_df.loc[
+        cap_adj_df["adjustment_type"] == "ir_adjustment",
+        "amount"
+    ].sum()
+
+    manual_adjustment = cap_adj_df.loc[
+        cap_adj_df["adjustment_type"] == "manual_adjustment",
+        "amount"
+    ].sum()
+
+cap_used = (
+    active_salary
+    + trade_carryover
+    + drop_charge
+    + taxi_adjustment
+    + ir_adjustment
+    + manual_adjustment
+)
+
+cap_space = 225 - cap_used
+
+cap_txt = f"${cap_used:.1f}"
+roster_count = len(my_roster)
+
+
+# ---------- hero ----------
+st.markdown(
+    f"""
+<div class="hero">
+  <div class="hero-kicker">Owner Portal</div>
+  <div class="hero-title">{team_name}</div>
+  <div class="hero-sub">
+    Manage your roster, trade block, draft picks, cap, and recent team activity.
+  </div>
+</div>
+""",
+    unsafe_allow_html=True,
+)
+
+
+# ---------- top metrics ----------
+m1, m2, m3, m4, m5 = st.columns([1, 1, 1, 1, 1])
+
+metrics = [
+    ("Record", record_txt, standing_txt),
+    ("Standing Points", standing_points, standing_txt),
+    ("PPG", f"{ppg:.1f}", "Avg / game"),
+    ("Cap Used", cap_txt, f"${cap_space:.1f} space"),
+    ("Roster", roster_count, "Players signed"),
+]
+
+for col, (title, value, sub) in zip([m1, m2, m3, m4, m5], metrics):
+    with col:
+        if title == "Cap Used":
+            st.markdown(
+                f"""
+<div class="card cap-hover-card">
+  <div class="metric-title">{title}</div>
+  <div class="metric-value">{value}</div>
+  <div class="metric-sub">{sub}</div>
+
+  <div class="cap-tooltip">
+    <div><strong>Active:</strong><span>${active_salary:.2f}</span></div>
+    <div><strong>Trades:</strong><span>${trade_carryover:.2f}</span></div>
+    <div><strong>Dropped:</strong><span>${drop_charge:.2f}</span></div>
+    <div><strong>Taxi:</strong><span>${taxi_adjustment:.2f}</span></div>
+    <div><strong>IR:</strong><span>${ir_adjustment:.2f}</span></div>
+    <hr>
+    <div><strong>Total:</strong><span>${cap_used:.2f}</span></div>
+    <div><strong>Space:</strong><span>${cap_space:.2f}</span></div>
+  </div>
+</div>
+""",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                f"""
+<div class="card">
+  <div class="metric-title">{title}</div>
+  <div class="metric-value">{value}</div>
+  <div class="metric-sub">{sub}</div>
+</div>
+""",
+                unsafe_allow_html=True,
+            )
+
+
+st.markdown("<br>", unsafe_allow_html=True)
+
+# ---------- main layout ----------
+left, right = st.columns([1.45, 1])
+
+
+# ---------- roster ----------
+with left:
+    html = [
+        '<div class="card roster-panel">',
+        "<h3>My Roster</h3>",
+        '<div class="roster-header">',
+        "<div>Pos</div><div>Player</div><div style='text-align:right;'>Years</div><div style='text-align:right;'>Salary</div>",
+        "</div>",
+    ]
+
+    if my_roster.empty:
+        html.append('<div class="empty" style="padding-top:10px;">No roster data found for this team.</div>')
+    else:
+        my_roster = my_roster.sort_values(["pos", "player"])
+        for _, r in my_roster.iterrows():
+            pos = r.get("pos") or "—"
+            player = r.get("player") or "Unknown"
+            years = r.get("years") or "—"
+            salary = r.get("salary") or "—"
+
+            html.append(
+                f"""
+<div class="roster-row">
+  <div><span class="pos-pill">{pos}</span></div>
+  <div class="player-name">{player}</div>
+  <div class="small-cell">{years}</div>
+  <div class="small-cell">${salary}</div>
+</div>
+"""
+            )
+
+    html.append("</div>")
+    st.markdown("".join(html), unsafe_allow_html=True)
+
+# ---------- right actions ----------
+with right:
+    with st.container(border=True):
+        st.markdown("### Trade Block")
+
+        if trade_df.empty:
+            st.markdown('<div class="empty">No players currently on your trade block.</div>', unsafe_allow_html=True)
+        else:
+            for _, r in trade_df.iterrows():
+                tb_id = r.get("id")
+                pname = r.get("player_name") or "Player"
+                st.markdown(
+                    f"<div class='trade-item'><strong>{pname}</strong></div>",
+                    unsafe_allow_html=True
+                )
+
+                if tb_id and st.button(f"Remove {pname}", key=f"remove_tb_{tb_id}"):
+                    rest_request("DELETE", "trade_block", params={"id": f"eq.{tb_id}"})
+                    st.rerun()
+
+        st.markdown("---")
+        st.markdown("#### Add Player to Trade Block")
+
+        roster_names = sorted(my_roster["player"].dropna().astype(str).unique().tolist()) if not my_roster.empty else []
+
+        selected_player = st.selectbox(
+            "Player",
+            options=roster_names if roster_names else ["No roster players found"],
+            disabled=not bool(roster_names),
+            key="trade_block_player",
+        )
+
+
+        if st.button("Add to Trade Block", disabled=not bool(roster_names)):
+            payload = {
+                "league_id": league_id,
+                "owner": owner_name,
+                "player_name": selected_player,
+            }
+            rest_request("POST", "trade_block", json_body=payload)
+            st.rerun()
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    with st.container(border=True):
+        st.markdown("### Taxi Squad / IR")
+
+        roster_options = sorted(
+            my_roster["player"].dropna().astype(str).unique().tolist()
+        ) if not my_roster.empty else []
+
+        selected_player = st.selectbox(
+            "Player",
+            roster_options,
+            key="designation_player",
+        )
+
+        designation = st.selectbox(
+            "Designation",
+            ["Taxi Squad", "Injured Reserve"],
+            key="designation_type",
+        )
+
+        if selected_player:
+
+            player_row = my_roster[
+                my_roster["player"] == selected_player
+            ].iloc[0]
+
+            salary = float(player_row.get("salary") or 0)
+
+            if designation == "Taxi Squad":
+                adjustment_type = "taxi_adjustment"
+                adjustment_amount = round(-(salary / 3), 2)
+            else:
+                adjustment_type = "ir_adjustment"
+                adjustment_amount = round(-(salary / 2), 2)
+
+            st.caption(
+                f"Cap Adjustment: ${adjustment_amount:.2f}"
+            )
+
+            if st.button(
+                "Apply Designation",
+                key="apply_designation"
+            ):
+                payload = {
+                    "league_id": league_id,
+                    "owner_name": owner_name,
+                    "player_name": selected_player,
+                    "season": 2026,
+                    "adjustment_type": adjustment_type,
+                    "amount": adjustment_amount,
+                    "note": f"{designation} designation",
+                }
+
+                rest_request(
+                    "POST",
+                    "cap_adjustments",
+                    json_body=payload,
+                )
+
+                st.success(
+                    f"{selected_player} added to {designation}"
+                )
+
+                st.rerun()
+# ---------- activity ----------
+with st.container(border=True):
+    st.markdown("### Recent Team Activity")
+
+    activity = pd.DataFrame()
+
+    if not tx_df.empty:
+        mask = pd.Series(False, index=tx_df.index)
+
+        for c in ["from_owner_name", "to_owner_name", "from_team_name", "to_team_name"]:
+            if c in tx_df.columns:
+                mask = mask | tx_df[c].astype(str).str.strip().str.lower().eq(str(owner_name).strip().lower())
+                mask = mask | tx_df[c].astype(str).str.strip().str.lower().eq(str(team_name).strip().lower())
+
+        activity = tx_df[mask].copy()
+
+    if activity.empty:
+        st.markdown('<div class="empty">No activity for your team yet.</div>', unsafe_allow_html=True)
+    else:
+        for _, r in activity.head(12).iterrows():
+            ts_raw = r.get("ts") or r.get("created_at") or ""
+            try:
+                ts = datetime.fromisoformat(str(ts_raw).replace("Z", "+00:00")).strftime("%Y-%m-%d")
+            except Exception:
+                ts = str(ts_raw)
+
+            acq = str(r.get("acquisition") or "").lower()
+            tx_type = str(r.get("tx_type") or "").lower()
+
+            if acq in ["added", "add", "waiver"]:
+                action = "Sign"
+            elif acq in ["dropped", "drop"]:
+                action = "Drop"
+            elif acq == "traded" or tx_type == "trade":
+                action = "Trade"
+            else:
+                action = "Transaction"
+
+            player = r.get("player_name") or "Player"
+
+            st.markdown(
+                f"<div class='activity-item'><strong>{action}</strong> · {player}<small>{ts}</small></div>",
+                unsafe_allow_html=True,
+            )
