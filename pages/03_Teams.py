@@ -816,7 +816,11 @@ def load_owners_df() -> pd.DataFrame:
 
     league_id = st.session_state.get("active_league_id") or st.session_state.get("import_league_id")
 
+    st.write("DEBUG sb exists:", sb is not None)
+    st.write("DEBUG league_id inside load_owners_df:", league_id)
+
     if not sb or not league_id:
+
         return pd.DataFrame(columns=["handle", "name"])
 
     try:
@@ -844,7 +848,7 @@ def load_owners_df() -> pd.DataFrame:
         return df[["handle", "name"]].dropna().drop_duplicates()
 
     except Exception as e:
-        st.error(f"load_owners_df error: {e}")
+        st.exception(e)
         return pd.DataFrame(columns=["handle", "name"])
 
 @st.cache_data(ttl=300, show_spinner=False)
