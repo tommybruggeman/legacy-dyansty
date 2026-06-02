@@ -65,9 +65,9 @@ def _load_env() -> Tuple[str, str, str]:
         if _load_kv(p):
             break
     return (
-        os.getenv("SUPABASE_URL", "").strip(),
-        os.getenv("SUPABASE_KEY", "").strip(),
-        os.getenv("SLEEPER_LEAGUE_ID", "").strip(),
+        (os.getenv("SUPABASE_URL") or st.secrets.get("SUPABASE_URL", "")).strip(),
+        (os.getenv("SUPABASE_KEY") or st.secrets.get("SUPABASE_KEY", "")).strip(),
+        (os.getenv("SLEEPER_LEAGUE_ID") or st.secrets.get("SLEEPER_LEAGUE_ID", "")).strip(),
     )
 
 SUPABASE_URL, SUPABASE_KEY, SLEEPER_LEAGUE_ID = _load_env()
