@@ -56,6 +56,7 @@ def _load_kv(path: Path) -> bool:
 def _load_env() -> Tuple[str, str, str]:
     here = PAGES_DIR
     root, cwd = here.parent, Path.cwd()
+
     for p in [
         here / "fantasy_env", here / ".env",
         cwd / "fantasy_env", cwd / ".env",
@@ -64,9 +65,15 @@ def _load_env() -> Tuple[str, str, str]:
     ]:
         if _load_kv(p):
             break
+
     return (
         (os.getenv("SUPABASE_URL") or st.secrets.get("SUPABASE_URL", "")).strip(),
-        (os.getenv("SUPABASE_KEY") or st.secrets.get("SUPABASE_KEY", "")).strip(),
+        (
+            os.getenv("SUPABASE_ANON_KEY")
+            or os.getenv("SUPABASE_KEY")
+            or st.secrets.get("SUPABASE_ANON_KEY", "")
+            or st.secrets.get("SUPABASE_KEY", "")
+        ).strip(),
         (os.getenv("SLEEPER_LEAGUE_ID") or st.secrets.get("SLEEPER_LEAGUE_ID", "")).strip(),
     )
 
