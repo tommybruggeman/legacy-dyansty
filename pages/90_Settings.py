@@ -413,8 +413,13 @@ def _load_env() -> tuple[str, str]:
             break
 
     return (
-        os.getenv("SUPABASE_URL", "").strip(),
-        os.getenv("SUPABASE_KEY", "").strip(),
+        (os.getenv("SUPABASE_URL") or st.secrets.get("SUPABASE_URL", "")).strip(),
+        (
+            os.getenv("SUPABASE_ANON_KEY")
+            or os.getenv("SUPABASE_KEY")
+            or st.secrets.get("SUPABASE_ANON_KEY", "")
+            or st.secrets.get("SUPABASE_KEY", "")
+        ).strip(),
     )
 
 
