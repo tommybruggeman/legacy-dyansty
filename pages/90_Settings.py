@@ -954,7 +954,6 @@ elif section == "League Manager Tools":
         "Manual Add",
         "Manual Drop",
         "Trade Tools",
-        "Owner Matching",
     ]
 
     if "lm_tool" not in st.session_state:
@@ -1386,12 +1385,6 @@ elif section == "League Manager Tools":
             st.success(
                 "Trade logged. Next step is wiring this to update contract ownership, draft pick ledger, and team cash balances."
             )
-
-    elif tool == "Owner Matching":
-        st.info(
-            "Owner Mapping has temporarily been removed while the onboarding flow is being rebuilt."
-    )
-
 
 # ============================================================
 # DRAFT CENTER
