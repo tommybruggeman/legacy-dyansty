@@ -1,0 +1,118 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Mapping
+
+from season_engine.rollover_service import stable_fingerprint
+
+
+VALIDATOR_VERSION = "rollover-contract-preflight-v1"
+
+
+@dataclass(frozen=True)
+class ContractAuthorityReadiness:
+    league_id: str
+    source_season: int
+    target_season: int
+    agreement_count: int
+    source_season_count: int
+    prepared_target_option_count: int
+    active_target_count: int
+    prior_transition_count: int
+    blockers: tuple[str, ...]
+    fingerprint: str
+    validator_version: str = VALIDATOR_VERSION
+
+    @property
+    def ready(self) -> bool:
+        return not self.blockers
+
+
+class ContractAuthorityPreflightService:
+    """Read-only readiness for rollover operations 10-12.
+
+    This deliberately does not use ``contract_transition_executions`` as proof:
+    that legacy ledger records a completed contract mutation.  Rollover preflight
+    instead verifies the immutable inputs that operations 10-12 will freeze and
+    mutate later.
+    """
+
+    def __init__(self, client: Any):
+        self.client = client
+
+    def run(self, league_id: str, source_season: int, target_season: int) -> ContractAuthorityReadiness:
+        agreements = self._rows("contract_agreements", league_id=league_id)
+        seasons = self._rows("contract_seasons", league_id=league_id)
+        league_seasons = self._rows("league_seasons", league_id=league_id)
+        assignments = []
+        source_authorities = [x for x in league_seasons if int(x.get("season") or 0) == source_season]
+        target_authorities = [x for x in league_seasons if int(x.get("season") or 0) == target_season]
+        if len(source_authorities) == 1:
+            assignments = self._rows("season_roster_assignments", league_season_id=source_authorities[0]["id"])
+        transitions = [x for x in self._rows("contract_transition_executions", league_id=league_id)
+                       if int(x.get("source_season") or 0) == source_season
+                       and int(x.get("target_season") or 0) == target_season]
+
+        by_agreement: dict[str, list[Mapping[str, Any]]] = {}
+        for row in seasons:
+            by_agreement.setdefault(str(row.get("contract_id")), []).append(row)
+        rostered = {str(x.get("sleeper_player_id") or x.get("canonical_player_id") or "") for x in assignments}
+        blockers: list[str] = []
+        if target_season != source_season + 1: blockers.append("contract_season_boundary_invalid")
+        if len(source_authorities) != 1: blockers.append("contract_source_season_authority_missing")
+        if len(target_authorities) != 1: blockers.append("contract_target_season_authority_missing")
+        if not agreements: blockers.append("normalized_contract_agreements_missing")
+
+        player_live: dict[str, int] = {}
+        source_count = 0
+        target_options = 0
+        active_target = 0
+        for agreement in agreements:
+            aid = str(agreement.get("id") or "")
+            pid = str(agreement.get("player_id") or "")
+            team = str(agreement.get("league_team_id") or "")
+            rows = by_agreement.get(aid, [])
+            source = [x for x in rows if int(x.get("season") or 0) == source_season]
+            target = [x for x in rows if int(x.get("season") or 0) == target_season]
+            if len(source) != 1:
+                blockers.append(f"contract_source_obligation_count:{aid}:{len(source)}")
+            else:
+                source_count += 1
+                if str(source[0].get("player_id")) != pid or str(source[0].get("league_team_id")) != team:
+                    blockers.append(f"contract_source_ownership_mismatch:{aid}")
+            if len(target) > 1: blockers.append(f"contract_target_obligation_duplicate:{aid}")
+            for row in target:
+                if str(row.get("player_id")) != pid or str(row.get("league_team_id")) != team:
+                    blockers.append(f"contract_target_ownership_mismatch:{aid}")
+                if row.get("obligation_status") == "active": active_target += 1
+            # Rostered expired agreements are the owner-option population. They
+            # must have one inactive prepared option obligation for operations
+            # 10-12; preflight never activates it.
+            if agreement.get("status") == "expired" and pid in rostered:
+                valid = [x for x in target if x.get("obligation_status") == "scheduled"
+                         and bool(x.get("is_option_year")) and bool(x.get("option_type"))]
+                if len(valid) != 1:
+                    blockers.append(f"prepared_target_option_missing:{aid}")
+                else: target_options += 1
+            if agreement.get("status") in {"active", "scheduled"}:
+                player_live[pid] = player_live.get(pid, 0) + 1
+        blockers.extend(f"duplicate_live_agreement:{pid}" for pid, count in player_live.items() if count > 1)
+        if active_target: blockers.append("target_contract_authority_already_activated")
+        if transitions: blockers.append("prior_contract_transition_conflicts_with_rollover")
+
+        material = {
+            "validator": VALIDATOR_VERSION, "league_id": league_id, "source_season": source_season,
+            "target_season": target_season,
+            "agreements": sorted(({k: row.get(k) for k in ("id", "league_team_id", "player_id", "status", "start_season", "end_season")}
+                                  for row in agreements), key=lambda x: str(x["id"])),
+            "seasons": sorted(({k: row.get(k) for k in ("id", "contract_id", "league_team_id", "player_id", "season", "salary", "cap_hit", "obligation_status", "is_option_year", "option_type")}
+                               for row in seasons), key=lambda x: (str(x["contract_id"]), int(x["season"]))),
+            "rostered_players": sorted(rostered), "blockers": sorted(set(blockers)),
+        }
+        return ContractAuthorityReadiness(league_id, source_season, target_season, len(agreements), source_count,
+            target_options, active_target, len(transitions), tuple(dict.fromkeys(blockers)), stable_fingerprint(material))
+
+    def _rows(self, table: str, **filters: Any) -> list[dict[str, Any]]:
+        query = self.client.table(table).select("*")
+        for key, value in filters.items(): query = query.eq(key, value)
+        return list(query.execute().data or ())

@@ -1,0 +1,633 @@
+{
+  "schema_version": 1,
+  "certification_name": "season-rollover-2025-2026-certified-v1",
+  "source_season": 2025,
+  "target_season": 2026,
+  "fixture": "unified-hosted-offroster-v8",
+  "certification_context_date": "2026-08-11",
+  "certified_final_state": "executed_unpublished",
+  "operations_attempted": 31,
+  "operations_completed": 31,
+  "completed_operation_evidence_count": 31,
+  "publication_performed": false,
+  "live_external_call_performed": false,
+  "intentional_roster_exclusions": 2,
+  "remaining_blocker": null,
+  "git": {
+    "branch_at_freeze": "main",
+    "head_at_freeze": "56a2c387f12c3bd3a152258bd7ff490ac252e76d",
+    "certified_changes_committed_at_freeze": false,
+    "note": "Hashes identify the certified dirty working-tree contents; commit and tag only after review."
+  },
+  "certification_scope": {
+    "operations": [
+      1,
+      31
+    ],
+    "terminal_state": "executed_unpublished",
+    "publication_certified": false,
+    "publication_operations_excluded": [
+      32,
+      36
+    ]
+  },
+  "invariant": "Ordinary continuing contracts require matching immutable source ownership and create unpublished target assignments. Canonically approved active_off_roster_liability/preserve_active_liability cases retain contract and cap liability but create no source or target roster assignment; absent or mismatched evidence fails closed.",
+  "drift_policy": "Any modification or removal of a listed file, or addition of a behavior-affecting execution component, requires review and re-certification.",
+  "files": [
+    {
+      "path": "supabase/migrations/20260730_pre_rollover_history.sql",
+      "category": "execution_migration",
+      "sha256": "3f205a3874c9a96a9d9b34337f7bea40be6718b918c70abfe89997917f82faa9"
+    },
+    {
+      "path": "supabase/migrations/20260731_contract_data_model.sql",
+      "category": "execution_migration",
+      "sha256": "7c0512daa8a5312bbe9a6084949a1b2265b32590153e2c404fef71fbd4d752bd"
+    },
+    {
+      "path": "supabase/migrations/20260801_contract_source_reconciliation.sql",
+      "category": "execution_migration",
+      "sha256": "ba73d06d1eaa268285c6fdf2e9c8aefefc4bf04608bd54cd3a4de213ef5cac47"
+    },
+    {
+      "path": "supabase/migrations/20260802_repair_contract_source_correction_audit.sql",
+      "category": "execution_migration",
+      "sha256": "770244e25287d01c473d6087976a2215bfdcd6c87a88523ee10c084bcd6b4036"
+    },
+    {
+      "path": "supabase/migrations/20260803_contract_transition_execution.sql",
+      "category": "execution_migration",
+      "sha256": "ff7e03317900d49af7dace7d6d17406792dbf79e3199a2403030fda54938f9b0"
+    },
+    {
+      "path": "supabase/migrations/20260803_target_season_authority.sql",
+      "category": "execution_migration",
+      "sha256": "70cd6fbd0c89a3f7361b3d5814125821787028d83654ec0f350e49ed0fcee5ef"
+    },
+    {
+      "path": "supabase/migrations/20260804_rollover_execution_control.sql",
+      "category": "execution_migration",
+      "sha256": "caae3f4dbdc84bfae0930ffeed7d0d5d8c29484283087a664a9a3d24700ffd4b"
+    },
+    {
+      "path": "supabase/migrations/20260805_rollover_window_operations.sql",
+      "category": "execution_migration",
+      "sha256": "21a87cf1125ad69ce7608306bb7c1118eea78daf70929fe4e4d8ed2daca9ace7"
+    },
+    {
+      "path": "supabase/migrations/20260806_rollover_window_operation_hardening.sql",
+      "category": "execution_migration",
+      "sha256": "62d26513f2b124d44c9206e41fa401e0897dbc6c7a09b772aa2c25145406a441"
+    },
+    {
+      "path": "supabase/migrations/20260807_commissioner_review_engine.sql",
+      "category": "execution_migration",
+      "sha256": "dc9d6b63915581c017ad4c5758958b29619528eb14a02655581a69ab28aae11c"
+    },
+    {
+      "path": "supabase/migrations/20260808_authority_preparation.sql",
+      "category": "execution_migration",
+      "sha256": "eb6df5ef7579fd507df98e042a2b0f8dc9c4d190af174c85ceee96dbe0d34c2c"
+    },
+    {
+      "path": "supabase/migrations/20260809_authority_preparation_hardening.sql",
+      "category": "execution_migration",
+      "sha256": "fe582d2893df74f8c0d065c5e078076dd422791af86baa3e9412bf421dfe3795"
+    },
+    {
+      "path": "supabase/migrations/20260810_rollover_dry_run_simulator.sql",
+      "category": "execution_migration",
+      "sha256": "100ab990357bdb42fb80a04700e5635a1ae97cc1111f744776770480eb65e44d"
+    },
+    {
+      "path": "supabase/migrations/20260811_rollover_dry_run_hardening.sql",
+      "category": "execution_migration",
+      "sha256": "4b2ebea1db03ee9cb4d86a0561826f28aaf603f50cc107fda6ed891dd254effc"
+    },
+    {
+      "path": "supabase/migrations/20260812_rollover_execution_plan.sql",
+      "category": "execution_migration",
+      "sha256": "5a3c8e56e6605bc1ddad63a55e9a922ffa4cbaa0a2ad934121342006d81fb67a"
+    },
+    {
+      "path": "supabase/migrations/20260813_rollover_execution_plan_approval.sql",
+      "category": "execution_migration",
+      "sha256": "8c697a9fbc45f09ad3b5e4370899e8e9ac1988296efc16a330a4e80dc2116631"
+    },
+    {
+      "path": "supabase/migrations/20260814_rollover_execution_plan_approval_catalog_hardening.sql",
+      "category": "execution_migration",
+      "sha256": "f2058f42fac9a5a8d6d3efd2d4da458e4cad3958448609a26b06b376140c2c9b"
+    },
+    {
+      "path": "supabase/migrations/20260815_rollover_execution_plan_immutability_fix.sql",
+      "category": "execution_migration",
+      "sha256": "2bc55280e4a6d1aa302783f8499311883436f7e7747a6e4ffc98c1ff02b28b83"
+    },
+    {
+      "path": "supabase/migrations/20260816_rollover_execution_plan_approval_replay_ordering.sql",
+      "category": "execution_migration",
+      "sha256": "65068d91662571e7bea3dbcac528ab63bdca283cba5585ed53119cd9e5f72116"
+    },
+    {
+      "path": "supabase/migrations/20260817_deterministic_rollover_execution_engine.sql",
+      "category": "execution_migration",
+      "sha256": "2f49e18a89f0ab030fb13e45c85217cdcd4dead3210138c882f2a01675b218e8"
+    },
+    {
+      "path": "supabase/migrations/20260818_rollover_execution_run_state_history.sql",
+      "category": "execution_migration",
+      "sha256": "9e29da1d20bc56076bd22fb95bf8d66577f2883e4c79daf44b8ccb822bdb4ed4"
+    },
+    {
+      "path": "supabase/migrations/20260819_phase3b6a_typed_authority_preflight_handlers.sql",
+      "category": "execution_migration",
+      "sha256": "66828b7135c88d39e47adbdae41753326c42af9c56793d5e355ef8657caf246d"
+    },
+    {
+      "path": "supabase/migrations/20260820_phase3b6b_mapping_option_window_preflight.sql",
+      "category": "execution_migration",
+      "sha256": "e3b2eae663eb214150422a98f584463bdb13aa7d089a552cc3403bf0bca086c5"
+    },
+    {
+      "path": "supabase/migrations/20260821_phase3b6b_effective_clock_fix.sql",
+      "category": "execution_migration",
+      "sha256": "c8ce9619df9cea73f50a33fe01e824ca931e880bddf7185d4671aa3f3968db3a"
+    },
+    {
+      "path": "supabase/migrations/20260821_phase3b6c_freeze_and_history_verification.sql",
+      "category": "execution_migration",
+      "sha256": "c751f057fc8894fa2305629ad39527cfda700681217509dbc10c2d1bbde2c407"
+    },
+    {
+      "path": "supabase/migrations/20260822_phase3b6c1_owner_option_snapshot_authority_v2.sql",
+      "category": "execution_migration",
+      "sha256": "9df50928bd665bf383f3bd9f731dcf48a75e6c5ebee1868b1b2b29a1d4ce50ec"
+    },
+    {
+      "path": "supabase/migrations/20260822_phase3b6c_snapshot_size_diagnostics.sql",
+      "category": "execution_migration",
+      "sha256": "28aefb3338a38a22f668a9c6fed019de27d74aa7d81d1ff02735d44a2c328dbd"
+    },
+    {
+      "path": "supabase/migrations/20260823_phase3b7a_owner_option_resolution_and_review.sql",
+      "category": "execution_migration",
+      "sha256": "3b66c91bd2859b4da5ee0218acf34070e4ba065bcc42c2d3a78f9e5316b09d6e"
+    },
+    {
+      "path": "supabase/migrations/20260824_phase3b7b_contract_advancement_and_options.sql",
+      "category": "execution_migration",
+      "sha256": "161fd3977d54c1d1fa17e70bae4d9cdab6b953840b9dfb19655f1f1dccd1cc1a"
+    },
+    {
+      "path": "supabase/migrations/20260825_phase3b7c_releases_holds_and_cutover_guards.sql",
+      "category": "execution_migration",
+      "sha256": "82ed6749e49c8c77dd025cc2b4829f6890135c2b25cbcf74a78db85bca7f1d1e"
+    },
+    {
+      "path": "supabase/migrations/20260826_phase3b8a_target_roster_reconciliation.sql",
+      "category": "execution_migration",
+      "sha256": "64824418130e0e83f0cfbc49e4117731102dbdae2e958929c1937eddc426a778"
+    },
+    {
+      "path": "supabase/migrations/20260827_phase3b8a_roster_acl_hardening.sql",
+      "category": "execution_migration",
+      "sha256": "390639f96e8da307dddf5c7591e26967e1a31551b5ce17c6a04d1e009976b3f1"
+    },
+    {
+      "path": "supabase/migrations/20260828_phase3b8a_contract_guard_compatibility.sql",
+      "category": "execution_migration",
+      "sha256": "df0acb0f086b0a912e5379e3efda895523f81090d5f9ad83ce7086458e53f5c0"
+    },
+    {
+      "path": "supabase/migrations/20260829_phase3b8a_target_roster_validation_hardening.sql",
+      "category": "execution_migration",
+      "sha256": "8a23149a0c6a5169e0cfac8ccf7de9be82ea3c93ce2592ec54fc3d05da6a0e1a"
+    },
+    {
+      "path": "supabase/migrations/20260830_phase3b8b_taxi_assignment_unlock.sql",
+      "category": "execution_migration",
+      "sha256": "7c58d8325805a5f6bdecbb1b12a8d6111a7242a087ebda65fdee02c912a4c188"
+    },
+    {
+      "path": "supabase/migrations/20260831_phase3b8c_taxi_eligibility_authority.sql",
+      "category": "execution_migration",
+      "sha256": "1ff0236bc3b4503cb60bff929b36fc2de5934be1adb25ec70550391d9f267d53"
+    },
+    {
+      "path": "supabase/migrations/20260901_phase3b8d_ir_assignment_reconciliation.sql",
+      "category": "execution_migration",
+      "sha256": "880fc98c92953b28b07a2f6b5a3e69944ed141317569a09c208421da1a7236d8"
+    },
+    {
+      "path": "supabase/migrations/20260902_phase3b9a_draft_pick_inventory_advancement.sql",
+      "category": "execution_migration",
+      "sha256": "1de9cfca163d6e28bf080b6315574fee86c17a8fad02f74d1ad825dc7a17fbb2"
+    },
+    {
+      "path": "supabase/migrations/20260903_phase3b9b_rookie_class_authority_advancement.sql",
+      "category": "execution_migration",
+      "sha256": "c01abe9b190ecf6805884a46df5eea1b1c2776caca04521db625b76dedb1f792"
+    },
+    {
+      "path": "supabase/migrations/20260904_phase3b9c_prepared_rookie_eligibility.sql",
+      "category": "execution_migration",
+      "sha256": "075b23f3c0cc532012cf4c2692dce41a8fbb538ed70dd7912f73b708696a1600"
+    },
+    {
+      "path": "supabase/migrations/20260905_phase3b10a_dead_cap_obligations.sql",
+      "category": "execution_migration",
+      "sha256": "e7d81010a65ca860f35cd5dd547246a346e67cb7d9e456e1668888e81252cf8a"
+    },
+    {
+      "path": "supabase/migrations/20260906_phase3b10b_prepared_team_caps.sql",
+      "category": "execution_migration",
+      "sha256": "adb1b685da90784183d783325f8af40a464036f48ca14410e4a61b5ebe7e2d7f"
+    },
+    {
+      "path": "supabase/migrations/20260907_phase3b10b_cap_security_hardening.sql",
+      "category": "execution_migration",
+      "sha256": "d6bf8cc5568652ff2b517523d0bff1295e2c31a0533f7c95f7eae3b404727715"
+    },
+    {
+      "path": "supabase/migrations/20260908_phase3b10c_prepared_free_agent_eligibility.sql",
+      "category": "execution_migration",
+      "sha256": "37aae7de70ce746539df868c646194685cdd904f8c31fc05c699da78147201bd"
+    },
+    {
+      "path": "supabase/migrations/20260909_phase3b10c_population_validation.sql",
+      "category": "execution_migration",
+      "sha256": "fd4112676bb1d41ea50d91df4858d3b63a165e8cc05be1148d7a6dbb30bb4411"
+    },
+    {
+      "path": "supabase/migrations/20260910_phase3b10d_prepared_expiring_contracts.sql",
+      "category": "execution_migration",
+      "sha256": "a79cb4a550b848bc2ea6d10dee0a2d0e40d57cca27b7772e5a8c40a061ecfe00"
+    },
+    {
+      "path": "supabase/migrations/20260911_phase3b11a_prepared_target_standings.sql",
+      "category": "execution_migration",
+      "sha256": "931cbd0c4749f9ccc3b994c742cf8bcc591daef0d6f4d9c8ca55bb0f97bbe769"
+    },
+    {
+      "path": "supabase/migrations/20260912_phase3b11b_prepared_target_matchups.sql",
+      "category": "execution_migration",
+      "sha256": "0c009335e0ef866386eaf88b9044ea86174e2b5ac8e04ab7f3e24a279a875a1a"
+    },
+    {
+      "path": "supabase/migrations/20260913_phase3b11c_prepared_target_playoffs.sql",
+      "category": "execution_migration",
+      "sha256": "06046ab1a7616c32039fed922e69fd9a5ed7baf8fd490d7c2acc8c622f096726"
+    },
+    {
+      "path": "supabase/migrations/20260914_phase3b12a_cache_invalidation_manifest.sql",
+      "category": "execution_migration",
+      "sha256": "c231712b57d14e144c7b4b64b11bc2dbd6da9840ceea75d2af85e5807e335c2d"
+    },
+    {
+      "path": "supabase/migrations/20260915_phase3b12b_post_execution_validation.sql",
+      "category": "execution_migration",
+      "sha256": "bef26f33b117f6041c2dcfbe90592976f00fe4f1e05da649418db672f2b66dd9"
+    },
+    {
+      "path": "supabase/migrations/20260916_phase3b12c_finalize_executed_unpublished.sql",
+      "category": "execution_migration",
+      "sha256": "1e6731049d0b318d067c276916916a12c36a4b4f3e07773985098fbcc474a259"
+    },
+    {
+      "path": "supabase/migrations/20260922_season_rollover_trusted_boundaries.sql",
+      "category": "execution_migration",
+      "sha256": "bc506fbf79ed01d3db2f3aecab796ec829d9dca2da38cd51ccfb28e55e7d398b"
+    },
+    {
+      "path": "supabase/migrations/20260923_rollover_canonical_plan_material.sql",
+      "category": "execution_migration",
+      "sha256": "c72c44e6a2e1d61a8e6610b02b118e3d2514e2e775954c055744069326ac8d43"
+    },
+    {
+      "path": "supabase/migrations/20260924_phase3b6c_split_owner_option_components.sql",
+      "category": "execution_migration",
+      "sha256": "7668d27a093f25242d02ff1f7cd3a5b3a483b06df0be143f5bd96e37587b3200"
+    },
+    {
+      "path": "supabase/migrations/20260924_rollover_disposable_clock_seam.sql",
+      "category": "execution_migration",
+      "sha256": "c95ab14ae78dfd33d1c6e93df1b8c44370189e851345a8a31f5c62f82f388a28"
+    },
+    {
+      "path": "supabase/migrations/20260925_history_mapping_replay_boundary.sql",
+      "category": "execution_migration",
+      "sha256": "01b8144bc78b382c7c738e2263dffae8051582c7148e42f198a7d1ae84f4d61c"
+    },
+    {
+      "path": "supabase/migrations/20260925_phase3b6c_component_schema_v2_constraint.sql",
+      "category": "execution_migration",
+      "sha256": "a3cd423a7c23e39a7dad9c9c74d493bbe77117f4a272923a4eacba39da23ebc7"
+    },
+    {
+      "path": "supabase/migrations/20260925_phase3b6c_snapshot_v2_constraint.sql",
+      "category": "execution_migration",
+      "sha256": "e31fbe1c74825dc589e0a8d34068d652d97834c0f994a4ed81dff9ba3e770a9e"
+    },
+    {
+      "path": "supabase/migrations/20260926_phase3b6c_component_schema_name_fix.sql",
+      "category": "execution_migration",
+      "sha256": "32d16b0773a03a3f60f98585f56921320e63b830e90e7261e508d35cf25514ec"
+    },
+    {
+      "path": "supabase/migrations/20260926_rollover_owner_membership_roles.sql",
+      "category": "execution_migration",
+      "sha256": "2ce62a7630a644aae4104866b33687f7914b16c3e50ce853808419a6ecebd863"
+    },
+    {
+      "path": "supabase/migrations/20260927_rollover_contract_preflight_ordering.sql",
+      "category": "execution_migration",
+      "sha256": "6e5a73596e9b5cb99b262b4a2c4b69f8e4c3878e5a0ca58087ff6fed0c0e2119"
+    },
+    {
+      "path": "supabase/migrations/20260928_rollover_owner_decision_clock_alignment.sql",
+      "category": "execution_migration",
+      "sha256": "ae166ece24f5fdcd98ec40d1a75b76938550a42d72751f69f7523bf70ec8d9e0"
+    },
+    {
+      "path": "supabase/migrations/20260929_commissioner_review_plan_approval_guard_fix.sql",
+      "category": "execution_migration",
+      "sha256": "73a2dc2719da237cefe36a39ec096aad1fa5e171edb1ed2a061f8ea1907aaa27"
+    },
+    {
+      "path": "supabase/migrations/20260930_authority_preparation_transition_fix.sql",
+      "category": "execution_migration",
+      "sha256": "b382a4c8a89fa17098e209d56b9964d4a897ff669efe6e66923010a058a70f55"
+    },
+    {
+      "path": "supabase/migrations/20261001_phase3b8a_preserved_off_roster_liability.sql",
+      "category": "execution_migration",
+      "sha256": "512afbed528d739092cb10e58076dc593320c6c722a227b1bffd8684ddb0fe22"
+    },
+    {
+      "path": "supabase/migrations/20261002_phase3b10b_empty_dead_cap_evidence.sql",
+      "category": "execution_migration",
+      "sha256": "d6b9632aa241c6885c1fef068d2e4d18a76e675c0f08c549faed7e0f9e09c180"
+    },
+    {
+      "path": "supabase/migrations/20261003_phase3b10b_preserved_liability_caps.sql",
+      "category": "execution_migration",
+      "sha256": "d3bde83229f3b0964a4071c4f7c344166d615ff1754e358edfeba0fb6f5ebfa9"
+    },
+    {
+      "path": "config/rollover_operation_catalog.yaml",
+      "category": "engine_or_catalog",
+      "sha256": "7192343e4e47123ca04f17c3d014e964eeeec13a0ef68c28003b701d6ac6a8ef"
+    },
+    {
+      "path": "config/rollover_post_execution_validation_registry.yaml",
+      "category": "engine_or_catalog",
+      "sha256": "ad10aec592a068609248a420974756039d68903aef20ca89d76fb293939d041d"
+    },
+    {
+      "path": "contract_engine/roster_reconciliation.py",
+      "category": "engine_or_catalog",
+      "sha256": "7be92111e92766afd4471a21fcf7dfb9374d7f8ec87098e95f777ed25794e45e"
+    },
+    {
+      "path": "contract_engine/roster_reconciliation_service.py",
+      "category": "engine_or_catalog",
+      "sha256": "d904a9b704a7152410d239163282c182baac186c6e14f8e115e6e4841249e504"
+    },
+    {
+      "path": "season_engine/authority_preparation.py",
+      "category": "engine_or_catalog",
+      "sha256": "95c60d6cf146b7b2a1250b37469f5c5155bc441cb782a61fffb7eb302c7e3abd"
+    },
+    {
+      "path": "season_engine/commissioner_policy_approval.py",
+      "category": "engine_or_catalog",
+      "sha256": "66bb01b8726967abba5ad2fcb96342d10403f031ab63631f88b8b1e03b006344"
+    },
+    {
+      "path": "season_engine/commissioner_policy_draft.py",
+      "category": "engine_or_catalog",
+      "sha256": "c144102b6d57f726edd9b6ddb43c92be02f264ba8c801c5ff9e0b18528553ac3"
+    },
+    {
+      "path": "season_engine/commissioner_review.py",
+      "category": "engine_or_catalog",
+      "sha256": "aa226527afd64f9102261fa3c8500485847373fa740c3c904daaa2b436408505"
+    },
+    {
+      "path": "season_engine/contract_authority_preflight.py",
+      "category": "engine_or_catalog",
+      "sha256": "3900f8d429b8b832283b016e929412702b6b993fc1f9154687aa62130e6399bc"
+    },
+    {
+      "path": "season_engine/dry_run_simulator.py",
+      "category": "engine_or_catalog",
+      "sha256": "9160c6e86a5a64a03d244c9aabef2a8b0efe0d8ddd1d8b15f189cda3b7d04c7f"
+    },
+    {
+      "path": "season_engine/execution_approval.py",
+      "category": "engine_or_catalog",
+      "sha256": "af5d5ec8e7db309dd35a3303c41bb5371ef8e6f86fb041f5dee2693374c8afd3"
+    },
+    {
+      "path": "season_engine/execution_plan.py",
+      "category": "engine_or_catalog",
+      "sha256": "3ca7f5899f742deb676cb71a187ba84f1e6931fb61e9a005fac5bbe81432db06"
+    },
+    {
+      "path": "season_engine/rollover_control_models.py",
+      "category": "engine_or_catalog",
+      "sha256": "80b5ae1fc2d56769fd60b6d4bc2830436b56ed3c43545960301cfdc0b04243ad"
+    },
+    {
+      "path": "season_engine/rollover_control_repository.py",
+      "category": "engine_or_catalog",
+      "sha256": "675d66e9028d73915face4039bf22d4728319b7b2010cf84aa510b5ec567ab07"
+    },
+    {
+      "path": "season_engine/rollover_models.py",
+      "category": "engine_or_catalog",
+      "sha256": "84add5175071ce17df70b8af4c99666d3be9ec4533ed9636dafa813565707e1d"
+    },
+    {
+      "path": "season_engine/rollover_service.py",
+      "category": "engine_or_catalog",
+      "sha256": "4eed78e5325265d879a4f47ee5a2ba742ed5584cdd3474ba259e57167291baab"
+    },
+    {
+      "path": "season_engine/rollover_window.py",
+      "category": "engine_or_catalog",
+      "sha256": "686b16fbe88d7fc4c7c4e20adab41e128679f32455cd28c6e2d407e5cce47531"
+    },
+    {
+      "path": "season_engine/target_authority.py",
+      "category": "engine_or_catalog",
+      "sha256": "14bfd4a67ea2beb49363117f9021f1dd197db4e5dc51730111f6b506310c0313"
+    },
+    {
+      "path": "services/season_rollover_control.py",
+      "category": "engine_or_catalog",
+      "sha256": "0aa82ec1cb891be9e490ad7d25dc5da44e12378c7884c49411ca617d10e24428"
+    },
+    {
+      "path": "season_engine/history/__init__.py",
+      "category": "engine_or_catalog",
+      "sha256": "8eea9b514673128f5f31701be21781c89f0850108cc6476715c8e97c12d339bf"
+    },
+    {
+      "path": "season_engine/history/models.py",
+      "category": "engine_or_catalog",
+      "sha256": "7d1fd7bd4d9d08998235009b5ac3aaf6775c0b12a187698bad48c73f3b489e28"
+    },
+    {
+      "path": "season_engine/history/planner.py",
+      "category": "engine_or_catalog",
+      "sha256": "65603a58e886ce96aefdd3e645f014562329a26c220be8c3232784b407b88b9a"
+    },
+    {
+      "path": "season_engine/history/repositories.py",
+      "category": "engine_or_catalog",
+      "sha256": "b30633848875153bdfad8515cf3b161b64fee3ba07648f7a96f0347ca76fd738"
+    },
+    {
+      "path": "season_engine/history/service.py",
+      "category": "engine_or_catalog",
+      "sha256": "ef5afe966389819ebc55adbb5a32484cbd1728080312ed4f155e09fb12414129"
+    },
+    {
+      "path": "season_engine/history/sleeper_source.py",
+      "category": "engine_or_catalog",
+      "sha256": "181c8ff9766c6f05f554a25d6609871e6bf06db7af815b4a5bcf1bd1b4e7230a"
+    },
+    {
+      "path": "tests/fixtures/season_rollover_domain_factory.py",
+      "category": "certification_evidence",
+      "sha256": "51b76839bdd926a6a1adc258512b6a1028d5620d7121bcbb680a349bdf1e4d3b"
+    },
+    {
+      "path": "tests/season_rollover_hosted_integration/psql_client.py",
+      "category": "certification_evidence",
+      "sha256": "768578f110cc7b3eb9441d68ffb8e9cd158e3cdd73e9643360158d4570edbf3c"
+    },
+    {
+      "path": "tests/season_rollover_hosted_integration/run_unified_hosted_rollover.py",
+      "category": "certification_evidence",
+      "sha256": "601ab98d5d9a2fcebefd99d1f428d4c098e8e101a5be573cb85f24ffc1e0d5a3"
+    },
+    {
+      "path": "supabase/tests/phase3b8a_integration/approve.sql",
+      "category": "certification_evidence",
+      "sha256": "a4e160b3b015473c697fb53b2206a5047aa45d5ee6222c57489ed29cf3ff70b2"
+    },
+    {
+      "path": "supabase/tests/phase3b8a_integration/cleanup.sql",
+      "category": "certification_evidence",
+      "sha256": "6441ac6715e035a99a57517148b309507771f8f98945cf36abeb0626341b1e4b"
+    },
+    {
+      "path": "supabase/tests/phase3b8a_integration/run_phase3b8a_integration.py",
+      "category": "certification_evidence",
+      "sha256": "5184c2a07519e047ae6da962fe172535a78e7da8ab59c0c0c2475513d28a2195"
+    },
+    {
+      "path": "supabase/tests/phase3b8a_integration/setup.sql",
+      "category": "certification_evidence",
+      "sha256": "d6f6762058589a76c79fd6c9ab56f0dd5cb03936eaafb60108bd3a30ab545e3d"
+    },
+    {
+      "path": "tests/test_season_rollover_domain_factory.py",
+      "category": "certification_evidence",
+      "sha256": "c41e5b6fce1048e3859fe56057347968de35ad537d9218ee9016e78f172ff1c5"
+    },
+    {
+      "path": "tests/test_season_rollover_hosted_reviews.py",
+      "category": "certification_evidence",
+      "sha256": "7190c64e9df19a79fe1cd5d2a998fb7a151a09e15c1c4759529f1813ac518fa1"
+    },
+    {
+      "path": "tests/test_season_rollover_trusted_boundaries.py",
+      "category": "certification_evidence",
+      "sha256": "3dc649edae7f82e5a37d6138b9f002fb118f2fc1eac1060a77946002f14b6217"
+    },
+    {
+      "path": "tests/test_rollover_authority.py",
+      "category": "certification_evidence",
+      "sha256": "ba3c4b18fa0b8993cff11c4283576bd2c6be8a9d30979a21895f2a85567e916a"
+    },
+    {
+      "path": "tests/test_rollover_contract_authority_preflight.py",
+      "category": "certification_evidence",
+      "sha256": "bf851adf4dd274384dcab7b2a67ca5719aae8129d81174171a17ec4896dbf535"
+    },
+    {
+      "path": "tests/test_rollover_dry_run_hardening.py",
+      "category": "certification_evidence",
+      "sha256": "31935e1c0e34458616c0d7eea038846b9b24fbd8d7573cc242fecbcacfb9eba3"
+    },
+    {
+      "path": "tests/test_rollover_dry_run_simulator.py",
+      "category": "certification_evidence",
+      "sha256": "b0e7aed545c072054645d1ea3a2d93ae8fc4bb6497859ea43023734061a936e6"
+    },
+    {
+      "path": "tests/test_rollover_execution_control.py",
+      "category": "certification_evidence",
+      "sha256": "284683f312f8fc6cf1ecb90e7bb099f0b5ba93f88afd4d54655aa19d73c1a24d"
+    },
+    {
+      "path": "tests/test_rollover_execution_plan.py",
+      "category": "certification_evidence",
+      "sha256": "78a86bf85f606f26d0252ee2598e49476bc810c800a1dd856d197e366640fb7f"
+    },
+    {
+      "path": "tests/test_rollover_execution_plan_approval.py",
+      "category": "certification_evidence",
+      "sha256": "be745f152bd5691170d0d1ef28d3afb8db0ff79b1b0414295ae34bc46aa52ed4"
+    },
+    {
+      "path": "tests/test_rollover_window.py",
+      "category": "certification_evidence",
+      "sha256": "b39830db24090f949762266f23860a6e830c9e1b411a2703825095d834b84350"
+    },
+    {
+      "path": "tests/test_rollover_window_hardening.py",
+      "category": "certification_evidence",
+      "sha256": "380d60fab729d3206fc3873ce047b3be5d4719570add8f9023c925881e59e623"
+    },
+    {
+      "path": "tests/test_season_rollover_control.py",
+      "category": "certification_evidence",
+      "sha256": "54e46764ac3132bdf728fd998ca6cca9ad7893bc3d41cf6312faabc64cd61dff"
+    },
+    {
+      "path": "tests/test_authority_preparation.py",
+      "category": "certification_evidence",
+      "sha256": "637ecd0f71c967d5afa5190d13d95908df3e4084f9729766e52b5ffbf4949c92"
+    },
+    {
+      "path": "tests/test_authority_preparation_hardening.py",
+      "category": "certification_evidence",
+      "sha256": "848bb6aa45f919c3432ebafae64300f23bcca9e4da8e9cff36a059454efaaa6e"
+    },
+    {
+      "path": "tests/test_target_authority_migration.py",
+      "category": "certification_evidence",
+      "sha256": "c50a13555a2853c3b8fd713427e64e27d5f4360d6c445e422970748d79d40891"
+    },
+    {
+      "path": "tests/test_target_season_authority.py",
+      "category": "certification_evidence",
+      "sha256": "600280c6822f4029de1fd12e8de4870fbd22acb123c203427ca740d156ee50d0"
+    },
+    {
+      "path": "docs/season_rollover_2025_2026_execution_certification.md",
+      "category": "freeze_artifact",
+      "sha256": "255dcea8e31cf98139975e1a2e453059a4fecbabaaafd93cd4cbfc84bc07c28d"
+    },
+    {
+      "path": "scripts/verify_season_rollover_certification.py",
+      "category": "freeze_artifact",
+      "sha256": "15299c339255498d2e9b7d0a14b6d1baa6675e69b70fe0e802c91294737776b6"
+    }
+  ]
+}
