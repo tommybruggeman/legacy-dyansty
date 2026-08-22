@@ -85,6 +85,8 @@ def get_active_league_id() -> Optional[str]:
 
 
 league_id = get_active_league_id()
+from season_engine import SeasonResolver
+canonical_season = SeasonResolver(sb).get_active_season(league_id).season if league_id else None
 role = st.session_state.get("role")
 is_commissioner = role in {"commissioner", "host", "admin"}
 
@@ -254,7 +256,7 @@ def execute_trade_direct(trade_id: str):
 
         elif kind == "CASH":
             amount = float(item.get("cash_amount") or item.get("amount") or 0)
-            years = item.get("cash_years") or item.get("seasons") or [2026]
+            years = item.get("cash_years") or item.get("seasons") or [canonical_season]
             if isinstance(years, str):
                 years = [int(x.strip()) for x in years.split(",") if x.strip()]
             if isinstance(years, (int, float)):
@@ -389,7 +391,8 @@ with st.container(border=True):
         with d1:
             amount = st.number_input("Salary/cap dollars", min_value=0.0, value=0.0, step=1.0, key="cash_amount")
         with d2:
-            seasons = st.multiselect("Applies to season(s)", [2026, 2027, 2028, 2029], default=[2026], key="cash_seasons")
+            season_options = [canonical_season + offset for offset in range(4)]
+            seasons = st.multiselect("Applies to season(s)", season_options, default=[canonical_season], key="cash_seasons")
         if st.button("Add Cash to Basket", key="add_cash"):
             if amount <= 0:
                 st.warning("Cash amount must be greater than 0.")

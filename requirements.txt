@@ -1,2 +1,3 @@
 streamlit
 supabase
+openai>=1.97.0

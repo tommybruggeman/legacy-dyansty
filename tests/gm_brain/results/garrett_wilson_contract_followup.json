@@ -1,0 +1,448 @@
+{
+  "name": "garrett_wilson_contract_followup",
+  "owner": "Tommy Bruggeman",
+  "transcript": [
+    {
+      "question_number": 1,
+      "question": "Should I trade Garrett Wilson?",
+      "prompt_sent": "Should I trade Garrett Wilson?",
+      "resolved_question": "Should I trade Garrett Wilson?",
+      "state": {
+        "current_player": "Garrett Wilson",
+        "compared_player": null,
+        "current_topic": "trade",
+        "team_goal": null,
+        "last_recommendation": "hold"
+      },
+      "answer": {
+        "original_question": "Should I trade Garrett Wilson?",
+        "resolved_question": "Should I trade Garrett Wilson?",
+        "answer": {
+          "answer_type": "player_decision",
+          "owner_team_name": "Tommy Bruggeman",
+          "summary": "No team future context available yet.\n\nDirective: prioritize picks, young ascending players, and contract flexibility over short-term points.\n\nOn **Garrett Wilson**, my read is: **HOLD, BUT ONLY MOVE FOR A PREMIUM**.\n\nHe is a **WR** at **$40** with **3 years** left.\n\nThe key signals are engine score **71.1**, recent production **56.0**, contract value **23.7**, trade value **61.0**, age curve **50.0**.\n\nThe player quality is real, but the contract is not especially efficient. That makes him more of a premium hold than an automatic untouchable.\n\nMy move: **HOLD, BUT ONLY MOVE FOR A PREMIUM**.\n\nNFL context: **GOOD_CONTEXT (70.3)**. Garrett Wilson NFL context: GOOD_CONTEXT, score 70.3. Team NYJ, status Active, active=True, injury=None, injury notes=None, depth=1.0. Flags: no major NFL context flags.",
+          "team_future_context": {},
+          "conversation_mode": "analyze"
+        },
+        "intent": {
+          "intent": "general",
+          "owner_team_name": "Tommy Bruggeman",
+          "primary_player": "Garrett Wilson",
+          "comparison_player": null,
+          "team_goal": null,
+          "topic": "trade",
+          "original_question": "Should I trade Garrett Wilson?",
+          "resolved_question": "Should I trade Garrett Wilson?",
+          "previous_recommendation": null
+        },
+        "state": {
+          "current_player": "Garrett Wilson",
+          "compared_player": null,
+          "current_topic": "trade",
+          "team_goal": null,
+          "last_recommendation": "hold"
+        }
+      },
+      "answer_text": "{\n  \"original_question\": \"Should I trade Garrett Wilson?\",\n  \"resolved_question\": \"Should I trade Garrett Wilson?\",\n  \"answer\": {\n    \"answer_type\": \"player_decision\",\n    \"owner_team_name\": \"Tommy Bruggeman\",\n    \"summary\": \"No team future context available yet.\\n\\nDirective: prioritize picks, young ascending players, and contract flexibility over short-term points.\\n\\nOn **Garrett Wilson**, my read is: **HOLD, BUT ONLY MOVE FOR A PREMIUM**.\\n\\nHe is a **WR** at **$40** with **3 years** left.\\n\\nThe key signals are engine score **71.1**, recent production **56.0**, contract value **23.7**, trade value **61.0**, age curve **50.0**.\\n\\nThe player quality is real, but the contract is not especially efficient. That makes him more of a premium hold than an automatic untouchable.\\n\\nMy move: **HOLD, BUT ONLY MOVE FOR A PREMIUM**.\\n\\nNFL context: **GOOD_CONTEXT (70.3)**. Garrett Wilson NFL context: GOOD_CONTEXT, score 70.3. Team NYJ, status Active, active=True, injury=None, injury notes=None, depth=1.0. Flags: no major NFL context flags.\",\n    \"team_future_context\": {},\n    \"conversation_mode\": \"analyze\"\n  },\n  \"intent\": {\n    \"intent\": \"general\",\n    \"owner_team_name\": \"Tommy Bruggeman\",\n    \"primary_player\": \"Garrett Wilson\",\n    \"comparison_player\": null,\n    \"team_goal\": null,\n    \"topic\": \"trade\",\n    \"original_question\": \"Should I trade Garrett Wilson?\",\n    \"resolved_question\": \"Should I trade Garrett Wilson?\",\n    \"previous_recommendation\": null\n  },\n  \"state\": {\n    \"current_player\": \"Garrett Wilson\",\n    \"compared_player\": null,\n    \"current_topic\": \"trade\",\n    \"team_goal\": null,\n    \"last_recommendation\": \"hold\"\n  }\n}",
+      "score": {
+        "checks_total": 5,
+        "checks_hit": 2,
+        "checks_missed": 3,
+        "hits": [
+          "contract",
+          "trade"
+        ],
+        "misses": [
+          "salary",
+          "win-now",
+          "cut"
+        ],
+        "rough_score": 4.0
+      },
+      "elapsed_seconds": 1.24
+    },
+    {
+      "question_number": 2,
+      "question": "Why?",
+      "prompt_sent": "Why?",
+      "resolved_question": "Explain the previous recommendation on Garrett Wilson.\n\nPrevious assistant answer:\n{'answer_type': 'player_decision', 'owner_team_name': 'Tommy Bruggeman', 'summary': 'No team future context available yet.\\n\\nDirective: prioritize picks, young ascending players, and contract flexibility over short-term points.\\n\\nOn **Garrett Wilson**, my read is: **HOLD, BUT ONLY MOVE FOR A PREMIUM**.\\n\\nHe is a **WR** at **$40** with **3 years** left.\\n\\nThe key signals are engine score **71.1**, recent production **56.0**, contract value **23.7**, trade value **61.0**, age curve **50.0**.\\n\\nThe player quality is real, but the contract is not especially efficient. That makes him more of a premium hold than an automatic untouchable.\\n\\nMy move: **HOLD, BUT ONLY MOVE FOR A PREMIUM**.\\n\\nNFL context: **GOOD_CONTEXT (70.3)**. Garrett Wilson NFL context: GOOD_CONTEXT, score 70.3. Team NYJ, status Active, active=True, injury=None, injury notes=None, depth=1.0. Flags: no major NFL context flags.', 'team_future_context': {}, 'conversation_mode': 'analyze'}",
+      "state": {
+        "current_player": "Garrett Wilson",
+        "compared_player": null,
+        "current_topic": "trade",
+        "team_goal": null,
+        "last_recommendation": "hold"
+      },
+      "answer": {
+        "original_question": "Why?",
+        "resolved_question": "Explain the previous recommendation on Garrett Wilson.\n\nPrevious assistant answer:\n{'answer_type': 'player_decision', 'owner_team_name': 'Tommy Bruggeman', 'summary': 'No team future context available yet.\\n\\nDirective: prioritize picks, young ascending players, and contract flexibility over short-term points.\\n\\nOn **Garrett Wilson**, my read is: **HOLD, BUT ONLY MOVE FOR A PREMIUM**.\\n\\nHe is a **WR** at **$40** with **3 years** left.\\n\\nThe key signals are engine score **71.1**, recent production **56.0**, contract value **23.7**, trade value **61.0**, age curve **50.0**.\\n\\nThe player quality is real, but the contract is not especially efficient. That makes him more of a premium hold than an automatic untouchable.\\n\\nMy move: **HOLD, BUT ONLY MOVE FOR A PREMIUM**.\\n\\nNFL context: **GOOD_CONTEXT (70.3)**. Garrett Wilson NFL context: GOOD_CONTEXT, score 70.3. Team NYJ, status Active, active=True, injury=None, injury notes=None, depth=1.0. Flags: no major NFL context flags.', 'team_future_context': {}, 'conversation_mode': 'analyze'}",
+        "answer": {
+          "answer_type": "player_decision",
+          "owner_team_name": "Tommy Bruggeman",
+          "summary": "No team future context available yet.\n\nDirective: prioritize picks, young ascending players, and contract flexibility over short-term points.\n\nOn **Garrett Wilson**, my read is: **HOLD, BUT ONLY MOVE FOR A PREMIUM**.\n\nHe is a **WR** at **$40** with **3 years** left.\n\nThe key signals are engine score **71.1**, recent production **56.0**, contract value **23.7**, trade value **61.0**, age curve **50.0**.\n\nThe player quality is real, but the contract is not especially efficient. That makes him more of a premium hold than an automatic untouchable.\n\nMy move: **HOLD, BUT ONLY MOVE FOR A PREMIUM**.\n\nNFL context: **GOOD_CONTEXT (70.3)**. Garrett Wilson NFL context: GOOD_CONTEXT, score 70.3. Team NYJ, status Active, active=True, injury=None, injury notes=None, depth=1.0. Flags: no major NFL context flags.",
+          "team_future_context": {},
+          "conversation_mode": "analyze"
+        },
+        "intent": {
+          "intent": "general",
+          "owner_team_name": "Tommy Bruggeman",
+          "primary_player": "Garrett Wilson",
+          "comparison_player": null,
+          "team_goal": null,
+          "topic": "trade",
+          "original_question": "Why?",
+          "resolved_question": "Explain the previous recommendation on Garrett Wilson.\n\nPrevious assistant answer:\n{'answer_type': 'player_decision', 'owner_team_name': 'Tommy Bruggeman', 'summary': 'No team future context available yet.\\n\\nDirective: prioritize picks, young ascending players, and contract flexibility over short-term points.\\n\\nOn **Garrett Wilson**, my read is: **HOLD, BUT ONLY MOVE FOR A PREMIUM**.\\n\\nHe is a **WR** at **$40** with **3 years** left.\\n\\nThe key signals are engine score **71.1**, recent production **56.0**, contract value **23.7**, trade value **61.0**, age curve **50.0**.\\n\\nThe player quality is real, but the contract is not especially efficient. That makes him more of a premium hold than an automatic untouchable.\\n\\nMy move: **HOLD, BUT ONLY MOVE FOR A PREMIUM**.\\n\\nNFL context: **GOOD_CONTEXT (70.3)**. Garrett Wilson NFL context: GOOD_CONTEXT, score 70.3. Team NYJ, status Active, active=True, injury=None, injury notes=None, depth=1.0. Flags: no major NFL context flags.', 'team_future_context': {}, 'conversation_mode': 'analyze'}",
+          "previous_recommendation": "hold"
+        },
+        "state": {
+          "current_player": "Garrett Wilson",
+          "compared_player": null,
+          "current_topic": "trade",
+          "team_goal": null,
+          "last_recommendation": "hold"
+        }
+      },
+      "answer_text": "{\n  \"original_question\": \"Why?\",\n  \"resolved_question\": \"Explain the previous recommendation on Garrett Wilson.\\n\\nPrevious assistant answer:\\n{'answer_type': 'player_decision', 'owner_team_name': 'Tommy Bruggeman', 'summary': 'No team future context available yet.\\\\n\\\\nDirective: prioritize picks, young ascending players, and contract flexibility over short-term points.\\\\n\\\\nOn **Garrett Wilson**, my read is: **HOLD, BUT ONLY MOVE FOR A PREMIUM**.\\\\n\\\\nHe is a **WR** at **$40** with **3 years** left.\\\\n\\\\nThe key signals are engine score **71.1**, recent production **56.0**, contract value **23.7**, trade value **61.0**, age curve **50.0**.\\\\n\\\\nThe player quality is real, but the contract is not especially efficient. That makes him more of a premium hold than an automatic untouchable.\\\\n\\\\nMy move: **HOLD, BUT ONLY MOVE FOR A PREMIUM**.\\\\n\\\\nNFL context: **GOOD_CONTEXT (70.3)**. Garrett Wilson NFL context: GOOD_CONTEXT, score 70.3. Team NYJ, status Active, active=True, injury=None, injury notes=None, depth=1.0. Flags: no major NFL context flags.', 'team_future_context': {}, 'conversation_mode': 'analyze'}\",\n  \"answer\": {\n    \"answer_type\": \"player_decision\",\n    \"owner_team_name\": \"Tommy Bruggeman\",\n    \"summary\": \"No team future context available yet.\\n\\nDirective: prioritize picks, young ascending players, and contract flexibility over short-term points.\\n\\nOn **Garrett Wilson**, my read is: **HOLD, BUT ONLY MOVE FOR A PREMIUM**.\\n\\nHe is a **WR** at **$40** with **3 years** left.\\n\\nThe key signals are engine score **71.1**, recent production **56.0**, contract value **23.7**, trade value **61.0**, age curve **50.0**.\\n\\nThe player quality is real, but the contract is not especially efficient. That makes him more of a premium hold than an automatic untouchable.\\n\\nMy move: **HOLD, BUT ONLY MOVE FOR A PREMIUM**.\\n\\nNFL context: **GOOD_CONTEXT (70.3)**. Garrett Wilson NFL context: GOOD_CONTEXT, score 70.3. Team NYJ, status Active, active=True, injury=None, injury notes=None, depth=1.0. Flags: no major NFL context flags.\",\n    \"team_future_context\": {},\n    \"conversation_mode\": \"analyze\"\n  },\n  \"intent\": {\n    \"intent\": \"general\",\n    \"owner_team_name\": \"Tommy Bruggeman\",\n    \"primary_player\": \"Garrett Wilson\",\n    \"comparison_player\": null,\n    \"team_goal\": null,\n    \"topic\": \"trade\",\n    \"original_question\": \"Why?\",\n    \"resolved_question\": \"Explain the previous recommendation on Garrett Wilson.\\n\\nPrevious assistant answer:\\n{'answer_type': 'player_decision', 'owner_team_name': 'Tommy Bruggeman', 'summary': 'No team future context available yet.\\\\n\\\\nDirective: prioritize picks, young ascending players, and contract flexibility over short-term points.\\\\n\\\\nOn **Garrett Wilson**, my read is: **HOLD, BUT ONLY MOVE FOR A PREMIUM**.\\\\n\\\\nHe is a **WR** at **$40** with **3 years** left.\\\\n\\\\nThe key signals are engine score **71.1**, recent production **56.0**, contract value **23.7**, trade value **61.0**, age curve **50.0**.\\\\n\\\\nThe player quality is real, but the contract is not especially efficient. That makes him more of a premium hold than an automatic untouchable.\\\\n\\\\nMy move: **HOLD, BUT ONLY MOVE FOR A PREMIUM**.\\\\n\\\\nNFL context: **GOOD_CONTEXT (70.3)**. Garrett Wilson NFL context: GOOD_CONTEXT, score 70.3. Team NYJ, status Active, active=True, injury=None, injury notes=None, depth=1.0. Flags: no major NFL context flags.', 'team_future_context': {}, 'conversation_mode': 'analyze'}\",\n    \"previous_recommendation\": \"hold\"\n  },\n  \"state\": {\n    \"current_player\": \"Garrett Wilson\",\n    \"compared_player\": null,\n    \"current_topic\": \"trade\",\n    \"team_goal\": null,\n    \"last_recommendation\": \"hold\"\n  }\n}",
+      "score": {
+        "checks_total": 5,
+        "checks_hit": 2,
+        "checks_missed": 3,
+        "hits": [
+          "contract",
+          "trade"
+        ],
+        "misses": [
+          "salary",
+          "win-now",
+          "cut"
+        ],
+        "rough_score": 4.0
+      },
+      "elapsed_seconds": 0.93
+    },
+    {
+      "question_number": 3,
+      "question": "I'm trying to win now. Does that change your answer?",
+      "prompt_sent": "I'm trying to win now. Does that change your answer?",
+      "resolved_question": "Re-evaluate Garrett Wilson with this changed team goal/context: contend. Explain whether the recommendation changes from the previous answer.\n\nTeam goal/context: contend.\n\nPrevious assistant answer:\n{'answer_type': 'player_decision', 'owner_team_name': 'Tommy Bruggeman', 'summary': 'No team future context available yet.\\n\\nDirective: prioritize picks, young ascending players, and contract flexibility over short-term points.\\n\\nOn **Garrett Wilson**, my read is: **HOLD, BUT ONLY MOVE FOR A PREMIUM**.\\n\\nHe is a **WR** at **$40** with **3 years** left.\\n\\nThe key signals are engine score **71.1**, recent production **56.0**, contract value **23.7**, trade value **61.0**, age curve **50.0**.\\n\\nThe player quality is real, but the contract is not especially efficient. That makes him more of a premium hold than an automatic untouchable.\\n\\nMy move: **HOLD, BUT ONLY MOVE FOR A PREMIUM**.\\n\\nNFL context: **GOOD_CONTEXT (70.3)**. Garrett Wilson NFL context: GOOD_CONTEXT, score 70.3. Team NYJ, status Active, active=True, injury=None, injury notes=None, depth=1.0. Flags: no major NFL context flags.', 'team_future_context': {}, 'conversation_mode': 'analyze'}",
+      "state": {
+        "current_player": "Garrett Wilson",
+        "compared_player": null,
+        "current_topic": "trade",
+        "team_goal": "contend",
+        "last_recommendation": "hold"
+      },
+      "answer": {
+        "original_question": "I'm trying to win now. Does that change your answer?",
+        "resolved_question": "Re-evaluate Garrett Wilson with this changed team goal/context: contend. Explain whether the recommendation changes from the previous answer.\n\nTeam goal/context: contend.\n\nPrevious assistant answer:\n{'answer_type': 'player_decision', 'owner_team_name': 'Tommy Bruggeman', 'summary': 'No team future context available yet.\\n\\nDirective: prioritize picks, young ascending players, and contract flexibility over short-term points.\\n\\nOn **Garrett Wilson**, my read is: **HOLD, BUT ONLY MOVE FOR A PREMIUM**.\\n\\nHe is a **WR** at **$40** with **3 years** left.\\n\\nThe key signals are engine score **71.1**, recent production **56.0**, contract value **23.7**, trade value **61.0**, age curve **50.0**.\\n\\nThe player quality is real, but the contract is not especially efficient. That makes him more of a premium hold than an automatic untouchable.\\n\\nMy move: **HOLD, BUT ONLY MOVE FOR A PREMIUM**.\\n\\nNFL context: **GOOD_CONTEXT (70.3)**. Garrett Wilson NFL context: GOOD_CONTEXT, score 70.3. Team NYJ, status Active, active=True, injury=None, injury notes=None, depth=1.0. Flags: no major NFL context flags.', 'team_future_context': {}, 'conversation_mode': 'analyze'}",
+        "answer": {
+          "answer_type": "player_decision",
+          "owner_team_name": "Tommy Bruggeman",
+          "summary": "No team future context available yet.\n\nDirective: prioritize picks, young ascending players, and contract flexibility over short-term points.\n\nOn **Garrett Wilson**, my read is: **HOLD, BUT ONLY MOVE FOR A PREMIUM**.\n\nHe is a **WR** at **$40** with **3 years** left.\n\nThe key signals are engine score **71.1**, recent production **56.0**, contract value **23.7**, trade value **61.0**, age curve **50.0**.\n\nThe player quality is real, but the contract is not especially efficient. That makes him more of a premium hold than an automatic untouchable.\n\nMy move: **HOLD, BUT ONLY MOVE FOR A PREMIUM**.\n\nNFL context: **GOOD_CONTEXT (70.3)**. Garrett Wilson NFL context: GOOD_CONTEXT, score 70.3. Team NYJ, status Active, active=True, injury=None, injury notes=None, depth=1.0. Flags: no major NFL context flags.",
+          "team_future_context": {},
+          "conversation_mode": "analyze"
+        },
+        "intent": {
+          "intent": "general",
+          "owner_team_name": "Tommy Bruggeman",
+          "primary_player": "Garrett Wilson",
+          "comparison_player": null,
+          "team_goal": "contend",
+          "topic": "trade",
+          "original_question": "I'm trying to win now. Does that change your answer?",
+          "resolved_question": "Re-evaluate Garrett Wilson with this changed team goal/context: contend. Explain whether the recommendation changes from the previous answer.\n\nTeam goal/context: contend.\n\nPrevious assistant answer:\n{'answer_type': 'player_decision', 'owner_team_name': 'Tommy Bruggeman', 'summary': 'No team future context available yet.\\n\\nDirective: prioritize picks, young ascending players, and contract flexibility over short-term points.\\n\\nOn **Garrett Wilson**, my read is: **HOLD, BUT ONLY MOVE FOR A PREMIUM**.\\n\\nHe is a **WR** at **$40** with **3 years** left.\\n\\nThe key signals are engine score **71.1**, recent production **56.0**, contract value **23.7**, trade value **61.0**, age curve **50.0**.\\n\\nThe player quality is real, but the contract is not especially efficient. That makes him more of a premium hold than an automatic untouchable.\\n\\nMy move: **HOLD, BUT ONLY MOVE FOR A PREMIUM**.\\n\\nNFL context: **GOOD_CONTEXT (70.3)**. Garrett Wilson NFL context: GOOD_CONTEXT, score 70.3. Team NYJ, status Active, active=True, injury=None, injury notes=None, depth=1.0. Flags: no major NFL context flags.', 'team_future_context': {}, 'conversation_mode': 'analyze'}",
+          "previous_recommendation": "hold"
+        },
+        "state": {
+          "current_player": "Garrett Wilson",
+          "compared_player": null,
+          "current_topic": "trade",
+          "team_goal": "contend",
+          "last_recommendation": "hold"
+        }
+      },
+      "answer_text": "{\n  \"original_question\": \"I'm trying to win now. Does that change your answer?\",\n  \"resolved_question\": \"Re-evaluate Garrett Wilson with this changed team goal/context: contend. Explain whether the recommendation changes from the previous answer.\\n\\nTeam goal/context: contend.\\n\\nPrevious assistant answer:\\n{'answer_type': 'player_decision', 'owner_team_name': 'Tommy Bruggeman', 'summary': 'No team future context available yet.\\\\n\\\\nDirective: prioritize picks, young ascending players, and contract flexibility over short-term points.\\\\n\\\\nOn **Garrett Wilson**, my read is: **HOLD, BUT ONLY MOVE FOR A PREMIUM**.\\\\n\\\\nHe is a **WR** at **$40** with **3 years** left.\\\\n\\\\nThe key signals are engine score **71.1**, recent production **56.0**, contract value **23.7**, trade value **61.0**, age curve **50.0**.\\\\n\\\\nThe player quality is real, but the contract is not especially efficient. That makes him more of a premium hold than an automatic untouchable.\\\\n\\\\nMy move: **HOLD, BUT ONLY MOVE FOR A PREMIUM**.\\\\n\\\\nNFL context: **GOOD_CONTEXT (70.3)**. Garrett Wilson NFL context: GOOD_CONTEXT, score 70.3. Team NYJ, status Active, active=True, injury=None, injury notes=None, depth=1.0. Flags: no major NFL context flags.', 'team_future_context': {}, 'conversation_mode': 'analyze'}\",\n  \"answer\": {\n    \"answer_type\": \"player_decision\",\n    \"owner_team_name\": \"Tommy Bruggeman\",\n    \"summary\": \"No team future context available yet.\\n\\nDirective: prioritize picks, young ascending players, and contract flexibility over short-term points.\\n\\nOn **Garrett Wilson**, my read is: **HOLD, BUT ONLY MOVE FOR A PREMIUM**.\\n\\nHe is a **WR** at **$40** with **3 years** left.\\n\\nThe key signals are engine score **71.1**, recent production **56.0**, contract value **23.7**, trade value **61.0**, age curve **50.0**.\\n\\nThe player quality is real, but the contract is not especially efficient. That makes him more of a premium hold than an automatic untouchable.\\n\\nMy move: **HOLD, BUT ONLY MOVE FOR A PREMIUM**.\\n\\nNFL context: **GOOD_CONTEXT (70.3)**. Garrett Wilson NFL context: GOOD_CONTEXT, score 70.3. Team NYJ, status Active, active=True, injury=None, injury notes=None, depth=1.0. Flags: no major NFL context flags.\",\n    \"team_future_context\": {},\n    \"conversation_mode\": \"analyze\"\n  },\n  \"intent\": {\n    \"intent\": \"general\",\n    \"owner_team_name\": \"Tommy Bruggeman\",\n    \"primary_player\": \"Garrett Wilson\",\n    \"comparison_player\": null,\n    \"team_goal\": \"contend\",\n    \"topic\": \"trade\",\n    \"original_question\": \"I'm trying to win now. Does that change your answer?\",\n    \"resolved_question\": \"Re-evaluate Garrett Wilson with this changed team goal/context: contend. Explain whether the recommendation changes from the previous answer.\\n\\nTeam goal/context: contend.\\n\\nPrevious assistant answer:\\n{'answer_type': 'player_decision', 'owner_team_name': 'Tommy Bruggeman', 'summary': 'No team future context available yet.\\\\n\\\\nDirective: prioritize picks, young ascending players, and contract flexibility over short-term points.\\\\n\\\\nOn **Garrett Wilson**, my read is: **HOLD, BUT ONLY MOVE FOR A PREMIUM**.\\\\n\\\\nHe is a **WR** at **$40** with **3 years** left.\\\\n\\\\nThe key signals are engine score **71.1**, recent production **56.0**, contract value **23.7**, trade value **61.0**, age curve **50.0**.\\\\n\\\\nThe player quality is real, but the contract is not especially efficient. That makes him more of a premium hold than an automatic untouchable.\\\\n\\\\nMy move: **HOLD, BUT ONLY MOVE FOR A PREMIUM**.\\\\n\\\\nNFL context: **GOOD_CONTEXT (70.3)**. Garrett Wilson NFL context: GOOD_CONTEXT, score 70.3. Team NYJ, status Active, active=True, injury=None, injury notes=None, depth=1.0. Flags: no major NFL context flags.', 'team_future_context': {}, 'conversation_mode': 'analyze'}\",\n    \"previous_recommendation\": \"hold\"\n  },\n  \"state\": {\n    \"current_player\": \"Garrett Wilson\",\n    \"compared_player\": null,\n    \"current_topic\": \"trade\",\n    \"team_goal\": \"contend\",\n    \"last_recommendation\": \"hold\"\n  }\n}",
+      "score": {
+        "checks_total": 5,
+        "checks_hit": 2,
+        "checks_missed": 3,
+        "hits": [
+          "contract",
+          "trade"
+        ],
+        "misses": [
+          "salary",
+          "win-now",
+          "cut"
+        ],
+        "rough_score": 4.0
+      },
+      "elapsed_seconds": 1.07
+    },
+    {
+      "question_number": 4,
+      "question": "What if I could get Breece Hall?",
+      "prompt_sent": "What if I could get Breece Hall?",
+      "resolved_question": "Evaluate this hypothetical trade scenario for Tommy Bruggeman: give Garrett Wilson, receive Breece Hall. Consider contract, salary, years, roster fit, team goal, risk, and win-now impact.\n\nTeam goal/context: contend.\n\nPrevious assistant answer:\n{'answer_type': 'player_decision', 'owner_team_name': 'Tommy Bruggeman', 'summary': 'No team future context available yet.\\n\\nDirective: prioritize picks, young ascending players, and contract flexibility over short-term points.\\n\\nOn **Garrett Wilson**, my read is: **HOLD, BUT ONLY MOVE FOR A PREMIUM**.\\n\\nHe is a **WR** at **$40** with **3 years** left.\\n\\nThe key signals are engine score **71.1**, recent production **56.0**, contract value **23.7**, trade value **61.0**, age curve **50.0**.\\n\\nThe player quality is real, but the contract is not especially efficient. That makes him more of a premium hold than an automatic untouchable.\\n\\nMy move: **HOLD, BUT ONLY MOVE FOR A PREMIUM**.\\n\\nNFL context: **GOOD_CONTEXT (70.3)**. Garrett Wilson NFL context: GOOD_CONTEXT, score 70.3. Team NYJ, status Active, active=True, injury=None, injury notes=None, depth=1.0. Flags: no major NFL context flags.', 'team_future_context': {}, 'conversation_mode': 'analyze'}",
+      "state": {
+        "current_player": "Garrett Wilson",
+        "compared_player": "Breece Hall",
+        "current_topic": "trade",
+        "team_goal": "contend",
+        "last_recommendation": "hold"
+      },
+      "answer": {
+        "original_question": "What if I could get Breece Hall?",
+        "resolved_question": "Evaluate this hypothetical trade scenario for Tommy Bruggeman: give Garrett Wilson, receive Breece Hall. Consider contract, salary, years, roster fit, team goal, risk, and win-now impact.\n\nTeam goal/context: contend.\n\nPrevious assistant answer:\n{'answer_type': 'player_decision', 'owner_team_name': 'Tommy Bruggeman', 'summary': 'No team future context available yet.\\n\\nDirective: prioritize picks, young ascending players, and contract flexibility over short-term points.\\n\\nOn **Garrett Wilson**, my read is: **HOLD, BUT ONLY MOVE FOR A PREMIUM**.\\n\\nHe is a **WR** at **$40** with **3 years** left.\\n\\nThe key signals are engine score **71.1**, recent production **56.0**, contract value **23.7**, trade value **61.0**, age curve **50.0**.\\n\\nThe player quality is real, but the contract is not especially efficient. That makes him more of a premium hold than an automatic untouchable.\\n\\nMy move: **HOLD, BUT ONLY MOVE FOR A PREMIUM**.\\n\\nNFL context: **GOOD_CONTEXT (70.3)**. Garrett Wilson NFL context: GOOD_CONTEXT, score 70.3. Team NYJ, status Active, active=True, injury=None, injury notes=None, depth=1.0. Flags: no major NFL context flags.', 'team_future_context': {}, 'conversation_mode': 'analyze'}",
+        "answer": {
+          "answer_type": "trade_scenario",
+          "owner_team_name": "Tommy Bruggeman",
+          "give": {
+            "sleeper_id": "8146",
+            "canonical_player_id": null,
+            "gsis_id": "00-0037740",
+            "player_name": "Garrett Wilson",
+            "search_name": "garrett wilson",
+            "pos": "WR",
+            "nfl_team": "NYJ",
+            "nfl_status": "Active",
+            "active": true,
+            "current_owner": "Tommy Bruggeman",
+            "roster_status": null,
+            "has_contract": true,
+            "salary": 40.0,
+            "years": 3.0,
+            "contract_total_years": 4.0,
+            "is_rookie_contract": false,
+            "market_pool": "TRADE",
+            "estimated_market_value": 0.0,
+            "recommended_years": 0.0,
+            "dynasty_asset_score": 63.11,
+            "future_projection_score": 63.39,
+            "rookie_asset_score": 0.0,
+            "market_consensus_score": 82.0,
+            "nfl_intelligence_score": 70.35,
+            "nfl_intelligence_grade": "GOOD_CONTEXT",
+            "nfl_intelligence_flags": [],
+            "contract_efficiency_score": 20.66,
+            "contract_efficiency_grade": "WEAK_VALUE",
+            "position_contract_rank": 63,
+            "position_contract_percentile": 1.59,
+            "expected_ppg": 11.61,
+            "historical_ppg": 12.69,
+            "latest_season": null,
+            "latest_week": null,
+            "latest_week_points": 0.0,
+            "latest_week_ppr": 0.0,
+            "season_ppg": 12.688,
+            "season_games": 17.0,
+            "player_universe_summary": "Garrett Wilson (WR) \u2014 owner=Tommy Bruggeman, contract=yes, market=TRADE, salary=$40, years=3, dynasty=63.1, contract_eff=20.7, expected_ppg=11.6.",
+            "updated_at": "2026-06-10T18:58:36.28444+00:00"
+          },
+          "receive": {
+            "sleeper_id": "8155",
+            "canonical_player_id": "8155",
+            "gsis_id": "00-0038120",
+            "player_name": "Breece Hall",
+            "search_name": "breece hall",
+            "pos": "RB",
+            "nfl_team": "NYJ",
+            "nfl_status": "Active",
+            "active": true,
+            "current_owner": "Nando Munoz",
+            "roster_status": null,
+            "has_contract": true,
+            "salary": 46.5,
+            "years": 3.0,
+            "contract_total_years": 4.0,
+            "is_rookie_contract": false,
+            "market_pool": "TRADE",
+            "estimated_market_value": 0.0,
+            "recommended_years": 0.0,
+            "dynasty_asset_score": 35.39,
+            "future_projection_score": 42.55,
+            "rookie_asset_score": 0.0,
+            "market_consensus_score": 30.81,
+            "nfl_intelligence_score": 66.66,
+            "nfl_intelligence_grade": "GOOD_CONTEXT",
+            "nfl_intelligence_flags": [],
+            "contract_efficiency_score": 16.33,
+            "contract_efficiency_grade": "BAD_VALUE",
+            "position_contract_rank": 52,
+            "position_contract_percentile": 1.92,
+            "expected_ppg": 10.49,
+            "historical_ppg": 0.0,
+            "latest_season": 2024,
+            "latest_week": 5,
+            "latest_week_points": 3.7,
+            "latest_week_ppr": 6.7,
+            "season_ppg": 0.0,
+            "season_games": 0.0,
+            "player_universe_summary": "Breece Hall (RB) \u2014 owner=Nando Munoz, contract=yes, market=TRADE, salary=$46.5, years=3, dynasty=35.4, contract_eff=16.3, expected_ppg=10.5.",
+            "updated_at": "2026-06-10T18:58:36.28444+00:00"
+          },
+          "team_goal": "contend",
+          "give_score": 58.2,
+          "receive_score": 43.3,
+          "delta": -14.9,
+          "cap_delta": 6.5,
+          "recommendation": "DECLINE",
+          "summary": "Trade scenario for **Tommy Bruggeman**:\n\nGive: **Garrett Wilson** (WR) \u2014 $40/3 yrs, dynasty 63.1, contract 20.7, expected PPG 11.6.\n\nReceive: **Breece Hall** (RB) \u2014 $46.5/3 yrs, dynasty 35.4, contract 16.3, expected PPG 10.5.\n\nTeam goal: **contend**.\n\nInternal trade score: receive side 43.3, give side 58.2, delta -14.9.\nCap change: +6.5.\n\nMy move: **DECLINE**. The outgoing player is worth more than the return once contract, production, and roster context are included."
+        },
+        "intent": {
+          "intent": "trade_scenario",
+          "owner_team_name": "Tommy Bruggeman",
+          "primary_player": "Garrett Wilson",
+          "comparison_player": "Breece Hall",
+          "team_goal": "contend",
+          "topic": "trade",
+          "original_question": "What if I could get Breece Hall?",
+          "resolved_question": "Evaluate this hypothetical trade scenario for Tommy Bruggeman: give Garrett Wilson, receive Breece Hall. Consider contract, salary, years, roster fit, team goal, risk, and win-now impact.\n\nTeam goal/context: contend.\n\nPrevious assistant answer:\n{'answer_type': 'player_decision', 'owner_team_name': 'Tommy Bruggeman', 'summary': 'No team future context available yet.\\n\\nDirective: prioritize picks, young ascending players, and contract flexibility over short-term points.\\n\\nOn **Garrett Wilson**, my read is: **HOLD, BUT ONLY MOVE FOR A PREMIUM**.\\n\\nHe is a **WR** at **$40** with **3 years** left.\\n\\nThe key signals are engine score **71.1**, recent production **56.0**, contract value **23.7**, trade value **61.0**, age curve **50.0**.\\n\\nThe player quality is real, but the contract is not especially efficient. That makes him more of a premium hold than an automatic untouchable.\\n\\nMy move: **HOLD, BUT ONLY MOVE FOR A PREMIUM**.\\n\\nNFL context: **GOOD_CONTEXT (70.3)**. Garrett Wilson NFL context: GOOD_CONTEXT, score 70.3. Team NYJ, status Active, active=True, injury=None, injury notes=None, depth=1.0. Flags: no major NFL context flags.', 'team_future_context': {}, 'conversation_mode': 'analyze'}",
+          "previous_recommendation": "hold"
+        },
+        "state": {
+          "current_player": "Garrett Wilson",
+          "compared_player": "Breece Hall",
+          "current_topic": "trade",
+          "team_goal": "contend",
+          "last_recommendation": "hold"
+        }
+      },
+      "answer_text": "{\n  \"original_question\": \"What if I could get Breece Hall?\",\n  \"resolved_question\": \"Evaluate this hypothetical trade scenario for Tommy Bruggeman: give Garrett Wilson, receive Breece Hall. Consider contract, salary, years, roster fit, team goal, risk, and win-now impact.\\n\\nTeam goal/context: contend.\\n\\nPrevious assistant answer:\\n{'answer_type': 'player_decision', 'owner_team_name': 'Tommy Bruggeman', 'summary': 'No team future context available yet.\\\\n\\\\nDirective: prioritize picks, young ascending players, and contract flexibility over short-term points.\\\\n\\\\nOn **Garrett Wilson**, my read is: **HOLD, BUT ONLY MOVE FOR A PREMIUM**.\\\\n\\\\nHe is a **WR** at **$40** with **3 years** left.\\\\n\\\\nThe key signals are engine score **71.1**, recent production **56.0**, contract value **23.7**, trade value **61.0**, age curve **50.0**.\\\\n\\\\nThe player quality is real, but the contract is not especially efficient. That makes him more of a premium hold than an automatic untouchable.\\\\n\\\\nMy move: **HOLD, BUT ONLY MOVE FOR A PREMIUM**.\\\\n\\\\nNFL context: **GOOD_CONTEXT (70.3)**. Garrett Wilson NFL context: GOOD_CONTEXT, score 70.3. Team NYJ, status Active, active=True, injury=None, injury notes=None, depth=1.0. Flags: no major NFL context flags.', 'team_future_context': {}, 'conversation_mode': 'analyze'}\",\n  \"answer\": {\n    \"answer_type\": \"trade_scenario\",\n    \"owner_team_name\": \"Tommy Bruggeman\",\n    \"give\": {\n      \"sleeper_id\": \"8146\",\n      \"canonical_player_id\": null,\n      \"gsis_id\": \"00-0037740\",\n      \"player_name\": \"Garrett Wilson\",\n      \"search_name\": \"garrett wilson\",\n      \"pos\": \"WR\",\n      \"nfl_team\": \"NYJ\",\n      \"nfl_status\": \"Active\",\n      \"active\": true,\n      \"current_owner\": \"Tommy Bruggeman\",\n      \"roster_status\": null,\n      \"has_contract\": true,\n      \"salary\": 40.0,\n      \"years\": 3.0,\n      \"contract_total_years\": 4.0,\n      \"is_rookie_contract\": false,\n      \"market_pool\": \"TRADE\",\n      \"estimated_market_value\": 0.0,\n      \"recommended_years\": 0.0,\n      \"dynasty_asset_score\": 63.11,\n      \"future_projection_score\": 63.39,\n      \"rookie_asset_score\": 0.0,\n      \"market_consensus_score\": 82.0,\n      \"nfl_intelligence_score\": 70.35,\n      \"nfl_intelligence_grade\": \"GOOD_CONTEXT\",\n      \"nfl_intelligence_flags\": [],\n      \"contract_efficiency_score\": 20.66,\n      \"contract_efficiency_grade\": \"WEAK_VALUE\",\n      \"position_contract_rank\": 63,\n      \"position_contract_percentile\": 1.59,\n      \"expected_ppg\": 11.61,\n      \"historical_ppg\": 12.69,\n      \"latest_season\": null,\n      \"latest_week\": null,\n      \"latest_week_points\": 0.0,\n      \"latest_week_ppr\": 0.0,\n      \"season_ppg\": 12.688,\n      \"season_games\": 17.0,\n      \"player_universe_summary\": \"Garrett Wilson (WR) \\u2014 owner=Tommy Bruggeman, contract=yes, market=TRADE, salary=$40, years=3, dynasty=63.1, contract_eff=20.7, expected_ppg=11.6.\",\n      \"updated_at\": \"2026-06-10T18:58:36.28444+00:00\"\n    },\n    \"receive\": {\n      \"sleeper_id\": \"8155\",\n      \"canonical_player_id\": \"8155\",\n      \"gsis_id\": \"00-0038120\",\n      \"player_name\": \"Breece Hall\",\n      \"search_name\": \"breece hall\",\n      \"pos\": \"RB\",\n      \"nfl_team\": \"NYJ\",\n      \"nfl_status\": \"Active\",\n      \"active\": true,\n      \"current_owner\": \"Nando Munoz\",\n      \"roster_status\": null,\n      \"has_contract\": true,\n      \"salary\": 46.5,\n      \"years\": 3.0,\n      \"contract_total_years\": 4.0,\n      \"is_rookie_contract\": false,\n      \"market_pool\": \"TRADE\",\n      \"estimated_market_value\": 0.0,\n      \"recommended_years\": 0.0,\n      \"dynasty_asset_score\": 35.39,\n      \"future_projection_score\": 42.55,\n      \"rookie_asset_score\": 0.0,\n      \"market_consensus_score\": 30.81,\n      \"nfl_intelligence_score\": 66.66,\n      \"nfl_intelligence_grade\": \"GOOD_CONTEXT\",\n      \"nfl_intelligence_flags\": [],\n      \"contract_efficiency_score\": 16.33,\n      \"contract_efficiency_grade\": \"BAD_VALUE\",\n      \"position_contract_rank\": 52,\n      \"position_contract_percentile\": 1.92,\n      \"expected_ppg\": 10.49,\n      \"historical_ppg\": 0.0,\n      \"latest_season\": 2024,\n      \"latest_week\": 5,\n      \"latest_week_points\": 3.7,\n      \"latest_week_ppr\": 6.7,\n      \"season_ppg\": 0.0,\n      \"season_games\": 0.0,\n      \"player_universe_summary\": \"Breece Hall (RB) \\u2014 owner=Nando Munoz, contract=yes, market=TRADE, salary=$46.5, years=3, dynasty=35.4, contract_eff=16.3, expected_ppg=10.5.\",\n      \"updated_at\": \"2026-06-10T18:58:36.28444+00:00\"\n    },\n    \"team_goal\": \"contend\",\n    \"give_score\": 58.2,\n    \"receive_score\": 43.3,\n    \"delta\": -14.9,\n    \"cap_delta\": 6.5,\n    \"recommendation\": \"DECLINE\",\n    \"summary\": \"Trade scenario for **Tommy Bruggeman**:\\n\\nGive: **Garrett Wilson** (WR) \\u2014 $40/3 yrs, dynasty 63.1, contract 20.7, expected PPG 11.6.\\n\\nReceive: **Breece Hall** (RB) \\u2014 $46.5/3 yrs, dynasty 35.4, contract 16.3, expected PPG 10.5.\\n\\nTeam goal: **contend**.\\n\\nInternal trade score: receive side 43.3, give side 58.2, delta -14.9.\\nCap change: +6.5.\\n\\nMy move: **DECLINE**. The outgoing player is worth more than the return once contract, production, and roster context are included.\"\n  },\n  \"intent\": {\n    \"intent\": \"trade_scenario\",\n    \"owner_team_name\": \"Tommy Bruggeman\",\n    \"primary_player\": \"Garrett Wilson\",\n    \"comparison_player\": \"Breece Hall\",\n    \"team_goal\": \"contend\",\n    \"topic\": \"trade\",\n    \"original_question\": \"What if I could get Breece Hall?\",\n    \"resolved_question\": \"Evaluate this hypothetical trade scenario for Tommy Bruggeman: give Garrett Wilson, receive Breece Hall. Consider contract, salary, years, roster fit, team goal, risk, and win-now impact.\\n\\nTeam goal/context: contend.\\n\\nPrevious assistant answer:\\n{'answer_type': 'player_decision', 'owner_team_name': 'Tommy Bruggeman', 'summary': 'No team future context available yet.\\\\n\\\\nDirective: prioritize picks, young ascending players, and contract flexibility over short-term points.\\\\n\\\\nOn **Garrett Wilson**, my read is: **HOLD, BUT ONLY MOVE FOR A PREMIUM**.\\\\n\\\\nHe is a **WR** at **$40** with **3 years** left.\\\\n\\\\nThe key signals are engine score **71.1**, recent production **56.0**, contract value **23.7**, trade value **61.0**, age curve **50.0**.\\\\n\\\\nThe player quality is real, but the contract is not especially efficient. That makes him more of a premium hold than an automatic untouchable.\\\\n\\\\nMy move: **HOLD, BUT ONLY MOVE FOR A PREMIUM**.\\\\n\\\\nNFL context: **GOOD_CONTEXT (70.3)**. Garrett Wilson NFL context: GOOD_CONTEXT, score 70.3. Team NYJ, status Active, active=True, injury=None, injury notes=None, depth=1.0. Flags: no major NFL context flags.', 'team_future_context': {}, 'conversation_mode': 'analyze'}\",\n    \"previous_recommendation\": \"hold\"\n  },\n  \"state\": {\n    \"current_player\": \"Garrett Wilson\",\n    \"compared_player\": \"Breece Hall\",\n    \"current_topic\": \"trade\",\n    \"team_goal\": \"contend\",\n    \"last_recommendation\": \"hold\"\n  }\n}",
+      "score": {
+        "checks_total": 5,
+        "checks_hit": 4,
+        "checks_missed": 1,
+        "hits": [
+          "contract",
+          "salary",
+          "win-now",
+          "trade"
+        ],
+        "misses": [
+          "cut"
+        ],
+        "rough_score": 8.0
+      },
+      "elapsed_seconds": 0.22
+    },
+    {
+      "question_number": 5,
+      "question": "Would you cut him if no one trades for him?",
+      "prompt_sent": "Would you cut him if no one trades for him?",
+      "resolved_question": "Evaluate whether Tommy Bruggeman should cut/drop Garrett Wilson if no trade market exists. Compare hold vs trade vs cut/release. Include contract, dead-cap implications if available, replacement value, and team goal: contend.\n\nTeam goal/context: contend.\n\nPrevious assistant answer:\n{'answer_type': 'trade_scenario', 'owner_team_name': 'Tommy Bruggeman', 'give': {'sleeper_id': '8146', 'canonical_player_id': None, 'gsis_id': '00-0037740', 'player_name': 'Garrett Wilson', 'search_name': 'garrett wilson', 'pos': 'WR', 'nfl_team': 'NYJ', 'nfl_status': 'Active', 'active': True, 'current_owner': 'Tommy Bruggeman', 'roster_status': None, 'has_contract': True, 'salary': 40.0, 'years': 3.0, 'contract_total_years': 4.0, 'is_rookie_contract': False, 'market_pool': 'TRADE', 'estimated_market_value': 0.0, 'recommended_years': 0.0, 'dynasty_asset_score': 63.11, 'future_projection_score': 63.39, 'rookie_asset_score': 0.0, 'market_consensus_score': 82.0, 'nfl_intelligence_score': 70.35, 'nfl_intelligence_grade': 'GOOD_CONTEXT', 'nfl_intelligence_flags': [], 'contract_efficiency_score': 20.66, 'contract_efficiency_grade': 'WEAK_VALUE', 'position_contract_rank': 63, 'position_contract_percentile': 1.59, 'expected_ppg': 11.61, 'historical_ppg': 12.69, 'latest_season': None, 'latest_week': None, 'latest_week_points': 0.0, 'latest_week_ppr': 0.0, 'season_ppg': 12.688, 'season_games': 17.0, 'player_universe_summary': 'Garrett Wilson (WR) \u2014 owner=Tommy Bruggeman, contract=yes, market=TRADE, salary=$40, years=3, dynasty=63.1, contract_eff=20.7, expected_ppg=11.6.', 'updated_at': '2026-06-10T18:58:36.28444+00:00'}, 'receive': {'sleeper_id': '8155', 'canonical_player_id': '8155', 'gsis_id': '00-0038120', 'player_name': 'Breece Hall', 'search_name': 'breece hall', 'pos': 'RB', 'nfl_team': 'NYJ', 'nfl_status': 'Active', 'active': True, 'current_owner': 'Nando Munoz', 'roster_status': None, 'has_contract': True, 'salary': 46.5, 'years': 3.0, 'contract_total_years': 4.0, 'is_rookie_contract': False, 'market_pool': 'TRADE', 'estimated_market_value': 0.0, 'recommended_years': 0.0, 'dynasty_asset_score': 35.39, 'future_projection_score': 42.55, 'rookie_asset_score': 0.0, 'market_consensus_score': 30.81, 'nfl_intelligence_score': 66.66, 'nfl_intelligence_grade': 'GOOD_CONTEXT', 'nfl_intelligence_flags': [], 'contract_efficiency_score': 16.33, 'contract_efficiency_grade': 'BAD_VALUE', 'position_contract_rank': 52, 'position_contract_percentile': 1.92, 'expected_ppg': 10.49, 'historical_ppg': 0.0, 'latest_season': 2024, 'latest_week': 5, 'latest_week_points': 3.7, 'latest_week_ppr': 6.7, 'season_ppg': 0.0, 'season_games': 0.0, 'player_universe_summary': 'Breece Hall (RB) \u2014 owner=Nando Munoz, contract=yes, market=TRADE, salary=$46.5, years=3, dynasty=35.4, contract_eff=16.3, expected_ppg=10.5.', 'updated_at': '2026-06-10T18:58:36.28444+00:00'}, 'team_goal': 'contend', 'give_score': 58.2, 'receive_score': 43.3, 'delta': -14.9, 'cap_delta': 6.5, 'recommendation': 'DECLINE', 'summary': 'Trade scenario for **Tommy Bruggeman**:\\n\\nGive: **Garrett Wilson** (WR) \u2014 $40/3 yrs, dynasty 63.1, contract 20.7, expected PPG 11.6.\\n\\nReceive: **Breece Hall** (RB) \u2014 $46.5/3 yrs, dynasty 35.4, contract 16.3, expected PPG 10.5.\\n\\nTeam goal: **contend**.\\n\\nInternal trade score: receive side 43.3, give side 58.2, delta -14.9.\\nCap change: +6.5.\\n\\nMy move: **DECLINE**. The outgoing player is worth more than the return once contract, production, and roster context are included.'}",
+      "state": {
+        "current_player": "Garrett Wilson",
+        "compared_player": "Breece Hall",
+        "current_topic": "cut",
+        "team_goal": "contend",
+        "last_recommendation": "hold"
+      },
+      "answer": {
+        "original_question": "Would you cut him if no one trades for him?",
+        "resolved_question": "Evaluate whether Tommy Bruggeman should cut/drop Garrett Wilson if no trade market exists. Compare hold vs trade vs cut/release. Include contract, dead-cap implications if available, replacement value, and team goal: contend.\n\nTeam goal/context: contend.\n\nPrevious assistant answer:\n{'answer_type': 'trade_scenario', 'owner_team_name': 'Tommy Bruggeman', 'give': {'sleeper_id': '8146', 'canonical_player_id': None, 'gsis_id': '00-0037740', 'player_name': 'Garrett Wilson', 'search_name': 'garrett wilson', 'pos': 'WR', 'nfl_team': 'NYJ', 'nfl_status': 'Active', 'active': True, 'current_owner': 'Tommy Bruggeman', 'roster_status': None, 'has_contract': True, 'salary': 40.0, 'years': 3.0, 'contract_total_years': 4.0, 'is_rookie_contract': False, 'market_pool': 'TRADE', 'estimated_market_value': 0.0, 'recommended_years': 0.0, 'dynasty_asset_score': 63.11, 'future_projection_score': 63.39, 'rookie_asset_score': 0.0, 'market_consensus_score': 82.0, 'nfl_intelligence_score': 70.35, 'nfl_intelligence_grade': 'GOOD_CONTEXT', 'nfl_intelligence_flags': [], 'contract_efficiency_score': 20.66, 'contract_efficiency_grade': 'WEAK_VALUE', 'position_contract_rank': 63, 'position_contract_percentile': 1.59, 'expected_ppg': 11.61, 'historical_ppg': 12.69, 'latest_season': None, 'latest_week': None, 'latest_week_points': 0.0, 'latest_week_ppr': 0.0, 'season_ppg': 12.688, 'season_games': 17.0, 'player_universe_summary': 'Garrett Wilson (WR) \u2014 owner=Tommy Bruggeman, contract=yes, market=TRADE, salary=$40, years=3, dynasty=63.1, contract_eff=20.7, expected_ppg=11.6.', 'updated_at': '2026-06-10T18:58:36.28444+00:00'}, 'receive': {'sleeper_id': '8155', 'canonical_player_id': '8155', 'gsis_id': '00-0038120', 'player_name': 'Breece Hall', 'search_name': 'breece hall', 'pos': 'RB', 'nfl_team': 'NYJ', 'nfl_status': 'Active', 'active': True, 'current_owner': 'Nando Munoz', 'roster_status': None, 'has_contract': True, 'salary': 46.5, 'years': 3.0, 'contract_total_years': 4.0, 'is_rookie_contract': False, 'market_pool': 'TRADE', 'estimated_market_value': 0.0, 'recommended_years': 0.0, 'dynasty_asset_score': 35.39, 'future_projection_score': 42.55, 'rookie_asset_score': 0.0, 'market_consensus_score': 30.81, 'nfl_intelligence_score': 66.66, 'nfl_intelligence_grade': 'GOOD_CONTEXT', 'nfl_intelligence_flags': [], 'contract_efficiency_score': 16.33, 'contract_efficiency_grade': 'BAD_VALUE', 'position_contract_rank': 52, 'position_contract_percentile': 1.92, 'expected_ppg': 10.49, 'historical_ppg': 0.0, 'latest_season': 2024, 'latest_week': 5, 'latest_week_points': 3.7, 'latest_week_ppr': 6.7, 'season_ppg': 0.0, 'season_games': 0.0, 'player_universe_summary': 'Breece Hall (RB) \u2014 owner=Nando Munoz, contract=yes, market=TRADE, salary=$46.5, years=3, dynasty=35.4, contract_eff=16.3, expected_ppg=10.5.', 'updated_at': '2026-06-10T18:58:36.28444+00:00'}, 'team_goal': 'contend', 'give_score': 58.2, 'receive_score': 43.3, 'delta': -14.9, 'cap_delta': 6.5, 'recommendation': 'DECLINE', 'summary': 'Trade scenario for **Tommy Bruggeman**:\\n\\nGive: **Garrett Wilson** (WR) \u2014 $40/3 yrs, dynasty 63.1, contract 20.7, expected PPG 11.6.\\n\\nReceive: **Breece Hall** (RB) \u2014 $46.5/3 yrs, dynasty 35.4, contract 16.3, expected PPG 10.5.\\n\\nTeam goal: **contend**.\\n\\nInternal trade score: receive side 43.3, give side 58.2, delta -14.9.\\nCap change: +6.5.\\n\\nMy move: **DECLINE**. The outgoing player is worth more than the return once contract, production, and roster context are included.'}",
+        "answer": {
+          "answer_type": "player_decision",
+          "owner_team_name": "Tommy Bruggeman",
+          "summary": "My honest take on **Breece Hall**: I am not just looking at whether he is talented. I am looking at whether the current version of the player still matches the price and role you need from him.",
+          "team_future_context": {},
+          "conversation_mode": "opinion"
+        },
+        "intent": {
+          "intent": "cut_decision",
+          "owner_team_name": "Tommy Bruggeman",
+          "primary_player": "Garrett Wilson",
+          "comparison_player": "Breece Hall",
+          "team_goal": "contend",
+          "topic": "cut",
+          "original_question": "Would you cut him if no one trades for him?",
+          "resolved_question": "Evaluate whether Tommy Bruggeman should cut/drop Garrett Wilson if no trade market exists. Compare hold vs trade vs cut/release. Include contract, dead-cap implications if available, replacement value, and team goal: contend.\n\nTeam goal/context: contend.\n\nPrevious assistant answer:\n{'answer_type': 'trade_scenario', 'owner_team_name': 'Tommy Bruggeman', 'give': {'sleeper_id': '8146', 'canonical_player_id': None, 'gsis_id': '00-0037740', 'player_name': 'Garrett Wilson', 'search_name': 'garrett wilson', 'pos': 'WR', 'nfl_team': 'NYJ', 'nfl_status': 'Active', 'active': True, 'current_owner': 'Tommy Bruggeman', 'roster_status': None, 'has_contract': True, 'salary': 40.0, 'years': 3.0, 'contract_total_years': 4.0, 'is_rookie_contract': False, 'market_pool': 'TRADE', 'estimated_market_value': 0.0, 'recommended_years': 0.0, 'dynasty_asset_score': 63.11, 'future_projection_score': 63.39, 'rookie_asset_score': 0.0, 'market_consensus_score': 82.0, 'nfl_intelligence_score': 70.35, 'nfl_intelligence_grade': 'GOOD_CONTEXT', 'nfl_intelligence_flags': [], 'contract_efficiency_score': 20.66, 'contract_efficiency_grade': 'WEAK_VALUE', 'position_contract_rank': 63, 'position_contract_percentile': 1.59, 'expected_ppg': 11.61, 'historical_ppg': 12.69, 'latest_season': None, 'latest_week': None, 'latest_week_points': 0.0, 'latest_week_ppr': 0.0, 'season_ppg': 12.688, 'season_games': 17.0, 'player_universe_summary': 'Garrett Wilson (WR) \u2014 owner=Tommy Bruggeman, contract=yes, market=TRADE, salary=$40, years=3, dynasty=63.1, contract_eff=20.7, expected_ppg=11.6.', 'updated_at': '2026-06-10T18:58:36.28444+00:00'}, 'receive': {'sleeper_id': '8155', 'canonical_player_id': '8155', 'gsis_id': '00-0038120', 'player_name': 'Breece Hall', 'search_name': 'breece hall', 'pos': 'RB', 'nfl_team': 'NYJ', 'nfl_status': 'Active', 'active': True, 'current_owner': 'Nando Munoz', 'roster_status': None, 'has_contract': True, 'salary': 46.5, 'years': 3.0, 'contract_total_years': 4.0, 'is_rookie_contract': False, 'market_pool': 'TRADE', 'estimated_market_value': 0.0, 'recommended_years': 0.0, 'dynasty_asset_score': 35.39, 'future_projection_score': 42.55, 'rookie_asset_score': 0.0, 'market_consensus_score': 30.81, 'nfl_intelligence_score': 66.66, 'nfl_intelligence_grade': 'GOOD_CONTEXT', 'nfl_intelligence_flags': [], 'contract_efficiency_score': 16.33, 'contract_efficiency_grade': 'BAD_VALUE', 'position_contract_rank': 52, 'position_contract_percentile': 1.92, 'expected_ppg': 10.49, 'historical_ppg': 0.0, 'latest_season': 2024, 'latest_week': 5, 'latest_week_points': 3.7, 'latest_week_ppr': 6.7, 'season_ppg': 0.0, 'season_games': 0.0, 'player_universe_summary': 'Breece Hall (RB) \u2014 owner=Nando Munoz, contract=yes, market=TRADE, salary=$46.5, years=3, dynasty=35.4, contract_eff=16.3, expected_ppg=10.5.', 'updated_at': '2026-06-10T18:58:36.28444+00:00'}, 'team_goal': 'contend', 'give_score': 58.2, 'receive_score': 43.3, 'delta': -14.9, 'cap_delta': 6.5, 'recommendation': 'DECLINE', 'summary': 'Trade scenario for **Tommy Bruggeman**:\\n\\nGive: **Garrett Wilson** (WR) \u2014 $40/3 yrs, dynasty 63.1, contract 20.7, expected PPG 11.6.\\n\\nReceive: **Breece Hall** (RB) \u2014 $46.5/3 yrs, dynasty 35.4, contract 16.3, expected PPG 10.5.\\n\\nTeam goal: **contend**.\\n\\nInternal trade score: receive side 43.3, give side 58.2, delta -14.9.\\nCap change: +6.5.\\n\\nMy move: **DECLINE**. The outgoing player is worth more than the return once contract, production, and roster context are included.'}",
+          "previous_recommendation": "hold"
+        },
+        "state": {
+          "current_player": "Garrett Wilson",
+          "compared_player": "Breece Hall",
+          "current_topic": "cut",
+          "team_goal": "contend",
+          "last_recommendation": "hold"
+        }
+      },
+      "answer_text": "{\n  \"original_question\": \"Would you cut him if no one trades for him?\",\n  \"resolved_question\": \"Evaluate whether Tommy Bruggeman should cut/drop Garrett Wilson if no trade market exists. Compare hold vs trade vs cut/release. Include contract, dead-cap implications if available, replacement value, and team goal: contend.\\n\\nTeam goal/context: contend.\\n\\nPrevious assistant answer:\\n{'answer_type': 'trade_scenario', 'owner_team_name': 'Tommy Bruggeman', 'give': {'sleeper_id': '8146', 'canonical_player_id': None, 'gsis_id': '00-0037740', 'player_name': 'Garrett Wilson', 'search_name': 'garrett wilson', 'pos': 'WR', 'nfl_team': 'NYJ', 'nfl_status': 'Active', 'active': True, 'current_owner': 'Tommy Bruggeman', 'roster_status': None, 'has_contract': True, 'salary': 40.0, 'years': 3.0, 'contract_total_years': 4.0, 'is_rookie_contract': False, 'market_pool': 'TRADE', 'estimated_market_value': 0.0, 'recommended_years': 0.0, 'dynasty_asset_score': 63.11, 'future_projection_score': 63.39, 'rookie_asset_score': 0.0, 'market_consensus_score': 82.0, 'nfl_intelligence_score': 70.35, 'nfl_intelligence_grade': 'GOOD_CONTEXT', 'nfl_intelligence_flags': [], 'contract_efficiency_score': 20.66, 'contract_efficiency_grade': 'WEAK_VALUE', 'position_contract_rank': 63, 'position_contract_percentile': 1.59, 'expected_ppg': 11.61, 'historical_ppg': 12.69, 'latest_season': None, 'latest_week': None, 'latest_week_points': 0.0, 'latest_week_ppr': 0.0, 'season_ppg': 12.688, 'season_games': 17.0, 'player_universe_summary': 'Garrett Wilson (WR) \\u2014 owner=Tommy Bruggeman, contract=yes, market=TRADE, salary=$40, years=3, dynasty=63.1, contract_eff=20.7, expected_ppg=11.6.', 'updated_at': '2026-06-10T18:58:36.28444+00:00'}, 'receive': {'sleeper_id': '8155', 'canonical_player_id': '8155', 'gsis_id': '00-0038120', 'player_name': 'Breece Hall', 'search_name': 'breece hall', 'pos': 'RB', 'nfl_team': 'NYJ', 'nfl_status': 'Active', 'active': True, 'current_owner': 'Nando Munoz', 'roster_status': None, 'has_contract': True, 'salary': 46.5, 'years': 3.0, 'contract_total_years': 4.0, 'is_rookie_contract': False, 'market_pool': 'TRADE', 'estimated_market_value': 0.0, 'recommended_years': 0.0, 'dynasty_asset_score': 35.39, 'future_projection_score': 42.55, 'rookie_asset_score': 0.0, 'market_consensus_score': 30.81, 'nfl_intelligence_score': 66.66, 'nfl_intelligence_grade': 'GOOD_CONTEXT', 'nfl_intelligence_flags': [], 'contract_efficiency_score': 16.33, 'contract_efficiency_grade': 'BAD_VALUE', 'position_contract_rank': 52, 'position_contract_percentile': 1.92, 'expected_ppg': 10.49, 'historical_ppg': 0.0, 'latest_season': 2024, 'latest_week': 5, 'latest_week_points': 3.7, 'latest_week_ppr': 6.7, 'season_ppg': 0.0, 'season_games': 0.0, 'player_universe_summary': 'Breece Hall (RB) \\u2014 owner=Nando Munoz, contract=yes, market=TRADE, salary=$46.5, years=3, dynasty=35.4, contract_eff=16.3, expected_ppg=10.5.', 'updated_at': '2026-06-10T18:58:36.28444+00:00'}, 'team_goal': 'contend', 'give_score': 58.2, 'receive_score': 43.3, 'delta': -14.9, 'cap_delta': 6.5, 'recommendation': 'DECLINE', 'summary': 'Trade scenario for **Tommy Bruggeman**:\\\\n\\\\nGive: **Garrett Wilson** (WR) \\u2014 $40/3 yrs, dynasty 63.1, contract 20.7, expected PPG 11.6.\\\\n\\\\nReceive: **Breece Hall** (RB) \\u2014 $46.5/3 yrs, dynasty 35.4, contract 16.3, expected PPG 10.5.\\\\n\\\\nTeam goal: **contend**.\\\\n\\\\nInternal trade score: receive side 43.3, give side 58.2, delta -14.9.\\\\nCap change: +6.5.\\\\n\\\\nMy move: **DECLINE**. The outgoing player is worth more than the return once contract, production, and roster context are included.'}\",\n  \"answer\": {\n    \"answer_type\": \"player_decision\",\n    \"owner_team_name\": \"Tommy Bruggeman\",\n    \"summary\": \"My honest take on **Breece Hall**: I am not just looking at whether he is talented. I am looking at whether the current version of the player still matches the price and role you need from him.\",\n    \"team_future_context\": {},\n    \"conversation_mode\": \"opinion\"\n  },\n  \"intent\": {\n    \"intent\": \"cut_decision\",\n    \"owner_team_name\": \"Tommy Bruggeman\",\n    \"primary_player\": \"Garrett Wilson\",\n    \"comparison_player\": \"Breece Hall\",\n    \"team_goal\": \"contend\",\n    \"topic\": \"cut\",\n    \"original_question\": \"Would you cut him if no one trades for him?\",\n    \"resolved_question\": \"Evaluate whether Tommy Bruggeman should cut/drop Garrett Wilson if no trade market exists. Compare hold vs trade vs cut/release. Include contract, dead-cap implications if available, replacement value, and team goal: contend.\\n\\nTeam goal/context: contend.\\n\\nPrevious assistant answer:\\n{'answer_type': 'trade_scenario', 'owner_team_name': 'Tommy Bruggeman', 'give': {'sleeper_id': '8146', 'canonical_player_id': None, 'gsis_id': '00-0037740', 'player_name': 'Garrett Wilson', 'search_name': 'garrett wilson', 'pos': 'WR', 'nfl_team': 'NYJ', 'nfl_status': 'Active', 'active': True, 'current_owner': 'Tommy Bruggeman', 'roster_status': None, 'has_contract': True, 'salary': 40.0, 'years': 3.0, 'contract_total_years': 4.0, 'is_rookie_contract': False, 'market_pool': 'TRADE', 'estimated_market_value': 0.0, 'recommended_years': 0.0, 'dynasty_asset_score': 63.11, 'future_projection_score': 63.39, 'rookie_asset_score': 0.0, 'market_consensus_score': 82.0, 'nfl_intelligence_score': 70.35, 'nfl_intelligence_grade': 'GOOD_CONTEXT', 'nfl_intelligence_flags': [], 'contract_efficiency_score': 20.66, 'contract_efficiency_grade': 'WEAK_VALUE', 'position_contract_rank': 63, 'position_contract_percentile': 1.59, 'expected_ppg': 11.61, 'historical_ppg': 12.69, 'latest_season': None, 'latest_week': None, 'latest_week_points': 0.0, 'latest_week_ppr': 0.0, 'season_ppg': 12.688, 'season_games': 17.0, 'player_universe_summary': 'Garrett Wilson (WR) \\u2014 owner=Tommy Bruggeman, contract=yes, market=TRADE, salary=$40, years=3, dynasty=63.1, contract_eff=20.7, expected_ppg=11.6.', 'updated_at': '2026-06-10T18:58:36.28444+00:00'}, 'receive': {'sleeper_id': '8155', 'canonical_player_id': '8155', 'gsis_id': '00-0038120', 'player_name': 'Breece Hall', 'search_name': 'breece hall', 'pos': 'RB', 'nfl_team': 'NYJ', 'nfl_status': 'Active', 'active': True, 'current_owner': 'Nando Munoz', 'roster_status': None, 'has_contract': True, 'salary': 46.5, 'years': 3.0, 'contract_total_years': 4.0, 'is_rookie_contract': False, 'market_pool': 'TRADE', 'estimated_market_value': 0.0, 'recommended_years': 0.0, 'dynasty_asset_score': 35.39, 'future_projection_score': 42.55, 'rookie_asset_score': 0.0, 'market_consensus_score': 30.81, 'nfl_intelligence_score': 66.66, 'nfl_intelligence_grade': 'GOOD_CONTEXT', 'nfl_intelligence_flags': [], 'contract_efficiency_score': 16.33, 'contract_efficiency_grade': 'BAD_VALUE', 'position_contract_rank': 52, 'position_contract_percentile': 1.92, 'expected_ppg': 10.49, 'historical_ppg': 0.0, 'latest_season': 2024, 'latest_week': 5, 'latest_week_points': 3.7, 'latest_week_ppr': 6.7, 'season_ppg': 0.0, 'season_games': 0.0, 'player_universe_summary': 'Breece Hall (RB) \\u2014 owner=Nando Munoz, contract=yes, market=TRADE, salary=$46.5, years=3, dynasty=35.4, contract_eff=16.3, expected_ppg=10.5.', 'updated_at': '2026-06-10T18:58:36.28444+00:00'}, 'team_goal': 'contend', 'give_score': 58.2, 'receive_score': 43.3, 'delta': -14.9, 'cap_delta': 6.5, 'recommendation': 'DECLINE', 'summary': 'Trade scenario for **Tommy Bruggeman**:\\\\n\\\\nGive: **Garrett Wilson** (WR) \\u2014 $40/3 yrs, dynasty 63.1, contract 20.7, expected PPG 11.6.\\\\n\\\\nReceive: **Breece Hall** (RB) \\u2014 $46.5/3 yrs, dynasty 35.4, contract 16.3, expected PPG 10.5.\\\\n\\\\nTeam goal: **contend**.\\\\n\\\\nInternal trade score: receive side 43.3, give side 58.2, delta -14.9.\\\\nCap change: +6.5.\\\\n\\\\nMy move: **DECLINE**. The outgoing player is worth more than the return once contract, production, and roster context are included.'}\",\n    \"previous_recommendation\": \"hold\"\n  },\n  \"state\": {\n    \"current_player\": \"Garrett Wilson\",\n    \"compared_player\": \"Breece Hall\",\n    \"current_topic\": \"cut\",\n    \"team_goal\": \"contend\",\n    \"last_recommendation\": \"hold\"\n  }\n}",
+      "score": {
+        "checks_total": 5,
+        "checks_hit": 4,
+        "checks_missed": 1,
+        "hits": [
+          "contract",
+          "salary",
+          "trade",
+          "cut"
+        ],
+        "misses": [
+          "win-now"
+        ],
+        "rough_score": 8.0
+      },
+      "elapsed_seconds": 1.18
+    },
+    {
+      "question_number": 6,
+      "question": "What would have to happen for him to become worth his contract?",
+      "prompt_sent": "What would have to happen for him to become worth his contract?",
+      "resolved_question": "What would need to happen for Garrett Wilson to become worth his current contract? Include required production tier, expected PPG, positional finish, contract efficiency, risk, and probability-style confidence.\n\nTeam goal/context: contend.\n\nPrevious assistant answer:\n{'answer_type': 'player_decision', 'owner_team_name': 'Tommy Bruggeman', 'summary': 'My honest take on **Breece Hall**: I am not just looking at whether he is talented. I am looking at whether the current version of the player still matches the price and role you need from him.', 'team_future_context': {}, 'conversation_mode': 'opinion'}",
+      "state": {
+        "current_player": "Garrett Wilson",
+        "compared_player": "Breece Hall",
+        "current_topic": "cut",
+        "team_goal": "contend",
+        "last_recommendation": "hold"
+      },
+      "answer": {
+        "original_question": "What would have to happen for him to become worth his contract?",
+        "resolved_question": "What would need to happen for Garrett Wilson to become worth his current contract? Include required production tier, expected PPG, positional finish, contract efficiency, risk, and probability-style confidence.\n\nTeam goal/context: contend.\n\nPrevious assistant answer:\n{'answer_type': 'player_decision', 'owner_team_name': 'Tommy Bruggeman', 'summary': 'My honest take on **Breece Hall**: I am not just looking at whether he is talented. I am looking at whether the current version of the player still matches the price and role you need from him.', 'team_future_context': {}, 'conversation_mode': 'opinion'}",
+        "answer": {
+          "answer_type": "contract",
+          "owner_team_name": "Tommy Bruggeman",
+          "summary": "I do not love the **Garrett Wilson** contract.\n\nThe case for it: The player has shown usable NFL production before, so the contract is not purely speculative.\n\nThe pushback: The contract is poor relative to other WR deals, landing near the bottom of the position. $40 is premium money, so the player needs to create a real weekly edge to justify it.\n\nContext: This is still partly a projection contract because the player is early in his NFL career.\n\nAction lens: now that we have the opinion, the next step would be comparing hold, trade, and cut outcomes.",
+          "team_future_context": {},
+          "conversation_mode": "analyze"
+        },
+        "intent": {
+          "intent": "contract_forecast",
+          "owner_team_name": "Tommy Bruggeman",
+          "primary_player": "Garrett Wilson",
+          "comparison_player": "Breece Hall",
+          "team_goal": "contend",
+          "topic": "cut",
+          "original_question": "What would have to happen for him to become worth his contract?",
+          "resolved_question": "What would need to happen for Garrett Wilson to become worth his current contract? Include required production tier, expected PPG, positional finish, contract efficiency, risk, and probability-style confidence.\n\nTeam goal/context: contend.\n\nPrevious assistant answer:\n{'answer_type': 'player_decision', 'owner_team_name': 'Tommy Bruggeman', 'summary': 'My honest take on **Breece Hall**: I am not just looking at whether he is talented. I am looking at whether the current version of the player still matches the price and role you need from him.', 'team_future_context': {}, 'conversation_mode': 'opinion'}",
+          "previous_recommendation": "hold"
+        },
+        "state": {
+          "current_player": "Garrett Wilson",
+          "compared_player": "Breece Hall",
+          "current_topic": "cut",
+          "team_goal": "contend",
+          "last_recommendation": "hold"
+        }
+      },
+      "answer_text": "{\n  \"original_question\": \"What would have to happen for him to become worth his contract?\",\n  \"resolved_question\": \"What would need to happen for Garrett Wilson to become worth his current contract? Include required production tier, expected PPG, positional finish, contract efficiency, risk, and probability-style confidence.\\n\\nTeam goal/context: contend.\\n\\nPrevious assistant answer:\\n{'answer_type': 'player_decision', 'owner_team_name': 'Tommy Bruggeman', 'summary': 'My honest take on **Breece Hall**: I am not just looking at whether he is talented. I am looking at whether the current version of the player still matches the price and role you need from him.', 'team_future_context': {}, 'conversation_mode': 'opinion'}\",\n  \"answer\": {\n    \"answer_type\": \"contract\",\n    \"owner_team_name\": \"Tommy Bruggeman\",\n    \"summary\": \"I do not love the **Garrett Wilson** contract.\\n\\nThe case for it: The player has shown usable NFL production before, so the contract is not purely speculative.\\n\\nThe pushback: The contract is poor relative to other WR deals, landing near the bottom of the position. $40 is premium money, so the player needs to create a real weekly edge to justify it.\\n\\nContext: This is still partly a projection contract because the player is early in his NFL career.\\n\\nAction lens: now that we have the opinion, the next step would be comparing hold, trade, and cut outcomes.\",\n    \"team_future_context\": {},\n    \"conversation_mode\": \"analyze\"\n  },\n  \"intent\": {\n    \"intent\": \"contract_forecast\",\n    \"owner_team_name\": \"Tommy Bruggeman\",\n    \"primary_player\": \"Garrett Wilson\",\n    \"comparison_player\": \"Breece Hall\",\n    \"team_goal\": \"contend\",\n    \"topic\": \"cut\",\n    \"original_question\": \"What would have to happen for him to become worth his contract?\",\n    \"resolved_question\": \"What would need to happen for Garrett Wilson to become worth his current contract? Include required production tier, expected PPG, positional finish, contract efficiency, risk, and probability-style confidence.\\n\\nTeam goal/context: contend.\\n\\nPrevious assistant answer:\\n{'answer_type': 'player_decision', 'owner_team_name': 'Tommy Bruggeman', 'summary': 'My honest take on **Breece Hall**: I am not just looking at whether he is talented. I am looking at whether the current version of the player still matches the price and role you need from him.', 'team_future_context': {}, 'conversation_mode': 'opinion'}\",\n    \"previous_recommendation\": \"hold\"\n  },\n  \"state\": {\n    \"current_player\": \"Garrett Wilson\",\n    \"compared_player\": \"Breece Hall\",\n    \"current_topic\": \"cut\",\n    \"team_goal\": \"contend\",\n    \"last_recommendation\": \"hold\"\n  }\n}",
+      "score": {
+        "checks_total": 5,
+        "checks_hit": 3,
+        "checks_missed": 2,
+        "hits": [
+          "contract",
+          "trade",
+          "cut"
+        ],
+        "misses": [
+          "salary",
+          "win-now"
+        ],
+        "rough_score": 6.0
+      },
+      "elapsed_seconds": 1.21
+    }
+  ]
+}

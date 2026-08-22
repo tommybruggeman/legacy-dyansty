@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import os
+from dotenv import load_dotenv
+load_dotenv(".env")
 from pathlib import Path
 from typing import Any
 
 import streamlit as st
 from supabase import create_client
-
 
 # ============================================================
 # Safe .env loader
@@ -62,7 +63,6 @@ load_local_env()
 # ============================================================
 # Supabase clients
 # ============================================================
-@st.cache_resource
 def _sb_anon():
     url = os.getenv("SUPABASE_URL", "").strip()
     key = os.getenv("SUPABASE_ANON_KEY", os.getenv("SUPABASE_KEY", "")).strip()
@@ -91,11 +91,27 @@ def _sb(access_token: str | None = None):
         raise RuntimeError("Missing SUPABASE_URL or SUPABASE_ANON_KEY/SUPABASE_KEY in environment.")
 
     client = create_client(url, key)
+    refresh_token = st.session_state.get(REFRESH_KEY)
+    effective_access_token = access_token
 
     try:
-        client.postgrest.auth(access_token)
+        if refresh_token and hasattr(client.auth, "set_session"):
+            response = client.auth.set_session(access_token, refresh_token)
+            session = getattr(response, "session", None)
+            refreshed_access_token = getattr(session, "access_token", None)
+            refreshed_refresh_token = getattr(session, "refresh_token", None)
+            if refreshed_access_token:
+                effective_access_token = refreshed_access_token
+                st.session_state[ACCESS_KEY] = refreshed_access_token
+            if refreshed_refresh_token:
+                st.session_state[REFRESH_KEY] = refreshed_refresh_token
     except Exception:
         pass
+
+    # Apply the effective user JWT after session restoration. This is explicit
+    # because page-level clients must never fall back to the anon key for RLS
+    # protected reads such as public.league_seasons.
+    client.postgrest.auth(effective_access_token)
 
     return client
 
@@ -206,6 +222,19 @@ def sign_in(email: str, password: str):
     if not email or not password:
         raise ValueError("Email and password required.")
 
+    import hashlib
+    expected_password = os.getenv("GATE3_COMMISSIONER_PASSWORD", "")
+    supplied_fp = hashlib.sha256(password.encode()).hexdigest()[:12]
+    expected_fp = hashlib.sha256(expected_password.encode()).hexdigest()[:12] if expected_password else "MISSING"
+
+    print(
+        f"[GATE3 AUTH DEBUG] url={os.getenv('SUPABASE_URL')} "
+        f"email={email} supplied_password_fp={supplied_fp} "
+        f"expected_password_fp={expected_fp} "
+        f"password_match={bool(expected_password and password == expected_password)}",
+        flush=True,
+    )
+
     client = _sb_anon()
     result = client.auth.sign_in_with_password(
         {
@@ -249,6 +278,67 @@ def sign_up(email: str, password: str):
         _store_session(session)
 
     return getattr(result, "user", None)
+
+
+def sign_up_with_result(email: str, password: str) -> dict[str, Any]:
+    email = (email or "").strip()
+
+    if not email or not password:
+        raise ValueError("Email and password required.")
+
+    client = _sb_anon()
+    result = client.auth.sign_up(
+        {
+            "email": email,
+            "password": password,
+        }
+    )
+
+    user = getattr(result, "user", None)
+    session = getattr(result, "session", None)
+
+    if session:
+        _store_session(session)
+
+    return {
+        "ok": bool(user),
+        "user": user,
+        "session": session,
+        "has_user": bool(user),
+        "has_session": bool(session),
+    }
+
+
+def reset_password(email: str, redirect_to: str | None = None) -> dict[str, Any]:
+    email = (email or "").strip()
+
+    if not email:
+        return {
+            "ok": False,
+            "code": "invalid_email",
+            "message": "Enter your email address before requesting a password reset.",
+        }
+
+    client = _sb_anon()
+    options = {"redirect_to": redirect_to} if redirect_to else None
+
+    try:
+        if options:
+            client.auth.reset_password_for_email(email, options=options)
+        else:
+            client.auth.reset_password_for_email(email)
+    except Exception:
+        return {
+            "ok": False,
+            "code": "reset_unavailable",
+            "message": "Password recovery is not available yet. Ask the commissioner for help signing in.",
+        }
+
+    return {
+        "ok": True,
+        "code": "reset_requested",
+        "message": "If password recovery email is configured, a reset link will be sent to that address.",
+    }
 
 
 def sign_out():

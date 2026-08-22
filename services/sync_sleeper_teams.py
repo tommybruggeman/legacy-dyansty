@@ -5,6 +5,9 @@ import os
 from pathlib import Path
 
 import requests
+from supabase import create_client
+
+from season_engine import SeasonResolver
 
 
 def load_env():
@@ -56,21 +59,14 @@ def supabase_headers():
 
 
 def get_league_season(supabase_url: str, headers: dict, sleeper_league_id: str) -> dict:
-    url = f"{supabase_url}/rest/v1/league_seasons"
-    params = {
-        "select": "*",
-        "sleeper_league_id": f"eq.{sleeper_league_id}",
-        "limit": "1",
-    }
-
-    r = requests.get(url, headers=headers, params=params, timeout=25)
-    r.raise_for_status()
-
-    rows = r.json() or []
-    if not rows:
-        raise SystemExit("No matching league_seasons row found.")
-
-    return rows[0]
+    client = create_client(supabase_url, headers["apikey"])
+    leagues = client.table("leagues").select("id").eq("sleeper_league_id", sleeper_league_id).execute().data or []
+    if len(leagues) != 1:
+        raise SystemExit(f"Expected one Legacy league for Sleeper league {sleeper_league_id}; found {len(leagues)}.")
+    season = SeasonResolver(client).get_active_season(str(leagues[0]["id"]))
+    if season.sleeper_league_id != sleeper_league_id:
+        raise SystemExit("Connected Sleeper league is not the authoritative active-season Sleeper league.")
+    return {"id": season.id, "league_id": season.league_id, "season": season.season, "sleeper_league_id": season.sleeper_league_id, "is_active": season.is_active}
 
 
 def fetch_sleeper_users(sleeper_league_id: str) -> list[dict]:

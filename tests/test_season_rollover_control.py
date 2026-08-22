@@ -18,7 +18,7 @@ from services.season_rollover_control import (
 
 
 class Response:
-    def __init__(self, data): self.data = data
+    def __init__(self, data, count=None): self.data, self.count = data, count
 
 
 class Execute:
@@ -27,12 +27,16 @@ class Execute:
 
 
 class Query:
-    def __init__(self, rows): self.rows = rows
-    def select(self, *_args): return self
+    def __init__(self, rows): self.rows, self.start, self.end, self.head = rows, 0, None, False
+    def select(self, *_args, **kwargs): self.head = bool(kwargs.get("head")); return self
     def eq(self, key, value):
         self.rows = [row for row in self.rows if str(row.get(key)) == str(value)]
         return self
-    def execute(self): return Response(self.rows)
+    def order(self, key): self.rows.sort(key=lambda row: str(row.get(key) or "")); return self
+    def range(self, start, end): self.start, self.end = start, end; return self
+    def execute(self):
+        count = len(self.rows); data = [] if self.head else self.rows[self.start:self.end + 1 if self.end is not None else None]
+        return Response(data, count)
 
 
 class User:
@@ -159,6 +163,65 @@ class BoundaryTests(unittest.TestCase):
         user.tables = trusted.tables
         readiness = SeasonRolloverControlService(user, "l", lambda: trusted).load_initiation_readiness()
         self.assertIn("canonical_team_mapping_incomplete", readiness.blockers)
+
+
+class OperatorDispatchTests(unittest.TestCase):
+    class Service(SeasonRolloverControlService):
+        def __init__(self, status="executed_unpublished"):
+            self.status = status; self.dispatched = []
+        def _scoped_execution(self, execution_id):
+            return {"id": execution_id, "status": self.status}
+        def authenticated_rpc(self, name, request):
+            self.dispatched.append((name, dict(request)))
+            return {"ok": True}
+
+    def state(self):
+        return {
+            "plans": [{"id":"plan", "plan_version":1, "plan_fingerprint":"p" * 64}],
+            "approvals": [{"id":"approval"}],
+            "finalizations": [{"id":"final", "deterministic_finalization_fingerprint":"f" * 64,
+                               "prepared_artifact_aggregate_hash":"a" * 64}],
+            "season_publications": [{"id":"season-pub", "publication_fingerprint":"s" * 64}],
+            "cap_publications": [{"id":"cap-pub", "publication_fingerprint":"c" * 64}],
+            "market_publications": [{"id":"market-pub", "deterministic_fingerprint":"m" * 64}],
+            "cutover_releases": [{"id":"release", "release_fingerprint":"r" * 64}],
+            "prepared_cap_sets": [{"id":"cap-set", "aggregate_cap_set_hash":"h" * 64}],
+            "prepared_free_agent_sets": [{"aggregate_set_hash":"g" * 64}],
+            "prepared_expiring_sets": [{"aggregate_set_hash":"e" * 64}],
+            "cache_manifests": [{"aggregate_manifest_hash":"x" * 64}],
+        }
+
+    def test_execution_calls_master_boundary_once_with_canonical_assertions(self):
+        service = self.Service("execution_ready")
+        service.execute_current_plan("execution", {"id":"approval"},
+                                     {"id":"plan", "plan_version":2, "plan_fingerprint":"p" * 64})
+        self.assertEqual(len(service.dispatched), 1)
+        name, request = service.dispatched[0]
+        self.assertEqual(name, "execute_rollover_plan_authenticated")
+        self.assertEqual(request["expected_execution_status"], "execution_ready")
+        self.assertEqual(request["expected_plan_fingerprint"], "p" * 64)
+
+    def test_publication_requests_reuse_existing_rpcs_and_persisted_fingerprints(self):
+        expected = {
+            32:"publish_target_season_authority_authenticated",
+            33:"activate_target_cap_authority_authenticated",
+            34:"enable_target_free_agent_visibility_authenticated",
+            35:"release_cutover_restrictions_authenticated",
+            36:"refresh_published_ui_and_ai_context_authenticated",
+        }
+        for operation, rpc in expected.items():
+            service = self.Service("completed" if operation == 36 else "executed_unpublished")
+            state = self.state()
+            service.publish_next_operation("execution", operation, state)
+            self.assertEqual(service.dispatched[0][0], rpc)
+            self.assertEqual(service.dispatched[0][1]["rollover_execution_id"], "execution")
+            if operation == 36:
+                self.assertEqual(service.dispatched[0][1]["expected_cutover_release_fingerprint"], "r" * 64)
+
+    def test_publication_fails_closed_without_plan_and_approval(self):
+        state = self.state(); state["plans"] = []
+        with self.assertRaisesRegex(RolloverControlError, "plan and approval"):
+            self.Service().publish_next_operation("execution", 32, state)
 
 
 class ConfirmationTests(unittest.TestCase):

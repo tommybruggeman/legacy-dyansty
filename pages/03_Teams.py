@@ -18,6 +18,7 @@ import pandas as pd
 import streamlit as st
 from components.sidebar_nav import render_nav
 from auth import require_login, current_user
+from services.config import configured_value
 
 ICON = Path(__file__).resolve().parents[1] / "assets" / "page_icon.png"
 
@@ -65,14 +66,12 @@ def _load_env() -> Tuple[str, str, str]:
             break
 
     return (
-        (os.getenv("SUPABASE_URL") or st.secrets.get("SUPABASE_URL", "")).strip(),
+        configured_value("SUPABASE_URL"),
         (
-            os.getenv("SUPABASE_ANON_KEY")
-            or os.getenv("SUPABASE_KEY")
-            or st.secrets.get("SUPABASE_ANON_KEY", "")
-            or st.secrets.get("SUPABASE_KEY", "")
-        ).strip(),
-        (os.getenv("SLEEPER_LEAGUE_ID") or st.secrets.get("SLEEPER_LEAGUE_ID", "")).strip(),
+            configured_value("SUPABASE_ANON_KEY")
+            or configured_value("SUPABASE_KEY")
+        ),
+        configured_value("SLEEPER_LEAGUE_ID"),
     )
 
 SUPABASE_URL, SUPABASE_KEY, SLEEPER_LEAGUE_ID = _load_env()
@@ -939,62 +938,131 @@ def load_team_activity(limit: int = 200) -> pd.DataFrame:
         return pd.DataFrame()
 
 @st.cache_data(ttl=300, show_spinner=False)
-def load_caps() -> pd.DataFrame:
+def load_caps(league_id: str, context_generation: int) -> pd.DataFrame:
     try:
         if sb:
-            rows = sb.table("v_team_caps").select("*").execute().data or []
+            from services.publication_context import published_cap_rows
+            rows = published_cap_rows(sb, league_id)
             return pd.DataFrame(rows)
     except Exception:
         pass
     return pd.DataFrame()
 
-def resolve_cap_for_owner(caps_df: pd.DataFrame, roster_df: pd.DataFrame,
-                          sel_name: str, sel_handle: Optional[str]) -> str:
-    # 1) v_team_caps (prefer)
-    if not caps_df.empty:
-        name_cols   = [c for c in caps_df.columns if c.lower() in {"owner_name","owner","team_owner","team_name","display_name","name"}]
-        handle_cols = [c for c in caps_df.columns if c.lower() in {"owner_handle","sleeper_handle","sleeper_username","handle"}]
-        mine = pd.DataFrame()
-        for c in name_cols:
-            mine = caps_df[caps_df[c].astype(str).str.strip().eq(sel_name)]
-            if not mine.empty: break
-        if mine.empty and sel_handle:
-            for c in handle_cols:
-                mine = caps_df[caps_df[c].astype(str).str.strip().eq(sel_handle)]
-                if not mine.empty: break
-        if not mine.empty:
-            for col in ["cap_used","cap","current_cap","cap_spend","cap_total"]:
-                if col in mine.columns:
-                    val = float(pd.to_numeric(mine.iloc[0][col], errors="coerce") or 0.0)
-                    return f"${val:.1f}"
 
-    # 2) fallback: sum roster salaries for this team
+@st.cache_data(ttl=300, show_spinner=False)
+def load_league_rules(league_id: str) -> dict:
+    if not sb or not league_id:
+        return {}
+
+    try:
+        rows = (
+            sb.table("league_rules")
+            .select("*")
+            .eq("league_id", league_id)
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+
+        return rows[0] if rows else {}
+
+    except Exception:
+        return {}
+
+def resolve_cap_for_owner(
+    roster_df: pd.DataFrame,
+    cap_adj_df: pd.DataFrame,
+    sel_name: str,
+    sel_handle: Optional[str],
+    salary_cap: float,
+    season: int,
+) -> tuple[str, str]:
+    active_salary = 0.0
+
     if not roster_df.empty:
-        name_keys   = ["owner_team_name","owner_name","team_owner","team_name","display_name","name"]
-        handle_keys = ["owner","owner_handle","sleeper_username","sleeper_handle","user_handle"]
+        name_keys = [
+            "owner_team_name",
+            "owner_name",
+            "team_owner",
+            "team_name",
+            "display_name",
+            "name",
+        ]
+
+        handle_keys = [
+            "owner",
+            "owner_handle",
+            "sleeper_username",
+            "sleeper_handle",
+            "user_handle",
+        ]
+
         mine = pd.DataFrame()
+
         for c in name_keys:
             if c in roster_df.columns:
-                mine = roster_df[roster_df[c].astype(str).str.strip().eq(sel_name)]
-                if not mine.empty: break
+                mine = roster_df[
+                    roster_df[c].astype(str).str.strip().eq(sel_name)
+                ]
+                if not mine.empty:
+                    break
+
         if mine.empty and sel_handle:
             for c in handle_keys:
                 if c in roster_df.columns:
-                    mine = roster_df[roster_df[c].astype(str).str.strip().eq(sel_handle)]
-                    if not mine.empty: break
-        if not mine.empty:
-            sal_col = None
-            for c in ["salary","cap","salary_usd","cap_hit","sal"]:
-                if c in mine.columns: sal_col = c; break
-            if sal_col:
-                sal = (
-                    pd.to_numeric(
-                        mine[sal_col].astype(str).str.replace("$","",regex=False).str.replace(",","",regex=False),
-                        errors="coerce"
-                    ).fillna(0.0).sum()
+                    mine = roster_df[
+                        roster_df[c].astype(str).str.strip().eq(sel_handle)
+                    ]
+                    if not mine.empty:
+                        break
+
+        if not mine.empty and "salary" in mine.columns:
+            active_salary = (
+                pd.to_numeric(
+                    mine["salary"]
+                    .astype(str)
+                    .str.replace("$", "", regex=False)
+                    .str.replace(",", "", regex=False),
+                    errors="coerce",
                 )
-                return f"${sal:.1f}"
-    return "—"
+                .fillna(0.0)
+                .sum()
+            )
+
+    adjustment_total = 0.0
+
+    if not cap_adj_df.empty:
+        adj = cap_adj_df.copy()
+
+        if "league_id" in adj.columns:
+            pass
+
+        if "season" in adj.columns:
+            adj = adj[
+                pd.to_numeric(adj["season"], errors="coerce").fillna(0).astype(int)
+                == int(season)
+            ]
+
+        if "owner_name" in adj.columns:
+            adj = adj[
+                adj["owner_name"]
+                .astype(str)
+                .str.strip()
+                .eq(sel_name)
+            ]
+
+        if not adj.empty and "amount" in adj.columns:
+            adjustment_total = (
+                pd.to_numeric(adj["amount"], errors="coerce")
+                .fillna(0.0)
+                .sum()
+            )
+
+    cap_used = active_salary + adjustment_total
+    cap_space = salary_cap - cap_used
+
+    return f"${cap_used:.1f}", f"${cap_space:.1f} space"
 
 @st.cache_data(ttl=300, show_spinner=False)
 def load_draft_picks() -> pd.DataFrame:
@@ -1011,14 +1079,15 @@ def load_draft_picks() -> pd.DataFrame:
     return pd.DataFrame()
 
 @st.cache_data(ttl=300, show_spinner=False)
-def load_cap_adjustments() -> pd.DataFrame:
+def load_cap_adjustments(season: int) -> pd.DataFrame:
     try:
         if sb:
             rows = (
                 sb.table("cap_adjustments")
                 .select("*")
                 .order("season", desc=False)
-                .execute()
+            .eq("season", season)
+            .execute()
                 .data
                 or []
             )
@@ -1105,7 +1174,15 @@ def get_roster_for_owner(
 spinner_placeholder = st.empty()
 show_loading_screen(spinner_placeholder, "Loading Team Dashboard...")
 
-ensure_active_league_from_user()
+active_league_id = ensure_active_league_from_user()
+
+# Canonical league context for the Teams page.
+# Keep the legacy variable name available for downstream loaders.
+league_id = active_league_id
+
+league_rules = load_league_rules(active_league_id)
+salary_cap = float(league_rules.get("salary_cap", 225))
+
 owners_df = load_owners_df()
 
 # REMOVE the "None" owner row + any empties
@@ -1124,8 +1201,12 @@ tx_enriched_df = load_transactions(limit=500)
 activity_df = load_team_activity(limit=500)
 
 tx_df = pd.concat([tx_enriched_df, activity_df], ignore_index=True)
-caps_df   = load_caps()
-cap_adj_df = load_cap_adjustments()
+from services.publication_context import publication_generation
+caps_df   = load_caps(league_id, publication_generation(sb, league_id))
+from season_engine import SeasonResolver
+
+active_season = SeasonResolver(sb).get_active_season(league_id).season
+cap_adj_df = load_cap_adjustments(active_season)
 stand_df = load_live_standings()
 
 spinner_placeholder.empty()
@@ -1289,7 +1370,14 @@ if not stand_df.empty:
         ppg_val = float(r.get("ppg", 0.0) or 0.0)
 
 # Cap (resolve after roster load)
-cap_txt = resolve_cap_for_owner(caps_df, roster_df, sel_name, sel_handle)
+cap_txt, cap_sub = resolve_cap_for_owner(
+    roster_df,
+    cap_adj_df,
+    sel_name,
+    sel_handle,
+    salary_cap,
+    active_season,
+)
 
 # Record
 with c_record:
@@ -1337,7 +1425,7 @@ with c_cap:
         <div class="stat-card">
           <div class="stat-title">Cap</div>
           <div class="stat-value">{cap_txt}</div>
-          <div class="stat-sub">Current cap used</div>
+          <div class="stat-sub">{cap_sub}</div>
         </div>
         """,
         unsafe_allow_html=True,

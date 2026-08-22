@@ -1,6 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
+from services.strict_pagination import complete_rows
 
 @dataclass(frozen=True)
 class RolloverControlState:
@@ -9,13 +10,13 @@ class RolloverControlState:
 class RolloverControlRepository:
     """Read-only Phase 3B.5B repository. Missing rows never imply authority."""
     def __init__(self,client):self.client=client
-    def _list(self,table,field,value):return tuple(self.client.table(table).select("*").eq(field,value).execute().data or [])
+    def _list(self,table,field,value):return tuple(complete_rows(self.client,table,filters={field:value}))
     def get_execution(self,execution_id):
         rows=self._list("rollover_executions","id",execution_id)
         if len(rows)>1:raise RuntimeError("duplicate execution id")
         return rows[0] if rows else None
     def find_boundary(self,league_id,source_season,target_season):
-        rows=self.client.table("rollover_executions").select("*").eq("league_id",league_id).eq("source_season",source_season).eq("target_season",target_season).execute().data or []
+        rows=complete_rows(self.client,"rollover_executions",filters={"league_id":league_id,"source_season":source_season,"target_season":target_season})
         active=[x for x in rows if x.get("status")!="cancelled"]
         if len(active)>1:raise RuntimeError("conflicting rollover executions")
         return active[0] if active else None

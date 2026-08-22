@@ -14,6 +14,7 @@ from season_engine.rollover_models import (
     ContractRosterException, FreeAgentPublicationState, ProjectedTeamCap,
     RequirementNode, RolloverReadinessReport, SeasonRolloverContext,
 )
+from services.strict_pagination import complete_rows
 
 
 def stable_fingerprint(value: Any) -> str:
@@ -37,11 +38,16 @@ class RolloverAuthorityService:
         adjustments, adjustment_error = self._optional_rows("cap_adjustments", league_id)
         dead_cap, dead_cap_error = self._optional_rows("dead_cap_ledger", league_id)
         publication, publication_error = self._publication_rows(league_id)
+        classifications, _ = self._optional_rows("contract_rollover_classifications", league_id)
         rules, rules_error = self._optional_rows("league_rules", league_id)
         context = self._context(league_id, active.season, target, operational, seasons)
         cap_policy = self._cap_policy(active.season, target, rules, adjustments, dead_cap, adjustment_error, dead_cap_error, rules_error)
         caps = self._project_caps(contracts, teams, adjustments, dead_cap, cap_policy)
-        exceptions, decisions = self._exceptions(league_id, contracts, roster_rows, publication, publication_error)
+        exceptions, decisions = self._exceptions(
+            league_id, active.season, contracts, roster_rows, publication, publication_error,
+            {str(x.get("contract_agreement_id")): str(x.get("classification") or "")
+             for x in classifications},
+        )
         graph = requirement_graph()
         blockers = list(context.blockers) + list(cap_policy.blockers)
         if publication_error:
@@ -130,14 +136,22 @@ class RolloverAuthorityService:
             result.append(ProjectedTeamCap(tid,str(team.get("team_name") or team.get("owner_name") or tid),policy.target_season,salary,adj,dead,total,policy.salary_cap_limit,available,complete,("contract_seasons","cap_adjustments","dead_cap_ledger","league_rules"),blockers))
         return result
 
-    def _exceptions(self, league_id, contracts, roster_rows, publication, publication_error):
+    def _exceptions(self, league_id, source_season, contracts, roster_rows, publication, publication_error,
+                    classifications=None):
+        classifications = classifications or {}
         roster={str(x.get("sleeper_player_id") or x.get("player_id")):x for x in roster_rows}
         published={str(x.get("sleeper_player_id") or x.get("player_id")):x for x in publication}
         exceptions=[]; decisions=[]
         for record in contracts:
             on_roster=record.sleeper_player_id in roster or record.player_id in roster
             if record.agreement_status=="expired" and on_roster:
-                classification="ROSTERED_EXPIRED_POLICY_UNDEFINED"; action="HOLD_FOR_COMMISSIONER_DECISION"
+                canonical = classifications.get(record.agreement_id)
+                if canonical == "ordinary_expiration":
+                    classification="ROSTERED_ORDINARY_EXPIRATION_READY"; action="CONTROLLED_RELEASE_AT_ROLLOVER"
+                elif canonical == "rookie_option_eligible":
+                    classification="ROSTERED_EXPIRED_POLICY_UNDEFINED"; action="HOLD_FOR_OWNER_ROOKIE_OPTION_DECISION"
+                else:
+                    classification="ROSTERED_EXPIRED_POLICY_UNDEFINED"; action="HOLD_FOR_COMMISSIONER_DECISION"
             elif record.agreement_status=="active" and not on_roster:
                 classification="ACTIVE_OFF_ROSTER_POLICY_REVIEW_REQUIRED"; action="RETAIN_ORIGINAL_TEAM_LIABILITY_PENDING_REVIEW"
             elif record.agreement_status=="expired" and not on_roster:
@@ -146,23 +160,33 @@ class RolloverAuthorityService:
             decision_id=stable_fingerprint({"league":league_id,"agreement":record.agreement_id,"classification":classification})[:24]
             pub="unknown" if publication_error else "published" if record.sleeper_player_id in published else "not_published"
             roster_row=roster.get(record.sleeper_player_id) or roster.get(record.player_id) or {}
-            taxi_ir=str(roster_row.get("roster_designation") or roster_row.get("roster_status") or roster_row.get("status") or "").lower() or None
-            exceptions.append(ContractRosterException(record.agreement_id,record.sleeper_player_id,record.player_name,record.canonical_team_id,"rostered" if on_roster else "unrostered",record.agreement_status,classification,action,taxi_ir,pub,decision_id,{"salary":str(record.operational_salary) if record.operational_salary is not None else None,"years_remaining":record.remaining_contract_seasons,"expiration_season":record.expiration_season,"future_obligations":[asdict(x) for x in record.future_contract_seasons],"drop_does_not_terminate":True,"natural_expiration_dead_cap":False}))
-            decisions.append(CommissionerRolloverDecision(decision_id,league_id,record.sleeper_player_id,record.canonical_team_id,classification,f"contract={record.agreement_status}; roster={'present' if on_roster else 'absent'}",action,("hold","review","approve_later_execution_action"),None,exceptions[-1].evidence,None,"policy not yet evidenced",True,"broader rollover execution",("contract_agreements","contract_seasons","season_roster_assignments")))
+            raw_designation = str(
+                roster_row.get("roster_designation")
+                or roster_row.get("roster_status")
+                or roster_row.get("status")
+                or ""
+            ).lower()
+            taxi_ir = raw_designation if raw_designation in {"taxi", "ir"} else None
+            source_read = next((season for season in record.provenance.get("season_reads", ())
+                                if int(season.season) == int(source_season)), None)
+            source_contract_years = max(int(record.expiration_season) - int(source_season), 0)
+            exceptions.append(ContractRosterException(record.agreement_id,record.sleeper_player_id,record.player_name,record.canonical_team_id,"rostered" if on_roster else "unrostered",record.agreement_status,classification,action,taxi_ir,pub,decision_id,{"salary":str(source_read.salary) if source_read is not None else None,"years_remaining":source_contract_years,"expiration_season":record.expiration_season,"future_obligations":[asdict(x) for x in record.future_contract_seasons],"drop_does_not_terminate":True,"natural_expiration_dead_cap":False}))
+            if classification != "ROSTERED_ORDINARY_EXPIRATION_READY":
+                decisions.append(CommissionerRolloverDecision(decision_id,league_id,record.sleeper_player_id,record.canonical_team_id,classification,f"contract={record.agreement_status}; roster={'present' if on_roster else 'absent'}",action,("hold","review","approve_later_execution_action"),None,exceptions[-1].evidence,None,"policy not yet evidenced",True,"broader rollover execution",("contract_agreements","contract_seasons","season_roster_assignments")))
         return exceptions, decisions
 
     def publication_state(self, player_id, *, contract_unbound, unrostered, row=None, authority_available=False):
         row=row or {}
         return FreeAgentPublicationState(str(player_id),bool(contract_unbound),bool(unrostered),bool(row.get("published")) if authority_available else None,bool(row.get("acquisition_eligible")) if authority_available else None,bool(row.get("waiver_locked")) if authority_available else None,bool(row.get("rookie_not_yet_available")) if authority_available else None,bool(row.get("commissioner_hold")) if authority_available else None,"trusted_publication_source" if authority_available else "unknown",() if authority_available else ("free_agent_publication_authority_absent",))
 
-    def _rows(self, table, league_id): return self.client.table(table).select("*").eq("league_id",league_id).execute().data or []
+    def _rows(self, table, league_id): return complete_rows(self.client, table, filters={"league_id": league_id})
     def _optional_rows(self, table, league_id):
         try:return self._rows(table,league_id),None
         except Exception as exc:return [],str(exc)
     def _publication_rows(self, league_id): return self._optional_rows("free_agents",league_id)
     def _roster_rows(self, league_season_id):
         if not league_season_id:return []
-        return self.client.table("season_roster_assignments").select("*").eq("league_season_id",str(league_season_id)).execute().data or []
+        return complete_rows(self.client, "season_roster_assignments", filters={"league_season_id": str(league_season_id)})
 
 
 def requirement_graph() -> tuple[RequirementNode,...]:

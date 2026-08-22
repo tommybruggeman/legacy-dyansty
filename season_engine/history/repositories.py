@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from season_engine.resolver import SeasonNotFoundError
+from services.strict_pagination import complete_rows, exact_count
 
 
 TABLES = {
@@ -10,6 +11,12 @@ TABLES = {
     "matchups": "season_matchups", "brackets": "season_playoff_brackets",
     "roster_assignments": "season_roster_assignments",
 }
+PAGE_SIZE = 500
+
+
+def paginated_rows(client: Any, table: str, columns: str = "*", *, filters: dict[str, Any] | None = None,
+                   order: str = "id", page_size: int = PAGE_SIZE) -> list[dict[str, Any]]:
+    return complete_rows(client, table, columns, filters=filters, order_key=order, page_size=page_size)
 
 
 class HistoricalSeasonRepository:
@@ -20,8 +27,8 @@ class HistoricalSeasonRepository:
     def league_season_id(self, league_id: str, season: int) -> str:
         if not league_id or season is None:
             raise ValueError("Historical reads require explicit league_id and season.")
-        rows = (self.client.table("league_seasons").select("id").eq("league_id", league_id)
-                .eq("season", int(season)).execute().data or [])
+        rows = paginated_rows(self.client, "league_seasons", "id",
+                              filters={"league_id": league_id, "season": int(season)})
         if len(rows) != 1:
             raise SeasonNotFoundError(f"Expected one league_seasons row for {league_id!r}/{season}; found {len(rows)}.")
         return str(rows[0]["id"])
@@ -38,12 +45,10 @@ class HistoricalSeasonRepository:
     def counts(self, league_season_id: str) -> dict[str, int]:
         result = {}
         for key, table in TABLES.items():
-            rows = self.client.table(table).select("id").eq("league_season_id", league_season_id).execute().data or []
-            result[key] = len(rows)
+            result[key] = exact_count(self.client, table, filters={"league_season_id": league_season_id})
         return result
 
     def _read(self, kind, league_id, season, **filters):
-        query = self.client.table(TABLES[kind]).select("*").eq("league_season_id", self.league_season_id(league_id, season))
-        for key, value in filters.items():
-            if value is not None: query = query.eq(key, value)
-        return query.execute().data or []
+        scoped = {"league_season_id": self.league_season_id(league_id, season)}
+        scoped.update({key: value for key, value in filters.items() if value is not None})
+        return paginated_rows(self.client, TABLES[kind], filters=scoped)

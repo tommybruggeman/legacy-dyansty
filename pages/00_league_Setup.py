@@ -8,6 +8,7 @@ import requests
 import streamlit as st
 
 from auth import require_login, current_user, _sb, sign_out
+from services.invitations import INVITE_TOKEN_SESSION_KEY
 
 
 ROOT_DIR = Path.cwd()
@@ -44,6 +45,12 @@ if setup_step != "league_setup":
 
     st.error(f"Setup step file not found: {target}")
     st.stop()
+
+if st.session_state.get(INVITE_TOKEN_SESSION_KEY):
+    st.info("Finishing your invitation before league setup.")
+    st.session_state.pop("app_mode", None)
+    st.session_state.pop("setup_step", None)
+    st.switch_page("home.py")
 
 
 # ============================================================

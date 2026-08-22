@@ -85,7 +85,7 @@ class TargetCapAuthority:
 
 class CommissionerPolicyService:
     def draft(self,**values)->LeagueRolloverPolicy:return LeagueRolloverPolicy(**values).validated()
-    def options(self,count=108)->tuple[PolicyOptionEffect,...]:
+    def options(self,count:int)->tuple[PolicyOptionEffect,...]:
         return (
             PolicyOptionEffect(RosteredExpiredPolicy.AUTOMATIC_RELEASE_AT_ROLLOVER.value,count,0,"plan release, then publication/hold",("commissioner_selection_required","taxi_ir_treatment_required")),
             PolicyOptionEffect(RosteredExpiredPolicy.RETAIN_UNCONTRACTED_UNTIL_DEADLINE.value,count,0,"retain at zero contract salary until deadline",("deadline_required",)),

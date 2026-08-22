@@ -1,0 +1,64 @@
+{
+  "contract_name": "season-rollover-publication-production-parity-v1",
+  "publication_operations": [
+    {
+      "operation_code": "PUBLISH_TARGET_SEASON_AUTHORITY",
+      "operation_order": 32,
+      "handler_version": 1,
+      "execution_owner": "publication"
+    },
+    {
+      "operation_code": "ACTIVATE_TARGET_CAP_AUTHORITY",
+      "operation_order": 33,
+      "handler_version": 1,
+      "execution_owner": "publication"
+    },
+    {
+      "operation_code": "ENABLE_TARGET_FREE_AGENT_VISIBILITY",
+      "operation_order": 34,
+      "handler_version": 1,
+      "execution_owner": "publication"
+    },
+    {
+      "operation_code": "RELEASE_CUTOVER_RESTRICTIONS",
+      "operation_order": 35,
+      "handler_version": 1,
+      "execution_owner": "publication"
+    },
+    {
+      "operation_code": "REFRESH_PUBLISHED_UI_AND_AI_CONTEXT",
+      "operation_order": 36,
+      "handler_version": 1,
+      "execution_owner": "publication"
+    }
+  ],
+  "required_tables": {
+    "rollover_target_season_authority_publications": [],
+    "rollover_target_cap_authority_publications": [],
+    "rollover_target_market_visibility_publications": [],
+    "rollover_target_market_visibility_rows": [],
+    "rollover_cutover_release_publications": [],
+    "publication_context_generations": []
+  },
+  "required_authenticated_wrappers": [
+    "publish_target_season_authority_authenticated(jsonb)",
+    "activate_target_cap_authority_authenticated(jsonb)",
+    "enable_target_free_agent_visibility_authenticated(jsonb)",
+    "release_cutover_restrictions_authenticated(jsonb)",
+    "refresh_published_ui_and_ai_context_authenticated(jsonb)"
+  ],
+  "required_private_functions": [
+    "publish_target_season_authority_phase3b13a_private(jsonb,uuid)",
+    "activate_target_cap_authority_phase3b13b_private(jsonb,uuid)",
+    "enable_target_market_visibility_phase3b13c_private(jsonb,uuid)",
+    "release_cutover_restrictions_phase3b13d_private(jsonb,uuid)",
+    "refresh_published_context_phase3b13e_private(jsonb,uuid)"
+  ],
+  "required_migrations": [
+    "20260917",
+    "20260918",
+    "20260919",
+    "20260920",
+    "20260921"
+  ]
+}

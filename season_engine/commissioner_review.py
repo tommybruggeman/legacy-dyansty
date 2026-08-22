@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from dataclasses import asdict,dataclass,field
 from datetime import datetime,timezone
+from decimal import Decimal
 from types import MappingProxyType
 from typing import Any,Mapping,Sequence
 
 from season_engine.rollover_service import RolloverAuthorityService,stable_fingerprint
+from season_engine.decision_population_fingerprints import commissioner_case_fingerprint,population_fingerprint
 
-EXPECTED_COMMISSIONER_CASES=13
+COMMISSIONER_CASE_SCHEMA_VERSION="phaseb-commissioner-case-v3"
 VALIDATOR_VERSION="commissioner-review-v1"
 
 OUTCOME_MATRIX:Mapping[str,frozenset[str]]=MappingProxyType({
@@ -34,7 +36,7 @@ LEGAL_TRANSITIONS:Mapping[str,frozenset[str]]=MappingProxyType({
 
 @dataclass(frozen=True)
 class CommissionerReviewCandidate:
- league_id:str;source_season:int;target_season:int;player_id:str;canonical_player_name:str;league_team_id:str;agreement_id:str;contract_event_id:str|None;review_type:str;agreement_status:str;roster_status:str;source_salary:str|None;source_contract_years:int;target_contract_state:str;publication_status:str;acquisition_status:str;second_agreement_status:str;dead_cap_status:str;evidence:Mapping[str,Any];blockers:tuple[str,...];warnings:tuple[str,...];evidence_fingerprint:str;provenance:tuple[str,...]
+ case_key:str;league_id:str;source_season:int;target_season:int;player_id:str;canonical_player_name:str;league_team_id:str;agreement_id:str;contract_event_id:str|None;review_type:str;agreement_status:str;roster_status:str;source_salary:str|None;source_contract_years:int;target_contract_state:str;publication_status:str;acquisition_status:str;second_agreement_status:str;dead_cap_status:str;evidence:Mapping[str,Any];blockers:tuple[str,...];warnings:tuple[str,...];evidence_fingerprint:str;provenance:tuple[str,...]
 
 @dataclass(frozen=True)
 class CommissionerPopulation:
@@ -74,22 +76,23 @@ class CommissionerPopulationBuilder:
    cases.append(self._case(league_id,source_season,target_season,str(row.get("player_id") or ""),str(row.get("player_name") or ""),str(row.get("league_team_id") or ""),str(row.get("agreement_id") or ""),row.get("contract_event_id"),str(row.get("review_type") or "owner_escalation"),str(row.get("agreement_status") or "unknown"),str(row.get("roster_status") or "unknown"),dict(row.get("evidence") or {})))
   cases.sort(key=lambda x:(x.review_type,x.player_id,x.agreement_id,x.league_team_id))
   for case in cases:
-   key=(case.review_type,case.player_id,case.agreement_id)
+   key=(case.review_type,case.player_id,case.agreement_id,case.league_team_id,case.contract_event_id or "")
    if key in seen:blockers.append(f"duplicate_commissioner_case:{case.review_type}:{case.player_id}:{case.agreement_id}")
    seen.add(key)
    if case.blockers:blockers.extend(case.blockers)
-  actual=len(cases);expected=EXPECTED_COMMISSIONER_CASES+len(owner_escalations)+len(conflicts)
-  if actual!=expected:blockers.append(f"commissioner_population_count:{actual}:expected:{expected}")
-  basis=[{"type":x.review_type,"player":x.player_id,"agreement":x.agreement_id,"team":x.league_team_id,"evidence":x.evidence_fingerprint} for x in cases]
-  return CommissionerPopulation(tuple(cases),actual,expected,actual-expected,tuple(dict.fromkeys(blockers)),(),_fingerprint({"league":league_id,"source":source_season,"target":target_season,"cases":basis}))
+  actual=len(cases);expected=actual
+  basis=[{"case_key":x.case_key,"case_fingerprint":x.evidence_fingerprint} for x in cases]
+  return CommissionerPopulation(tuple(cases),actual,expected,0,tuple(dict.fromkeys(blockers)),(),population_fingerprint("commissioner",basis))
  def _case(self,league,source,target,player,name,team,agreement,event,review_type,agreement_status,roster_status,evidence):
   local=[]
   if not player:local.append("identity_unresolved")
   if not team:local.append("team_unresolved")
   if not agreement:local.append("agreement_unresolved")
   active=review_type=="active_off_roster_liability";salary=evidence.get("source_salary")
-  packet={"league":league,"source":source,"target":target,"player":player,"team":team,"agreement":agreement,"event":event,"type":review_type,"agreement_status":agreement_status,"roster_status":roster_status,"evidence":evidence,"blockers":local}
-  return CommissionerReviewCandidate(league,source,target,player,name,team,agreement,event,review_type,agreement_status,roster_status,None if salary is None else str(salary),int(evidence.get("source_contract_years") or 0),"active_liability" if active else "expired","blocked" if active else "candidate_only","blocked" if active else "deferred","blocked" if active else "none","none_without_qualifying_event",MappingProxyType(evidence),tuple(local),(),_fingerprint(packet),("contract_agreements","contract_events","contract_seasons","season_roster_assignments"))
+  salary_value=evidence.get("source_salary");canonical_salary=None if salary_value is None else f"{Decimal(str(salary_value)):.2f}"
+  packet={"schema":COMMISSIONER_CASE_SCHEMA_VERSION,"review_type":review_type,"agreement_id":agreement,"player_id":player,"league_team_id":team,"source_identity":event,"agreement_status":agreement_status,"roster_status":roster_status,"source_salary":canonical_salary,"source_contract_years":int(evidence.get("source_contract_years") or 0)}
+  case_key=f"{review_type}:{agreement}:{player}:{team}:{event or 'base'}"
+  return CommissionerReviewCandidate(case_key,league,source,target,player,name,team,agreement,event,review_type,agreement_status,roster_status,None if salary is None else str(salary),int(evidence.get("source_contract_years") or 0),"active_liability" if active else "expired","blocked" if active else "candidate_only","blocked" if active else "deferred","blocked" if active else "none","none_without_qualifying_event",MappingProxyType(evidence),tuple(local),(),commissioner_case_fingerprint(packet),("contract_agreements","contract_events","contract_seasons","season_roster_assignments"))
 
 class CommissionerReviewValidator:
  def validate(self,review:Mapping[str,Any],outcome:str,*,evidence:Mapping[str,Any]|None=None,termination_event_id:str|None=None,dead_cap_event_id:str|None=None,publication_reference:str|None=None,retained_agreement_id:str|None=None,validated_at:datetime|None=None)->CommissionerReviewValidationResult:

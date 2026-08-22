@@ -23,6 +23,8 @@ def client() -> Client:
         ],
         "season_roster_assignments": [{"league_season_id": "s25", "sleeper_player_id": "p"}],
         "contract_transition_executions": [],
+        "contract_rollover_classifications": [],
+        "contract_transition_reconciliations": [],
     }
     return value
 

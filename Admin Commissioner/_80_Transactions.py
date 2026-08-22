@@ -6,13 +6,13 @@ import pandas as pd
 import streamlit as st
 
 from auth import require_login, current_user, _sb
+from season_engine import SeasonResolver
 
 # ==========================
 # Config
 # ==========================
 TRANSACTIONS_TABLE = "transactions_enriched"  # Supabase VIEW
 TIMESTAMP_COLUMN   = "ts"                     # Used for ordering
-DEFAULT_SEASON     = 2025                    # Label only (no season col yet)
 
 # ==========================
 # Page setup
@@ -42,6 +42,9 @@ try:
 except Exception:
     pass
 
+ACTIVE_SEASON_ROW = SeasonResolver(sb).get_active_season(league_id)
+ACTIVE_SEASON = ACTIVE_SEASON_ROW.season
+
 try:
     league_row = (
         sb.table("leagues")
@@ -55,7 +58,7 @@ except Exception as e:
     st.error(f"Could not load active league: {e}")
     st.stop()
 
-SLEEPER_LEAGUE_ID = str(league_row.get("sleeper_league_id") or "").strip()
+SLEEPER_LEAGUE_ID = str(ACTIVE_SEASON_ROW.sleeper_league_id or "").strip()
 SLEEPER_LEAGUE_ID = "".join(ch for ch in SLEEPER_LEAGUE_ID if ch.isdigit())
 
 if not SLEEPER_LEAGUE_ID:
@@ -268,7 +271,7 @@ with col2:
         "Season",
         min_value=2000,
         max_value=2100,
-        value=DEFAULT_SEASON,
+        value=ACTIVE_SEASON,
         step=1,
         help="Season label only for now (no season column yet).",
     )

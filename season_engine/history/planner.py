@@ -7,6 +7,8 @@ from typing import Any
 
 from season_engine.models import LeagueSeason
 from .models import CapturePlan, SourceBundle
+from .fingerprints import (canonical_team_set_fingerprint, mapping_set_fingerprint,
+                           source_roster_set_fingerprint, standings_set_fingerprint)
 
 
 def build_capture_plan(*, season: LeagueSeason, source: SourceBundle,
@@ -19,19 +21,49 @@ def build_capture_plan(*, season: LeagueSeason, source: SourceBundle,
         errors.append(_issue("source_not_active", "The requested source LeagueSeason is not active."))
     if str(source.league.get("season")) != str(season.season):
         errors.append(_issue("source_season_mismatch", "Sleeper season does not match LeagueSeason."))
-    if len(source.rosters) != 10:
-        errors.append(_issue("roster_count", f"Expected 10 Sleeper rosters; found {len(source.rosters)}."))
-
     by_roster: dict[int, list[dict]] = {}
     by_user: dict[str, list[dict]] = {}
+    canonical_ids: list[str] = []
+    canonical_roster_ids: list[int] = []
     for team in league_teams:
         if str(team.get("league_id")) != season.league_id:
             errors.append(_issue("cross_league_team", f"Team {team.get('id')} belongs to another league."))
             continue
+        team_id = str(team.get("id") or "")
+        if not team_id:
+            errors.append(_issue("canonical_team_identity_missing", "A canonical league team has no ID."))
+            continue
+        canonical_ids.append(team_id)
         if team.get("sleeper_roster_id") is not None:
-            by_roster.setdefault(int(team["sleeper_roster_id"]), []).append(team)
+            roster_id = int(team["sleeper_roster_id"])
+            canonical_roster_ids.append(roster_id)
+            by_roster.setdefault(roster_id, []).append(team)
+        else:
+            errors.append(_issue("canonical_sleeper_roster_missing", f"Team {team_id} has no authoritative Sleeper roster ID.", league_team_id=team_id))
         if team.get("sleeper_user_id"):
             by_user.setdefault(str(team["sleeper_user_id"]), []).append(team)
+
+    if not canonical_ids:
+        errors.append(_issue("canonical_team_set_empty", "The league has no canonical teams."))
+    for team_id in sorted({value for value in canonical_ids if canonical_ids.count(value) > 1}):
+        errors.append(_issue("duplicate_canonical_team", f"Canonical team {team_id} appears more than once.", league_team_id=team_id))
+    for roster_id in sorted({value for value in canonical_roster_ids if canonical_roster_ids.count(value) > 1}):
+        errors.append(_issue("duplicate_canonical_sleeper_roster", f"Sleeper roster {roster_id} belongs to multiple canonical teams.", roster_id=roster_id))
+
+    source_roster_ids: list[int] = []
+    for roster in source.rosters:
+        try:
+            source_roster_ids.append(int(roster["roster_id"]))
+        except (KeyError, TypeError, ValueError):
+            errors.append(_issue("source_roster_identity_missing", "A source roster has no valid Sleeper roster ID."))
+    for roster_id in sorted({value for value in source_roster_ids if source_roster_ids.count(value) > 1}):
+        errors.append(_issue("duplicate_source_sleeper_roster", f"Sleeper roster {roster_id} appears more than once in source evidence.", roster_id=roster_id))
+    missing_rosters = sorted(set(canonical_roster_ids) - set(source_roster_ids))
+    foreign_rosters = sorted(set(source_roster_ids) - set(canonical_roster_ids))
+    if missing_rosters:
+        errors.append(_issue("source_roster_set_missing", "Canonical teams are missing from source roster evidence.", sleeper_roster_ids=missing_rosters))
+    if foreign_rosters:
+        errors.append(_issue("source_roster_set_foreign", "Source roster evidence contains non-canonical rosters.", sleeper_roster_ids=foreign_rosters))
 
     users = {str(u.get("user_id")): u for u in source.users if u.get("user_id")}
     mappings, roster_to_team = [], {}
@@ -64,6 +96,19 @@ def build_capture_plan(*, season: LeagueSeason, source: SourceBundle,
     standings = _normalize_standings(season, source, roster_to_team)
     brackets = _normalize_brackets(season, source, roster_to_team, errors)
     assignments = _normalize_rosters(season, source, roster_to_team, player_names, errors)
+    canonical_set = set(canonical_ids)
+    mapped_set = {str(row["league_team_id"]) for row in mappings}
+    standing_ids = [str(row["league_team_id"]) for row in standings]
+    standing_set = set(standing_ids)
+    if mapped_set != canonical_set or len(mappings) != len(canonical_ids):
+        errors.append(_issue("mapping_set_mismatch", "Historical mappings do not exactly equal the canonical team set.",
+                             missing_team_ids=sorted(canonical_set-mapped_set), foreign_team_ids=sorted(mapped_set-canonical_set)))
+    duplicate_standings = sorted({value for value in standing_ids if standing_ids.count(value) > 1})
+    if duplicate_standings:
+        errors.append(_issue("duplicate_standings_team", "Standings contain duplicate canonical teams.", league_team_ids=duplicate_standings))
+    if standing_set != canonical_set or len(standings) != len(canonical_ids):
+        errors.append(_issue("standings_set_mismatch", "Historical standings do not exactly equal the canonical team set.",
+                             missing_team_ids=sorted(canonical_set-standing_set), foreign_team_ids=sorted(standing_set-canonical_set)))
     champions = {row.get("winner_league_team_id") for row in brackets if row.get("bracket_type") == "winner" and row.get("placement") == 1}
     if len(champions) != 1:
         errors.append(_issue("champion", f"Expected one derivable champion; found {len(champions)}."))
@@ -75,6 +120,16 @@ def build_capture_plan(*, season: LeagueSeason, source: SourceBundle,
         league_id=season.league_id, league_season_id=str(season.id), season=season.season,
         sleeper_league_id=str(season.sleeper_league_id), generated_at=datetime.now(timezone.utc).isoformat(),
         source_fingerprint=fingerprint, idempotency_key=f"pre_rollover_snapshot:{season.id}:sleeper:v1",
+        canonical_team_count=len(canonical_set),
+        canonical_team_set_fingerprint=canonical_team_set_fingerprint(
+            row for row in league_teams if str(row.get("league_id")) == season.league_id),
+        source_roster_set_fingerprint=source_roster_set_fingerprint(source.rosters),
+        mapping_set_fingerprint=mapping_set_fingerprint(mappings),
+        standings_set_fingerprint=standings_set_fingerprint(standings),
+        source_roster_identifiers=tuple(sorted((
+            {"sleeper_roster_id": int(row["roster_id"]), "sleeper_owner_id": row.get("owner_id")}
+            for row in source.rosters if row.get("roster_id") is not None
+        ), key=lambda row: (row["sleeper_roster_id"], str(row.get("sleeper_owner_id") or "")))),
         team_mappings=tuple(mappings), matchups=tuple(matchups), standings=tuple(standings),
         brackets=tuple(brackets), roster_assignments=tuple(assignments), warnings=tuple(warnings),
         blocking_errors=tuple(errors), existing_counts=existing_counts or {},
@@ -121,7 +176,7 @@ def _normalize_standings(season, source, roster_to_team):
         "ties": int((r.get("settings") or {}).get("ties") or 0), "points_for": _decimal(r.get("settings") or {}, "fpts"),
         "points_against": _decimal(r.get("settings") or {}, "fpts_against"), "regular_season_rank": rank[int(r["roster_id"])],
         "streak": (r.get("metadata") or {}).get("streak"), "source_payload": r.get("settings") or {}}
-        for r in source.rosters if int(r["roster_id"]) in roster_to_team]
+        for r in source.rosters if r.get("roster_id") is not None and int(r["roster_id"]) in roster_to_team]
 
 
 def _normalize_brackets(season, source, roster_to_team, errors):

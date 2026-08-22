@@ -4,3 +4,7 @@ __pycache__/
 *.pyc
 .DS_Store
 .streamlit/secrets.toml
+.env
+.env.gate3-production-hold
+.streamlit/secrets.toml.gate3-production-hold
+pages/.env.gate3-production-hold

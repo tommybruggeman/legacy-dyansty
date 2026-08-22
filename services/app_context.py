@@ -9,7 +9,9 @@ import pandas as pd
 import requests
 import streamlit as st
 
-from auth import current_user
+from auth import auth_client, current_user
+from season_engine import SeasonResolver
+from services.publication_context import publication_generation, published_cap_rows
 
 
 # ---------- timing ----------
@@ -219,7 +221,7 @@ def resolve_my_team(user_id: str | None, league_id: str | None) -> dict | None:
         return None
 
     membership = membership_rows[0]
-    team_id = membership.get("team_id") or membership.get("league_team_id")
+    team_id = membership.get("league_team_id") or membership.get("team_id")
 
     if team_id:
         team_rows = (
@@ -310,17 +312,23 @@ def load_roster(league_id: str) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def load_caps() -> pd.DataFrame:
+def _load_caps_published(league_id: str, context_generation: int) -> pd.DataFrame:
     sb = get_sb()
 
     if not sb:
         return pd.DataFrame()
 
     try:
-        rows = sb.table("v_team_caps").select("*").execute().data or []
+        rows = published_cap_rows(sb, league_id)
         return pd.DataFrame(rows)
     except Exception:
         return pd.DataFrame()
+
+
+def load_caps(league_id: str) -> pd.DataFrame:
+    sb = get_sb()
+    generation = publication_generation(sb, league_id) if sb and league_id else 0
+    return _load_caps_published(league_id, generation)
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -393,7 +401,7 @@ def load_trade_block(league_id: str, owner_name: str) -> pd.DataFrame:
 def load_cap_adjustments(
     league_id: str,
     owner_name: str,
-    season: int = 2026,
+    season: int,
 ) -> pd.DataFrame:
     sb = get_sb()
 
@@ -698,10 +706,18 @@ def get_app_context(force_refresh: bool = False) -> dict:
         owner_name = my_team.get("owner_name") or team_name
         role = my_team.get("role") or role
 
+    if not league_id:
+        raise RuntimeError("An active league is required to resolve the season.")
+    sb = get_sb()
+    if not sb:
+        raise RuntimeError("A database connection is required to resolve the season.")
+    active_season_row = SeasonResolver(auth_client()).get_active_season(league_id)
+    active_season = active_season_row.season
+
     roster_df = load_roster(league_id)
     tick("after load_roster")
 
-    caps_df = load_caps()
+    caps_df = load_caps(league_id)
     tick("after load_caps")
 
     picks_df = load_draft_picks()
@@ -713,13 +729,13 @@ def get_app_context(force_refresh: bool = False) -> dict:
     trade_df = load_trade_block(league_id, owner_name)
     tick("after load_trade_block")
 
-    cap_adj_df = load_cap_adjustments(league_id, owner_name)
+    cap_adj_df = load_cap_adjustments(league_id, owner_name, active_season)
     tick("after load_cap_adjustments")
 
     cached_stand_df = load_cached_standings(league_id)
     tick("after load_cached_standings")
 
-    sleeper_stand_df = build_standings_from_sleeper(SLEEPER_LEAGUE_ID)
+    sleeper_stand_df = build_standings_from_sleeper(active_season_row.sleeper_league_id or "")
     tick("after build_standings_from_sleeper")
 
     stand_df = sleeper_stand_df
@@ -739,6 +755,7 @@ def get_app_context(force_refresh: bool = False) -> dict:
         "team_name": team_name,
         "owner_name": owner_name,
         "role": role,
+        "current_season": active_season,
         "roster_df": roster_df,
         "caps_df": caps_df,
         "picks_df": picks_df,

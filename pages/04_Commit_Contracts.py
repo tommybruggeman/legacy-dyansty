@@ -70,6 +70,25 @@ try:
 except Exception:
     pass
 
+# Advisory UX check. Database triggers remain authoritative and close the race
+# between this preflight and every legacy contract write below.
+try:
+    cutover_locked = bool(
+        sb.rpc("has_active_rollover_cutover_lock", {"p_league_id": league_id})
+        .execute()
+        .data
+    )
+except Exception as exc:
+    st.error(f"Could not verify rollover contract-write availability: {exc}")
+    st.stop()
+
+if cutover_locked:
+    st.warning(
+        "Contract commits are temporarily disabled while the commissioner "
+        "rollover cutover lock is active. No contract data was changed."
+    )
+    st.stop()
+
 st.title("Finalize Contract Import")
 st.caption("Review your contracts one last time before saving them to this league.")
 
@@ -228,7 +247,10 @@ if commit_clicked:
         st.rerun()
 
     except Exception as e:
-        st.error(f"Could not commit contracts: {e}")
+        if "rollover_cutover_contract_writes_blocked" in str(e):
+            st.error("Contract commits are temporarily disabled during rollover. No contract data was changed.")
+        else:
+            st.error(f"Could not commit contracts: {e}")
 
 if st.session_state.get("contracts_finalized"):
     st.success(

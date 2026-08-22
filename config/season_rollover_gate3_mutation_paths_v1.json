@@ -1,0 +1,233 @@
+{
+  "schema_version": 1,
+  "gate": "gate3-application-mutation-path-audit",
+  "baseline": {
+    "tag": "season-rollover-2025-2026-certified-v1",
+    "commit": "67d4d039244495f1c7fd417cd3210e9b5ebe2ede",
+    "certified_file_count": 119
+  },
+  "canonical_application_boundary": "services.season_rollover_control.SeasonRolloverControlService",
+  "protected_table_patterns": [
+    "rollover_*",
+    "prepared_*"
+  ],
+  "protected_exact_tables": [
+    "league_rollover_policies",
+    "league_seasons",
+    "season_roster_assignments",
+    "contract_agreements",
+    "contract_seasons",
+    "dead_cap_ledger",
+    "season_standings",
+    "season_matchups",
+    "season_playoff_brackets"
+  ],
+  "classifications": [
+    "CERTIFIED RPC",
+    "SAFE NON-ROLLOVER WRITE",
+    "LEGACY / MUST REMOVE",
+    "UNSAFE DIRECT WRITE",
+    "TEST ONLY",
+    "SCRIPT / ADMIN ONLY",
+    "UNKNOWN / REQUIRES REVIEW"
+  ],
+  "paths": [
+    {
+      "id": "commissioner-ui-entrypoint",
+      "classification": "CERTIFIED RPC",
+      "surfaces": ["rollover lifecycle through executed_unpublished"],
+      "mechanism": "UI delegates to canonical service",
+      "locations": ["pages/90_Settings.py:1340", "services/season_rollover_ui.py:77"],
+      "notes": "The page performs no protected table mutation. UI visibility is supplemental; service and database authorization remain authoritative."
+    },
+    {
+      "id": "authenticated-rollover-command-dispatch",
+      "classification": "CERTIFIED RPC",
+      "surfaces": ["season authority", "rollover executions", "owner decisions", "commissioner reviews", "authority preparation", "execution approval", "execution operations", "publication operations 32-36"],
+      "mechanism": "allowlisted authenticated RPC",
+      "locations": ["services/season_rollover_control.py:53", "services/season_rollover_control.py:747", "services/season_rollover_ui.py:47"],
+      "notes": "Unknown RPC names fail closed; authenticated database wrappers re-resolve the actor and commissioner authority."
+    },
+    {
+      "id": "policy-approval-authenticated",
+      "classification": "CERTIFIED RPC",
+      "surfaces": ["season authority"],
+      "mechanism": "approve_canonical_rollover_policy_authenticated(jsonb)",
+      "locations": ["services/season_rollover_control.py:519"],
+      "notes": "Canonical application path."
+    },
+    {
+      "id": "execution-window-and-owner-decisions",
+      "classification": "CERTIFIED RPC",
+      "surfaces": ["rollover executions", "rollover decisions"],
+      "mechanism": "authenticated lifecycle RPC wrappers",
+      "locations": ["season_engine/rollover_window.py:127", "services/season_rollover_ui.py:229", "services/season_rollover_ui.py:249", "services/season_rollover_owner_ui.py"],
+      "notes": "Includes execution creation/cancellation, notice-window transitions, owner submission, commissioner override, and close-window operations."
+    },
+    {
+      "id": "commissioner-review-lifecycle",
+      "classification": "CERTIFIED RPC",
+      "surfaces": ["commissioner reviews"],
+      "mechanism": "authenticated commissioner-review RPC wrappers",
+      "locations": ["season_engine/commissioner_review.py:133", "services/season_rollover_control.py:654", "services/season_rollover_ui.py:266"],
+      "notes": "Canonical review population and allowed outcomes are server validated."
+    },
+    {
+      "id": "authority-preparation-lifecycle",
+      "classification": "CERTIFIED RPC",
+      "surfaces": ["authority preparation", "dead cap", "prepared cap state"],
+      "mechanism": "authenticated authority-preparation RPC wrappers",
+      "locations": ["season_engine/authority_preparation.py:412", "services/season_rollover_control.py:676", "services/season_rollover_ui.py:310"],
+      "notes": "Preparation is derived from canonical review evidence."
+    },
+    {
+      "id": "immutable-history-capture",
+      "classification": "CERTIFIED RPC",
+      "surfaces": ["historical season evidence"],
+      "mechanism": "trusted capture_pre_rollover_history RPC",
+      "locations": ["season_engine/history/service.py:38", "services/season_rollover_control.py:544"],
+      "notes": "Service-role capability is confined to the canonical server-side control service after authenticated commissioner authorization."
+    },
+    {
+      "id": "dry-run-generation",
+      "classification": "CERTIFIED RPC",
+      "surfaces": ["dry-run evidence"],
+      "mechanism": "authenticated assertion plus private service persistence RPC",
+      "locations": ["season_engine/dry_run_simulator.py:169", "season_engine/dry_run_simulator.py:213", "services/season_rollover_ui.py:325"],
+      "notes": "The user boundary authorizes; the narrowly held service client persists canonical generated material."
+    },
+    {
+      "id": "execution-plan-generation",
+      "classification": "CERTIFIED RPC",
+      "surfaces": ["execution plans"],
+      "mechanism": "authenticated assertion/material RPCs plus private service persistence RPC",
+      "locations": ["season_engine/execution_plan.py:364", "season_engine/execution_plan.py:368", "season_engine/execution_plan.py:396", "services/season_rollover_ui.py:350"],
+      "notes": "Direct authenticated plan persistence is unavailable."
+    },
+    {
+      "id": "execution-plan-approval",
+      "classification": "CERTIFIED RPC",
+      "surfaces": ["execution approval", "cutover lock"],
+      "mechanism": "approve/revoke authenticated RPC wrappers",
+      "locations": ["season_engine/execution_approval.py:201", "season_engine/execution_approval.py:208", "services/season_rollover_ui.py:387"],
+      "notes": "Approval binds expected fingerprints and creates the certified cutover lock. Revocation exists in the service layer but is not exposed by the current commissioner UI."
+    },
+    {
+      "id": "execute-operations-1-31",
+      "classification": "CERTIFIED RPC",
+      "surfaces": ["execution operations", "roster assignments", "contract state", "dead cap", "prepared cap state", "free-agent eligibility", "expiring contracts", "standings", "matchups", "playoff structures", "cache invalidation"],
+      "mechanism": "execute_rollover_plan_authenticated(jsonb)",
+      "locations": ["services/season_rollover_ui.py:399"],
+      "notes": "Database execution requires approved plan, matching active cutover lock, expected state/fingerprints, idempotency, and registry order 1-31."
+    },
+    {
+      "id": "publish-operations-32-36",
+      "classification": "CERTIFIED RPC",
+      "surfaces": ["season authority", "prepared cap publication", "free-agent visibility", "cutover release", "cache/UI/AI context"],
+      "mechanism": "five sequential authenticated publication RPC wrappers",
+      "locations": ["services/season_rollover_control.py:53", "supabase/migrations/20260917_phase3b13a_publish_target_season_authority.sql", "supabase/migrations/20260918_phase3b13b_activate_target_cap_authority.sql", "supabase/migrations/20260919_phase3b13c_enable_target_market_visibility.sql", "supabase/migrations/20260920_phase3b13d_release_cutover_restrictions.sql", "supabase/migrations/20260921_phase3b13e_refresh_published_context.sql"],
+      "notes": "Certified RPC boundaries exist, but the Gate 3 UI deliberately exposes no publication mutation control pending separate publication certification."
+    },
+    {
+      "id": "legacy-policy-approval-admin-script",
+      "classification": "SCRIPT / ADMIN ONLY",
+      "surfaces": ["season authority"],
+      "mechanism": "service-role direct insert into league_rollover_policies",
+      "locations": ["scripts/approve_commissioner_rollover_policy.py:26", "season_engine/commissioner_policy_approval.py:58"],
+      "notes": "Not referenced by application pages. Must remain excluded from deployed UI/runtime command paths; the application uses the authenticated canonical wrapper instead."
+    },
+    {
+      "id": "legacy-contract-import",
+      "classification": "LEGACY / MUST REMOVE",
+      "surfaces": ["legacy contract state"],
+      "mechanism": "direct delete/insert on legacy contracts table",
+      "locations": ["pages/04_Commit_Contracts.py:77", "pages/04_Commit_Contracts.py:194", "pages/04_Commit_Contracts.py:215"],
+      "notes": "Checks has_active_rollover_cutover_lock and is also protected by database cutover guards, but remains a parallel legacy contract model and must not become a canonical rollover writer."
+    },
+    {
+      "id": "normalized-contract-transition-admin",
+      "classification": "SCRIPT / ADMIN ONLY",
+      "surfaces": ["contract agreements", "contract seasons"],
+      "mechanism": "apply_contract_transition RPC",
+      "locations": ["contract_engine/transition_execution_service.py:47", "contract_engine/transition_execution_service.py:56"],
+      "notes": "Explicit CLI/admin path with fingerprints, fixed certified counts, dry-run mode, confirm_apply, version checks, and replay validation; not imported by UI."
+    },
+    {
+      "id": "normalized-contract-backfill-admin",
+      "classification": "SCRIPT / ADMIN ONLY",
+      "surfaces": ["contract agreements", "contract seasons"],
+      "mechanism": "backfill_contract_model RPC",
+      "locations": ["contract_engine/service.py:22", "scripts/backfill_contract_model.py:1"],
+      "notes": "Migration/backfill utility, not an application rollover path."
+    },
+    {
+      "id": "contract-import-staging",
+      "classification": "SAFE NON-ROLLOVER WRITE",
+      "surfaces": ["contract import staging"],
+      "mechanism": "direct authenticated staging-table DML",
+      "locations": ["pages/02_Import_Contracts.py:419", "pages/02_Import_Contracts.py:475", "pages/03_Fix_Players.py:326", "pages/03_Fix_Players.py:399"],
+      "notes": "Does not mutate canonical rollover/prepared state."
+    },
+    {
+      "id": "waiver-and-free-agent-transactions",
+      "classification": "SAFE NON-ROLLOVER WRITE",
+      "surfaces": ["in-season free-agent transactions"],
+      "mechanism": "waiver claim insert and waiver/free-agent RPCs",
+      "locations": ["Admin Commissioner/_81_Waivers.py:158", "Admin Commissioner/_81_Waivers.py:205", "Admin Commissioner/_81_Waivers.py:218"],
+      "notes": "Separate in-season transaction domain; server RPCs and cutover restrictions must remain authoritative after publication wiring."
+    },
+    {
+      "id": "legacy-sleeper-roster-sync",
+      "classification": "SCRIPT / ADMIN ONLY",
+      "surfaces": ["legacy roster mirror"],
+      "mechanism": "direct roster table DML",
+      "locations": ["sleeper-map/sync_transactions.py:156", "sleeper-map/sync_transactions.py:174", "sleeper-map/sync_transactions.py:175", "scripts/sync_roster_state.py:126", "scripts/sync_roster_state.py:187"],
+      "notes": "Does not write season_roster_assignments and is not invoked by rollover UI."
+    },
+    {
+      "id": "league-setup-and-settings",
+      "classification": "SAFE NON-ROLLOVER WRITE",
+      "surfaces": ["league metadata", "memberships", "teams", "league rules"],
+      "mechanism": "ordinary authenticated table DML",
+      "locations": ["pages/00_league_Setup.py:345", "pages/00_league_Setup.py:352", "pages/00_league_Setup.py:367", "pages/90_Settings.py:945", "pages/90_Settings.py:1029", "pages/90_Settings.py:1453"],
+      "notes": "No direct league_seasons or protected rollover/prepared mutation was found."
+    },
+    {
+      "id": "derived-intelligence-builders",
+      "classification": "SCRIPT / ADMIN ONLY",
+      "surfaces": ["derived caches and intelligence"],
+      "mechanism": "offline builder table DML",
+      "locations": ["snapshot/", "engine/"],
+      "notes": "No certified rollover/prepared lifecycle table writer was found; operation 36 remains the canonical publication-context refresh boundary."
+    },
+    {
+      "id": "database-operation-handlers",
+      "classification": "CERTIFIED RPC",
+      "surfaces": ["all operation 1-36 domain mutations"],
+      "mechanism": "private SECURITY DEFINER handlers invoked only by certified public wrappers",
+      "locations": ["supabase/migrations/20260817_deterministic_rollover_execution_engine.sql", "supabase/migrations/20260819_phase3b6a_typed_authority_preflight_handlers.sql", "supabase/migrations/20260917_phase3b13a_publish_target_season_authority.sql", "supabase/migrations/20260918_phase3b13b_activate_target_cap_authority.sql", "supabase/migrations/20260919_phase3b13c_enable_target_market_visibility.sql", "supabase/migrations/20260920_phase3b13d_release_cutover_restrictions.sql", "supabase/migrations/20260921_phase3b13e_refresh_published_context.sql"],
+      "notes": "Private functions are not application-callable by authenticated/public roles."
+    },
+    {
+      "id": "tests-and-hosted-fixtures",
+      "classification": "TEST ONLY",
+      "surfaces": ["all representative rollover surfaces"],
+      "mechanism": "disposable SQL fixtures and integration runners",
+      "locations": ["tests/", "supabase/tests/"],
+      "notes": "Not imported by application runtime and guarded by disposable-environment sentinels where database mutation occurs."
+    }
+  ],
+  "audit_findings": {
+    "runtime_direct_writes_to_protected_tables": [],
+    "unsafe_direct_writes": [],
+    "legacy_paths": ["legacy-contract-import"],
+    "admin_only_bypass_capable_paths": ["legacy-policy-approval-admin-script", "normalized-contract-transition-admin", "normalized-contract-backfill-admin"],
+    "ui_missing_actions": [
+      "dry-run cancellation/supersession (not present in the certified commissioner service allowlist)",
+      "authority-preparation supersession (requires canonical replacement generation not exposed by the certified commissioner service)"
+    ],
+    "production_mutation_performed": false,
+    "rollover_executed": false,
+    "publication_executed": false
+  }
+}

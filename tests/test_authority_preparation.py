@@ -21,7 +21,7 @@ class PublicationTests(unittest.TestCase):
     def test_original_liability_blocks(self): self.assertIn("blocked_by_original_team_liability", self.one(original_team_liability=True).publication_blockers)
     def test_second_agreement_blocks(self): self.assertIn("blocked_by_second_agreement_conflict", self.one(second_agreement_conflict=True).publication_blockers)
     def test_natural_expiration_does_not_publish_without_approval(self):
-        self.assertEqual(self.one(commissioner_outcome="reject_publication").publication_action, "commissioner_hold")
+        self.assertEqual(self.one(commissioner_outcome="reject_publication").publication_action, "hold")
     def test_approval_is_only_future_instruction(self): self.assertEqual(self.one().publication_action, "plan_publication_at_execution")
     def test_retained_player_not_published(self):
         row = self.one(planned_contract_outcome="retain", active_agreement=True)

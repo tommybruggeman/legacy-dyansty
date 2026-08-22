@@ -196,6 +196,7 @@ class AuthoritySimulationInput:
     salary_cap_authority_fingerprint: str = ""
     finalized_owner_outcomes: tuple[Mapping[str, Any], ...] = ()
     finalized_commissioner_outcomes: tuple[Mapping[str, Any], ...] = ()
+    owner_expected_count: int | None = None
 
 
 @dataclass(frozen=True)
@@ -274,7 +275,7 @@ class PublicationAuthorityPlanner:
             eligibility = "approved_for_future_publication" if approved else (
                 blockers[0] if blockers else "naturally_expired_but_not_approved")
             action = "plan_publication_at_execution" if approved else (
-                "retain" if row.get("planned_contract_outcome") == "retain" else "hold")
+                "do_not_publish" if row.get("planned_contract_outcome") == "retain" else "hold")
             evidence = material_fingerprint(dict(row))
             basis = {"player": row.get("player_id"), "agreement": row.get("agreement_id"),
                      "eligibility": eligibility, "action": action, "blockers": blockers, "evidence": evidence}

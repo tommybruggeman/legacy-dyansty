@@ -23,6 +23,12 @@ class CapturePlan:
     generated_at: str
     source_fingerprint: str
     idempotency_key: str
+    canonical_team_count: int = 0
+    canonical_team_set_fingerprint: str = ""
+    source_roster_set_fingerprint: str = ""
+    mapping_set_fingerprint: str = ""
+    standings_set_fingerprint: str = ""
+    source_roster_identifiers: tuple[dict[str, Any], ...] = ()
     team_mappings: tuple[dict[str, Any], ...] = ()
     matchups: tuple[dict[str, Any], ...] = ()
     standings: tuple[dict[str, Any], ...] = ()
@@ -51,6 +57,12 @@ class CapturePlan:
             "league_id": self.league_id, "league_season_id": self.league_season_id,
             "season": self.season, "sleeper_league_id": self.sleeper_league_id,
             "source_fingerprint": self.source_fingerprint, "idempotency_key": self.idempotency_key,
+            "canonical_team_count": self.canonical_team_count,
+            "canonical_team_set_fingerprint": self.canonical_team_set_fingerprint,
+            "source_roster_set_fingerprint": self.source_roster_set_fingerprint,
+            "mapping_set_fingerprint": self.mapping_set_fingerprint,
+            "standings_set_fingerprint": self.standings_set_fingerprint,
+            "source_roster_identifiers": list(self.source_roster_identifiers),
             "team_mappings": list(self.team_mappings), "matchups": list(self.matchups),
             "standings": list(self.standings), "brackets": list(self.brackets),
             "roster_assignments": list(self.roster_assignments), "warnings": list(self.warnings),

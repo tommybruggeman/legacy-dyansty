@@ -10,7 +10,8 @@ from datetime import datetime, timezone
 import pandas as pd
 import streamlit as st
 from components.sidebar_nav import render_nav
-from auth import _sb
+from auth import auth_client
+from services.config import configured_value
 import math
 
 # ============================================================
@@ -32,6 +33,22 @@ PAGES_DIR = os.path.abspath(os.path.dirname(__file__))
 ROOT_DIR_STR = os.path.abspath(os.path.join(PAGES_DIR, ".."))
 sys.path.append(ROOT_DIR_STR)
 sys.path.append(os.path.join(ROOT_DIR_STR, "lib"))
+
+from services.invitations import (
+    INVITE_LINK_SESSION_NAMESPACE,
+    can_offer_invite_role,
+    classify_invite_status,
+    clear_invite_links,
+    create_invitation,
+    list_team_invitations,
+    remember_invite_link,
+    resend_invitation,
+    revoke_invitation,
+    safe_invite_link_payload,
+    validate_email,
+)
+from services.season_rollover_ui import render_season_rollover_control
+from services.season_rollover_owner_ui import render_owner_rollover_decisions
 
 
 # ============================================================
@@ -413,13 +430,11 @@ def _load_env() -> tuple[str, str]:
             break
 
     return (
-        (os.getenv("SUPABASE_URL") or st.secrets.get("SUPABASE_URL", "")).strip(),
+        configured_value("SUPABASE_URL"),
         (
-            os.getenv("SUPABASE_ANON_KEY")
-            or os.getenv("SUPABASE_KEY")
-            or st.secrets.get("SUPABASE_ANON_KEY", "")
-            or st.secrets.get("SUPABASE_KEY", "")
-        ).strip(),
+            configured_value("SUPABASE_ANON_KEY")
+            or configured_value("SUPABASE_KEY")
+        ),
     )
 
 
@@ -444,9 +459,14 @@ class _Table:
         self._select = "*"
         self._order = None
         self._filters = {}
+        self._count = None
+        self._head = False
+        self._range = None
 
-    def select(self, cols: str = "*", count: str | None = None):
+    def select(self, cols: str = "*", count: str | None = None, head: bool = False):
         self._select = cols
+        self._count = count
+        self._head = head
         return self
 
     def eq(self, col: str, val):
@@ -457,6 +477,10 @@ class _Table:
         self._order = (col, desc)
         return self
 
+    def range(self, start: int, end: int):
+        self._range = (int(start), int(end))
+        return self
+
     def execute(self):
         url = f"{self.base}/rest/v1/{self.name}"
         params = {"select": self._select}
@@ -465,11 +489,16 @@ class _Table:
         if self._order:
             params["order"] = f"{self._order[0]}.{'desc' if self._order[1] else 'asc'}"
 
-        r = requests.get(url, headers=self.h, params=params, timeout=20)
+        headers = dict(self.h)
+        if self._count == "exact": headers["Prefer"] = "count=exact"
+        if self._range: headers["Range"] = f"{self._range[0]}-{self._range[1]}"
+        r = requests.head(url, headers=headers, params=params, timeout=20) if self._head else requests.get(url, headers=headers, params=params, timeout=20)
         if r.status_code == 404:
             return _Resp([])
         r.raise_for_status()
-        return _Resp(r.json())
+        content_range = r.headers.get("Content-Range", "")
+        count = int(content_range.rsplit("/", 1)[1]) if "/" in content_range and content_range.rsplit("/", 1)[1] != "*" else None
+        return _Resp([] if self._head else r.json(), count)
 
     def insert(self, payload: dict | list[dict]):
         url = f"{self.base}/rest/v1/{self.name}"
@@ -511,14 +540,17 @@ class SB:
 
 
 sb = SB(SUPABASE_URL, SUPABASE_KEY)
-access = st.session_state.get("sb_access_token")
-sb_client = _sb(access) if access else None
+sb_client = auth_client()
 
 # ============================================================
 # Access control
 # ============================================================
 role = st.session_state.get("role")
 active_league_id = st.session_state.get("active_league_id")
+from season_engine import SeasonResolver
+from services.strict_pagination import complete_rows
+from services.season_rollover_ui import bounded_stable_page
+canonical_season = SeasonResolver(sb_client).get_active_season(active_league_id).season if active_league_id else None
 
 is_platform_admin = role in ["admin"]
 is_commissioner = role in ["commissioner", "host", "admin"]
@@ -540,15 +572,10 @@ def safe_table(table_name: str, order_col: str | None = None) -> list[dict]:
     try:
         client = sb_client if sb_client else sb
 
-        q = client.table(table_name).select("*")
-
-        if active_league_id:
-            q = q.eq("league_id", active_league_id)
-
+        rows = complete_rows(client, table_name, filters={"league_id": active_league_id} if active_league_id else {})
         if order_col:
-            q = q.order(order_col)
-
-        return q.execute().data or []
+            rows.sort(key=lambda row: str(row.get(order_col) or ""))
+        return rows
 
     except Exception as e:
         st.error(f"Could not load {table_name}: {e}")
@@ -589,6 +616,25 @@ def fetch_active_league() -> dict | None:
     except Exception as e:
         st.error(f"Could not load active league: {e}")
         return None
+
+
+def fetch_league_rules() -> dict:
+    try:
+        client = sb_client if sb_client else sb
+
+        rows = (
+            client.table("league_rules")
+            .select("*")
+            .eq("league_id", active_league_id)
+            .execute()
+            .data
+            or []
+        )
+
+        return rows[0] if rows else {}
+
+    except Exception:
+        return {}
 
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_sleeper_league_payload(sleeper_league_id: str) -> tuple[list[dict], list[dict]]:
@@ -679,10 +725,132 @@ def show_commissioner_gate():
     )
 
 
+def load_connected_memberships(league_id: str) -> dict[str, list[dict]]:
+    if not sb_client or not league_id:
+        return {}
+
+    try:
+        rows = complete_rows(sb_client, "league_memberships", "id,user_id,role,league_team_id,created_at",
+                             filters={"league_id": league_id})
+    except Exception:
+        return {}
+
+    grouped: dict[str, list[dict]] = {}
+
+    for row in rows:
+        team_id = row.get("league_team_id")
+
+        if not team_id:
+            continue
+
+        grouped.setdefault(team_id, []).append(row)
+
+    return grouped
+
+
+def load_invites_by_team(league_id: str) -> dict[str, list[dict]]:
+    result = list_team_invitations(league_id=league_id, sb=sb_client)
+
+    if not result.get("ok"):
+        st.warning(result.get("message") or "Could not load invitations.")
+        return {}
+
+    grouped: dict[str, list[dict]] = {}
+
+    for invite in result.get("invitations", []):
+        team_id = invite.get("league_team_id")
+
+        if not team_id:
+            continue
+
+        grouped.setdefault(team_id, []).append(invite)
+
+    return grouped
+
+
+def render_invitation_result(result: dict):
+    message = result.get("message") or "Invitation action complete."
+
+    if result.get("ok"):
+        st.success(message)
+    else:
+        st.error(message)
+
+    invite_url = result.get("invite_url")
+
+    if invite_url:
+        st.caption("Copyable invitation link")
+        st.code(invite_url)
+
+
+def reset_invite_links_when_league_changes(league_id: str | None) -> None:
+    state_key = "owner_invite_links_active_league_id"
+    previous_league_id = st.session_state.get(state_key)
+
+    if previous_league_id == league_id:
+        return
+
+    clear_invite_links(st.session_state)
+    st.session_state[state_key] = league_id
+
+
+def store_invitation_link(result: dict, invited_role: str) -> None:
+    if not result.get("ok") or not result.get("invite_url"):
+        return
+
+    payload = safe_invite_link_payload(result, invited_role=invited_role)
+    remember_invite_link(st.session_state, payload)
+
+
+def render_retained_invite_links(
+    *,
+    league_id: str,
+    league_team_id: str,
+    invited_role: str | None = None,
+) -> None:
+    prefix = f"{INVITE_LINK_SESSION_NAMESPACE}|"
+
+    for key in list(st.session_state.keys()):
+        if not str(key).startswith(prefix):
+            continue
+
+        payload = st.session_state.get(key) or {}
+
+        if payload.get("league_id") != league_id:
+            st.session_state.pop(key, None)
+            continue
+
+        if payload.get("league_team_id") != league_team_id:
+            continue
+
+        if invited_role and payload.get("invited_role") != invited_role:
+            continue
+
+        if classify_invite_status({"status": "pending", "expires_at": payload.get("expires_at")}) != "pending_active":
+            st.session_state.pop(key, None)
+            continue
+
+        label_role = str(payload.get("invited_role") or "owner").replace("_", "-")
+        email = payload.get("email") or "invited owner"
+        st.caption(f"Copy and share this {label_role} link for {email}")
+        st.code(payload.get("invite_url"))
+
+        if st.button(
+            "Clear link",
+            key=f"clear_invite_link_{league_team_id}_{label_role}_{payload.get('invitation_id')}",
+        ):
+            st.session_state.pop(key, None)
+            st.rerun()
+
+
+reset_invite_links_when_league_changes(active_league_id)
+
+
 # ============================================================
 # League context
 # ============================================================
 league = fetch_active_league()
+league_rules = fetch_league_rules()
 league_name = league.get("name") if league else "Current League"
 sleeper_league_id = league.get("sleeper_league_id") if league else None
 
@@ -879,48 +1047,241 @@ if section == "Owners":
 
     st.divider()
 
-    st.markdown("### Owner Access")
-    st.caption("Add owner or co-owner emails for each mapped team.")
+    st.markdown("### Owner Invitations")
 
-    access_rows = []
+    if not is_commissioner:
+        st.info("Only commissioners can manage owner invitations.")
+        st.stop()
+
+    connected_by_team = load_connected_memberships(active_league_id)
+    invites_by_team = load_invites_by_team(active_league_id)
 
     for team in league_teams:
-        access_rows.append(
-            {
-                "Contract Owner": team.get("owner_name"),
-                "Sleeper Team": team.get("sleeper_team_name") or "Unmapped",
-                "Owner Email": team.get("owner_email") or "",
-                "Co-Owner Email": team.get("co_owner_email") or "",
-            }
+        team_id = team.get("id")
+        owner_name = team.get("owner_name") or team.get("team_name") or "Unknown Owner"
+        team_name = team.get("team_name") or owner_name
+        sleeper_name = team.get("sleeper_team_name") or "Unmapped"
+        connected_members = connected_by_team.get(team_id, [])
+        team_invites = invites_by_team.get(team_id, [])
+        classified_invites = [
+            {**invite, "_classified_status": classify_invite_status(invite)}
+            for invite in team_invites
+        ]
+        pending_invites = [
+            invite
+            for invite in classified_invites
+            if invite.get("_classified_status") == "pending_active"
+        ]
+        latest_invite_status = (
+            classified_invites[0].get("_classified_status") if classified_invites else None
         )
+        if connected_members:
+            clear_invite_links(
+                st.session_state,
+                league_id=active_league_id,
+                league_team_id=team_id,
+                invited_role="owner",
+            )
 
-    access_df = pd.DataFrame(access_rows)
+            for member in connected_members:
+                member_role = str(member.get("role") or "").replace("-", "_")
+                if member_role in {"owner", "co_owner"}:
+                    clear_invite_links(
+                        st.session_state,
+                        league_id=active_league_id,
+                        league_team_id=team_id,
+                        invited_role=member_role,
+                    )
 
-    edited_access = st.data_editor(
-        access_df,
-        use_container_width=True,
-        hide_index=True,
-        disabled=["Contract Owner", "Sleeper Team"],
-        column_config={
-            "Owner Email": st.column_config.TextColumn("Owner Email"),
-            "Co-Owner Email": st.column_config.TextColumn("Co-Owner Email"),
-        },
-    )
+        for invite in classified_invites:
+            if invite.get("_classified_status") in {"accepted", "expired", "revoked"}:
+                clear_invite_links(
+                    st.session_state,
+                    league_id=active_league_id,
+                    league_team_id=team_id,
+                    invited_role=invite.get("role"),
+                    invitation_id=invite.get("id"),
+                )
 
-    if st.button("Save Owner Access", use_container_width=True):
-        for i, row in edited_access.iterrows():
-            team = league_teams[i]
+        with st.container(border=True):
+            top_col, status_col = st.columns([2, 1])
 
-            sb_client.table("league_teams").update(
-                {
-                    "owner_email": row.get("Owner Email") or None,
-                    "co_owner_email": row.get("Co-Owner Email") or None,
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                }
-            ).eq("id", team["id"]).execute()
+            with top_col:
+                st.markdown(f"**{team_name}**")
+                st.caption(f"Contract owner: {owner_name} | Sleeper: {sleeper_name}")
 
-        st.success("Owner access saved.")
-        st.rerun()
+            with status_col:
+                if connected_members:
+                    st.success(f"Connected ({len(connected_members)})")
+                elif pending_invites:
+                    st.warning("Pending")
+                elif latest_invite_status == "expired":
+                    st.warning("Invite expired")
+                elif latest_invite_status == "revoked":
+                    st.info("Invite revoked")
+                elif latest_invite_status == "accepted":
+                    st.success("Accepted")
+                else:
+                    st.info("Not invited")
+
+            if connected_members:
+                connected_rows = [
+                    {
+                        "User ID": member.get("user_id"),
+                        "Role": member.get("role") or "member",
+                    }
+                    for member in connected_members
+                ]
+                st.dataframe(
+                    pd.DataFrame(connected_rows),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+            if classified_invites:
+                invite_rows = [
+                    {
+                        "Email": invite.get("email"),
+                        "Access": str(invite.get("role") or "").replace("_", "-"),
+                        "Status": str(invite.get("_classified_status") or invite.get("status") or "").replace("_", " "),
+                        "Expires": invite.get("expires_at"),
+                        "Sent": invite.get("send_count") or 0,
+                    }
+                    for invite in classified_invites
+                ]
+                st.dataframe(
+                    pd.DataFrame(invite_rows),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+            action_cols = st.columns(3)
+            create_role = None
+
+            if connected_members:
+                st.info("Owner invite is disabled because this team already has connected app access.")
+
+                if not can_offer_invite_role(
+                    connected_members=connected_members,
+                    active_invites=pending_invites,
+                    invite_role="co_owner",
+                ):
+                    st.caption("A co-owner invitation is already pending for this team.")
+                else:
+                    create_role = "co_owner"
+                    invite_email = st.text_input(
+                        "Co-owner email",
+                        value="",
+                        placeholder="co-owner@email.com",
+                        key=f"invite_email_{team_id}_co_owner",
+                    )
+            else:
+                invite_email = st.text_input(
+                    "Email",
+                    value="",
+                    placeholder="owner@email.com",
+                    key=f"invite_email_{team_id}_owner_or_co_owner",
+                )
+                invite_role_label = st.radio(
+                    "Access type",
+                    ["Owner", "Co-owner"],
+                    horizontal=True,
+                    key=f"invite_role_{team_id}",
+                )
+                create_role = "co_owner" if invite_role_label == "Co-owner" else "owner"
+
+            with action_cols[0]:
+                if create_role and st.button(
+                    "Send New Invite" if latest_invite_status == "expired" else "Send Invite",
+                    key=f"send_invite_{team_id}_{create_role}",
+                    use_container_width=True,
+                ):
+                    if not validate_email(invite_email):
+                        st.error("Enter a valid email address.")
+                    else:
+                        result = create_invitation(
+                            league_id=active_league_id,
+                            league_team_id=team_id,
+                            email=invite_email,
+                            invite_role=create_role,
+                            sb=sb_client,
+                        )
+                        store_invitation_link(result, create_role)
+                        render_invitation_result(result)
+
+                        if result.get("ok"):
+                            log_commish_action(
+                                "create_owner_invitation",
+                                {
+                                    "league_team_id": team_id,
+                                    "email": result.get("email"),
+                                    "role": create_role,
+                                },
+                            )
+
+            pending_options = {
+                f"{invite.get('email')} ({str(invite.get('role') or '').replace('_', '-')}) [{invite.get('id')}]": invite.get("id")
+                for invite in pending_invites
+            }
+
+            if pending_options:
+                selected_pending = st.selectbox(
+                    "Pending invitation",
+                    list(pending_options.keys()),
+                    key=f"pending_invite_{team_id}",
+                )
+                selected_invite_id = pending_options[selected_pending]
+
+                with action_cols[1]:
+                    if st.button("Resend", key=f"resend_invite_{team_id}", use_container_width=True):
+                        result = resend_invitation(selected_invite_id, sb=sb_client)
+                        selected_invite = next(
+                            (invite for invite in pending_invites if invite.get("id") == selected_invite_id),
+                            {},
+                        )
+                        clear_invite_links(
+                            st.session_state,
+                            league_id=active_league_id,
+                            league_team_id=team_id,
+                            invited_role=selected_invite.get("role"),
+                            invitation_id=selected_invite_id,
+                        )
+                        store_invitation_link(result, selected_invite.get("role"))
+                        render_invitation_result(result)
+
+                        if result.get("ok"):
+                            log_commish_action(
+                                "resend_owner_invitation",
+                                {"invitation_id": selected_invite_id, "league_team_id": team_id},
+                            )
+
+                with action_cols[2]:
+                    if st.button("Revoke", key=f"revoke_invite_{team_id}", use_container_width=True):
+                        result = revoke_invitation(selected_invite_id, sb=sb_client)
+                        selected_invite = next(
+                            (invite for invite in pending_invites if invite.get("id") == selected_invite_id),
+                            {},
+                        )
+                        clear_invite_links(
+                            st.session_state,
+                            league_id=active_league_id,
+                            league_team_id=team_id,
+                            invited_role=selected_invite.get("role"),
+                            invitation_id=selected_invite_id,
+                        )
+                        render_invitation_result(result)
+
+                        if result.get("ok"):
+                            log_commish_action(
+                                "revoke_owner_invitation",
+                                {"invitation_id": selected_invite_id, "league_team_id": team_id},
+                            )
+                            st.rerun()
+
+            render_retained_invite_links(
+                league_id=active_league_id,
+                league_team_id=team_id,
+            )
 
 
 # ============================================================
@@ -932,9 +1293,8 @@ elif section == "My Access":
         "View your league role and team access.",
     )
 
-    st.info(
-        "Owner and co-owner account tools will live here. Commissioner-only league controls are hidden from this role."
-    )
+    st.info("Owner and co-owner rollover decisions are separate from commissioner-only controls.")
+    render_owner_rollover_decisions(sb_client, active_league_id)
 
 
 # ============================================================
@@ -954,6 +1314,7 @@ elif section == "League Manager Tools":
         "Manual Add",
         "Manual Drop",
         "Trade Tools",
+        "Season Rollover",
     ]
 
     if "lm_tool" not in st.session_state:
@@ -978,7 +1339,10 @@ elif section == "League Manager Tools":
 
     st.divider()
 
-    if tool == "League Rules":
+    if tool == "Season Rollover":
+        render_season_rollover_control(sb_client, active_league_id, league_name)
+
+    elif tool == "League Rules":
         st.markdown("### League Rules")
         st.caption("Commissioner settings for this league only.")
 
@@ -986,49 +1350,130 @@ elif section == "League Manager Tools":
 
         c1, c2, c3 = st.columns(3)
         with c1:
-            salary_cap = st.number_input("Salary cap", min_value=0, value=300)
+            salary_cap = st.number_input(
+                "Salary cap",
+                min_value=0,
+                value=int(float(league_rules.get("salary_cap", 225))),
+            )
         with c2:
-            max_contract_years = st.number_input("Max contract years", min_value=1, max_value=10, value=4)
+            max_contract_years = st.number_input(
+                "Max contract years",
+                min_value=1,
+                max_value=10,
+                value=int(float(league_rules.get("max_contract_years", 4))),
+            )
         with c3:
-            default_dead_cap_pct = st.number_input("Default dead cap %", min_value=0.0, max_value=100.0, value=0.0)
+            default_dead_cap_pct = st.number_input(
+                "Default dead cap %",
+                min_value=0.0,
+                max_value=100.0,
+                value=float(league_rules.get("default_dead_cap_pct", 50)),
+            )
 
         c4, c5, c6 = st.columns(3)
         with c4:
-            default_fa_years = st.number_input("Default free agent years", min_value=1, max_value=5, value=1)
+            default_fa_years = st.number_input(
+                "Default free agent years",
+                min_value=1,
+                max_value=5,
+                value=int(float(league_rules.get("default_fa_years", 1))),
+            )
         with c5:
-            default_fa_salary = st.number_input("Default free agent salary", min_value=0.0, value=1.0)
+            default_fa_salary = st.number_input(
+                "Default free agent salary",
+                min_value=0.0,
+                value=float(league_rules.get("default_fa_salary", 1.0)),
+            )
         with c6:
-            default_waiver_salary = st.number_input("Default waiver salary", min_value=0.0, value=1.0)
+            default_waiver_salary = st.number_input(
+                "Default waiver salary",
+                min_value=0.0,
+                value=float(league_rules.get("default_waiver_salary", 1.0)),
+            )
 
         st.divider()
         st.markdown("#### Rookie Draft Defaults")
 
         r1, r2, r3 = st.columns(3)
         with r1:
-            rookie_contract_years = st.number_input("Default rookie years", min_value=1, max_value=5, value=3)
+            rookie_contract_years = st.number_input(
+                "Default rookie years",
+                min_value=1,
+                max_value=5,
+                value=int(float(league_rules.get("rookie_contract_years", 3))),
+            )
         with r2:
-            rookie_option_years = st.number_input("Rookie option years", min_value=0, max_value=3, value=1)
+            rookie_option_years = st.number_input(
+                "Rookie option years",
+                min_value=0,
+                max_value=3,
+                value=int(float(league_rules.get("rookie_option_years", 1))),
+            )
         with r3:
-            rookie_scale_enabled = st.checkbox("Use rookie salary scale", value=True)
+            rookie_scale_enabled = st.checkbox(
+                "Use rookie salary scale",
+                value=bool(league_rules.get("rookie_scale_enabled", True)),
+            )
 
         st.divider()
         st.markdown("#### Auction Settings")
 
         a1, a2, a3 = st.columns(3)
         with a1:
-            min_2_year_bid = st.number_input("2-year minimum bid", min_value=0.0, value=4.0)
+            min_2_year_bid = st.number_input(
+                "2-year minimum bid",
+                min_value=0.0,
+                value=float(league_rules.get("min_2_year_bid", 4.0)),
+            )
         with a2:
-            min_3_year_bid = st.number_input("3-year minimum bid", min_value=0.0, value=12.0)
+            min_3_year_bid = st.number_input(
+                "3-year minimum bid",
+                min_value=0.0,
+                value=float(league_rules.get("min_3_year_bid", 12.0)),
+            )
         with a3:
-            min_4_year_bid = st.number_input("4-year minimum bid", min_value=0.0, value=20.0)
+            min_4_year_bid = st.number_input(
+                "4-year minimum bid",
+                min_value=0.0,
+                value=float(league_rules.get("min_4_year_bid", 20.0)),
+            )
 
         a4, a5 = st.columns(2)
         with a4:
-            year_discount_pct = st.number_input("Year discount %", min_value=0.0, max_value=100.0, value=10.0)
+            year_discount_pct = st.number_input(
+                "Year discount %",
+                min_value=0.0,
+                max_value=100.0,
+                value=float(league_rules.get("year_discount_pct", 10.0)),
+            )
         with a5:
-            auction_reset_allowed = st.checkbox("Allow auction reset", value=True)
+            auction_reset_allowed = st.checkbox(
+                "Allow auction reset",
+                value=bool(league_rules.get("auction_reset_allowed", True)),
+            )
 
         if st.button("Save League Rules", use_container_width=True):
+            sb_client.table("league_rules").upsert(
+                {
+                    "league_id": active_league_id,
+                    "salary_cap": salary_cap,
+                    "max_contract_years": max_contract_years,
+                    "default_dead_cap_pct": default_dead_cap_pct,
+                    "default_fa_years": default_fa_years,
+                    "default_fa_salary": default_fa_salary,
+                    "default_waiver_salary": default_waiver_salary,
+                    "rookie_contract_years": rookie_contract_years,
+                    "rookie_option_years": rookie_option_years,
+                    "rookie_scale_enabled": rookie_scale_enabled,
+                    "min_2_year_bid": min_2_year_bid,
+                    "min_3_year_bid": min_3_year_bid,
+                    "min_4_year_bid": min_4_year_bid,
+                    "year_discount_pct": year_discount_pct,
+                    "auction_reset_allowed": auction_reset_allowed,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                },
+                on_conflict="league_id",
+            ).execute()
             log_commish_action(
                 "save_league_rules",
                 {
@@ -1321,7 +1766,7 @@ elif section == "League Manager Tools":
             pick_options = [""] + [
                 f"{from_team} — {year} Round {round_num}"
                 for from_team in other_teams
-                for year in range(2026, 2030)
+                for year in range(canonical_season, canonical_season + 4)
                 for round_num in range(1, 5)
             ]
 
@@ -1410,43 +1855,25 @@ elif section == "Draft Center":
         with top_col1:
             draft_year = st.selectbox(
                 "Draft year",
-                [2026, 2027],
+                [canonical_season, canonical_season + 1],
                 index=0,
                 key="rookie_draft_year",
             )
 
         default_rookie_template = pd.DataFrame(
             [
-                [1, 1, 15, 2, 25, 3],
-                [1, 2, 12, 2, 25, 3],
-                [1, 3, 9, 2, 25, 3],
-                [1, 4, 8, 2, 25, 3],
-                [1, 5, 6, 2, 25, 3],
-                [1, 6, 5, 2, 25, 3],
-                [1, 7, 4, 2, 25, 3],
-                [1, 8, 4, 2, 25, 3],
-                [1, 9, 4, 2, 25, 3],
-                [1, 10, 4, 2, 25, 3],
-                [2, 1, 3, 2, 15, 3],
-                [2, 2, 3, 2, 15, 3],
-                [2, 3, 3, 2, 15, 3],
-                [2, 4, 3, 2, 15, 3],
-                [2, 5, 3, 2, 15, 3],
-                [2, 6, 3, 2, 15, 3],
-                [2, 7, 3, 2, 15, 3],
-                [2, 8, 3, 2, 15, 3],
-                [2, 9, 3, 2, 15, 3],
-                [2, 10, 3, 2, 15, 3],
-                [3, 1, 1, 1, 7, 2],
-                [3, 2, 1, 1, 7, 2],
-                [3, 3, 1, 1, 7, 2],
-                [3, 4, 1, 1, 7, 2],
-                [3, 5, 1, 1, 7, 2],
-                [3, 6, 1, 1, 7, 2],
-                [3, 7, 1, 1, 7, 2],
-                [3, 8, 1, 1, 7, 2],
-                [3, 9, 1, 1, 7, 2],
-                [3, 10, 1, 1, 7, 2],
+                [1, 1, 15, 2, 25, 1], [1, 2, 12, 2, 25, 1], [1, 3, 9, 2, 25, 1],
+                [1, 4, 8, 2, 25, 1], [1, 5, 6, 2, 25, 1], [1, 6, 5, 2, 25, 1],
+                [1, 7, 4, 2, 25, 1], [1, 8, 4, 2, 25, 1], [1, 9, 4, 2, 25, 1],
+                [1, 10, 4, 2, 25, 1],
+                [2, 1, 3, 2, 15, 1], [2, 2, 3, 2, 15, 1], [2, 3, 3, 2, 15, 1],
+                [2, 4, 3, 2, 15, 1], [2, 5, 3, 2, 15, 1], [2, 6, 3, 2, 15, 1],
+                [2, 7, 3, 2, 15, 1], [2, 8, 3, 2, 15, 1], [2, 9, 3, 2, 15, 1],
+                [2, 10, 3, 2, 15, 1],
+                [3, 1, 1, 1, 7, 1], [3, 2, 1, 1, 7, 1], [3, 3, 1, 1, 7, 1],
+                [3, 4, 1, 1, 7, 1], [3, 5, 1, 1, 7, 1], [3, 6, 1, 1, 7, 1],
+                [3, 7, 1, 1, 7, 1], [3, 8, 1, 1, 7, 1], [3, 9, 1, 1, 7, 1],
+                [3, 10, 1, 1, 7, 1],
             ],
             columns=["Round", "Pick", "Base Salary", "Base Years", "Option Salary", "Option Year"],
         )
@@ -1570,6 +1997,7 @@ elif section == "Draft Center":
 
                 salary = float(salary_row.iloc[0]["Base Salary"]) if not salary_row.empty else 1.0
                 years = int(salary_row.iloc[0]["Base Years"]) if not salary_row.empty else 1
+                option_salary = float(salary_row.iloc[0]["Option Salary"]) if not salary_row.empty else 7.0
 
                 draft_rows.append(
                     {
@@ -1581,6 +2009,7 @@ elif section == "Draft Center":
                         "salary": salary,
                         "years": years,
                         "contract_tag": "rookie_contract",
+                        "option_salary": option_salary,
                     }
                 )
 
@@ -1596,13 +2025,23 @@ elif section == "Draft Center":
                 st.warning("Add at least one rookie before submitting.")
                 st.stop()
 
-            log_commish_action(
-                "submit_rookie_draft_board",
-                {
-                    "draft_year": draft_year,
-                    "picks": completed,
-                },
-            )
+            team_id_by_owner = {
+                (t.get("owner_name") or t.get("team_name")): t.get("id") for t in league_teams
+            }
+            canonical_picks = []
+            for row in completed:
+                player_id = row["player"].rsplit("(", 1)[-1].rstrip(")")
+                canonical_picks.append({
+                    "draft_round": row["round"], "round_pick": row["pick"],
+                    "player_id": player_id, "league_team_id": team_id_by_owner[row["owner"]],
+                    "original_salary": row["salary"], "original_contract_term": row["years"],
+                    "one_time_option_salary": row["option_salary"],
+                })
+            sb_client.rpc("persist_rookie_draft_board_authenticated", {
+                "p_request": {"league_id": active_league_id, "draft_year": draft_year,
+                              "idempotency_key": f"rookie-board:{active_league_id}:{draft_year}:v1",
+                              "picks": canonical_picks}
+            }).execute()
 
             st.success(f"Submitted {len(completed)} rookie draft pick(s).")
     with auction_tab:
@@ -1815,7 +2254,14 @@ elif section == "Audit Log":
     rows = safe_table("commissioner_action_log", "created_at")
 
     if rows:
-        df = pd.DataFrame(rows)
+        audit_size = st.selectbox("Audit rows per page", [25, 50], key="audit-log-size")
+        audit_pages = max(1, (len(rows) + audit_size - 1) // audit_size)
+        audit_page = st.number_input("Audit page", min_value=1, max_value=audit_pages, value=1, step=1,
+                                     key="audit-log-page")
+        audit_view = bounded_stable_page(rows, page=int(audit_page), page_size=audit_size)
+        displayed = audit_view["rows"]
+        st.caption(f"Total {len(rows)} · Displayed {audit_view['displayed']} · Page {audit_view['page']}/{audit_view['pages']}")
+        df = pd.DataFrame(displayed)
         st.dataframe(df, use_container_width=True, hide_index=True)
     else:
         st.info("No commissioner action log entries found yet.")

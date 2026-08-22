@@ -8,7 +8,7 @@ from season_engine.dry_run_simulator import PersistedDryRunSimulation,RolloverDr
 FP="a"*64
 ROW=dict(id="s",rollover_execution_id="e",league_id="l",source_season=2025,target_season=2026,simulation_version=1,simulator_version="v1",simulation_status="valid",input_fingerprint=FP,result_fingerprint=FP,policy_fingerprint=FP,preflight_fingerprint=FP,owner_population_fingerprint=FP,commissioner_population_fingerprint=FP,authority_preparation_fingerprint=FP,result_payload={},blockers=[],warnings=[],valid=True,executable=True,plan_eligible=True)
 class Response:
- def __init__(self,data):self.data=data
+ def __init__(self,data,count=None):self.data=data;self.count=count
 class Call:
  def __init__(self,data):self.data=data
  def execute(self):return Response(self.data)
@@ -20,10 +20,19 @@ class Client:
    return Call(FP)
   return Call(self.data)
 class Query:
- def __init__(self,rows):self.rows=rows
- def select(self,*a):return self
- def eq(self,*a):return self
- def execute(self):return Response(self.rows)
+ def __init__(self,rows):self.rows=rows;self.filters=[];self.bounds=None;self.order_key=None
+ def select(self,*a,**k):return self
+ def eq(self,k,v):self.filters.append((k,v));return self
+ def order(self,k):self.order_key=k;return self
+ def range(self,s,e):self.bounds=(s,e);return self
+ def execute(self):
+  rows=[dict(x) for x in self.rows if all(x.get(k)==v for k,v in self.filters)]
+  if self.order_key:
+   for index,row in enumerate(rows):row.setdefault(self.order_key,f"fixture:{index:08d}")
+   rows.sort(key=lambda row:str(row[self.order_key]))
+  count=len(rows)
+  if self.bounds:rows=rows[self.bounds[0]:self.bounds[1]+1]
+  return Response(rows,count)
 class EvidenceClient(Client):
  def __init__(self,rows):super().__init__({"authorized":True,"actor_user_id":"u"});self.rows=rows
  def table(self,name):return Query(self.rows[name])
@@ -63,8 +72,8 @@ class TrustBoundaryTests(unittest.TestCase):
   from season_engine.dry_run_simulator import RolloverDryRunSimulator
   result=RolloverDryRunSimulator().simulate(replace(source(),finalized_owner_outcomes=()));self.assertIn("finalized_owner_outcomes_missing",result.blockers)
  def test_authoritative_reconstruction_orders_evidence(self):
-  preparations=[{"authority_type":x,"authority_status":"prepared","id":x,"version":1,"authority_fingerprint":FP,"evidence_fingerprint":FP,"preparation_fingerprint":FP} for x in ("salary_cap","publication","dead_cap")]
-  rows={"rollover_executions":[{"id":"e"}],"rollover_owner_decisions":[{"agreement_id":"b","player_id":"2","decision_status":"planned_release"},{"agreement_id":"a","player_id":"1","decision_status":"planned_retention"}],"rollover_commissioner_reviews":[{"agreement_id":"a","player_id":"1","review_type":"x","review_state":"approved"}],"rollover_authority_preparations":preparations}
+  preparations=[{"rollover_execution_id":"e","authority_type":x,"authority_status":"prepared","id":x,"version":1,"authority_fingerprint":FP,"evidence_fingerprint":FP,"preparation_fingerprint":FP} for x in ("salary_cap","publication","dead_cap")]
+  rows={"rollover_executions":[{"id":"e"}],"rollover_owner_decisions":[{"rollover_execution_id":"e","agreement_id":"b","player_id":"2","decision_status":"planned_release"},{"rollover_execution_id":"e","agreement_id":"a","player_id":"1","decision_status":"planned_retention"}],"rollover_commissioner_reviews":[{"rollover_execution_id":"e","agreement_id":"a","player_id":"1","review_type":"x","review_state":"approved"}],"rollover_authority_preparations":preparations}
   service=TrustedDryRunGenerationService(EvidenceClient(rows),Client({"simulation":ROW}));built,evidence=service.build_authority_simulation_input("e",lambda evidence:source())
   self.assertEqual([x["agreement_id"] for x in evidence["owner_outcomes"]],["a","b"]);self.assertEqual([x["authority_type"] for x in evidence["preparations"]],["dead_cap","publication","salary_cap"])
 

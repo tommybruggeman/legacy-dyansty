@@ -5,6 +5,9 @@ import os, sys, requests
 from pathlib import Path
 import streamlit as st
 
+from season_engine import SeasonResolver
+from season_engine.service import resolve_single_league_id
+
 st.set_page_config(page_title="Fantasy GM — Draft Picks", layout="wide")
 
 # ---------- Path prelude ----------
@@ -109,6 +112,8 @@ class SB:
         return _SBTable(self.url, self.h, name)
 
 sb = SB(SUPABASE_URL, SUPABASE_KEY)
+ACTIVE_LEAGUE_ID = resolve_single_league_id(sb)
+NEXT_SEASON = SeasonResolver(sb).get_next_season(ACTIVE_LEAGUE_ID)
 
 # ---------- Access context ----------
 role = st.session_state.get("role")
@@ -161,7 +166,7 @@ else:
 
 col1, col2 = st.columns([1, 2])
 with col1:
-    season = st.number_input("Season", min_value=2024, max_value=2100, value=2027, step=1)
+    season = st.number_input("Season", min_value=2024, max_value=2100, value=NEXT_SEASON, step=1)
 with col2:
     owner = st.selectbox("Filter by Owner", teams)
 

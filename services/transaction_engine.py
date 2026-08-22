@@ -12,7 +12,7 @@ class LeagueRules:
     max_roster_size: int = 22
     max_ir: int = 1
     max_taxi: int = 1
-    taxi_cap_multiplier: float = 2 / 3
+    taxi_cap_multiplier: float = 1 / 2
     ir_cap_multiplier: float = 1 / 2
 
 
@@ -25,6 +25,7 @@ class Contract:
     years_left: int
     status: RosterStatus = "Active"
     rookie: bool = False
+    rookie_draft_assignment_id: str | None = None
     active: bool = True
 
 
@@ -76,9 +77,9 @@ class TransactionEngine:
             )
 
     def validate_taxi_eligibility(self, contract: Contract) -> None:
-        if contract.status == "Taxi" and not contract.rookie:
+        if contract.status == "Taxi" and not contract.rookie_draft_assignment_id:
             raise TransactionEngineError(
-                f"{contract.player_name} is not eligible for Taxi because he is not marked rookie."
+                f"{contract.player_name} is not eligible for Taxi without Rookie Draft Board provenance."
             )
 
     def apply_faab_bid(self, team: TeamCapState, bid: float) -> TeamCapState:

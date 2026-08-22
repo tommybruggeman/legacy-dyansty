@@ -5,7 +5,7 @@ from typing import Any
 from season_engine import SeasonResolver
 from .models import CaptureResult
 from .planner import build_capture_plan
-from .repositories import HistoricalSeasonRepository
+from .repositories import HistoricalSeasonRepository, paginated_rows
 from .sleeper_source import HistorySource, SleeperHistorySource
 
 
@@ -17,8 +17,18 @@ class PreRolloverHistoryService:
     def plan(self, league_id: str):
         season = SeasonResolver(self.client).get_active_season(league_id)
         bundle = self.source.fetch(season)
-        teams = self.client.table("league_teams").select("*").eq("league_id", league_id).execute().data or []
-        players = self.client.table("player_universe").select("sleeper_id,player_name").execute().data or []
+        teams = paginated_rows(self.client, "league_teams", filters={"league_id": league_id})
+        referenced_players = sorted({str(player) for roster in bundle.rosters for player in (roster.get("players") or ())})
+        players = []
+        for start in range(0, len(referenced_players), 200):
+            batch = referenced_players[start:start + 200]
+            if not batch:
+                continue
+            query = self.client.table("player_universe").select("sleeper_id,player_name", count="exact").in_("sleeper_id", batch).order("sleeper_id").range(0, len(batch)-1)
+            response = query.execute(); count = getattr(response, "count", None)
+            if count is None or len(response.data or []) != count:
+                raise RuntimeError("Player-name evidence was truncated or its exact count was unavailable.")
+            players.extend(response.data or [])
         names = {str(row["sleeper_id"]): row.get("player_name") for row in players if row.get("sleeper_id")}
         try: existing = HistoricalSeasonRepository(self.client).counts(str(season.id))
         except Exception: existing = {}

@@ -30,7 +30,8 @@ import pandas as pd
 import streamlit as st
 
 from components.sidebar_nav import render_nav
-from auth import require_login, current_user
+from auth import auth_client, require_login, current_user
+from services.my_team_context import resolve_my_team
 
 # ---------- page ----------
 ICON = Path(__file__).resolve().parents[1] / "assets" / "page_icon.png"
@@ -544,13 +545,12 @@ def ensure_active_league_from_user() -> Optional[str]:
         sb.table("league_memberships")
         .select("league_id, role")
         .eq("user_id", user_id)
-        .limit(1)
         .execute()
         .data
         or []
     )
 
-    if not rows:
+    if len(rows) != 1:
         return None
 
     st.session_state["active_league_id"] = rows[0].get("league_id")
@@ -564,62 +564,24 @@ def resolve_my_team_uncached(user_id: str) -> dict | None:
     if not sb or not league_id or not user_id:
         return None
 
-    membership_rows = (
-        sb.table("league_memberships")
-        .select("*")
-        .eq("league_id", league_id)
-        .eq("user_id", user_id)
-        .limit(1)
-        .execute()
-        .data
-        or []
-    )
-
-    if not membership_rows:
-        return None
-
-    membership = membership_rows[0]
-    team_id = membership.get("team_id")
-
-    if not team_id:
-        return None
-
-    owner_rows = (
-        sb.table("owners")
-        .select("*")
-        .eq("id", team_id)
-        .eq("league_id", league_id)
-        .limit(1)
-        .execute()
-        .data
-        or []
-    )
-
-    if not owner_rows:
-        return None
-
-    owner = owner_rows[0]
-
-    return {
-        "league_id": league_id,
-        "team_id": owner.get("id"),
-        "team_name": owner.get("team_name") or owner.get("display_name") or owner.get("full_name"),
-        "owner_name": owner.get("full_name") or owner.get("display_name") or owner.get("team_name"),
-        "role": membership.get("role"),
-    }
+    return resolve_my_team(sb, user_id=user_id, league_id=league_id)
 
 def get_cached_my_team():
-    if "my_team_context" in st.session_state:
-        return st.session_state["my_team_context"]
-
     user_id = get_user_id()
 
     if not user_id:
         return None
 
+    cached = st.session_state.get("my_team_context")
+    active_league = st.session_state.get("active_league_id")
+    if (cached and cached.get("_user_id") == user_id
+            and cached.get("league_id") == active_league):
+        return cached
+
     my_team = resolve_my_team_uncached(user_id)
 
     if my_team:
+        my_team["_user_id"] = user_id
         st.session_state["my_team_context"] = my_team
         st.session_state["active_league_id"] = my_team["league_id"]
         st.session_state["role"] = my_team.get("role")
@@ -662,15 +624,38 @@ def load_roster(league_id: str) -> pd.DataFrame:
     )
 
 @st.cache_data(ttl=300, show_spinner=False)
-def load_caps() -> pd.DataFrame:
+def load_caps(league_id: str, context_generation: int) -> pd.DataFrame:
     if not sb:
         return pd.DataFrame()
 
     try:
-        rows = sb.table("v_team_caps").select("*").execute().data or []
+        from services.publication_context import published_cap_rows
+        rows = published_cap_rows(sb, league_id)
         return pd.DataFrame(rows)
     except Exception:
         return pd.DataFrame()
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_league_rules(league_id: str) -> dict:
+    if not sb or not league_id:
+        return {}
+
+    try:
+        rows = (
+            sb.table("league_rules")
+            .select("*")
+            .eq("league_id", league_id)
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+
+        return rows[0] if rows else {}
+
+    except Exception:
+        return {}
 
 @st.cache_data(ttl=300, show_spinner=False)
 def load_draft_picks() -> pd.DataFrame:
@@ -754,7 +739,7 @@ def load_trade_block(league_id: str, owner_name: str) -> pd.DataFrame:
 def load_cap_adjustments(
     league_id: str,
     owner_name: str,
-    season: int = 2026
+    season: int,
 ) -> pd.DataFrame:
     if not sb:
         return pd.DataFrame()
@@ -962,10 +947,14 @@ team_name = my_team["team_name"] or "My Team"
 owner_name = my_team["owner_name"] or team_name
 role = my_team.get("role") or "owner"
 
+league_rules = load_league_rules(league_id)
+salary_cap = float(league_rules.get("salary_cap", 225))
+
 roster_df = load_roster(league_id)
 tick("after load_roster")
 
-caps_df = load_caps()
+from services.publication_context import publication_generation
+caps_df = load_caps(league_id, publication_generation(sb, league_id))
 tick("after load_caps")
 
 picks_df = load_draft_picks()
@@ -980,7 +969,10 @@ tick("after load_team_activity")
 trade_df = load_trade_block(league_id, owner_name)
 tick("after load_trade_block")
 
-cap_adj_df = load_cap_adjustments(league_id, owner_name)
+from season_engine import SeasonResolver
+
+active_season = SeasonResolver(auth_client()).get_active_season(league_id).season
+cap_adj_df = load_cap_adjustments(league_id, owner_name, active_season)
 tick("after load_cap_adjustments")
 
 stand_df = load_cached_standings(league_id)
@@ -1059,7 +1051,7 @@ cap_used = (
     + manual_adjustment
 )
 
-cap_space = 225 - cap_used
+cap_space = salary_cap - cap_used
 
 cap_txt = f"${cap_used:.1f}"
 roster_count = len(my_roster)
@@ -1108,6 +1100,7 @@ for col, (title, value, sub) in zip([m1, m2, m3, m4, m5], metrics):
     <div><strong>Taxi:</strong><span>${taxi_adjustment:.2f}</span></div>
     <div><strong>IR:</strong><span>${ir_adjustment:.2f}</span></div>
     <hr>
+    <div><strong>Limit:</strong><span>${salary_cap:.2f}</span></div>
     <div><strong>Total:</strong><span>${cap_used:.2f}</span></div>
     <div><strong>Space:</strong><span>${cap_space:.2f}</span></div>
   </div>
@@ -1357,7 +1350,7 @@ with right:
                     "league_id": league_id,
                     "owner_name": owner_name,
                     "player_name": selected_designation_player,
-                    "season": 2026,
+                    "season": active_season,
                     "adjustment_type": adjustment_type,
                     "amount": adjustment_amount,
                     "note": f"{designation} designation",

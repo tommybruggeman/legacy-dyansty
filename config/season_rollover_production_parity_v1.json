@@ -1,0 +1,301 @@
+{
+  "schema_version": 1,
+  "baseline_tag": "season-rollover-2025-2026-certified-v1",
+  "baseline_commit": "67d4d039244495f1c7fd417cd3210e9b5ebe2ede",
+  "source_season": 2025,
+  "target_season": 2026,
+  "required_tables": {
+    "historical_capture_executions": [
+      "id",
+      "league_season_id"
+    ],
+    "season_roster_assignments": [
+      "league_season_id",
+      "league_team_id",
+      "sleeper_player_id"
+    ],
+    "rollover_executions": [
+      "id",
+      "league_id",
+      "source_season",
+      "target_season",
+      "status"
+    ],
+    "rollover_execution_locks": [
+      "rollover_execution_id",
+      "lock_type",
+      "status"
+    ],
+    "rollover_owner_decisions": [
+      "rollover_execution_id"
+    ],
+    "rollover_commissioner_reviews": [
+      "rollover_execution_id"
+    ],
+    "rollover_authority_preparations": [
+      "rollover_execution_id",
+      "authority_status"
+    ],
+    "rollover_dry_run_simulations": [
+      "rollover_execution_id"
+    ],
+    "rollover_execution_plans": [
+      "rollover_execution_id",
+      "ordered_operations",
+      "plan_fingerprint"
+    ],
+    "rollover_execution_plan_approvals": [
+      "execution_plan_id"
+    ],
+    "rollover_execution_input_snapshots": [
+      "rollover_execution_id",
+      "aggregate_snapshot_fingerprint"
+    ],
+    "rollover_execution_input_snapshot_components": [
+      "snapshot_id",
+      "component_name",
+      "component_schema_version",
+      "canonical_payload"
+    ],
+    "rollover_execution_handler_registry": [
+      "operation_code",
+      "operation_order",
+      "handler_version",
+      "execution_owner",
+      "enabled"
+    ],
+    "rollover_execution_operation_results": [
+      "rollover_execution_id",
+      "operation_index",
+      "operation_type"
+    ],
+    "rollover_target_roster_assignment_sets": [
+      "rollover_execution_id",
+      "expected_row_count",
+      "aggregate_assignment_set_hash"
+    ],
+    "rollover_dead_cap_obligations": [
+      "rollover_execution_id",
+      "deterministic_fingerprint"
+    ],
+    "prepared_team_cap_sets": [
+      "rollover_execution_id"
+    ],
+    "prepared_team_caps": [
+      "cap_set_id",
+      "league_team_id"
+    ],
+    "prepared_free_agent_eligibility_sets": [
+      "rollover_execution_id"
+    ],
+    "prepared_expiring_contract_sets": [
+      "rollover_execution_id"
+    ],
+    "prepared_target_standings_sets": [
+      "rollover_execution_id"
+    ],
+    "prepared_target_matchup_sets": [
+      "rollover_execution_id"
+    ],
+    "prepared_target_playoff_structures": [
+      "rollover_execution_id"
+    ],
+    "season_cache_invalidation_manifests": [
+      "rollover_execution_id"
+    ],
+    "rollover_post_execution_validation_reports": [
+      "rollover_execution_id"
+    ],
+    "rollover_executed_unpublished_finalizations": [
+      "rollover_execution_id"
+    ]
+  },
+  "required_column_types": {
+    "rollover_executions.id": "uuid",
+    "rollover_executions.source_season": "integer",
+    "rollover_executions.target_season": "integer",
+    "rollover_executions.status": "text",
+    "rollover_execution_plans.ordered_operations": "jsonb",
+    "rollover_execution_plans.plan_fingerprint": "text",
+    "rollover_execution_input_snapshot_components.canonical_payload": "jsonb",
+    "rollover_execution_handler_registry.operation_order": "integer",
+    "rollover_execution_handler_registry.handler_version": "integer",
+    "rollover_execution_operation_results.operation_index": "integer"
+  },
+  "required_functions": {
+    "approve_canonical_rollover_policy_authenticated(jsonb)": {
+      "security_definer": true,
+      "search_path": "pg_catalog, public",
+      "authenticated_execute": true
+    },
+    "create_rollover_execution_authenticated(jsonb)": {
+      "security_definer": true,
+      "search_path": "pg_catalog, public",
+      "authenticated_execute": true
+    },
+    "open_rollover_notice_window_authenticated(jsonb)": {
+      "security_definer": true,
+      "search_path": "pg_catalog, public",
+      "authenticated_execute": true
+    },
+    "submit_rollover_owner_decision_authenticated(jsonb)": {
+      "security_definer": true,
+      "search_path": "pg_catalog, public",
+      "authenticated_execute": true
+    },
+    "override_rollover_owner_decision_authenticated(jsonb)": {
+      "security_definer": true,
+      "search_path": "pg_catalog, public",
+      "authenticated_execute": true
+    },
+    "close_rollover_decision_window_authenticated(jsonb)": {
+      "security_definer": true,
+      "search_path": "pg_catalog, public",
+      "authenticated_execute": true
+    },
+    "cancel_rollover_execution_authenticated(jsonb)": {
+      "security_definer": true,
+      "search_path": "pg_catalog, public",
+      "authenticated_execute": true
+    },
+    "initialize_rollover_commissioner_reviews_authenticated(jsonb)": {
+      "security_definer": true,
+      "search_path": "pg_catalog, public",
+      "authenticated_execute": true
+    },
+    "begin_rollover_commissioner_review_authenticated(jsonb)": {
+      "security_definer": true,
+      "search_path": "pg_catalog, public",
+      "authenticated_execute": true
+    },
+    "submit_rollover_commissioner_review_authenticated(jsonb)": {
+      "security_definer": true,
+      "search_path": "pg_catalog, public",
+      "authenticated_execute": true
+    },
+    "supersede_rollover_commissioner_review_authenticated(jsonb)": {
+      "security_definer": true,
+      "search_path": "pg_catalog, public",
+      "authenticated_execute": true
+    },
+    "cancel_rollover_commissioner_review_authenticated(jsonb)": {
+      "security_definer": true,
+      "search_path": "pg_catalog, public",
+      "authenticated_execute": true
+    },
+    "execute_rollover_plan_authenticated(jsonb)": {
+      "security_definer": true,
+      "search_path": "pg_catalog, public",
+      "authenticated_execute": true
+    },
+    "approve_rollover_execution_plan_authenticated(jsonb)": {
+      "security_definer": true,
+      "search_path": "pg_catalog, public",
+      "authenticated_execute": true
+    },
+    "prepare_rollover_authorities_authenticated(jsonb)": {
+      "security_definer": true,
+      "search_path": "pg_catalog, public",
+      "authenticated_execute": true
+    },
+    "supersede_rollover_authority_preparation_authenticated(jsonb)": {
+      "security_definer": true,
+      "search_path": "pg_catalog, public",
+      "authenticated_execute": true
+    },
+    "cancel_rollover_authority_preparation_authenticated(jsonb)": {
+      "security_definer": true,
+      "search_path": "pg_catalog, public",
+      "authenticated_execute": true
+    },
+    "revoke_rollover_execution_plan_approval_authenticated(jsonb)": {
+      "security_definer": true,
+      "search_path": "pg_catalog, public",
+      "authenticated_execute": true
+    },
+    "phase3b8a_is_preserved_off_roster_liability(uuid,uuid,text,uuid)": {
+      "security_definer": true,
+      "search_path": "pg_catalog, public",
+      "authenticated_execute": false
+    },
+    "validate_target_roster_assignment_set_phase3b8a_private(uuid,uuid,uuid)": {
+      "security_definer": true,
+      "search_path": "pg_catalog, public",
+      "authenticated_execute": false
+    },
+    "write_target_roster_assignment_set_phase3b8a_private(uuid,uuid,uuid,uuid)": {
+      "security_definer": true,
+      "search_path": "pg_catalog, public",
+      "authenticated_execute": false
+    },
+    "write_prepared_caps_phase3b10b_private(uuid,uuid,uuid,uuid)": {
+      "security_definer": true,
+      "search_path": "pg_catalog, public",
+      "authenticated_execute": false
+    },
+    "execute_rollover_typed_handler_phase3b12c_private(jsonb,uuid,uuid,uuid,uuid)": {
+      "security_definer": true,
+      "search_path": "pg_catalog, public",
+      "authenticated_execute": false
+    },
+    "phase3b10b_derive_team_caps_private(uuid,uuid,uuid,numeric,text)": {
+      "security_definer": true,
+      "search_path": "pg_catalog, public",
+      "authenticated_execute": false
+    }
+  },
+  "definition_markers": {
+    "phase3b8a_is_preserved_off_roster_liability(uuid,uuid,text,uuid)": [
+      "active_off_roster_liability",
+      "preserve_active_liability",
+      "evidence_fingerprint",
+      "review_fingerprint"
+    ],
+    "validate_target_roster_assignment_set_phase3b8a_private(uuid,uuid,uuid)": [
+      "target_roster_owner_mismatch",
+      "preserved_off_roster_source_assignment_conflict",
+      "phase3b8a_is_preserved_off_roster_liability"
+    ],
+    "write_target_roster_assignment_set_phase3b8a_private(uuid,uuid,uuid,uuid)": [
+      "intentional_exclusion",
+      "preserved_off_roster_liability_count",
+      "publication_performed"
+    ],
+    "write_prepared_caps_phase3b10b_private(uuid,uuid,uuid,uuid)": [
+      "'[]'::jsonb",
+      "phase3b10b_derive_team_caps_private",
+      "prepared_team_cap_sets",
+      "prepared_team_caps"
+    ],
+    "phase3b10b_derive_team_caps_private(uuid,uuid,uuid,numeric,text)": [
+      "phase3b8a_is_preserved_off_roster_liability",
+      "cap_hit"
+    ]
+  },
+  "required_constraints": [
+    {
+      "table": "rollover_execution_handler_registry",
+      "contains": "UNIQUE (operation_order)"
+    },
+    {
+      "table": "rollover_execution_input_snapshot_components",
+      "contains": "component_schema_version"
+    },
+    {
+      "table": "rollover_execution_operation_results",
+      "contains": "operation_index"
+    },
+    {
+      "table": "rollover_executed_unpublished_finalizations",
+      "contains": "rollover_execution_id"
+    }
+  ],
+  "operations_source": "config/rollover_operation_catalog.yaml",
+  "publication_operations": [
+    32,
+    33,
+    34,
+    35,
+    36
+  ]
+}

@@ -46,6 +46,8 @@ def render_nav():
 
         st.page_link("pages/01_Season_Standings.py", label="Season Standings")
         st.page_link("pages/02_My_Team.py", label="My Team")
+        st.page_link("pages/04_Free_Agent.py", label="Free Agent")
+        st.page_link("pages/05_GM_Assistant.py", label="GM Assistant Beta")
         st.page_link("pages/02_Weekly_Matchups.py", label="Weekly Matchups")
         st.page_link("pages/03_Teams.py", label="Teams")
         st.page_link("pages/90_Settings.py", label="Settings")

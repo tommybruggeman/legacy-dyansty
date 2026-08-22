@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "baseline_tag": "season-rollover-2025-2026-certified-v1",
+  "migrations": [
+    {"name": "20260922_season_rollover_trusted_boundaries.sql", "sha256": "bc506fbf79ed01d3db2f3aecab796ec829d9dca2da38cd51ccfb28e55e7d398b"},
+    {"name": "20261001_phase3b8a_preserved_off_roster_liability.sql", "sha256": "512afbed528d739092cb10e58076dc593320c6c722a227b1bffd8684ddb0fe22"},
+    {"name": "20261002_phase3b10b_empty_dead_cap_evidence.sql", "sha256": "d6b9632aa241c6885c1fef068d2e4d18a76e675c0f08c549faed7e0f9e09c180"},
+    {"name": "20261003_phase3b10b_preserved_liability_caps.sql", "sha256": "d3bde83229f3b0964a4071c4f7c344166d615ff1754e358edfeba0fb6f5ebfa9"}
+  ],
+  "required_tables": ["leagues", "league_memberships", "league_rollover_policies", "rollover_executions", "rollover_execution_input_snapshots", "rollover_execution_input_snapshot_components", "rollover_execution_locks", "rollover_execution_plans", "contract_agreements", "contract_seasons", "season_roster_assignments", "rollover_target_roster_assignment_sets", "rollover_contract_releases", "rollover_commissioner_holds", "rollover_dead_cap_obligations", "prepared_team_cap_sets", "prepared_team_caps", "player_universe", "league_seasons", "league_teams"],
+  "required_functions": ["rollover_material_fingerprint(jsonb)", "raise_phase3b6c1_failure(text,jsonb)", "require_authenticated_user()", "require_commissioner_authority(uuid)"],
+  "required_roles": ["anon", "authenticated", "service_role"],
+  "required_columns": ["contract_seasons.cap_hit", "rollover_execution_input_snapshot_components.canonical_payload", "rollover_execution_input_snapshot_components.component_schema_version", "rollover_authority_preparations.authority_status"]
+}

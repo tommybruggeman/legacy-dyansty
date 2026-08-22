@@ -46,6 +46,7 @@ from season_engine.history.sleeper_source import HistorySource, SleeperHistorySo
 from season_engine.rollover_window import RolloverPreflightRequest, RolloverPreflightService, canonical
 from season_engine.contract_authority_preflight import ContractAuthorityPreflightService
 from season_engine.rollover_service import stable_fingerprint
+from services.strict_pagination import complete_rows, exact_count
 
 COMMISSIONER_ROLES = frozenset({"commissioner", "host", "admin"})
 TRUSTED_CAPABILITIES = frozenset({"history_capture", "preflight_analysis", "dry_run_persistence", "plan_persistence"})
@@ -57,6 +58,7 @@ AUTHENTICATED_RPCS = frozenset({
     "submit_rollover_owner_decision_authenticated",
     "override_rollover_owner_decision_authenticated",
     "close_rollover_decision_window_authenticated",
+    "close_abs_2025_2026_immediate_rollover_authenticated",
     "cancel_rollover_execution_authenticated",
     "initialize_rollover_commissioner_reviews_authenticated",
     "begin_rollover_commissioner_review_authenticated",
@@ -289,10 +291,8 @@ def _service_client() -> Any:
 
 
 def _rows(client: Any, table: str, **filters: Any) -> list[dict[str, Any]]:
-    query = client.table(table).select("*")
-    for key, value in filters.items():
-        query = query.eq(key, value)
-    return list(query.execute().data or [])
+    return complete_rows(client, table, filters=filters,
+                         order_key="user_id" if table == "league_memberships" else "id")
 
 
 def _authenticated_actor(client: Any) -> str:
@@ -394,6 +394,7 @@ def _simulation_input(evidence: Mapping[str, Any], league_id: str) -> AuthorityS
         salary_cap_authority_fingerprint=str(preparations["salary_cap"]["authority_fingerprint"]),
         finalized_owner_outcomes=tuple(evidence["owner_outcomes"]),
         finalized_commissioner_outcomes=tuple(evidence["commissioner_outcomes"]),
+        owner_expected_count=len(((execution.get("metadata") or {}).get("canonical_preflight") or {}).get("owner_population") or ()),
     )
 
 
@@ -471,7 +472,7 @@ class SeasonRolloverControlService:
     def load_initiation_readiness(self) -> InitiationReadiness:
         self.authorize()
         try:
-            service = self._client
+            service = self._trusted_client("preflight_analysis")
             seasons = _rows(service, "league_seasons", league_id=self.league_id)
             active = [row for row in seasons if row.get("is_active") and row.get("status") == "active"]
             if len(active) != 1:
@@ -479,8 +480,8 @@ class SeasonRolloverControlService:
                     "missing", None, "not_started", ("exactly_one_active_season_required",))
             source = active[0]; source_season = int(source["season"]); target_season = source_season + 1
             target = [row for row in seasons if int(row.get("season") or 0) == target_season]
-            teams = _rows(service, "league_teams", league_id=self.league_id)
-            mappings = _rows(service, "season_team_mappings", league_season_id=source["id"])
+            team_count = exact_count(service, "league_teams", filters={"league_id": self.league_id})
+            mapping_count = exact_count(service, "season_team_mappings", filters={"league_season_id": source["id"]})
             policies = [row for row in _rows(service, "league_rollover_policies", league_id=self.league_id)
                         if int(row.get("source_season") or 0) == source_season and int(row.get("target_season") or 0) == target_season
                         and row.get("status") == "approved" and row.get("effective_at") is None]
@@ -491,13 +492,13 @@ class SeasonRolloverControlService:
             blockers = []
             if len(target) != 1 or target[0].get("is_active") or target[0].get("status") != "scheduled": blockers.append("target_season_not_scheduled")
             if not source.get("sleeper_league_id"): blockers.append("source_sleeper_linkage_missing")
-            if not teams or len(mappings) != len(teams): blockers.append("canonical_team_mapping_incomplete")
+            if not team_count or mapping_count != team_count: blockers.append("canonical_team_mapping_incomplete")
             if len(policies) > 1: blockers.append("duplicate_approved_policy")
             if len(executions) > 1: blockers.append("duplicate_active_execution")
             history_valid = len(history) == 1 and history[0].get("status") in {"validated", "finalized"}
             contract = ContractAuthorityPreflightService(service).run(self.league_id, source_season, target_season)
             return InitiationReadiness(self.league_id, source_season, target_season,
-                source.get("sleeper_league_id"), len(teams), len(mappings), "validated" if history_valid else "required",
+                source.get("sleeper_league_id"), team_count, mapping_count, "validated" if history_valid else "required",
                 "approved" if len(policies) == 1 else "required", str(policies[0]["id"]) if len(policies) == 1 else None,
                 str(executions[0].get("status")) if len(executions) == 1 else "not_started", tuple(blockers),
                 "ready" if contract.ready else "blocked", contract.agreement_count,
@@ -604,7 +605,10 @@ class SeasonRolloverControlService:
             executions = _rows(self._client, "rollover_executions", league_id=self.league_id)
             executions.sort(key=lambda row: str(row.get("created_at") or ""), reverse=True)
             execution = executions[0] if executions else None
-            result: dict[str, Any] = {"execution": execution}
+            result: dict[str, Any] = {
+                "execution": execution,
+                "seasons": _rows(self._client, "league_seasons", league_id=self.league_id),
+            }
             if execution:
                 eid = execution["id"]
                 for key, table in (("preparations", "rollover_authority_preparations"),
@@ -613,6 +617,7 @@ class SeasonRolloverControlService:
                                    ("approvals", "rollover_execution_plan_approvals"),
                                    ("locks", "rollover_execution_locks"),
                                    ("operation_results", "rollover_execution_operation_results"),
+                                   ("validation_reports", "rollover_post_execution_validation_reports"),
                                    ("commissioner_reviews", "rollover_commissioner_reviews"),
                                    ("finalizations", "rollover_executed_unpublished_finalizations"),
                                    ("season_publications", "rollover_target_season_authority_publications"),
@@ -626,6 +631,16 @@ class SeasonRolloverControlService:
                                    ("cache_manifests", "season_cache_invalidation_manifests")):
                     result[key] = _rows(self._client, table, rollover_execution_id=eid)
                 result["owner_decisions"] = _rows(self._client, "rollover_owner_decisions", rollover_execution_id=eid)
+                reports = list(result.get("validation_reports") or ())
+                result["validation_checks"] = (_rows(self._client, "rollover_post_execution_validation_checks",
+                                                       report_id=reports[-1]["id"]) if reports else [])
+                result["target_roster_sets"] = _rows(self._client, "rollover_target_roster_assignment_sets", rollover_execution_id=eid)
+                result["taxi_unlock_sets"] = _rows(self._client, "rollover_taxi_unlock_sets", rollover_execution_id=eid)
+                result["draft_generations"] = _rows(self._client, "rollover_draft_inventory_generations", rollover_execution_id=eid)
+                result["rookie_eligibility_sets"] = _rows(self._client, "prepared_rookie_eligibility_sets", rollover_execution_id=eid)
+                result["prepared_standings_sets"] = _rows(self._client, "prepared_target_standings_sets", rollover_execution_id=eid)
+                result["prepared_matchup_sets"] = _rows(self._client, "prepared_target_matchup_sets", rollover_execution_id=eid)
+                result["prepared_playoff_structures"] = _rows(self._client, "prepared_target_playoff_structures", rollover_execution_id=eid)
             return MappingProxyType(result)
         except RolloverControlError:
             raise
@@ -756,6 +771,100 @@ class SeasonRolloverControlService:
             raise RolloverControlError("The lifecycle action returned an invalid response.")
         return MappingProxyType(dict(data))
 
+    def close_abs_2025_2026_immediate_rollover(self, execution_id: str, confirmation: str) -> Mapping[str, Any]:
+        """Consume the one-time ABs authority through its dedicated authenticated RPC."""
+        execution = self._scoped_execution(execution_id)
+        if (self.league_id != "9838a0a1-97c6-4cab-bb88-af177317abfe"
+                or int(execution.get("source_season") or 0) != 2025
+                or int(execution.get("target_season") or 0) != 2026):
+            raise RolloverControlError("Immediate rollover authority is limited to ABs 2025-to-2026.")
+        if execution.get("status") != "decision_window_open":
+            raise RolloverControlError("The ABs owner-decision window is not open.")
+        return self.authenticated_rpc("close_abs_2025_2026_immediate_rollover_authenticated", {
+            "rollover_execution_id": execution_id,
+            "confirmation": confirmation,
+            "expected_population_fingerprint": execution.get("decision_population_fingerprint"),
+            "idempotency_key": f"abs-immediate-close:{execution_id}",
+        })
+
+    def execute_current_plan(self, execution_id: str, approval: Mapping[str, Any],
+                             plan: Mapping[str, Any]) -> Mapping[str, Any]:
+        execution = self._scoped_execution(execution_id)
+        if execution.get("status") != "execution_ready":
+            raise RolloverControlError("Execution requires canonical execution_ready state.")
+        return self.authenticated_rpc("execute_rollover_plan_authenticated", {
+            "rollover_execution_id": execution_id, "approval_id": approval["id"],
+            "execution_plan_id": plan["id"], "expected_plan_fingerprint": plan["plan_fingerprint"],
+            "expected_execution_status": "execution_ready", "expected_approval_status": "approved",
+            "expected_plan_version": plan["plan_version"],
+            "idempotency_key": f"rollover-operator-execute:{execution_id}:{approval['id']}:{plan['plan_fingerprint']}",
+        })
+
+    def publish_next_operation(self, execution_id: str, operation: int,
+                               state: Mapping[str, Any]) -> Mapping[str, Any]:
+        """Build assertion-only publication requests from canonical persisted rows."""
+        execution = self._scoped_execution(execution_id)
+        plans = list(state.get("plans") or ()); approvals = list(state.get("approvals") or ())
+        finalizations = list(state.get("finalizations") or ())
+        season = list(state.get("season_publications") or ()); caps = list(state.get("cap_publications") or ())
+        markets = list(state.get("market_publications") or ()); releases = list(state.get("cutover_releases") or ())
+        manifests = list(state.get("cache_manifests") or ())
+        plan = plans[-1] if plans else {}; approval = approvals[-1] if approvals else {}
+        if not plan or not approval:
+            raise RolloverControlError("Publication requires canonical plan and approval evidence.")
+        common_key = f"rollover-operator-publish-{operation}:{execution_id}"
+        if operation == 32:
+            if execution.get("status") != "executed_unpublished" or len(finalizations) != 1:
+                raise RolloverControlError("Operation 32 requires one executed-unpublished finalization.")
+            f = finalizations[0]
+            request = {"rollover_execution_id": execution_id, "finalization_id": f["id"],
+                "expected_finalization_fingerprint": f["deterministic_finalization_fingerprint"],
+                "expected_artifact_hash": f["prepared_artifact_aggregate_hash"], "approval_id": approval["id"],
+                "execution_plan_id": plan["id"], "expected_plan_fingerprint": plan["plan_fingerprint"],
+                "idempotency_key": common_key}
+            return self.authenticated_rpc("publish_target_season_authority_authenticated", request)
+        if operation == 33:
+            if len(season) != 1 or len(state.get("prepared_cap_sets") or ()) != 1: raise RolloverControlError("Operation 33 prerequisites are incomplete.")
+            s, cap = season[0], list(state["prepared_cap_sets"])[0]
+            request = {"rollover_execution_id": execution_id, "season_publication_id": s["id"],
+                "expected_season_publication_fingerprint": s["publication_fingerprint"],
+                "expected_cap_set_id": cap["id"], "expected_cap_set_hash": cap["aggregate_cap_set_hash"],
+                "approval_id": approval["id"], "execution_plan_id": plan["id"],
+                "expected_plan_fingerprint": plan["plan_fingerprint"], "idempotency_key": common_key}
+            return self.authenticated_rpc("activate_target_cap_authority_authenticated", request)
+        if operation == 34:
+            if len(season) != 1 or len(caps) != 1: raise RolloverControlError("Operation 34 prerequisites are incomplete.")
+            fa = list(state.get("prepared_free_agent_sets") or ()); ex = list(state.get("prepared_expiring_sets") or ())
+            if len(fa) != 1 or len(ex) != 1: raise RolloverControlError("Prepared market authority is incomplete.")
+            request = {"rollover_execution_id": execution_id, "season_publication_id": season[0]["id"],
+                "cap_publication_id": caps[0]["id"], "expected_season_publication_fingerprint": season[0]["publication_fingerprint"],
+                "expected_cap_publication_fingerprint": caps[0]["publication_fingerprint"],
+                "expected_free_agent_set_hash": fa[0]["aggregate_set_hash"],
+                "expected_expiring_set_hash": ex[0]["aggregate_set_hash"], "idempotency_key": common_key}
+            return self.authenticated_rpc("enable_target_free_agent_visibility_authenticated", request)
+        if operation == 35:
+            if len(season) != 1 or len(caps) != 1 or len(markets) != 1: raise RolloverControlError("Operation 35 prerequisites are incomplete.")
+            request = {"rollover_execution_id": execution_id, "season_publication_id": season[0]["id"],
+                "cap_publication_id": caps[0]["id"], "market_publication_id": markets[0]["id"],
+                "expected_season_publication_fingerprint": season[0]["publication_fingerprint"],
+                "expected_cap_publication_fingerprint": caps[0]["publication_fingerprint"],
+                "expected_market_publication_fingerprint": markets[0]["deterministic_fingerprint"],
+                "release_reason": "Certified production rollover publication", "idempotency_key": common_key}
+            return self.authenticated_rpc("release_cutover_restrictions_authenticated", request)
+        if operation == 36:
+            if len(season) != 1 or len(caps) != 1 or len(markets) != 1 or len(releases) != 1 or len(manifests) != 1:
+                raise RolloverControlError("Operation 36 prerequisites are incomplete.")
+            request = {"rollover_execution_id": execution_id, "season_publication_id": season[0]["id"],
+                "cap_publication_id": caps[0]["id"], "market_publication_id": markets[0]["id"],
+                "cutover_release_id": releases[0]["id"],
+                "expected_season_publication_fingerprint": season[0]["publication_fingerprint"],
+                "expected_cap_publication_fingerprint": caps[0]["publication_fingerprint"],
+                "expected_market_publication_fingerprint": markets[0]["deterministic_fingerprint"],
+                "expected_cutover_release_fingerprint": releases[0]["release_fingerprint"],
+                "expected_manifest_hash": manifests[0]["aggregate_manifest_hash"], "idempotency_key": common_key}
+            return self.authenticated_rpc("refresh_published_ui_and_ai_context_authenticated", request)
+        raise RolloverControlError("Unsupported publication operation.")
+
     def generate_canonical_dry_run(self, execution_id: str, request: Mapping[str, Any]) -> TrustedGenerationResult:
         execution = self._scoped_execution(execution_id)
         if execution.get("status") != "authority_ready":
@@ -769,10 +878,10 @@ class SeasonRolloverControlService:
                 tuple(str(x) for x in row.blockers), tuple(str(x) for x in row.warnings))
         except RolloverControlError:
             raise
-        except Exception:
+        except Exception as exc:
             raise RolloverControlError(
                 "Canonical dry-run generation was rejected."
-            ) from None
+            ) from exc
 
     def generate_canonical_execution_plan(self, execution_id: str, simulation_id: str,
                                           request: Mapping[str, Any]) -> TrustedGenerationResult:
@@ -791,10 +900,10 @@ class SeasonRolloverControlService:
                 tuple(str(x) for x in (row.get("warnings") or ())))
         except RolloverControlError:
             raise
-        except Exception:
+        except Exception as exc:
             raise RolloverControlError(
                 "Canonical execution-plan generation was rejected."
-            ) from None
+            ) from exc
 
 
 def sanitized_result(value: TrustedGenerationResult) -> Mapping[str, Any]:

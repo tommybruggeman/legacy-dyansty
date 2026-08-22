@@ -13,6 +13,7 @@ import streamlit as st
 from components.sidebar_nav import render_nav
 
 from auth import require_login, current_user, _sb
+from season_engine import SeasonResolver
 
 ICON = Path(__file__).resolve().parents[1] / "assets" / "page_icon.png"
 
@@ -65,7 +66,8 @@ except Exception as e:
     st.error(f"Could not load active league: {e}")
     st.stop()
 
-SLEEPER_LEAGUE_ID = str(league_row.get("sleeper_league_id") or "").strip()
+ACTIVE_SEASON = SeasonResolver(sb).get_active_season(league_id)
+SLEEPER_LEAGUE_ID = str(ACTIVE_SEASON.sleeper_league_id or "").strip()
 SLEEPER_LEAGUE_ID = "".join(ch for ch in SLEEPER_LEAGUE_ID if ch.isdigit())
 
 if not SLEEPER_LEAGUE_ID:

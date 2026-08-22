@@ -1,15 +1,20 @@
 from __future__ import annotations
 from dataclasses import asdict,dataclass,field
 from datetime import datetime,timedelta,timezone
+from decimal import Decimal
 from types import MappingProxyType
 from typing import Any,Mapping,Sequence
 
 from season_engine.rollover_service import RolloverAuthorityService,stable_fingerprint
 from season_engine.contract_authority_preflight import ContractAuthorityPreflightService
+from season_engine.decision_population_fingerprints import owner_case_fingerprint,commissioner_case_fingerprint,population_fingerprint
+from services.strict_pagination import complete_rows
 
 POLICY_DEADLINE_RULE="SEVEN_CALENDAR_DAYS_AFTER_OFFICIAL_COMMISSIONER_ROLLOVER_NOTICE"
 POLICY_FAILURE_OUTCOME="RELEASE_AT_ROLLOVER_TO_COMMISSIONER_HOLD"
-EXPECTED_OWNER_CASES=108;EXPECTED_COMMISSIONER_CASES=13;VALIDATOR_VERSION="rollover-window-v1"
+OWNER_CASE_SCHEMA_VERSION="phaseb-owner-case-v3"
+COMMISSIONER_CASE_SCHEMA_VERSION="phaseb-commissioner-case-v3"
+VALIDATOR_VERSION="rollover-window-v1"
 
 @dataclass(frozen=True)
 class RolloverPreflightRequest:
@@ -22,7 +27,7 @@ class OwnerPopulationResult:
     cases:tuple[OwnerPopulationCase,...];actual_count:int;expected_count:int;count_difference:int;blockers:tuple[str,...];warnings:tuple[str,...];fingerprint:str
 @dataclass(frozen=True)
 class CommissionerPreviewCase:
-    player_id:str;player_name:str;agreement_id:str;league_team_id:str;review_type:str;preserved_facts:Mapping[str,Any];evidence_fingerprint:str
+    case_key:str;player_id:str;player_name:str;agreement_id:str;league_team_id:str;review_type:str;preserved_facts:Mapping[str,Any];evidence_fingerprint:str
 @dataclass(frozen=True)
 class CommissionerPopulationPreview:
     cases:tuple[CommissionerPreviewCase,...];actual_count:int;expected_count:int;count_difference:int;blockers:tuple[str,...];fingerprint:str
@@ -42,27 +47,39 @@ def canonical(value:Any)->Any:
     if isinstance(value,datetime):return value.astimezone(timezone.utc).isoformat()
     return value
 def material_fingerprint(value:Any)->str:return stable_fingerprint(canonical(value))
+def canonical_money(value:Any)->str|None:return None if value is None else f"{Decimal(str(value)):.2f}"
 def resolve_owner_deadline(notice:datetime)->datetime:
     if notice.tzinfo is None or notice.utcoffset() is None:raise ValueError("official notice timestamp must be timezone-aware")
     return notice.astimezone(timezone.utc)+timedelta(hours=168)
 
 class OwnerPopulationBuilder:
-    def build(self,league_id:str,source:int,target:int,report)->OwnerPopulationResult:
+    def build(self,league_id:str,source:int,target:int,report,classification_rows:Sequence[Mapping[str,Any]]|None=None)->OwnerPopulationResult:
         cases=[];seen=set();blockers=[]
+        eligible_agreements = None if classification_rows is None else {
+            str(row.get("contract_agreement_id")) for row in classification_rows
+            if str(row.get("league_id")) == str(league_id)
+            and int(row.get("source_season") or 0) == source
+            and int(row.get("target_season") or 0) == target
+            and row.get("classification") == "rookie_option_eligible"
+        }
         for item in report.roster_exceptions:
             if item.classification!="ROSTERED_EXPIRED_POLICY_UNDEFINED":continue
+            if eligible_agreements is not None and str(item.agreement_id) not in eligible_agreements:continue
             key=(item.agreement_id,item.player_id,item.team_id)
             if key in seen:blockers.append(f"duplicate_owner_case:{item.agreement_id}")
             seen.add(key);local=[]
             if not item.player_id:local.append("canonical_player_identity_unresolved")
             if not item.team_id:local.append("league_team_unresolved")
-            slot=(item.taxi_or_ir or "").lower() or None;evidence={"league_id":league_id,"source_season":source,"target_season":target,"agreement_id":item.agreement_id,"player_id":item.player_id,"team_id":item.team_id,"roster_status":item.roster_status,"roster_slot":slot,"agreement_status":item.contract_status,"salary":item.evidence.get("salary"),"years":item.evidence.get("years_remaining"),"blockers":local}
-            cases.append(OwnerPopulationCase(league_id,source,target,item.team_id,item.player_id,item.player_name,item.agreement_id,item.contract_status,item.evidence.get("salary"),int(item.evidence.get("years_remaining") or 0),"none_expired",item.roster_status,slot,slot=="taxi",slot=="ir","unknown","unknown","none",not local,tuple(local),(),material_fingerprint(evidence),("contract_agreements","contract_seasons","season_roster_assignments")))
+            slot=(item.taxi_or_ir or "").lower() or None
+            canonical_classification = ("ROOKIE_OPTION_ELIGIBLE"
+                if getattr(item, "proposed_action", "") == "HOLD_FOR_OWNER_ROOKIE_OPTION_DECISION"
+                else "ROSTERED_EXPIRED_POLICY_UNDEFINED")
+            evidence={"schema":OWNER_CASE_SCHEMA_VERSION,"classification":canonical_classification,"league_id":league_id,"source_season":source,"target_season":target,"agreement_id":item.agreement_id,"player_id":item.player_id,"league_team_id":item.team_id,"agreement_status":item.contract_status,"roster_designation":slot or "rostered","sleeper_player_id":item.player_id,"source_salary":canonical_money(item.evidence.get("salary")),"source_contract_years":int(item.evidence.get("years_remaining") or 0)}
+            cases.append(OwnerPopulationCase(league_id,source,target,item.team_id,item.player_id,item.player_name,item.agreement_id,item.contract_status,item.evidence.get("salary"),int(item.evidence.get("years_remaining") or 0),"none_expired",item.roster_status,slot,slot=="taxi",slot=="ir","unknown","unknown","none",not local,tuple(local),(),owner_case_fingerprint(evidence),("contract_agreements","contract_seasons","season_roster_assignments")))
         cases.sort(key=lambda x:(x.league_team_id,x.player_id,x.agreement_id));actual=len(cases)
         if any(x.blockers for x in cases):blockers.append("owner_population_contains_blocked_cases")
-        if actual!=EXPECTED_OWNER_CASES:blockers.append(f"owner_population_count:{actual}:expected:{EXPECTED_OWNER_CASES}")
-        basis=[{"agreement_id":x.agreement_id,"player_id":x.player_id,"team_id":x.league_team_id,"evidence_fingerprint":x.evidence_fingerprint} for x in cases]
-        return OwnerPopulationResult(tuple(cases),actual,EXPECTED_OWNER_CASES,actual-EXPECTED_OWNER_CASES,tuple(dict.fromkeys(blockers)),(),material_fingerprint({"league":league_id,"source":source,"target":target,"cases":basis}))
+        basis=[{"case_key":f"{source}:{target}:{x.agreement_id}:{x.player_id}:{x.league_team_id}","case_fingerprint":x.evidence_fingerprint} for x in cases]
+        return OwnerPopulationResult(tuple(cases),actual,actual,0,tuple(dict.fromkeys(blockers)),(),population_fingerprint("owner",basis))
 
 class CommissionerPopulationBuilder:
     def build(self,report)->CommissionerPopulationPreview:
@@ -71,18 +88,25 @@ class CommissionerPopulationBuilder:
             if item.classification not in {"ACTIVE_OFF_ROSTER_POLICY_REVIEW_REQUIRED","EXPIRED_UNROSTERED_PUBLICATION_PENDING"}:continue
             review="active_off_roster_liability" if item.classification.startswith("ACTIVE") else "expired_unrostered_publication_candidate"
             facts={"agreement_status":item.contract_status,"roster_status":item.roster_status,"salary":item.evidence.get("salary"),"publication_blocked":True,"acquisition_blocked":True,"second_agreement_blocked":review=="active_off_roster_liability","termination_inferred":False,"dead_cap_inferred":False}
-            cases.append(CommissionerPreviewCase(item.player_id,item.player_name,item.agreement_id,item.team_id,review,MappingProxyType(facts),material_fingerprint({"player":item.player_id,"agreement":item.agreement_id,"review":review,"facts":facts})))
-        cases.sort(key=lambda x:(x.review_type,x.player_id,x.agreement_id));actual=len(cases);blockers=() if actual==EXPECTED_COMMISSIONER_CASES else (f"commissioner_population_count:{actual}:expected:{EXPECTED_COMMISSIONER_CASES}",)
-        return CommissionerPopulationPreview(tuple(cases),actual,EXPECTED_COMMISSIONER_CASES,actual-EXPECTED_COMMISSIONER_CASES,blockers,material_fingerprint([{"player":x.player_id,"agreement":x.agreement_id,"evidence":x.evidence_fingerprint} for x in cases]))
+            case_key=f"{review}:{item.agreement_id}:{item.player_id}:{item.team_id}:base"
+            case_material={"review_type":review,"agreement_id":item.agreement_id,"player_id":item.player_id,"league_team_id":item.team_id,"source_identity":None,"agreement_status":item.contract_status,"roster_status":item.roster_status,"source_salary":canonical_money(item.evidence.get("salary")),"source_contract_years":int(item.evidence.get("years_remaining") or 0)}
+            cases.append(CommissionerPreviewCase(case_key,item.player_id,item.player_name,item.agreement_id,item.team_id,review,MappingProxyType(facts),commissioner_case_fingerprint(case_material)))
+        cases.sort(key=lambda x:(x.review_type,x.player_id,x.agreement_id,x.league_team_id));actual=len(cases)
+        keys=[(x.review_type,x.player_id,x.agreement_id,x.league_team_id) for x in cases]
+        blockers=() if len(keys)==len(set(keys)) else ("duplicate_commissioner_case",)
+        basis=[{"case_key":x.case_key,"case_fingerprint":x.evidence_fingerprint} for x in cases]
+        return CommissionerPopulationPreview(tuple(cases),actual,actual,0,blockers,population_fingerprint("commissioner",basis))
 
 class RolloverPreflightService:
     def __init__(self,client):self.client=client
     def run(self,request:RolloverPreflightRequest)->RolloverPreflightResult:
-        seasons=self.client.table("league_seasons").select("*").eq("league_id",request.league_id).execute().data or []
-        policies=self.client.table("league_rollover_policies").select("*").eq("id",request.policy_id).execute().data or []
-        executions=self.client.table("rollover_executions").select("*").eq("league_id",request.league_id).eq("source_season",request.source_season).eq("target_season",request.target_season).execute().data or []
-        history=self.client.table("historical_capture_executions").select("*").execute().data or []
-        report=RolloverAuthorityService(self.client).build_rollover_readiness_report(request.league_id);owner=OwnerPopulationBuilder().build(request.league_id,request.source_season,request.target_season,report);commissioner=CommissionerPopulationBuilder().build(report);contract=ContractAuthorityPreflightService(self.client).run(request.league_id,request.source_season,request.target_season)
+        seasons=complete_rows(self.client,"league_seasons",filters={"league_id":request.league_id})
+        policies=complete_rows(self.client,"league_rollover_policies",filters={"id":request.policy_id})
+        executions=complete_rows(self.client,"rollover_executions",filters={"league_id":request.league_id,"source_season":request.source_season,"target_season":request.target_season})
+        history=complete_rows(self.client,"historical_capture_executions")
+        report=RolloverAuthorityService(self.client).build_rollover_readiness_report(request.league_id)
+        classifications=complete_rows(self.client,"contract_rollover_classifications",filters={"league_id":request.league_id,"source_season":request.source_season,"target_season":request.target_season})
+        owner=OwnerPopulationBuilder().build(request.league_id,request.source_season,request.target_season,report,classifications);commissioner=CommissionerPopulationBuilder().build(report);contract=ContractAuthorityPreflightService(self.client).run(request.league_id,request.source_season,request.target_season)
         policy=policies[0] if len(policies)==1 else {};metadata=policy.get("metadata") or {};stored_payload=metadata.get("policy_payload") or {};recalculated=(policy.get("fingerprint") if metadata.get("fingerprint_algorithm")=="postgres-jsonb-v1" else stable_fingerprint({k:v for k,v in stored_payload.items() if k!="fingerprint"})) if stored_payload else None
         source=[x for x in seasons if int(x.get("season") or 0)==request.source_season];target=[x for x in seasons if int(x.get("season") or 0)==request.target_season]
         checks={"league_exists":bool(seasons),"source_exists":len(source)==1,"target_exists":len(target)==1,"source_active":bool(source and source[0].get("is_active") and source[0].get("status")=="active"),"target_scheduled":bool(target and not target[0].get("is_active") and target[0].get("status")=="scheduled"),"sequential_boundary":request.target_season==request.source_season+1,"policy_unique":len(policies)==1,"policy_boundary":bool(policy and str(policy.get("league_id"))==request.league_id and int(policy.get("source_season") or 0)==request.source_season and int(policy.get("target_season") or 0)==request.target_season),"policy_fingerprint":bool(policy and policy.get("fingerprint")==request.expected_policy_fingerprint==recalculated),"policy_approved_inactive":bool(policy and policy.get("status")=="approved" and policy.get("effective_at") is None),"no_existing_execution":not any(x.get("status")!="cancelled" for x in executions),"contract_authority_target":contract.ready,"historical_integrity":bool(history and all(x.get("status") in {"validated","finalized"} for x in history)),"owner_population_complete":not owner.blockers,"commissioner_population_complete":not commissioner.blockers,"execution_schema_available":True,"authorities_uninitialized":self._authority_empty(request.league_id,request.target_season)}
@@ -92,7 +116,7 @@ class RolloverPreflightService:
         return RolloverPreflightResult(request.league_id,request.source_season,request.target_season,request.policy_id,request.expected_policy_fingerprint,all(checks[k] for k in ("policy_unique","policy_boundary","policy_fingerprint","policy_approved_inactive")),MappingProxyType({"league":request.source_season,"publication":"uninitialized","dead_cap":"uninitialized","cap":"uninitialized"}),MappingProxyType({"existing":len(executions)}),MappingProxyType({"season":report.context.contract_operational_season,"source_fingerprint":report.source_fingerprint}),MappingProxyType({"capture_count":len(history),"valid":checks["historical_integrity"]}),owner,commissioner,tuple(dict.fromkeys(blockers)),tuple(report.warnings),MappingProxyType(checks),fp,not blockers,request.generated_at,("league_seasons","league_rollover_policies","normalized contracts","season_roster_assignments","historical capture","rollover control"))
     def _authority_empty(self,league,season):
         for table in ("free_agent_publications","dead_cap_obligations","dead_cap_season_authorities","cap_season_authorities"):
-            rows=self.client.table(table).select("id").eq("league_id",league).eq("season",season).execute().data or []
+            rows=complete_rows(self.client,table,"id",filters={"league_id":league,"season":season})
             if rows:return False
         return True
 

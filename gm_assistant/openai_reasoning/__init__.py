@@ -1,0 +1,66 @@
+from gm_assistant.openai_reasoning.client import (
+    FakeReasoningProvider,
+    OpenAIReasoningProvider,
+    ReasoningConfig,
+    UnavailableReasoningProvider,
+    configuration_status,
+    load_reasoning_config,
+    live_smoke_permitted,
+    parse_reasoning_response,
+)
+from gm_assistant.openai_reasoning.models import (
+    ProviderResult,
+    REASONING_RESPONSE_SCHEMA,
+    ReasoningAlternative,
+    ReasoningConfigurationStatus,
+    ReasoningProvider,
+    ReasoningRankedPlayer,
+    ReasoningRequest,
+    ReasoningResponse,
+    ReasoningTrace,
+)
+from gm_assistant.openai_reasoning.prompt_builder import (
+    MAX_CONVERSATION_TURNS,
+    SYSTEM_INSTRUCTION,
+    build_reasoning_messages,
+    build_reasoning_request,
+    sanitize_payload,
+)
+from gm_assistant.openai_reasoning.service import (
+    OpenAIReasoningService,
+    ReasonedAnswer,
+    ReasoningEligibility,
+    determine_reasoning_eligibility,
+)
+from gm_assistant.openai_reasoning.validation import ReasoningValidation, validate_reasoning_response
+
+__all__ = [
+    "FakeReasoningProvider",
+    "MAX_CONVERSATION_TURNS",
+    "OpenAIReasoningProvider",
+    "OpenAIReasoningService",
+    "ProviderResult",
+    "REASONING_RESPONSE_SCHEMA",
+    "ReasonedAnswer",
+    "ReasoningAlternative",
+    "ReasoningConfigurationStatus",
+    "ReasoningConfig",
+    "ReasoningEligibility",
+    "ReasoningProvider",
+    "ReasoningRankedPlayer",
+    "ReasoningRequest",
+    "ReasoningResponse",
+    "ReasoningTrace",
+    "ReasoningValidation",
+    "SYSTEM_INSTRUCTION",
+    "UnavailableReasoningProvider",
+    "build_reasoning_messages",
+    "build_reasoning_request",
+    "configuration_status",
+    "determine_reasoning_eligibility",
+    "load_reasoning_config",
+    "live_smoke_permitted",
+    "parse_reasoning_response",
+    "sanitize_payload",
+    "validate_reasoning_response",
+]

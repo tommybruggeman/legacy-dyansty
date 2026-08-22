@@ -354,6 +354,29 @@ class TrustedExecutionPlanService:
 
     def generate_from_storage(self, execution_id: str, simulation_id: str, request: Mapping[str, Any], decoder):
         plan_input, simulation, validation = self.reconstruct_simulation(execution_id, simulation_id, decoder)
+
+        existing_plans = (
+            self.user_client.table("rollover_execution_plans")
+            .select("plan_version")
+            .eq("rollover_execution_id", execution_id)
+            .execute()
+            .data
+            or []
+        )
+
+        next_plan_version = (
+            max(
+                (int(row["plan_version"]) for row in existing_plans),
+                default=0,
+            )
+            + 1
+        )
+
+        plan_input = replace(
+            plan_input,
+            expected_plan_version=next_plan_version,
+        )
+
         return self.generate(plan_input, simulation, validation, request)
 
     def generate(self, plan_input: DryRunExecutionPlanInput, simulation: RolloverDryRunResult,

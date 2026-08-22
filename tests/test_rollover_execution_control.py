@@ -9,10 +9,19 @@ ROOT=Path(__file__).resolve().parents[1];MIGRATION=ROOT/"supabase/migrations/202
 TABLES=("rollover_executions","rollover_owner_decisions","rollover_owner_decision_revisions","rollover_commissioner_reviews","rollover_commissioner_review_events","rollover_execution_plans","rollover_execution_locks","rollover_validation_results")
 
 class Query:
- def __init__(self,rows):self.rows=rows;self.filters=[]
- def select(self,*a):return self
+ def __init__(self,rows):self.rows=rows;self.filters=[];self.bounds=None;self.order_key=None
+ def select(self,*a,**k):return self
  def eq(self,k,v):self.filters.append((k,v));return self
- def execute(self):return type("R",(),{"data":[x for x in self.rows if all(x.get(k)==v for k,v in self.filters)]})()
+ def order(self,k):self.order_key=k;return self
+ def range(self,s,e):self.bounds=(s,e);return self
+ def execute(self):
+  rows=[dict(x) for x in self.rows if all(x.get(k)==v for k,v in self.filters)]
+  if self.order_key:
+   for index,row in enumerate(rows):row.setdefault(self.order_key,f"fixture:{index:08d}")
+   rows.sort(key=lambda row:str(row[self.order_key]))
+  count=len(rows)
+  if self.bounds:rows=rows[self.bounds[0]:self.bounds[1]+1]
+  return type("R",(),{"data":rows,"count":count})()
 class Client:
  def __init__(self,rows=None):self.rows=rows or {}
  def table(self,t):return Query(self.rows.get(t,[]))

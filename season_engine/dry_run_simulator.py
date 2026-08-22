@@ -9,6 +9,7 @@ from uuid import NAMESPACE_URL, uuid5
 import hashlib, json
 
 from season_engine.authority_preparation import AuthoritySimulationInput, material_fingerprint
+from services.strict_pagination import complete_rows
 
 SIMULATOR_VERSION = "rollover-dry-run-v1"
 VALIDATOR_VERSION = "rollover-dry-run-validator-v1"
@@ -113,9 +114,9 @@ class TrustedDryRunGenerationService:
         executions=self.user_client.table("rollover_executions").select("*").eq("id",execution_id).execute().data or []
         if len(executions)!=1:raise ValueError("exactly one execution required")
         execution=executions[0]
-        owners=self.user_client.table("rollover_owner_decisions").select("*").eq("rollover_execution_id",execution_id).execute().data or []
-        reviews=self.user_client.table("rollover_commissioner_reviews").select("*").eq("rollover_execution_id",execution_id).execute().data or []
-        preparations=self.user_client.table("rollover_authority_preparations").select("*").eq("rollover_execution_id",execution_id).execute().data or []
+        owners=complete_rows(self.user_client,"rollover_owner_decisions",filters={"rollover_execution_id":execution_id})
+        reviews=complete_rows(self.user_client,"rollover_commissioner_reviews",filters={"rollover_execution_id":execution_id})
+        preparations=complete_rows(self.user_client,"rollover_authority_preparations",filters={"rollover_execution_id":execution_id})
         current=sorted((x for x in preparations if x.get("authority_status")=="prepared"),key=lambda x:str(x.get("authority_type")))
         if [x.get("authority_type") for x in current] != ["dead_cap","publication","salary_cap"]:raise ValueError("exactly three prepared authority domains required")
         if any(x.get("decision_status") not in {"planned_retention","planned_release","commissioner_review_requested","no_response","execution_ready"} for x in owners):raise ValueError("unresolved owner outcomes")
@@ -135,6 +136,8 @@ class TrustedDryRunGenerationService:
                 "league_id": simulation_input.league_id,
                 "source_season": simulation_input.source_season,
                 "target_season": simulation_input.target_season,
+                "expected_policy_id":
+                    simulation_input.policy_id,
                 "expected_policy_fingerprint":
                     simulation_input.policy_fingerprint,
                 "expected_preflight_fingerprint":
@@ -298,13 +301,23 @@ class RolloverDryRunSimulator:
         if simulation_input.target_season != simulation_input.source_season + 1: blockers.append("season_boundary_drift")
         owner = tuple(getattr(simulation_input, "finalized_owner_outcomes", ()) or ())
         reviews = tuple(getattr(simulation_input, "finalized_commissioner_outcomes", ()) or ())
-        if not owner: blockers.append("finalized_owner_outcomes_missing")
+        expected_owner_count = getattr(simulation_input, "owner_expected_count", None)
+        if expected_owner_count is None and not owner: blockers.append("finalized_owner_outcomes_missing")
+        elif expected_owner_count is not None and len(owner) != int(expected_owner_count):
+            blockers.append("finalized_owner_outcomes_count_mismatch")
         if not reviews: blockers.append("finalized_commissioner_outcomes_missing")
         contract = self._contracts(owner, reviews, simulation_input.target_season)
         roster, taxi, ir = self._rosters(owner, contract)
         publication = self._publication(simulation_input)
         dead_cap = self._dead_cap(simulation_input)
         teams = self._teams(simulation_input)
+        authoritative_team_ids = tuple(sorted(str(team.league_team_id) for team in simulation_input.cap_authority_plan.projected_team_cap_states))
+        canonical_team_evidence = MappingProxyType({
+            "source": "prepared_salary_cap_authority",
+            "team_ids": authoritative_team_ids,
+            "team_count": len(authoritative_team_ids),
+            "team_set_fingerprint": material_fingerprint(list(authoritative_team_ids)),
+        })
         for team in teams:
             if team.unresolved_exposure: blockers.append(f"unresolved_salary:{team.league_team_id}")
             if team.hard_cap_legal is False: blockers.append(f"hard_cap_violation:{team.league_team_id}")
@@ -320,7 +333,8 @@ class RolloverDryRunSimulator:
         unique_blockers = tuple(sorted(set(blockers))); unique_warnings = tuple(sorted(set(warnings)))
         material = {"input":input_fp,"contract":contract,"roster":roster,"publication":publication,
                     "dead_cap":dead_cap,"teams":teams,"season":season,"taxi":taxi,"ir":ir,"draft":draft,
-                    "rookie":rookie,"pages":pages,"mutations":mutation,"blockers":unique_blockers,"warnings":unique_warnings}
+                    "rookie":rookie,"pages":pages,"mutations":mutation,"canonical_team_evidence":canonical_team_evidence,
+                    "blockers":unique_blockers,"warnings":unique_warnings}
         result_fp = material_fingerprint(material); valid = not any(b.startswith("malformed") for b in unique_blockers)
         executable = valid and not unique_blockers
         return RolloverDryRunResult(str(uuid5(NAMESPACE_URL,f"legacy:{simulation_input.execution_id}:{result_fp}")),
@@ -332,7 +346,7 @@ class RolloverDryRunSimulator:
           unique_blockers,unique_warnings,contract,roster,publication,dead_cap,(),season,taxi,ir,draft,rookie,(),teams,
           _ordered(({"player_id":x.player_id,"domain":x.domain,"classification":x.classification} for rows in (contract,roster,publication,dead_cap) for x in rows),"player_id","domain"),
           MappingProxyType(pages),mutation,MappingProxyType({"valid":valid,"executable":executable}),
-          MappingProxyType({"writes_performed":0}),
+          MappingProxyType({"writes_performed":0,"canonical_team_evidence":canonical_team_evidence}),
           ("AuthoritySimulationInput","normalized_contracts","roster_evidence","league_rules","season_authority"))
 
     def _contracts(self, owner, reviews, target):
@@ -410,7 +424,21 @@ class RolloverDryRunSimulator:
 
 class RolloverDryRunValidator:
     def validate(self,result:RolloverDryRunResult,*,validated_at:datetime|None=None):
-        checks=MappingProxyType({"sequential_seasons":result.target_season==result.source_season+1,"no_material_blockers":not result.blockers,"ten_unique_teams":len(result.team_results)==10 and len({x.league_team_id for x in result.team_results})==10,"no_domain_writes":result.metadata.get("writes_performed")==0})
+        evidence = result.metadata.get("canonical_team_evidence") or {}
+        expected_ids = tuple(str(value) for value in (evidence.get("team_ids") or ()))
+        actual_ids = tuple(str(row.league_team_id) for row in result.team_results)
+        expected_set = set(expected_ids); actual_set = set(actual_ids)
+        fingerprint_valid = bool(expected_ids) and evidence.get("team_set_fingerprint") == material_fingerprint(list(sorted(expected_ids)))
+        checks=MappingProxyType({
+            "sequential_seasons":result.target_season==result.source_season+1,
+            "no_material_blockers":not result.blockers,
+            "canonical_team_evidence_present":bool(expected_ids),
+            "canonical_team_evidence_fingerprint":fingerprint_valid,
+            "canonical_team_evidence_unique":len(expected_ids)==len(expected_set),
+            "team_results_unique":len(actual_ids)==len(actual_set),
+            "team_result_set_matches_authority":actual_set==expected_set and len(actual_ids)==len(expected_ids),
+            "no_domain_writes":result.metadata.get("writes_performed")==0,
+        })
         blockers=tuple(sorted(set((*result.blockers,*(k for k,v in checks.items() if not v)))))
         executable=result.valid and not blockers;fp=material_fingerprint({"checks":checks,"result":result.result_fingerprint,"blockers":blockers,"validator":VALIDATOR_VERSION})
         return RolloverDryRunValidationResult(result.valid,executable,executable,checks,blockers,result.warnings,result.input_fingerprint,result.result_fingerprint,fp,VALIDATOR_VERSION,validated_at or datetime.now(timezone.utc))
