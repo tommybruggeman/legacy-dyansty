@@ -1,3 +1,4 @@
 streamlit
 supabase
 openai>=1.97.0
+python-dotenv
