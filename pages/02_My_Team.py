@@ -490,6 +490,280 @@ html, body, [data-testid="stAppViewContainer"]{
   margin: 6px 0;
 }
 
+
+/* ==========================================================
+   PHONE-ONLY RESPONSIVE LAYOUT
+   Desktop layout remains unchanged.
+   ========================================================== */
+
+.mobile-metrics-grid,
+.mobile-roster {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .block-container {
+    padding-top: 28px !important;
+    padding-left: 14px !important;
+    padding-right: 14px !important;
+    max-width: 100% !important;
+  }
+
+  .hero {
+    border-radius: 20px;
+    padding: 18px;
+    margin-bottom: 12px;
+  }
+
+  .hero-kicker {
+    font-size: .66rem;
+  }
+
+  .hero-title {
+    font-size: 1.75rem;
+    line-height: 1.08;
+  }
+
+  .hero-sub {
+    font-size: .82rem;
+    line-height: 1.45;
+  }
+
+  /* Hide the existing five-column desktop metric row on phones only. */
+  [data-testid="stHorizontalBlock"]:has(.desktop-metric-card) {
+    display: none !important;
+  }
+
+  .mobile-metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 9px;
+    margin-bottom: 12px;
+  }
+
+  .mobile-metrics-grid .card {
+    min-width: 0;
+    min-height: 94px;
+    border-radius: 16px;
+    padding: 13px;
+  }
+
+  .mobile-metrics-grid .metric-title {
+    font-size: .64rem;
+  }
+
+  .mobile-metrics-grid .metric-value {
+    font-size: 1.25rem;
+  }
+
+  .mobile-metrics-grid .metric-sub {
+    font-size: .68rem;
+  }
+
+  /* Desktop roster remains unchanged above 768px. */
+  .desktop-roster {
+    display: none !important;
+  }
+
+  .mobile-roster {
+    display: block;
+  }
+
+  .mobile-roster .roster-panel {
+    max-height: none;
+    overflow: visible;
+  }
+
+  .mobile-roster .roster-header,
+  .mobile-roster .roster-row {
+    grid-template-columns: 48px minmax(0, 1fr) 46px 66px;
+    gap: 5px;
+  }
+
+  .mobile-roster .roster-header {
+    font-size: .60rem;
+  }
+
+  .mobile-roster .roster-row {
+    padding: 9px 0;
+  }
+
+  .mobile-roster .player-name {
+    font-size: .82rem;
+  }
+
+  .mobile-roster .small-cell {
+    font-size: .70rem;
+  }
+
+  .mobile-roster .pos-pill {
+    min-width: 32px;
+    padding: 2px 6px;
+    font-size: .59rem;
+  }
+
+  .mobile-roster .roster-badge {
+    min-width: 18px;
+    height: 18px;
+    margin-left: 4px;
+    padding: 0 5px;
+  }
+
+  .mobile-roster-details {
+    margin-top: 8px;
+  }
+
+  .mobile-roster-details summary {
+    list-style: none;
+    cursor: pointer;
+    color: var(--gold);
+    font-size: .82rem;
+    font-weight: 850;
+    text-align: center;
+    padding: 12px 0 4px 0;
+    min-height: 44px;
+  }
+
+  .mobile-roster-details summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .mobile-roster-details summary::after {
+    content: " ›";
+  }
+
+  .mobile-roster-details[open] summary::after {
+    content: " ↑";
+  }
+
+  .mobile-roster-details .expanded-roster {
+    margin-top: 6px;
+    border-top: 1px solid var(--rule);
+    padding-top: 4px;
+  }
+
+  /* Mobile controls: larger touch targets without changing desktop controls. */
+  [data-testid="stButton"] button {
+    min-height: 44px;
+  }
+
+  [data-testid="stTextInput"] input,
+  [data-testid="stTextArea"] textarea,
+  [data-testid="stSelectbox"] [data-baseweb="select"] {
+    min-height: 46px;
+    font-size: 16px !important;
+  }
+
+  /* Hover-only cap tooltip is not useful on touch screens. */
+  .cap-tooltip {
+    display: none !important;
+  }
+
+
+  /* ======================================================
+     COMPACT TAXI SQUAD / IR — PHONE ONLY
+     ====================================================== */
+
+  .taxi-ir-marker {
+    display: none;
+  }
+
+  /* Tighten only the bordered container containing Taxi / IR */
+  [data-testid="stVerticalBlockBorderWrapper"]:has(.taxi-ir-marker)
+  [data-testid="stVerticalBlock"] {
+    gap: .45rem !important;
+  }
+
+  /* Smaller Taxi / IR heading */
+  [data-testid="stVerticalBlockBorderWrapper"]:has(.taxi-ir-marker) h3 {
+    font-size: 1.45rem !important;
+    line-height: 1.15 !important;
+    margin-top: 0 !important;
+    margin-bottom: .2rem !important;
+  }
+
+  /* Current Designations heading, if one exists */
+  [data-testid="stVerticalBlockBorderWrapper"]:has(.taxi-ir-marker) h4 {
+    font-size: .95rem !important;
+    line-height: 1.2 !important;
+    margin-top: .25rem !important;
+    margin-bottom: .15rem !important;
+  }
+
+  /* Reduce space around the Player + Designation selects */
+  [data-testid="stVerticalBlockBorderWrapper"]:has(.taxi-ir-marker)
+  [data-testid="stSelectbox"] {
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+  }
+
+  /* Smaller field labels */
+  [data-testid="stVerticalBlockBorderWrapper"]:has(.taxi-ir-marker)
+  [data-testid="stSelectbox"] label {
+    font-size: .78rem !important;
+    margin-bottom: 2px !important;
+  }
+
+  /* Shorter select boxes */
+  [data-testid="stVerticalBlockBorderWrapper"]:has(.taxi-ir-marker)
+  [data-baseweb="select"] {
+    min-height: 42px !important;
+  }
+
+  /* Compact cap-adjustment line */
+  [data-testid="stVerticalBlockBorderWrapper"]:has(.taxi-ir-marker)
+  [data-testid="stCaptionContainer"] {
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+    font-size: .72rem !important;
+  }
+
+  /* Compact Apply / Remove buttons */
+  [data-testid="stVerticalBlockBorderWrapper"]:has(.taxi-ir-marker)
+  [data-testid="stButton"] button {
+    min-height: 40px !important;
+    padding-top: 5px !important;
+    padding-bottom: 5px !important;
+  }
+
+  /* Reduce separator spacing inside Taxi / IR */
+  [data-testid="stVerticalBlockBorderWrapper"]:has(.taxi-ir-marker) hr {
+    margin-top: .35rem !important;
+    margin-bottom: .35rem !important;
+  }
+}
+@media (max-width: 390px) {
+  .block-container {
+    padding-left: 10px !important;
+    padding-right: 10px !important;
+  }
+
+  .hero {
+    padding: 16px;
+  }
+
+  .hero-title {
+    font-size: 1.55rem;
+  }
+
+  .mobile-metrics-grid {
+    gap: 7px;
+  }
+
+  .mobile-metrics-grid .card {
+    padding: 11px;
+  }
+
+  .mobile-metrics-grid .metric-value {
+    font-size: 1.15rem;
+  }
+
+  .mobile-roster .roster-header,
+  .mobile-roster .roster-row {
+    grid-template-columns: 42px minmax(0, 1fr) 40px 60px;
+  }
+}
+
 </style>
 """,
     unsafe_allow_html=True,
@@ -1073,22 +1347,22 @@ st.markdown(
 
 
 # ---------- top metrics ----------
-m1, m2, m3, m4, m5 = st.columns([1, 1, 1, 1, 1])
+# Desktop: keep the existing Streamlit metric row layout.
+m1, m2, m3, m4 = st.columns([1, 1, 1, 1])
 
 metrics = [
     ("Record", record_txt, standing_txt),
     ("Standing Points", standing_points, standing_txt),
     ("PPG", f"{ppg:.1f}", "Avg / game"),
     ("Cap Used", cap_txt, f"${cap_space:.1f} space"),
-    ("Roster", roster_count, "Players signed"),
 ]
 
-for col, (title, value, sub) in zip([m1, m2, m3, m4, m5], metrics):
+for col, (title, value, sub) in zip([m1, m2, m3, m4], metrics):
     with col:
         if title == "Cap Used":
             st.markdown(
                 f"""
-<div class="card cap-hover-card">
+<div class="card cap-hover-card desktop-metric-card">
   <div class="metric-title">{title}</div>
   <div class="metric-value">{value}</div>
   <div class="metric-sub">{sub}</div>
@@ -1111,7 +1385,7 @@ for col, (title, value, sub) in zip([m1, m2, m3, m4, m5], metrics):
         else:
             st.markdown(
                 f"""
-<div class="card">
+<div class="card desktop-metric-card">
   <div class="metric-title">{title}</div>
   <div class="metric-value">{value}</div>
   <div class="metric-sub">{sub}</div>
@@ -1120,6 +1394,38 @@ for col, (title, value, sub) in zip([m1, m2, m3, m4, m5], metrics):
                 unsafe_allow_html=True,
             )
 
+# Phone only: compact 2 x 2 + full-width roster metric.
+st.markdown(
+    f"""
+<div class="mobile-metrics-grid">
+  <div class="card">
+    <div class="metric-title">Record</div>
+    <div class="metric-value">{record_txt}</div>
+    <div class="metric-sub">{standing_txt}</div>
+  </div>
+
+  <div class="card">
+    <div class="metric-title">Standing Points</div>
+    <div class="metric-value">{standing_points}</div>
+    <div class="metric-sub">{standing_txt}</div>
+  </div>
+
+  <div class="card">
+    <div class="metric-title">PPG</div>
+    <div class="metric-value">{ppg:.1f}</div>
+    <div class="metric-sub">Avg / game</div>
+  </div>
+
+  <div class="card">
+    <div class="metric-title">Cap Used</div>
+    <div class="metric-value">{cap_txt}</div>
+    <div class="metric-sub">${cap_space:.1f} space</div>
+  </div>
+
+</div>
+""",
+    unsafe_allow_html=True,
+)
 
 st.markdown("<br>", unsafe_allow_html=True)
 
@@ -1129,18 +1435,12 @@ left, right = st.columns([1.45, 1])
 
 # ---------- roster ----------
 with left:
-    html = [
-        '<div class="card roster-panel">',
-        "<h3>My Roster</h3>",
-        '<div class="roster-header">',
-        "<div>Pos</div><div>Player</div><div style='text-align:right;'>Years</div><div style='text-align:right;'>Salary</div>",
-        "</div>",
-    ]
+    # Build roster row HTML once so desktop and phone use identical roster data.
+    roster_rows = []
 
-    if my_roster.empty:
-        html.append('<div class="empty" style="padding-top:10px;">No roster data found for this team.</div>')
-    else:
+    if not my_roster.empty:
         my_roster = my_roster.sort_values(["pos", "player"])
+
         for _, r in my_roster.iterrows():
             pos = r.get("pos") or "—"
             player = r.get("player") or "Unknown"
@@ -1185,7 +1485,7 @@ with left:
 
             badges_html = "".join(badges)
 
-            html.append(
+            roster_rows.append(
                 f"""
 <div class="roster-row">
   <div><span class="pos-pill">{pos}</span></div>
@@ -1195,8 +1495,61 @@ with left:
 </div>
 """
             )
-    html.append("</div>")
-    st.markdown("".join(html), unsafe_allow_html=True)
+
+    # DESKTOP / TABLET: preserve the existing full roster card exactly.
+    desktop_html = [
+        '<div class="desktop-roster">',
+        '<div class="card roster-panel">',
+        "<h3>My Roster</h3>",
+        '<div class="roster-header">',
+        "<div>Pos</div><div>Player</div><div style='text-align:right;'>Years</div><div style='text-align:right;'>Salary</div>",
+        "</div>",
+    ]
+
+    if not roster_rows:
+        desktop_html.append(
+            '<div class="empty" style="padding-top:10px;">No roster data found for this team.</div>'
+        )
+    else:
+        desktop_html.extend(roster_rows)
+
+    desktop_html.extend(["</div>", "</div>"])
+
+    # PHONE ONLY: show five players first, with the rest behind View Full Roster.
+    mobile_html = [
+        '<div class="mobile-roster">',
+        '<div class="card roster-panel">',
+        "<h3>My Roster</h3>",
+        '<div class="roster-header">',
+        "<div>Pos</div><div>Player</div><div style='text-align:right;'>Years</div><div style='text-align:right;'>Salary</div>",
+        "</div>",
+    ]
+
+    if not roster_rows:
+        mobile_html.append(
+            '<div class="empty" style="padding-top:10px;">No roster data found for this team.</div>'
+        )
+    else:
+        mobile_html.extend(roster_rows[:5])
+
+        if len(roster_rows) > 5:
+            mobile_html.append(
+                f"""
+<details class="mobile-roster-details">
+  <summary>View Full Roster</summary>
+  <div class="expanded-roster">
+    {''.join(roster_rows[5:])}
+  </div>
+</details>
+"""
+            )
+
+    mobile_html.extend(["</div>", "</div>"])
+
+    st.markdown(
+        "".join(desktop_html) + "".join(mobile_html),
+        unsafe_allow_html=True,
+    )
 
 # ---------- right actions ----------
 with right:
@@ -1255,6 +1608,10 @@ with right:
     st.markdown("<br>", unsafe_allow_html=True)
 
     with st.container(border=True):
+        st.markdown(
+            '<div class="taxi-ir-marker"></div>',
+            unsafe_allow_html=True,
+        )
         st.markdown("### Taxi Squad / IR")
         current_designations = pd.DataFrame()
 
