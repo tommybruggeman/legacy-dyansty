@@ -171,9 +171,13 @@ def load_league_free_agent_state(sb: Any, league_id: str) -> LeagueFreeAgentStat
     if not clean_league_id:
         raise ValueError("Selected league is required.")
 
-    contracts = _required_rows(sb, "contracts", clean_league_id)
+    contracts = _required_rows(sb, "contract_agreements", clean_league_id)
+    if not contracts:
+        contracts = _required_rows(sb, "contracts", clean_league_id)
+        warnings = ["Canonical contract agreements are unavailable; legacy contracts are being used as the ownership fallback."]
+    else:
+        warnings = []
     teams = _required_rows(sb, "league_teams", clean_league_id)
-    warnings: list[str] = []
     try:
         roster_rows = _required_rows(sb, "team_roster_state", clean_league_id)
     except Exception:
@@ -242,7 +246,9 @@ def build_free_agent_results(
         if _is_released(contract):
             continue
         player_id = _player_id(contract)
-        expiration = resolve_free_agent_season(season, contract.get("contract_years_left") or contract.get("years_remaining"))
+        expiration = _safe_season(contract.get("end_season")) or resolve_free_agent_season(
+            season, contract.get("contract_years_left") or contract.get("years_remaining")
+        )
         if not player_id or expiration is None or (state.visible_expiring_contract_ids is not None and player_id not in state.visible_expiring_contract_ids):
             if _clean(contract.get("player_name")):
                 warnings.append("A contract with incomplete player identity or remaining-years data was omitted from future free agents.")

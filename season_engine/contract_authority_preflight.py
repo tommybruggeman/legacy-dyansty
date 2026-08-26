@@ -7,7 +7,7 @@ from season_engine.rollover_service import stable_fingerprint
 from services.strict_pagination import complete_rows
 
 
-VALIDATOR_VERSION = "rollover-contract-preflight-v1"
+VALIDATOR_VERSION = "rollover-contract-preflight-v2"
 
 
 @dataclass(frozen=True)
@@ -59,6 +59,9 @@ class ContractAuthorityPreflightService:
         classifications = self._optional_rows(
             "contract_rollover_classifications", league_id=league_id,
         )
+        draft_assignments = self._optional_rows(
+            "rookie_draft_board_assignments", league_id=league_id,
+        )
         reconciliations = self._optional_rows(
             "contract_transition_reconciliations", league_id=league_id,
         )
@@ -73,6 +76,12 @@ class ContractAuthorityPreflightService:
         }
         transitions = [x for x in transitions if str(x.get("id")) not in reconciled_transition_ids]
         class_by_agreement = {str(x.get("contract_agreement_id")): x for x in classifications}
+        incoming_board_authority = {
+            (str(x.get("player_id") or ""), str(x.get("original_league_team_id") or ""))
+            for x in draft_assignments
+            if int(x.get("draft_year") or 0) == target_season
+            and bool(x.get("rookie_contract_provenance"))
+        }
 
         by_agreement: dict[str, list[Mapping[str, Any]]] = {}
         for row in seasons:
@@ -91,6 +100,7 @@ class ContractAuthorityPreflightService:
         ordinary_expirations = 0
         taxi_paused = 0
         unresolved = 0
+        source_agreement_count = 0
         for agreement in agreements:
             aid = str(agreement.get("id") or "")
             pid = str(agreement.get("player_id") or "")
@@ -98,9 +108,20 @@ class ContractAuthorityPreflightService:
             rows = by_agreement.get(aid, [])
             source = [x for x in rows if int(x.get("season") or 0) == source_season]
             target = [x for x in rows if int(x.get("season") or 0) == target_season]
-            if len(source) != 1:
+            incoming_target_rookie = (
+                int(agreement.get("start_season") or 0) == target_season
+                and agreement.get("status") == "scheduled"
+                and agreement.get("origin") == "signed"
+                and agreement.get("contract_type") == "rookie"
+                and len(target) == 1
+                and target[0].get("obligation_status") == "scheduled"
+                and (pid, team) in incoming_board_authority
+            )
+            if not incoming_target_rookie:
+                source_agreement_count += 1
+            if not incoming_target_rookie and len(source) != 1:
                 blockers.append(f"contract_source_obligation_count:{aid}:{len(source)}")
-            else:
+            elif not incoming_target_rookie:
                 source_count += 1
                 if str(source[0].get("player_id")) != pid or str(source[0].get("league_team_id")) != team:
                     blockers.append(f"contract_source_ownership_mismatch:{aid}")
@@ -110,7 +131,7 @@ class ContractAuthorityPreflightService:
                     blockers.append(f"contract_target_ownership_mismatch:{aid}")
                 if row.get("obligation_status") == "active": active_target += 1
             classification = str(class_by_agreement.get(aid, {}).get("classification") or "")
-            if classifications and not classification:
+            if classifications and not classification and not incoming_target_rookie:
                 unresolved += 1
                 blockers.append(f"contract_rollover_classification_missing:{aid}")
             if classification == "ordinary_expiration":
@@ -145,8 +166,12 @@ class ContractAuthorityPreflightService:
                 "contract_agreement_id", "classification", "rookie_draft_assignment_id",
                 "taxi_assignment_id", "option_consumed")}
                 for row in classifications), key=lambda x: str(x["contract_agreement_id"])),
+            "incoming_target_rookies": sorted((
+                {"player_id": player_id, "league_team_id": team_id}
+                for player_id, team_id in incoming_board_authority
+            ), key=lambda x: (x["player_id"], x["league_team_id"])),
         }
-        return ContractAuthorityReadiness(league_id, source_season, target_season, len(agreements), source_count,
+        return ContractAuthorityReadiness(league_id, source_season, target_season, source_agreement_count, source_count,
             target_options, active_target, len(transitions), ordinary_expirations, taxi_paused,
             unresolved, tuple(dict.fromkeys(blockers)), stable_fingerprint(material))
 

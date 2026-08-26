@@ -49,6 +49,8 @@ from services.invitations import (
 )
 from services.season_rollover_ui import render_season_rollover_control
 from services.season_rollover_owner_ui import render_owner_rollover_decisions
+from services.free_agents import build_free_agent_results, load_league_free_agent_state, load_player_universe
+from services.offseason_transactions import OffseasonTransactionService, rookie_draft_player_options
 
 
 # ============================================================
@@ -1574,21 +1576,12 @@ elif section == "League Manager Tools":
     elif tool == "Manual Add":
         st.markdown("### Manual Player Add")
 
-        players = (
-            sb_client.table("contracts")
-            .select("player_name,sleeper_player_id")
-            .eq("league_id", active_league_id)
-            .order("player_name")
-            .execute()
-            .data
-            or []
+        fa_results = build_free_agent_results(
+            load_player_universe(sb_client),
+            load_league_free_agent_state(sb_client, active_league_id),
+            active_season=canonical_season,
         )
-
-        player_options = [
-            f"{p.get('player_name')} ({p.get('sleeper_player_id')})"
-            for p in players
-            if p.get("player_name")
-        ]
+        player_options = [f"{p.player} ({p.sleeper_player_id})" for p in fa_results.current]
 
         c1, c2 = st.columns(2)
 
@@ -1623,6 +1616,13 @@ elif section == "League Manager Tools":
         notes = st.text_area("Reason / notes")
 
         if st.button("Log Manual Add", use_container_width=True):
+            player_id = player_search.rsplit("(", 1)[-1].rstrip(")")
+            team_id = next(t.get("id") for t in league_teams if (t.get("owner_name") or t.get("team_name")) == target_team)
+            OffseasonTransactionService(sb_client, active_league_id).acquire(
+                player_id=player_id, league_team_id=team_id, season=canonical_season,
+                salary=salary, years=years, acquisition_type="commissioner_manual_add",
+                idempotency_key=f"manual-add:{active_league_id}:{canonical_season}:{player_id}", notes=notes,
+            )
             log_commish_action(
                 "manual_player_add",
                 {
@@ -1633,7 +1633,7 @@ elif section == "League Manager Tools":
                     "notes": notes,
                 },
             )
-            st.success("Manual add logged.")
+            st.success("Manual add completed.")
 
     elif tool == "Manual Drop":
         st.markdown("### Manual Player Drop")
@@ -1680,6 +1680,13 @@ elif section == "League Manager Tools":
         notes = st.text_area("Reason / notes")
 
         if st.button("Log Manual Drop", use_container_width=True):
+            player_id = player_search.rsplit("(", 1)[-1].rstrip(")")
+            team_id = next(t.get("id") for t in league_teams if (t.get("owner_name") or t.get("team_name")) == drop_team)
+            OffseasonTransactionService(sb_client, active_league_id).release(
+                player_id=player_id, league_team_id=team_id, season=canonical_season,
+                dead_cap=dead_cap,
+                idempotency_key=f"manual-drop:{active_league_id}:{canonical_season}:{player_id}", notes=notes,
+            )
             log_commish_action(
                 "manual_player_drop",
                 {
@@ -1689,7 +1696,7 @@ elif section == "League Manager Tools":
                     "notes": notes,
                 },
             )
-            st.success("Manual drop logged.")
+            st.success("Manual drop completed.")
     elif tool == "Trade Tools":
         st.markdown("### Trade Tools")
         st.caption("Build trades by entering what each team receives.")
@@ -1903,20 +1910,12 @@ elif section == "Draft Center":
 
         default_order = team_names[:10]
 
-        rookie_players = (
-            sb_client.table("sleeper_players")
-            .select("full_name,sleeper_player_id,position")
-            .order("full_name")
-            .execute()
-            .data
-            or []
+        rookie_results = build_free_agent_results(
+            load_player_universe(sb_client),
+            load_league_free_agent_state(sb_client, active_league_id),
+            active_season=draft_year,
         )
-
-        rookie_options = [
-            f"{p.get('full_name')} — {p.get('position')} ({p.get('sleeper_player_id')})"
-            for p in rookie_players
-            if p.get("full_name")
-        ]
+        rookie_options = list(rookie_draft_player_options(rookie_results.rookies))
 
         st.divider()
 
@@ -2061,19 +2060,14 @@ elif section == "Draft Center":
             st.session_state["auction_current_bid"] = float(new_bid)
             st.session_state["auction_current_years"] = new_years
 
-        players = (
-            sb_client.table("sleeper_players")
-            .select("full_name,sleeper_player_id,position")
-            .order("full_name")
-            .execute()
-            .data
-            or []
+        auction_results = build_free_agent_results(
+            load_player_universe(sb_client),
+            load_league_free_agent_state(sb_client, active_league_id),
+            active_season=canonical_season,
         )
-
         player_options = [
-            f"{p.get('full_name')} — {p.get('position')} ({p.get('sleeper_player_id')})"
-            for p in players
-            if p.get("full_name")
+            f"{p.player} — {p.position} ({p.sleeper_player_id})"
+            for p in auction_results.current
         ]
 
         contracts = (
@@ -2224,6 +2218,13 @@ elif section == "Draft Center":
                 elif selected_sleeper_id and selected_sleeper_id in contracted_ids:
                     st.error("This player is already under contract. Confirm before logging this as a free agent auction.")
                 else:
+                    team_id = next(t.get("id") for t in league_teams if (t.get("owner_name") or t.get("team_name")) == auction_winner)
+                    OffseasonTransactionService(sb_client, active_league_id).acquire(
+                        player_id=selected_sleeper_id, league_team_id=team_id,
+                        season=canonical_season, salary=current_bid, years=current_years,
+                        acquisition_type="fa_auction",
+                        idempotency_key=f"fa-auction:{active_league_id}:{canonical_season}:{selected_sleeper_id}",
+                    )
                     log_commish_action(
                         "finish_fa_auction",
                         {
@@ -2234,7 +2235,7 @@ elif section == "Draft Center":
                             "current_years": current_years,
                         },
                     )
-                    st.success("Auction finish logged. Creating the contract can be wired next.")
+                    st.success("Auction finish logged and contract created.")
 
             st.markdown("</div>", unsafe_allow_html=True)
 

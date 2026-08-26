@@ -115,6 +115,7 @@ def main() -> int:
     label = os.getenv("ROLLOVER_FIXTURE_LABEL", "unified-hosted-v1")
     decision_scenario = os.getenv("ROLLOVER_DECISION_SCENARIO", "baseline").strip().lower()
     publication_scenario = os.getenv("ROLLOVER_PUBLICATION_SCENARIO", "uninterrupted").strip().lower()
+    incoming_rookie = os.getenv("ROLLOVER_INCOMING_TARGET_ROOKIE", "0") == "1"
     require(decision_scenario in {"baseline", "all_extend", "all_decline", "mixed"},
             "unsupported ROLLOVER_DECISION_SCENARIO")
     require(publication_scenario in {"uninterrupted", "interrupt_replay"},
@@ -160,6 +161,45 @@ def main() -> int:
         assert_lifecycle_empty(service_db, ids.league_id)
         print(json.dumps({"stage": "denylist_empty"}), flush=True)
         verify_hosted_auth_context(factory, commissioner_db, owner_db, foreign_db)
+
+        incoming_player_id = f"{ids.namespace}-incoming-target-rookie"
+        if incoming_rookie:
+            service_db.command(
+                "insert into public.player_universe("
+                "sleeper_id,canonical_player_id,player_name,pos,active,rookie_class_year,draft_year,"
+                "draft_round,is_rookie_contract,nfl_status,market_pool) values("
+                f"'{incoming_player_id}','{incoming_player_id}','Incoming Target Rookie','RB',true,"
+                "2026,2026,1,true,'PROSPECT','ROOKIE_PROSPECT')"
+            )
+            response = commissioner_db.rpc(
+                "persist_rookie_draft_board_authenticated",
+                {"p_request": {
+                    "league_id": ids.league_id,
+                    "draft_year": 2026,
+                    "idempotency_key": f"incoming-target-rookie:{ids.league_id}",
+                    "picks": [{
+                        "league_team_id": ids.team_ids[0],
+                        "player_id": incoming_player_id,
+                        "draft_round": 1,
+                        "round_pick": 10,
+                        "original_salary": 2,
+                        "original_contract_term": 1,
+                        "one_time_option_salary": 7,
+                    }],
+                }},
+            ).execute().data
+            require(int(response.get("rows_written", 0)) == 1,
+                    "incoming target rookie acquisition was not persisted")
+            incoming_preflight = service_db.json_query(
+                "select public.rollover_contract_preflight_readiness_private("
+                f"'{ids.league_id}'::uuid,2025,2026)"
+            )
+            require(incoming_preflight.get("ready") is True
+                    and int(incoming_preflight.get("incoming_target_rookie_count", 0)) == 1,
+                    "incoming target rookie was not accepted by contract preflight")
+            print(json.dumps({"stage": "incoming_target_rookie_scheduled",
+                              "player_id": incoming_player_id,
+                              "preflight": incoming_preflight}, sort_keys=True), flush=True)
 
         source = DeterministicHistorySource(factory.history_source(), disposable=True)
         control = SeasonRolloverControlService(
@@ -1622,6 +1662,36 @@ def main() -> int:
         require(final_by_year[2026].get("status") == "active"
                 and bool(final_by_year[2026].get("is_active")),
                 "target season did not finish active")
+        if incoming_rookie:
+            incoming_contract = service_db.json_query(
+                "select to_jsonb(q) from (select a.id,a.status,cs.obligation_status "
+                "from public.contract_agreements a join public.contract_seasons cs on cs.contract_id=a.id "
+                f"where a.league_id='{ids.league_id}' and a.player_id='{incoming_player_id}' "
+                "and cs.season=2026) q"
+            )
+            incoming_assignment = service_db.json_query(
+                "select to_jsonb(q) from (select source_assignment_id,provenance "
+                "from public.season_roster_assignments "
+                f"where league_season_id='{ids.target_season_id}' and sleeper_player_id='{incoming_player_id}') q"
+            )
+            incoming_events = int(service_db.json_query(
+                "select to_jsonb(count(*)) from public.contract_events "
+                f"where league_id='{ids.league_id}' and player_id='{incoming_player_id}' "
+                "and event_type='season_obligation_advanced' and source='phase3b7b_incoming_rookie'"
+            ))
+            require(incoming_contract.get("status") == "active"
+                    and incoming_contract.get("obligation_status") == "active",
+                    "incoming target rookie contract was not activated by operation 10")
+            require(incoming_assignment.get("source_assignment_id") is None
+                    and (incoming_assignment.get("provenance") or {}).get("authorization_authority")
+                    == "rookie_draft_board_assignments.original_league_team_id",
+                    "incoming target rookie target-roster authority is invalid")
+            require(incoming_events == 1,
+                    "incoming target rookie activation evidence is not exactly once")
+            print(json.dumps({"stage": "incoming_target_rookie_completed",
+                              "contract": incoming_contract,
+                              "assignment": incoming_assignment,
+                              "activation_event_count": incoming_events}, sort_keys=True), flush=True)
         manifests = list(completed_state.get("cache_manifests") or ())
         require(len(manifests) == 1 and manifests[0].get("status") == "completed",
                 "cache manifest did not finish completed")

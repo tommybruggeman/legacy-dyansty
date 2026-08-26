@@ -25,6 +25,7 @@ def client() -> Client:
         "contract_transition_executions": [],
         "contract_rollover_classifications": [],
         "contract_transition_reconciliations": [],
+        "rookie_draft_board_assignments": [],
     }
     return value
 
@@ -52,6 +53,32 @@ class ContractAuthorityPreflightTests(unittest.TestCase):
         self.assertIn("target_contract_authority_already_activated", service.run("l", 2025, 2026).blockers)
         c = client(); c.rows["contract_transition_executions"] = [{"league_id": "l", "source_season": 2025, "target_season": 2026}]
         self.assertIn("prior_contract_transition_conflicts_with_rollover", ContractAuthorityPreflightService(c).run("l", 2025, 2026).blockers)
+
+    def test_incoming_target_rookie_uses_board_authority_without_source_classification(self):
+        c = client()
+        c.rows["contract_agreements"].append({
+            "id": "incoming", "league_id": "l", "league_team_id": "t", "player_id": "r",
+            "status": "scheduled", "start_season": 2026, "end_season": 2026,
+            "origin": "signed", "contract_type": "rookie",
+        })
+        c.rows["contract_seasons"].append({
+            "id": "incoming-26", "contract_id": "incoming", "league_id": "l",
+            "league_team_id": "t", "player_id": "r", "season": 2026,
+            "salary": 2, "cap_hit": 2, "obligation_status": "scheduled",
+            "is_option_year": False, "option_type": None,
+        })
+        c.rows["rookie_draft_board_assignments"].append({
+            "league_id": "l", "draft_year": 2026, "player_id": "r",
+            "original_league_team_id": "t", "rookie_contract_provenance": True,
+        })
+        result = ContractAuthorityPreflightService(c).run("l", 2025, 2026)
+        self.assertTrue(result.ready)
+        self.assertEqual(result.agreement_count, 1)
+        self.assertEqual(result.source_season_count, 1)
+
+        c.rows["rookie_draft_board_assignments"][0]["original_league_team_id"] = "wrong"
+        blocked = ContractAuthorityPreflightService(c).run("l", 2025, 2026)
+        self.assertIn("contract_source_obligation_count:incoming:0", blocked.blockers)
 
 
 if __name__ == "__main__": unittest.main()
