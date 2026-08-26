@@ -1537,9 +1537,6 @@ elif section == "League Manager Tools":
         }
 
         c1, c2 = st.columns(2)
-        transaction_service = OffseasonTransactionService(sb_client, active_league_id)
-        drop_resolution = None
-        drop_error = None
 
         with c1:
             player_search = st.selectbox(
@@ -1666,6 +1663,13 @@ elif section == "League Manager Tools":
             for p in players
             if p.get("player_name")
         ]
+
+        transaction_service = OffseasonTransactionService(
+            sb_client,
+            active_league_id,
+        )
+        drop_resolution = None
+        drop_error = None
 
         c1, c2 = st.columns(2)
 

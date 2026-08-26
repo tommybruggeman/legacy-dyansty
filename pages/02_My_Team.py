@@ -32,7 +32,10 @@ import streamlit as st
 from components.sidebar_nav import render_nav
 from auth import auth_client, require_login, current_user
 from services.my_team_context import resolve_my_team
-from services.offseason_transactions import taxi_eligible_player_names
+from services.offseason_transactions import (
+    load_taxi_eligibility_provenance,
+    taxi_eligible_player_names,
+)
 
 # ---------- page ----------
 ICON = Path(__file__).resolve().parents[1] / "assets" / "page_icon.png"
@@ -1670,12 +1673,11 @@ with right:
             my_roster["player"].dropna().astype(str).unique().tolist()
         ) if not my_roster.empty else []
         if st.session_state.get("designation_type", "Taxi Squad") == "Taxi Squad":
-            draft_assignments = (
-                sb.table("rookie_draft_board_assignments")
-                .select("player_id,original_league_team_id,draft_year,rookie_contract_provenance")
-                .eq("league_id", league_id)
-                .execute().data or []
+            draft_assignments, taxi_provenance_error = load_taxi_eligibility_provenance(
+                auth_client(), league_id,
             )
+            if taxi_provenance_error:
+                st.warning(taxi_provenance_error)
             taxi_roster = my_roster.rename(columns={"sleeper_id": "sleeper_player_id"}).to_dict(orient="records")
             roster_options = list(taxi_eligible_player_names(
                 taxi_roster, draft_assignments, league_team_id=my_team["team_id"]

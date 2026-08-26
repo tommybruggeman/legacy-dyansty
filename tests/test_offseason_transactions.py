@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from services.free_agents import RookieRow
 from services.offseason_transactions import (
     calculate_default_dead_cap,
+    load_taxi_eligibility_provenance,
     OffseasonTransactionService,
     resolve_auction_terms,
     resolve_normal_free_agent_terms,
@@ -22,7 +23,7 @@ class DropClient(Client):
     def __init__(self):
         super().__init__()
         self.rows["league_seasons"] = [
-            {"id": "ls26", "league_id": "l1", "season": 2026, "status": "active", "is_active": True},
+            {"id": "ls26", "league_id": "l1", "season": 2026, "status": None, "is_active": True},
         ]
         self.rows["contract_agreements"] = [
             {"id": "marvin-agreement", "league_id": "l1", "league_team_id": "t1",
@@ -63,6 +64,26 @@ class OffseasonReadAuthorityTests(unittest.TestCase):
         ]
         self.assertEqual(taxi_eligible_player_names(roster, assignments, league_team_id="mine"), ("Drafted Rookie",))
 
+    def test_authenticated_provenance_load_and_failure_are_fail_closed(self):
+        client = Client()
+        client.rows["rookie_draft_board_assignments"] = [{
+            "league_id": "l1", "player_id": "drafted", "original_league_team_id": "mine",
+            "draft_year": 2026, "rookie_contract_provenance": True,
+        }]
+        rows, error = load_taxi_eligibility_provenance(client, "l1")
+        self.assertIsNone(error); self.assertEqual(rows[0]["player_id"], "drafted")
+
+        class ForbiddenClient:
+            def table(self, name): raise RuntimeError("403 Forbidden")
+        rows, error = load_taxi_eligibility_provenance(ForbiddenClient(), "l1")
+        self.assertEqual(rows, ()); self.assertIn("unavailable", error)
+
+    def test_my_team_uses_authenticated_taxi_path_without_changing_ir_branch(self):
+        source = Path("pages/02_My_Team.py").read_text()
+        self.assertIn("load_taxi_eligibility_provenance(\n                auth_client(), league_id", source)
+        self.assertNotIn('sb.table("rookie_draft_board_assignments")', source)
+        self.assertIn('["Taxi Squad", "Injured Reserve"]', source)
+
 
 class OffseasonWriteBoundaryTests(unittest.TestCase):
     def test_auction_and_manual_add_use_canonical_acquisition_rpc(self):
@@ -78,17 +99,13 @@ class OffseasonWriteBoundaryTests(unittest.TestCase):
         self.assertEqual(request[1]["p_request"]["acquisition_type"], "fa_auction")
 
     def test_drop_uses_canonical_release_rpc(self):
-        client = Mock()
-        client.rpc.return_value.execute.return_value.data = {"contract_agreement_id": "agreement"}
-        client.table.return_value.select.return_value.eq.return_value.eq.return_value.eq.return_value.execute.return_value.data = [
-            {"season": 2026, "status": "active", "is_active": True}
-        ]
-        OffseasonTransactionService(client, "league").release(
-            player_id="p", league_team_id="t", dead_cap=4,
+        client = DropClient()
+        OffseasonTransactionService(client, "l1").release(
+            player_id="marvin", league_team_id="t1", dead_cap=4,
             idempotency_key="drop:p",
         )
-        self.assertEqual(client.rpc.call_args.args[0], "release_offseason_player_authenticated")
-        self.assertEqual(client.rpc.call_args.args[1]["p_request"]["season"], 2026)
+        self.assertEqual(client.rpc_calls[-1][0], "release_offseason_player_authenticated")
+        self.assertEqual(client.rpc_calls[-1][1]["p_request"]["season"], 2026)
 
 
 class CanonicalTransactionRuleTests(unittest.TestCase):
@@ -133,6 +150,31 @@ class CanonicalTransactionRuleTests(unittest.TestCase):
 
 
 class ManualDropResolutionTests(unittest.TestCase):
+    def test_service_reuses_season_resolver_and_accepts_null_status(self):
+        service = OffseasonTransactionService(DropClient(), "l1")
+        self.assertEqual(service.canonical_active_season(), 2026)
+        source = Path("services/offseason_transactions.py").read_text()
+        self.assertIn("SeasonResolver(self.client).get_active_season(self.league_id).season", source)
+        self.assertNotIn('.eq("status", "active")', source)
+
+    def test_missing_and_ambiguous_active_season_fail_closed(self):
+        client = DropClient(); client.rows["league_seasons"] = []
+        with self.assertRaisesRegex(ValueError, "missing or ambiguous"):
+            OffseasonTransactionService(client, "l1").canonical_active_season()
+        client = DropClient(); client.rows["league_seasons"].append({
+            "id": "duplicate-active", "league_id": "l1", "season": 2027,
+            "status": None, "is_active": True,
+        })
+        with self.assertRaisesRegex(ValueError, "missing or ambiguous"):
+            OffseasonTransactionService(client, "l1").canonical_active_season()
+
+    def test_release_rejects_conflicting_explicit_season(self):
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            OffseasonTransactionService(DropClient(), "l1").release(
+                player_id="marvin", league_team_id="t1", season=2025, dead_cap=12,
+                idempotency_key="conflicting-season",
+            )
+
     def test_player_resolves_team_contract_rule_and_dead_cap(self):
         result = OffseasonTransactionService(DropClient(), "l1").resolve_manual_drop("marvin")
         self.assertEqual(result.league_team_id, "t1")
@@ -175,6 +217,13 @@ class ManualDropResolutionTests(unittest.TestCase):
 
 
 class OffseasonMigrationTests(unittest.TestCase):
+    def test_rookie_board_rls_is_authenticated_membership_scoped(self):
+        sql = Path("supabase/migrations/20261020_abs_2025_rookie_taxi_contract_reconciliation.sql").read_text().lower()
+        self.assertIn("policy rookie_board_member_read", sql)
+        self.assertIn("for select to authenticated", sql)
+        self.assertIn("m.user_id=auth.uid()", sql)
+        self.assertNotIn("grant select on public.rookie_draft_board_assignments to anon", sql)
+
     def test_migration_is_atomic_canonical_and_duplicate_safe(self):
         sql = Path("supabase/migrations/20261027_offseason_canonical_acquisition_release.sql").read_text().lower()
         for fragment in ("begin;", "contract_agreements", "contract_seasons", "contract_events",

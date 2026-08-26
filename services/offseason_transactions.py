@@ -5,6 +5,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Mapping, Sequence
 
 from services.free_agents import RookieRow
+from season_engine.resolver import SeasonAuthorityError, SeasonResolver
 
 
 ROOKIE_SALARY_SCALE_BASE_CAP = Decimal("225")
@@ -135,6 +136,19 @@ def taxi_eligible_player_names(
     return tuple(sorted(names))
 
 
+def load_taxi_eligibility_provenance(
+    authenticated_client: Any, league_id: str,
+) -> tuple[tuple[Mapping[str, Any], ...], str | None]:
+    """Read only the member-visible draft provenance needed by the Taxi selector."""
+    try:
+        rows = (authenticated_client.table("rookie_draft_board_assignments")
+                .select("player_id,original_league_team_id,draft_year,rookie_contract_provenance")
+                .eq("league_id", str(league_id)).execute().data or [])
+        return tuple(dict(row) for row in rows), None
+    except Exception:
+        return (), "Taxi eligibility provenance is temporarily unavailable."
+
+
 class OffseasonTransactionService:
     """Thin client for atomic authenticated canonical offseason writes."""
 
@@ -155,12 +169,10 @@ class OffseasonTransactionService:
         return self.client.rpc("acquire_offseason_player_authenticated", {"p_request": request}).execute().data
 
     def canonical_active_season(self) -> int:
-        rows = (self.client.table("league_seasons").select("season,status,is_active")
-                .eq("league_id", self.league_id).eq("status", "active")
-                .eq("is_active", True).execute().data or [])
-        if len(rows) != 1:
-            raise ValueError("canonical active league season is missing or ambiguous")
-        return int(rows[0]["season"])
+        try:
+            return int(SeasonResolver(self.client).get_active_season(self.league_id).season)
+        except SeasonAuthorityError as exc:
+            raise ValueError("canonical active league season is missing or ambiguous") from exc
 
     def resolve_manual_drop(self, player_id: str) -> ManualDropResolution:
         active_season = self.canonical_active_season()
