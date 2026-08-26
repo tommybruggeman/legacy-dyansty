@@ -22,6 +22,19 @@ class ContractTerms:
     option_salary: Decimal | None = None
 
 
+@dataclass(frozen=True)
+class ManualDropResolution:
+    player_id: str
+    agreement_id: str
+    league_team_id: str
+    team_name: str
+    active_season: int
+    salary_basis: Decimal
+    years_remaining: int
+    dead_cap_percentage: Decimal
+    dead_cap: Decimal
+
+
 def _money(value: Any) -> Decimal:
     return Decimal(str(value)).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
 
@@ -148,6 +161,62 @@ class OffseasonTransactionService:
         if len(rows) != 1:
             raise ValueError("canonical active league season is missing or ambiguous")
         return int(rows[0]["season"])
+
+    def resolve_manual_drop(self, player_id: str) -> ManualDropResolution:
+        active_season = self.canonical_active_season()
+        agreements = (self.client.table("contract_agreements")
+                      .select("id,league_team_id,player_id,status,superseded_by_contract_id")
+                      .eq("league_id", self.league_id).eq("player_id", str(player_id))
+                      .in_("status", ["active", "scheduled"])
+                      .eq("superseded_by_contract_id", None).execute().data or [])
+        if len(agreements) != 1:
+            raise ValueError("player must have exactly one canonical live ownership agreement")
+        agreement = agreements[0]
+        team_id = str(agreement.get("league_team_id") or "")
+        teams = (self.client.table("league_teams").select("id,team_name,owner_name")
+                 .eq("league_id", self.league_id).eq("id", team_id).execute().data or [])
+        if len(teams) != 1:
+            raise ValueError("canonical owning team is missing or ambiguous")
+        team_name = str(teams[0].get("owner_name") or teams[0].get("team_name") or "").strip()
+        if not team_name:
+            raise ValueError("canonical owning team name is missing")
+        seasons = (self.client.table("contract_seasons")
+                   .select("id,season,salary,cap_hit,obligation_status")
+                   .eq("contract_id", str(agreement["id"])).execute().data or [])
+        current = [row for row in seasons if int(row.get("season") or 0) == active_season
+                   and row.get("obligation_status") == "active"]
+        if len(current) != 1:
+            raise ValueError("canonical active contract season is missing or ambiguous")
+        raw_salary = current[0].get("cap_hit")
+        if raw_salary is None:
+            raw_salary = current[0].get("salary")
+        if raw_salary is None or Decimal(str(raw_salary)) < 0:
+            raise ValueError("canonical drop salary basis is missing or invalid")
+        rules = (self.client.table("league_rules").select("default_dead_cap_pct")
+                 .eq("league_id", self.league_id).execute().data or [])
+        if len(rules) != 1 or rules[0].get("default_dead_cap_pct") is None:
+            raise ValueError("canonical league dead-cap rule is missing or ambiguous")
+        percentage = Decimal(str(rules[0]["default_dead_cap_pct"]))
+        salary_basis = Decimal(str(raw_salary))
+        years_remaining = sum(
+            1 for row in seasons
+            if int(row.get("season") or 0) >= active_season
+            and row.get("obligation_status") in {"active", "scheduled"}
+        )
+        return ManualDropResolution(
+            str(player_id), str(agreement["id"]), team_id, team_name, active_season,
+            salary_basis, years_remaining, percentage,
+            calculate_default_dead_cap(rules[0], salary_basis),
+        )
+
+    def release_manual_drop(self, *, player_id: str, notes: str = "") -> Mapping[str, Any]:
+        resolved = self.resolve_manual_drop(player_id)
+        return self.release(
+            player_id=resolved.player_id, league_team_id=resolved.league_team_id,
+            season=resolved.active_season, dead_cap=float(resolved.dead_cap),
+            idempotency_key=(f"manual-drop:{self.league_id}:{resolved.active_season}:"
+                             f"{resolved.player_id}"), notes=notes,
+        )
 
     def release(self, *, player_id: str, league_team_id: str, season: int | None = None,
                 dead_cap: float, idempotency_key: str, notes: str = "") -> Mapping[str, Any]:

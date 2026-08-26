@@ -1537,6 +1537,9 @@ elif section == "League Manager Tools":
         }
 
         c1, c2 = st.columns(2)
+        transaction_service = OffseasonTransactionService(sb_client, active_league_id)
+        drop_resolution = None
+        drop_error = None
 
         with c1:
             player_search = st.selectbox(
@@ -1674,37 +1677,53 @@ elif section == "League Manager Tools":
                 placeholder="Search or choose player...",
                 key="manual_drop_player_select",
             )
-
-            drop_team = st.selectbox(
+            if player_search:
+                try:
+                    selected_drop_player_id = player_search.rsplit("(", 1)[-1].rstrip(")")
+                    drop_resolution = transaction_service.resolve_manual_drop(selected_drop_player_id)
+                except (ValueError, TypeError) as exc:
+                    drop_error = str(exc)
+            st.text_input(
                 "Current team",
-                [t.get("owner_name") or t.get("team_name") for t in league_teams],
+                value=drop_resolution.team_name if drop_resolution else "",
+                disabled=True,
             )
 
         with c2:
-            dead_cap = st.number_input(
-                "Dead cap",
-                min_value=0.0,
-                value=0.0,
+            st.text_input(
+                "Current contract",
+                value=(f"${drop_resolution.salary_basis:.2f} — "
+                       f"{drop_resolution.years_remaining} year(s) remaining") if drop_resolution else "",
+                disabled=True,
             )
+            st.text_input(
+                "Drop penalty",
+                value=f"{drop_resolution.dead_cap_percentage:.2f}%" if drop_resolution else "",
+                disabled=True,
+            )
+            st.text_input(
+                "Dead cap",
+                value=f"${drop_resolution.dead_cap:.2f}" if drop_resolution else "",
+                disabled=True,
+            )
+
+        if drop_error:
+            st.error(drop_error)
 
         notes = st.text_area("Reason / notes")
 
-        if st.button("Log Manual Drop", use_container_width=True):
-            player_id = player_search.rsplit("(", 1)[-1].rstrip(")")
-            team_id = next(t.get("id") for t in league_teams if (t.get("owner_name") or t.get("team_name")) == drop_team)
-            transaction_service = OffseasonTransactionService(sb_client, active_league_id)
-            active_drop_season = transaction_service.canonical_active_season()
-            transaction_service.release(
-                player_id=player_id, league_team_id=team_id, season=active_drop_season,
-                dead_cap=dead_cap,
-                idempotency_key=f"manual-drop:{active_league_id}:{active_drop_season}:{player_id}", notes=notes,
-            )
+        if st.button("Log Manual Drop", use_container_width=True, disabled=drop_resolution is None):
+            transaction_service.release_manual_drop(player_id=drop_resolution.player_id, notes=notes)
             log_commish_action(
                 "manual_player_drop",
                 {
                     "player_search": player_search,
-                    "drop_team": drop_team,
-                    "dead_cap": dead_cap,
+                    "league_team_id": drop_resolution.league_team_id,
+                    "team_name": drop_resolution.team_name,
+                    "active_season": drop_resolution.active_season,
+                    "salary_basis": str(drop_resolution.salary_basis),
+                    "dead_cap_percentage": str(drop_resolution.dead_cap_percentage),
+                    "dead_cap": str(drop_resolution.dead_cap),
                     "notes": notes,
                 },
             )

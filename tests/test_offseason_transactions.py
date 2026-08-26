@@ -1,6 +1,7 @@
 import unittest
 from unittest.mock import Mock
 from pathlib import Path
+from types import SimpleNamespace
 
 from services.free_agents import RookieRow
 from services.offseason_transactions import (
@@ -14,6 +15,34 @@ from services.offseason_transactions import (
     rookie_draft_player_options,
     taxi_eligible_player_names,
 )
+from tests.test_contract_reads import Client
+
+
+class DropClient(Client):
+    def __init__(self):
+        super().__init__()
+        self.rows["league_seasons"] = [
+            {"id": "ls26", "league_id": "l1", "season": 2026, "status": "active", "is_active": True},
+        ]
+        self.rows["contract_agreements"] = [
+            {"id": "marvin-agreement", "league_id": "l1", "league_team_id": "t1",
+             "player_id": "marvin", "status": "active", "superseded_by_contract_id": None},
+        ]
+        self.rows["contract_seasons"] = [
+            {"id": "marvin-26", "contract_id": "marvin-agreement", "season": 2026,
+             "salary": "20", "cap_hit": "24", "obligation_status": "active"},
+            {"id": "marvin-27", "contract_id": "marvin-agreement", "season": 2027,
+             "salary": "22", "cap_hit": "22", "obligation_status": "scheduled"},
+        ]
+        self.rows["league_teams"] = [
+            {"id": "t1", "league_id": "l1", "owner_name": "Chase Seyforth", "team_name": "Team One"},
+        ]
+        self.rows["league_rules"] = [{"league_id": "l1", "default_dead_cap_pct": 50}]
+        self.rpc_calls = []
+
+    def rpc(self, name, params):
+        self.rpc_calls.append((name, params))
+        return SimpleNamespace(execute=lambda: SimpleNamespace(data={"contract_agreement_id": "marvin-agreement"}))
 
 
 class OffseasonReadAuthorityTests(unittest.TestCase):
@@ -101,6 +130,48 @@ class CanonicalTransactionRuleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "minimum"):
             resolve_auction_terms(rules, 11, 3)
         self.assertEqual(calculate_default_dead_cap(rules, 9), 4.50)
+
+
+class ManualDropResolutionTests(unittest.TestCase):
+    def test_player_resolves_team_contract_rule_and_dead_cap(self):
+        result = OffseasonTransactionService(DropClient(), "l1").resolve_manual_drop("marvin")
+        self.assertEqual(result.league_team_id, "t1")
+        self.assertEqual(result.team_name, "Chase Seyforth")
+        self.assertEqual(result.salary_basis, 24)
+        self.assertEqual(result.years_remaining, 2)
+        self.assertEqual(result.dead_cap_percentage, 50)
+        self.assertEqual(result.dead_cap, 12)
+
+    def test_no_live_or_ambiguous_live_contract_fails_closed(self):
+        client = DropClient(); client.rows["contract_agreements"] = []
+        with self.assertRaisesRegex(ValueError, "exactly one"):
+            OffseasonTransactionService(client, "l1").resolve_manual_drop("marvin")
+        client = DropClient(); client.rows["contract_agreements"].append({**client.rows["contract_agreements"][0], "id": "duplicate"})
+        with self.assertRaisesRegex(ValueError, "exactly one"):
+            OffseasonTransactionService(client, "l1").resolve_manual_drop("marvin")
+
+    def test_release_reresolves_and_sends_only_canonical_values(self):
+        client = DropClient(); service = OffseasonTransactionService(client, "l1")
+        service.release_manual_drop(player_id="marvin", notes="canonical drop")
+        name, params = client.rpc_calls[-1]
+        self.assertEqual(name, "release_offseason_player_authenticated")
+        self.assertEqual(params["p_request"]["league_team_id"], "t1")
+        self.assertEqual(params["p_request"]["season"], 2026)
+        self.assertEqual(params["p_request"]["dead_cap"], 12.0)
+        with self.assertRaises(TypeError):
+            service.release_manual_drop(player_id="marvin", league_team_id="arbitrary", notes="")
+        with self.assertRaises(TypeError):
+            service.release_manual_drop(player_id="marvin", dead_cap=999, notes="")
+
+    def test_active_season_is_freshly_resolved(self):
+        client = DropClient(); service = OffseasonTransactionService(client, "l1")
+        self.assertEqual(service.resolve_manual_drop("marvin").active_season, 2026)
+        client.rows["league_seasons"] = [
+            {"id": "ls27", "league_id": "l1", "season": 2027, "status": "active", "is_active": True},
+        ]
+        client.rows["contract_seasons"][0]["obligation_status"] = "satisfied"
+        client.rows["contract_seasons"][1]["obligation_status"] = "active"
+        self.assertEqual(service.resolve_manual_drop("marvin").active_season, 2027)
 
 
 class OffseasonMigrationTests(unittest.TestCase):
