@@ -50,7 +50,11 @@ from services.invitations import (
 from services.season_rollover_ui import render_season_rollover_control
 from services.season_rollover_owner_ui import render_owner_rollover_decisions
 from services.free_agents import build_free_agent_results, load_league_free_agent_state, load_player_universe
-from services.offseason_transactions import OffseasonTransactionService, rookie_draft_player_options
+from services.offseason_transactions import (
+    OffseasonTransactionService,
+    resolve_rookie_contract_terms,
+    rookie_draft_player_options,
+)
 
 
 # ============================================================
@@ -1416,6 +1420,10 @@ elif section == "League Manager Tools":
                 "Use rookie salary scale",
                 value=bool(league_rules.get("rookie_scale_enabled", True)),
             )
+            scale_rookie_salaries_with_cap = st.checkbox(
+                "Scale rookie salaries with salary cap",
+                value=bool(league_rules.get("scale_rookie_salaries_with_cap", False)),
+            )
 
         st.divider()
         st.markdown("#### Auction Settings")
@@ -1467,6 +1475,7 @@ elif section == "League Manager Tools":
                     "rookie_contract_years": rookie_contract_years,
                     "rookie_option_years": rookie_option_years,
                     "rookie_scale_enabled": rookie_scale_enabled,
+                    "scale_rookie_salaries_with_cap": scale_rookie_salaries_with_cap,
                     "min_2_year_bid": min_2_year_bid,
                     "min_3_year_bid": min_3_year_bid,
                     "min_4_year_bid": min_4_year_bid,
@@ -1488,6 +1497,7 @@ elif section == "League Manager Tools":
                     "rookie_contract_years": rookie_contract_years,
                     "rookie_option_years": rookie_option_years,
                     "rookie_scale_enabled": rookie_scale_enabled,
+                    "scale_rookie_salaries_with_cap": scale_rookie_salaries_with_cap,
                     "min_2_year_bid": min_2_year_bid,
                     "min_3_year_bid": min_3_year_bid,
                     "min_4_year_bid": min_4_year_bid,
@@ -1682,10 +1692,12 @@ elif section == "League Manager Tools":
         if st.button("Log Manual Drop", use_container_width=True):
             player_id = player_search.rsplit("(", 1)[-1].rstrip(")")
             team_id = next(t.get("id") for t in league_teams if (t.get("owner_name") or t.get("team_name")) == drop_team)
-            OffseasonTransactionService(sb_client, active_league_id).release(
-                player_id=player_id, league_team_id=team_id, season=canonical_season,
+            transaction_service = OffseasonTransactionService(sb_client, active_league_id)
+            active_drop_season = transaction_service.canonical_active_season()
+            transaction_service.release(
+                player_id=player_id, league_team_id=team_id, season=active_drop_season,
                 dead_cap=dead_cap,
-                idempotency_key=f"manual-drop:{active_league_id}:{canonical_season}:{player_id}", notes=notes,
+                idempotency_key=f"manual-drop:{active_league_id}:{active_drop_season}:{player_id}", notes=notes,
             )
             log_commish_action(
                 "manual_player_drop",
@@ -1884,6 +1896,13 @@ elif section == "Draft Center":
             ],
             columns=["Round", "Pick", "Base Salary", "Base Years", "Option Salary", "Option Year"],
         )
+        for template_index, template_row in default_rookie_template.iterrows():
+            template_terms = resolve_rookie_contract_terms(
+                league_rules, int(template_row["Round"]), int(template_row["Pick"]),
+            )
+            default_rookie_template.at[template_index, "Base Salary"] = float(template_terms.salary)
+            default_rookie_template.at[template_index, "Base Years"] = template_terms.years
+            default_rookie_template.at[template_index, "Option Salary"] = float(template_terms.option_salary)
 
         with top_col2:
             st.write("")
@@ -1994,9 +2013,10 @@ elif section == "Draft Center":
                     & (default_rookie_template["Pick"] == pick_idx)
                 ]
 
-                salary = float(salary_row.iloc[0]["Base Salary"]) if not salary_row.empty else 1.0
-                years = int(salary_row.iloc[0]["Base Years"]) if not salary_row.empty else 1
-                option_salary = float(salary_row.iloc[0]["Option Salary"]) if not salary_row.empty else 7.0
+                rookie_terms = resolve_rookie_contract_terms(league_rules, round_num, pick_idx)
+                salary = float(rookie_terms.salary)
+                years = rookie_terms.years
+                option_salary = float(rookie_terms.option_salary)
 
                 draft_rows.append(
                     {
