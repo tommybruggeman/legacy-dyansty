@@ -43,6 +43,7 @@ from services.team_roster_state import (
     dead_cap_display_rows,
     load_team_state,
     merge_activity,
+    roster_designation,
     state_activity,
     state_cap_adjustments,
     state_roster,
@@ -1592,34 +1593,15 @@ with left:
                     '<span class="roster-badge" title="Rookie">R</span>'
                 )
 
-            player_cap_rows = pd.DataFrame()
-
-            if not cap_adj_df.empty:
-                player_cap_rows = cap_adj_df[
-                    cap_adj_df["player_name"]
-                    .astype(str)
-                    .str.lower()
-                    .eq(str(player).lower())
-                ]
-
-            if not player_cap_rows.empty:
-                if any(
-                    player_cap_rows["adjustment_type"]
-                    .astype(str)
-                    .eq("taxi_adjustment")
-                ):
-                    badges.append(
-                        '<span class="roster-badge roster-badge-action" title="Taxi Squad">T</span>'
-                    )
-
-                if any(
-                    player_cap_rows["adjustment_type"]
-                    .astype(str)
-                    .eq("ir_adjustment")
-                ):
-                    badges.append(
-                        '<span class="roster-badge roster-badge-action" title="Injured Reserve">IR</span>'
-                    )
+            designation = roster_designation(r)
+            if designation == "taxi":
+                badges.append(
+                    '<span class="roster-badge roster-badge-action" title="Taxi Squad">T</span>'
+                )
+            elif designation == "ir":
+                badges.append(
+                    '<span class="roster-badge roster-badge-action" title="Injured Reserve">IR</span>'
+                )
 
             badges_html = "".join(badges)
 

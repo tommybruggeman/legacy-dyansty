@@ -9,6 +9,10 @@ def _money(value: Any)->Decimal:
     try:return Decimal(str(value or 0))
     except (InvalidOperation,ValueError,TypeError):return Decimal("0")
 
+def roster_designation(row:Mapping[str,Any])->str|None:
+    value=_text(row.get("roster_designation")).lower()
+    return value if value in {"taxi","ir"} else None
+
 def load_team_state(client:Any,league_id:str,season:int,league_team_id:str|None=None)->dict[str,Any]:
     if client is None or not _text(league_id):raise CanonicalTeamStateError("Canonical team state requires an authenticated client and league")
     request={"league_id":str(league_id),"season":int(season)}
@@ -23,7 +27,7 @@ def load_team_state(client:Any,league_id:str,season:int,league_team_id:str|None=
     return result
 
 def _normalized_roster(rows):
-    return[{**r,"owner":r.get("owner_name"),"owner_team_name":r.get("team_name"),"player":r.get("player_name"),"player_position":r.get("pos"),"sleeper_id":r.get("sleeper_player_id"),"salary":r.get("cap_hit",r.get("salary")),"years":r.get("contract_years_left")}for r in rows]
+    return[{**r,"owner":r.get("owner_name"),"owner_team_name":r.get("team_name"),"player":r.get("player_name"),"player_position":r.get("pos"),"sleeper_id":r.get("sleeper_player_id"),"salary":r.get("cap_hit",r.get("salary")),"years":r.get("contract_years_left"),"roster_designation":roster_designation(r)}for r in rows]
 def _normalized_activity(rows):
     return[{**r,"owner":r.get("owner_name"),"player":r.get("player_name"),"tx_type":r.get("action"),"acquisition":"added" if r.get("action")=="add" else "dropped","ts":r.get("effective_at")or r.get("created_at"),"_source":"contract_events","_canonical_event_id":r.get("id")}for r in rows]
 

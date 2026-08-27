@@ -26,6 +26,7 @@ from services.team_roster_state import (
     dead_cap_display_rows,
     load_team_state,
     merge_activity,
+    roster_designation,
     state_activity,
     state_cap_adjustments,
     state_roster,
@@ -1869,11 +1870,18 @@ with left_col:
             name = r.get("player", "Unknown")
             yrs = r.get("years", "") or "—"
             sal = r.get("salary", "") or "—"
+            designation = roster_designation(r)
+            designation_badge = (
+                '<span class="pos-pill" title="Taxi Squad">T</span>'
+                if designation == "taxi" else
+                '<span class="pos-pill" title="Injured Reserve">IR</span>'
+                if designation == "ir" else ""
+            )
             html.append(
                 (
                     '<div class="roster-row" style="gap:0;">'
                     f'<div style="width:42px;"><span class="pos-pill">{pos}</span></div>'
-                    f'<div style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><span class="player-name">{name}</span></div>'
+                    f'<div style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><span class="player-name">{name}{designation_badge}</span></div>'
                     f'<div style="width:70px;text-align:right;font-size:.7rem;">{yrs}</div>'
                     f'<div style="width:80px;text-align:right;font-size:.7rem;">${sal}</div>'
                     '</div>'
@@ -2255,11 +2263,18 @@ for _, r in mobile_roster.iterrows():
     mobile_name = _mobile_escape(r.get("player") or "Unknown")
     mobile_years = _mobile_escape(r.get("years") or "—")
     mobile_salary = _mobile_escape(r.get("salary") or "—")
+    mobile_designation = roster_designation(r)
+    mobile_badge = (
+        '<span class="teams-mobile-pos" title="Taxi Squad">T</span>'
+        if mobile_designation == "taxi" else
+        '<span class="teams-mobile-pos" title="Injured Reserve">IR</span>'
+        if mobile_designation == "ir" else ""
+    )
 
     mobile_roster_rows.append(
         '<div class="teams-mobile-roster-row">'
         f'<div><span class="teams-mobile-pos">{mobile_pos}</span></div>'
-        f'<div class="teams-mobile-roster-name">{mobile_name}</div>'
+        f'<div class="teams-mobile-roster-name">{mobile_name}{mobile_badge}</div>'
         f'<div class="teams-mobile-roster-cell">{mobile_years}</div>'
         f'<div class="teams-mobile-roster-cell">${mobile_salary}</div>'
         '</div>'

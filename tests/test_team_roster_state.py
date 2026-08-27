@@ -6,6 +6,7 @@ from services.team_roster_state import (
     CanonicalTeamStateError, calculate_team_financials,
     dead_cap_display_rows,
     invalidate_team_state_session_cache, load_team_state, merge_activity,
+    roster_designation,
     state_activity, state_cap_adjustments, state_roster,
 )
 
@@ -23,7 +24,7 @@ class Client:
     def rpc(self,name,params):self.calls.append((name,params));return Rpc(self.payload,self.error)
 
 def snapshot():
-    return {"schema":"canonical-team-state-v1","league_id":"l1","season":2026,"scope_team_id":"t1","teams":[{"league_team_id":"t1","owner_name":"Chase","team_name":"Chase Seyforth"}],"roster":[{"contract_agreement_id":"a1","league_team_id":"t1","player_id":"p1","sleeper_player_id":"p1","player_name":"Added Player","pos":"WR","owner_name":"Chase","team_name":"Chase Seyforth","cap_hit":"7.00","contract_years_left":2}],"dead_cap":[{"id":"d1","league_team_id":"t1","player_id":"11628","player_name":"Marvin Harrison Jr.","owner_name":"Chase","team_name":"Chase Seyforth","season":2026,"amount":"20.50","adjustment_type":"dropped_player_charge"}],"activity":[{"id":"e1","league_team_id":"t1","player_id":"p1","player_name":"Added Player","owner_name":"Chase","team_name":"Chase Seyforth","action":"add","effective_at":"2026-01-01T00:00:00Z"},{"id":"e2","league_team_id":"t1","player_id":"11628","player_name":"Marvin Harrison Jr.","owner_name":"Chase","team_name":"Chase Seyforth","action":"drop","effective_at":"2026-01-02T00:00:00Z"}],"cap_adjustments":[{"id":"legacy","league_team_id":"t1","owner_name":"Chase","player_name":"IR Player","season":2026,"amount":"2","adjustment_type":"ir_adjustment"}]}
+    return {"schema":"canonical-team-state-v1","league_id":"l1","season":2026,"scope_team_id":"t1","teams":[{"league_team_id":"t1","owner_name":"Chase","team_name":"Chase Seyforth"}],"roster":[{"contract_agreement_id":"a1","league_team_id":"t1","player_id":"p1","sleeper_player_id":"p1","player_name":"Added Player","pos":"WR","owner_name":"Chase","team_name":"Chase Seyforth","cap_hit":"7.00","contract_years_left":2,"is_rookie":True,"roster_designation":"TAXI"}],"dead_cap":[{"id":"d1","league_team_id":"t1","player_id":"11628","player_name":"Marvin Harrison Jr.","owner_name":"Chase","team_name":"Chase Seyforth","season":2026,"amount":"20.50","adjustment_type":"dropped_player_charge"}],"activity":[{"id":"e1","league_team_id":"t1","player_id":"p1","player_name":"Added Player","owner_name":"Chase","team_name":"Chase Seyforth","action":"add","effective_at":"2026-01-01T00:00:00Z"},{"id":"e2","league_team_id":"t1","player_id":"11628","player_name":"Marvin Harrison Jr.","owner_name":"Chase","team_name":"Chase Seyforth","action":"drop","effective_at":"2026-01-02T00:00:00Z"}],"cap_adjustments":[{"id":"legacy","league_team_id":"t1","owner_name":"Chase","player_name":"IR Player","season":2026,"amount":"2","adjustment_type":"ir_adjustment"}]}
 
 class TeamStateTests(unittest.TestCase):
     def test_rpc_is_only_canonical_read_and_is_team_scoped(self):
@@ -33,6 +34,7 @@ class TeamStateTests(unittest.TestCase):
     def test_names_roster_terms_dead_cap_and_activity(self):
         state=snapshot();roster=state_roster(state);activity=state_activity(state);adjustments=state_cap_adjustments(state)
         self.assertEqual(roster[0]["player"],"Added Player");self.assertEqual(roster[0]["years"],2)
+        self.assertTrue(roster[0]["is_rookie"]);self.assertEqual(roster[0]["roster_designation"],"taxi")
         self.assertEqual(adjustments[0]["player_name"],"Marvin Harrison Jr.")
         self.assertEqual(dead_cap_display_rows(adjustments),[("Marvin Harrison Jr.",Decimal("20.50"))])
         self.assertEqual([r["action"] for r in activity],["add","drop"])
@@ -47,6 +49,11 @@ class TeamStateTests(unittest.TestCase):
         with self.assertRaises(CanonicalTeamStateError):load_team_state(Client([]),"l1",2026)
     def test_targeted_cache_epoch(self):
         state={};self.assertEqual(invalidate_team_state_session_cache(state),1);self.assertEqual(invalidate_team_state_session_cache(state),2)
+    def test_roster_designation_normalizes_only_canonical_values(self):
+        self.assertEqual(roster_designation({"roster_designation":" TAXI "}),"taxi")
+        self.assertEqual(roster_designation({"roster_designation":"IR"}),"ir")
+        self.assertIsNone(roster_designation({"roster_designation":"bench"}))
+        self.assertIsNone(roster_designation({}))
     def test_no_direct_canonical_table_reads(self):
         source=(ROOT/"services/team_roster_state.py").read_text()
         for table in("contract_agreements","contract_seasons","contract_events","dead_cap_obligations"):
@@ -61,5 +68,13 @@ class TeamStateTests(unittest.TestCase):
             source=(ROOT/page).read_text();self.assertIn("dead_cap_display_rows",source)
         teams=(ROOT/"pages/03_Teams.py").read_text()
         self.assertNotIn("f'<small>{season}</small>'",teams)
+    def test_pages_use_canonical_designation_and_rookie_is_independent(self):
+        mine=(ROOT/"pages/02_My_Team.py").read_text();teams=(ROOT/"pages/03_Teams.py").read_text()
+        roster_block=mine[mine.index("# ---------- roster ----------"):mine.index("# ---------- right actions ----------")]
+        self.assertIn('if bool(r.get("is_rookie"))',roster_block)
+        self.assertIn('designation = roster_designation(r)',roster_block)
+        self.assertNotIn('eq("taxi_adjustment")',roster_block)
+        self.assertNotIn('eq("ir_adjustment")',roster_block)
+        self.assertGreaterEqual(teams.count("roster_designation(r)"),2)
 
 if __name__=="__main__":unittest.main()
