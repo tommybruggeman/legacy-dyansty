@@ -33,8 +33,19 @@ from components.sidebar_nav import render_nav
 from auth import auth_client, require_login, current_user
 from services.my_team_context import resolve_my_team
 from services.offseason_transactions import (
+    OffseasonTransactionService,
     load_taxi_eligibility_provenance,
     taxi_eligible_player_names,
+)
+from services.team_roster_state import (
+    CanonicalTeamStateError,
+    calculate_team_financials,
+    dead_cap_display_rows,
+    load_team_state,
+    merge_activity,
+    state_activity,
+    state_cap_adjustments,
+    state_roster,
 )
 
 # ---------- page ----------
@@ -114,6 +125,7 @@ class _Table:
         self.name = name
         self._select = "*"
         self._filters = []
+        self._in_filters = []
         self._order = None
         self._limit = None
 
@@ -123,6 +135,10 @@ class _Table:
 
     def eq(self, col, val):
         self._filters.append((col, val))
+        return self
+
+    def in_(self, col, values):
+        self._in_filters.append((col, list(values)))
         return self
 
     def order(self, col, desc=False):
@@ -139,6 +155,9 @@ class _Table:
 
         for c, v in self._filters:
             params[c] = f"eq.{v}"
+
+        for c, values in self._in_filters:
+            params[c] = f"in.({','.join(str(v) for v in values)})"
 
         if self._order:
             params["order"] = f"{self._order[0]}.{'desc' if self._order[1] else 'asc'}"
@@ -168,6 +187,17 @@ class SB:
 
     def table(self, name: str):
         return _Table(self.url, self.headers, name)
+
+    def rpc(self, name: str, params: dict):
+        class _Rpc:
+            def execute(inner_self):
+                response = requests.post(
+                    f"{self.url}/rest/v1/rpc/{name}", headers=self.headers,
+                    json=params, timeout=25,
+                )
+                response.raise_for_status()
+                return _Resp(response.json())
+        return _Rpc()
 
 
 access_token = st.session_state.get("sb_access_token")
@@ -245,6 +275,19 @@ st.markdown(
   --muted:#9DA89C;
   --rule:rgba(202,167,74,.12);
   --shadow:0 4px 18px rgba(0,0,0,.32);
+
+  /* ======================================================
+     EASY FONT SIZE CONTROLS
+     Change ONLY these numbers when you want to experiment.
+     1.00 = current size, 1.10 = 10% larger, .90 = 10% smaller.
+     Desktop/tablet and phone can be tuned independently.
+     ====================================================== */
+  --my-team-desktop-font-scale: 1.00;
+  --my-team-phone-font-scale: 1.00;
+}
+
+@media (min-width:769px){
+  html { font-size: calc(16px * var(--my-team-desktop-font-scale)); }
 }
 
 html, body, [data-testid="stAppViewContainer"]{
@@ -506,6 +549,8 @@ html, body, [data-testid="stAppViewContainer"]{
 }
 
 @media (max-width: 768px) {
+  html { font-size: calc(16px * var(--my-team-phone-font-scale)); }
+
   .block-container {
     padding-top: 28px !important;
     padding-left: 14px !important;
@@ -614,36 +659,148 @@ html, body, [data-testid="stAppViewContainer"]{
   }
 
   .mobile-roster-details {
-    margin-top: 8px;
+    margin-top: 0;
+    display:flex;
+    flex-direction:column;
   }
 
   .mobile-roster-details summary {
-    list-style: none;
-    cursor: pointer;
-    color: var(--gold);
-    font-size: .82rem;
-    font-weight: 850;
-    text-align: center;
-    padding: 12px 0 4px 0;
-    min-height: 44px;
+    order:1;
+    list-style:none;
+    cursor:pointer;
+    color:var(--gold);
+    font-size:.82rem;
+    font-weight:900;
+    text-align:center;
+    min-height:44px;
+    padding:13px 0 0;
   }
 
-  .mobile-roster-details summary::-webkit-details-marker {
-    display: none;
+  .mobile-roster-details summary::-webkit-details-marker { display:none; }
+  .mobile-roster-details .close-label { display:none; }
+  .mobile-roster-details[open] .expanded-roster { order:1; }
+  .mobile-roster-details[open] summary {
+    order:2;
+    border-top:1px solid var(--rule);
+    margin-top:4px;
   }
-
-  .mobile-roster-details summary::after {
-    content: " ›";
-  }
-
-  .mobile-roster-details[open] summary::after {
-    content: " ↑";
-  }
+  .mobile-roster-details[open] .open-label { display:none; }
+  .mobile-roster-details[open] .close-label { display:inline; }
 
   .mobile-roster-details .expanded-roster {
-    margin-top: 6px;
-    border-top: 1px solid var(--rule);
-    padding-top: 4px;
+    margin-top:0;
+    padding-top:0;
+  }
+
+  /* ======================================================
+     MY TEAM PHONE LAYOUT
+     Roster gets its own full-width row.
+     Trade Block + Taxi Squad / IR sit side-by-side below it.
+     Desktop remains unchanged.
+     ====================================================== */
+
+  /* Stack the main roster/actions layout vertically on phone. */
+  .st-key-my_team_main_layout [data-testid="stHorizontalBlock"] {
+    display:flex !important;
+    flex-direction:column !important;
+    gap:0 !important;
+    align-items:stretch !important;
+  }
+
+  .st-key-my_team_main_layout [data-testid="stHorizontalBlock"] > [data-testid="column"] {
+    width:100% !important;
+    min-width:0 !important;
+    flex:0 0 100% !important;
+  }
+
+  /* Re-enable ONLY the two action cards as a two-column row.
+     Keep them completely below the roster and align their
+     outside edges exactly with the roster card. */
+.st-key-my_team_mobile_actions {
+    box-sizing: border-box !important;
+    width: calc(100vw - 28px) !important;
+    max-width: calc(100vw - 28px) !important;
+
+    /* Space between My Team and the two action boxes */
+    margin-top: 28px !important;
+
+    /* Don't add extra spacing below */
+    margin-bottom: 0 !important;
+
+    /* Prevent padding from interfering with the gap */
+    padding-top: 0 !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+}
+
+  .st-key-my_team_mobile_actions [data-testid="stHorizontalBlock"] {
+    display:grid !important;
+    grid-template-columns:minmax(0,1fr) minmax(0,1fr) !important;
+    column-gap:10px !important;
+    row-gap:0 !important;
+    align-items:start !important;
+    width:100% !important;
+    max-width:100% !important;
+    margin:0 !important;
+    padding:0 !important;
+  }
+
+  .st-key-my_team_mobile_actions [data-testid="stHorizontalBlock"] > [data-testid="column"] {
+    box-sizing:border-box !important;
+    width:100% !important;
+    min-width:0 !important;
+    max-width:100% !important;
+    flex:none !important;
+    margin:0 !important;
+    padding:0 !important;
+    align-self:start !important;
+  }
+
+  .st-key-my_team_mobile_actions [data-testid="stHorizontalBlock"] > [data-testid="column"]:first-child {
+    grid-column:1 !important;
+  }
+
+  .st-key-my_team_mobile_actions [data-testid="stHorizontalBlock"] > [data-testid="column"]:last-child {
+    grid-column:2 !important;
+  }
+
+  .st-key-my_team_mobile_actions [data-testid="stHorizontalBlock"] > [data-testid="column"]
+  > [data-testid="stVerticalBlock"] {
+    margin:0 !important;
+    padding:0 !important;
+  }
+
+  .st-key-my_team_mobile_actions [data-testid="stVerticalBlockBorderWrapper"] {
+    border:1px solid rgba(226,188,91,.40) !important;
+    border-radius:20px !important;
+    background:linear-gradient(145deg,#10201E 0%,#081513 100%) !important;
+    box-shadow:0 8px 26px rgba(0,0,0,.28) !important;
+    overflow:hidden;
+  }
+
+  .st-key-my_team_mobile_actions h3 {
+    font-size:.94rem !important;
+    margin-bottom:.35rem !important;
+  }
+
+  .st-key-my_team_mobile_actions h4 {
+    font-size:.78rem !important;
+  }
+
+  .st-key-my_team_mobile_actions [data-testid="stSelectbox"] label {
+    font-size:.70rem !important;
+  }
+
+  .st-key-my_team_mobile_actions [data-baseweb="select"] {
+    min-height:40px !important;
+    font-size:14px !important;
+  }
+
+  .st-key-my_team_mobile_actions [data-testid="stButton"] button {
+    min-height:40px !important;
+    font-size:.70rem !important;
+    padding-left:8px !important;
+    padding-right:8px !important;
   }
 
   /* Mobile controls: larger touch targets without changing desktop controls. */
@@ -740,6 +897,11 @@ html, body, [data-testid="stAppViewContainer"]{
   .block-container {
     padding-left: 10px !important;
     padding-right: 10px !important;
+  }
+
+  .st-key-my_team_mobile_actions {
+    width:calc(100vw - 20px) !important;
+    max-width:calc(100vw - 20px) !important;
   }
 
   .hero {
@@ -868,38 +1030,8 @@ def get_cached_my_team():
 
 # ---------- data loaders ----------
 @st.cache_data(ttl=300, show_spinner=False)
-def load_roster(league_id: str) -> pd.DataFrame:
-    if not sb:
-        return pd.DataFrame()
-
-    rows = (
-        sb.table("contracts")
-        .select(
-            "id, league_id, owner_name, player_name, player_position, "
-            "contract_years_left, contract_total_years, salary, sleeper_player_id, is_rookie"
-        )
-        .eq("league_id", league_id)
-        .order("player_position")
-        .order("player_name")
-        .execute()
-        .data
-        or []
-    )
-
-    df = pd.DataFrame(rows)
-
-    if df.empty:
-        return df
-
-    return df.rename(
-        columns={
-            "owner_name": "owner",
-            "player_name": "player",
-            "player_position": "pos",
-            "contract_years_left": "years",
-            "sleeper_player_id": "sleeper_id",
-        }
-    )
+def load_canonical_team_state(league_id: str, season: int, team_id: str, cache_epoch: int) -> dict:
+    return load_team_state(sb, league_id, season, team_id)
 
 @st.cache_data(ttl=300, show_spinner=False)
 def load_caps(league_id: str, context_generation: int) -> pd.DataFrame:
@@ -1014,29 +1146,6 @@ def load_trade_block(league_id: str, owner_name: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 @st.cache_data(ttl=300, show_spinner=False)
-def load_cap_adjustments(
-    league_id: str,
-    owner_name: str,
-    season: int,
-) -> pd.DataFrame:
-    if not sb:
-        return pd.DataFrame()
-
-    try:
-        rows = (
-            sb.table("cap_adjustments")
-            .select("*")
-            .eq("league_id", league_id)
-            .eq("owner_name", owner_name)
-            .eq("season", season)
-            .execute()
-            .data
-            or []
-        )
-        return pd.DataFrame(rows)
-    except Exception:
-        return pd.DataFrame()
-
 @st.cache_data(ttl=300, show_spinner=False)
 def load_cached_standings(league_id: str) -> pd.DataFrame:
     if not sb:
@@ -1228,7 +1337,22 @@ role = my_team.get("role") or "owner"
 league_rules = load_league_rules(league_id)
 salary_cap = float(league_rules.get("salary_cap", 225))
 
-roster_df = load_roster(league_id)
+from season_engine import SeasonResolver
+
+active_league_season = SeasonResolver(auth_client()).get_active_season(league_id)
+active_season = active_league_season.season
+active_league_season_id = str(active_league_season.id)
+
+try:
+    canonical_state = load_canonical_team_state(
+        league_id, active_season, str(my_team.get("team_id") or ""),
+        int(st.session_state.get("team_state_cache_epoch", 0)),
+    )
+except CanonicalTeamStateError as exc:
+    spinner_placeholder.empty()
+    st.error("Canonical team state could not be loaded. Roster and cap totals were not rendered.")
+    st.stop()
+roster_df = pd.DataFrame(state_roster(canonical_state))
 tick("after load_roster")
 
 from services.publication_context import publication_generation
@@ -1244,13 +1368,15 @@ tick("after load_transactions")
 team_activity_df = load_team_activity()
 tick("after load_team_activity")
 
+canonical_activity_df = pd.DataFrame(state_activity(canonical_state, 300))
+legacy_activity_rows = pd.concat([tx_df, team_activity_df], ignore_index=True).to_dict("records")
+tx_df = pd.DataFrame(merge_activity(canonical_activity_df.to_dict("records"), legacy_activity_rows))
+team_activity_df = pd.DataFrame()
+
 trade_df = load_trade_block(league_id, owner_name)
 tick("after load_trade_block")
 
-from season_engine import SeasonResolver
-
-active_season = SeasonResolver(auth_client()).get_active_season(league_id).season
-cap_adj_df = load_cap_adjustments(league_id, owner_name, active_season)
+cap_adj_df = pd.DataFrame(state_cap_adjustments(canonical_state))
 tick("after load_cap_adjustments")
 
 stand_df = load_cached_standings(league_id)
@@ -1261,7 +1387,7 @@ spinner_placeholder.empty()
 my_roster = pd.DataFrame()
 if not roster_df.empty:
     my_roster = roster_df[
-        roster_df["owner"].astype(str).str.strip().str.lower().eq(str(owner_name).strip().lower())
+        roster_df["league_team_id"].astype(str).eq(str(my_team.get("team_id")))
     ].copy()
 
 # ---------- metrics ----------
@@ -1320,16 +1446,16 @@ if not cap_adj_df.empty:
         "amount"
     ].sum()
 
-cap_used = (
-    active_salary
-    + trade_carryover
-    + drop_charge
-    + taxi_adjustment
-    + ir_adjustment
-    + manual_adjustment
+financials = calculate_team_financials(
+    roster_df.to_dict("records"),
+    cap_adj_df.to_dict("records"),
+    salary_cap=salary_cap,
+    league_team_id=my_team.get("team_id"),
+    owner_name=owner_name,
 )
-
-cap_space = salary_cap - cap_used
+active_salary = float(financials["active_salary"])
+cap_used = float(financials["cap_used"])
+cap_space = float(financials["cap_space"])
 
 cap_txt = f"${cap_used:.1f}"
 roster_count = len(my_roster)
@@ -1361,6 +1487,11 @@ metrics = [
     ("Cap Used", cap_txt, f"${cap_space:.1f} space"),
 ]
 
+dead_cap_tooltip_html = "".join(
+    f"<div><strong>{player}</strong><span>${amount:.2f}</span></div>"
+    for player, amount in dead_cap_display_rows(cap_adj_df.to_dict("records"))
+)
+
 for col, (title, value, sub) in zip([m1, m2, m3, m4], metrics):
     with col:
         if title == "Cap Used":
@@ -1374,7 +1505,7 @@ for col, (title, value, sub) in zip([m1, m2, m3, m4], metrics):
   <div class="cap-tooltip">
     <div><strong>Active:</strong><span>${active_salary:.2f}</span></div>
     <div><strong>Trades:</strong><span>${trade_carryover:.2f}</span></div>
-    <div><strong>Dropped:</strong><span>${drop_charge:.2f}</span></div>
+    {dead_cap_tooltip_html}
     <div><strong>Taxi:</strong><span>${taxi_adjustment:.2f}</span></div>
     <div><strong>IR:</strong><span>${ir_adjustment:.2f}</span></div>
     <hr>
@@ -1434,7 +1565,10 @@ st.markdown(
 st.markdown("<br>", unsafe_allow_html=True)
 
 # ---------- main layout ----------
-left, right = st.columns([1.45, 1])
+# Desktop keeps the existing two-column layout.
+# Phone CSS stacks Roster first, then the action area below it.
+with st.container(key="my_team_main_layout"):
+    left, right = st.columns([1.45, 1])
 
 
 # ---------- roster ----------
@@ -1540,7 +1674,10 @@ with left:
             mobile_html.append(
                 f"""
 <details class="mobile-roster-details">
-  <summary>View Full Roster</summary>
+  <summary>
+    <span class="open-label">View Full Team ›</span>
+    <span class="close-label">Close Full Team ↑</span>
+  </summary>
   <div class="expanded-roster">
     {''.join(roster_rows[5:])}
   </div>
@@ -1556,7 +1693,14 @@ with left:
     )
 
 # ---------- right actions ----------
+# Desktop: remains in the existing right column.
+# Phone: the entire action area moves below the roster, while
+# Trade Block and Taxi Squad / IR remain side-by-side.
 with right:
+    with st.container(key="my_team_mobile_actions"):
+        action_trade_col, action_designation_col = st.columns(2)
+
+with action_trade_col:
     with st.container(border=True):
         st.markdown("### Trade Block")
 
@@ -1609,8 +1753,8 @@ with right:
 
             st.toast(f"{selected_trade_block_player} added to trade block")
             st.rerun()
-    st.markdown("<br>", unsafe_allow_html=True)
 
+with action_designation_col:
     with st.container(border=True):
         st.markdown(
             '<div class="taxi-ir-marker"></div>',
@@ -1657,7 +1801,7 @@ with right:
                             params={"id": f"eq.{designation_id}"},
                         )
 
-                        load_cap_adjustments.clear()
+                        load_canonical_team_state.clear()
 
                         log_team_activity(
                             remove_action,
@@ -1680,7 +1824,10 @@ with right:
                 st.warning(taxi_provenance_error)
             taxi_roster = my_roster.rename(columns={"sleeper_id": "sleeper_player_id"}).to_dict(orient="records")
             roster_options = list(taxi_eligible_player_names(
-                taxi_roster, draft_assignments, league_team_id=my_team["team_id"]
+                taxi_roster,
+                draft_assignments,
+                league_team_id=my_team["team_id"],
+                draft_year=active_season,
             ))
 
         selected_designation_player = st.selectbox(
@@ -1703,8 +1850,11 @@ with right:
             salary = float(player_row.get("salary") or 0)
 
             if designation == "Taxi Squad":
+                # Canonical Taxi rule:
+                # player carries 50% of the normal annual charge while on Taxi.
                 adjustment_type = "taxi_adjustment"
-                adjustment_amount = round(-(salary / 3), 2)
+                taxi_charge = round(salary * 0.50, 2)
+                adjustment_amount = round(taxi_charge - salary, 2)
             else:
                 adjustment_type = "ir_adjustment"
                 adjustment_amount = round(-(salary / 2), 2)
@@ -1717,16 +1867,6 @@ with right:
                 "Apply Designation",
                 key="apply_designation"
             ):
-                payload = {
-                    "league_id": league_id,
-                    "owner_name": owner_name,
-                    "player_name": selected_designation_player,
-                    "season": active_season,
-                    "adjustment_type": adjustment_type,
-                    "amount": adjustment_amount,
-                    "note": f"{designation} designation",
-                }
-
                 existing_designation = pd.DataFrame()
 
                 if not cap_adj_df.empty:
@@ -1740,14 +1880,68 @@ with right:
                     st.warning(
                         f"{team_name} already has a player designated to {designation}. Remove the current player before assigning a new one."
                     )
+
+                elif designation == "Taxi Squad":
+                    sleeper_player_id = str(
+                        player_row.get("sleeper_id")
+                        or player_row.get("sleeper_player_id")
+                        or player_row.get("player_id")
+                        or ""
+                    ).strip()
+
+                    if not sleeper_player_id:
+                        st.error(
+                            "Canonical player ID is missing. Taxi assignment was not written."
+                        )
+                    else:
+                        try:
+                            OffseasonTransactionService(
+                                auth_client(),
+                                league_id,
+                            ).assign_rookie_taxi(
+                                player_id=sleeper_player_id,
+                                league_team_id=str(my_team["team_id"]),
+                                league_season_id=active_league_season_id,
+                                normal_annual_charge=salary,
+                            )
+
+                            load_canonical_team_state.clear()
+
+                            log_team_activity(
+                                designation.lower(),
+                                selected_designation_player,
+                            )
+
+                            st.success(
+                                f"{selected_designation_player} added to {designation}"
+                            )
+
+                            st.rerun()
+
+                        except Exception as exc:
+                            st.error(
+                                f"Taxi assignment failed: {exc}"
+                            )
+
                 else:
+                    payload = {
+                        "league_id": league_id,
+                        "owner_name": owner_name,
+                        "player_name": selected_designation_player,
+                        "season": active_season,
+                        "adjustment_type": adjustment_type,
+                        "amount": adjustment_amount,
+                        "note": f"{designation} designation",
+                    }
+
                     rest_request(
                         "POST",
                         "cap_adjustments",
                         json_body=payload,
                     )
 
-                    load_cap_adjustments.clear()
+                    load_canonical_team_state.clear()
+
                     log_team_activity(
                         designation.lower(),
                         selected_designation_player,
@@ -1767,7 +1961,10 @@ with st.container(border=True):
     if not tx_df.empty:
         mask = pd.Series(False, index=tx_df.index)
 
-        for c in ["from_owner_name", "to_owner_name", "from_team_name", "to_team_name"]:
+        for c in [
+            "owner_name", "team_name", "from_owner_name", "to_owner_name",
+            "from_team_name", "to_team_name",
+        ]:
             if c in tx_df.columns:
                 mask = mask | tx_df[c].astype(str).str.strip().str.lower().eq(str(owner_name).strip().lower())
                 mask = mask | tx_df[c].astype(str).str.strip().str.lower().eq(str(team_name).strip().lower())

@@ -11,6 +11,7 @@ class Query:
     def __init__(self,client,table):self.client=client;self.name=table;self.filters=[];self.allowed=None;self.order_key=None;self.bounds=None
     def select(self,*a,**k):return self
     def eq(self,key,value):self.filters.append((key,value));return self
+    def is_(self,key,value):self.filters.append((key,None if value=="null" else value));return self
     def in_(self,key,values):self.allowed=(key,{str(x) for x in values});return self
     def order(self,key,*a,**k):self.order_key=key;return self
     def range(self,start,end):self.bounds=(start,end);return self

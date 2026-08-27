@@ -47,6 +47,14 @@ class DropClient(Client):
 
 
 class OffseasonReadAuthorityTests(unittest.TestCase):
+    def test_settings_splits_server_reads_from_authenticated_writes(self):
+        source = Path("pages/90_Settings.py").read_text()
+        self.assertGreaterEqual(source.count("load_player_universe(service_client())"), 3)
+        self.assertIn("read_client=service_client()", source)
+        self.assertIn('sb_client.rpc("persist_rookie_draft_board_authenticated"', source)
+        self.assertGreaterEqual(source.count("OffseasonTransactionService(sb_client, active_league_id).acquire("), 2)
+        self.assertNotIn("service_client().rpc(", source)
+
     def test_rookie_board_uses_exact_free_agent_rookie_rows(self):
         rows = (RookieRow("r1", "Eligible Rookie", "RB", "DEN", 2, 40, 8, "Round 2, Pick 40", "Boise", "DRAFTED"),)
         self.assertEqual(rookie_draft_player_options(rows), ("Eligible Rookie — RB (r1)",))
@@ -217,6 +225,20 @@ class ManualDropResolutionTests(unittest.TestCase):
 
 
 class OffseasonMigrationTests(unittest.TestCase):
+    def test_legacy_bootstrap_is_scoped_replay_safe_and_uses_active_flag_authority(self):
+        sql = Path("supabase/migrations/20261029_legacy_contract_canonical_bootstrap.sql").read_text().lower()
+        for fragment in (
+            "bootstrap_legacy_contracts_private", "p_expected_source_count",
+            "duplicate live player ownership", "does not map to exactly one canonical league team",
+            "canonical agreements already exist", "source_legacy_contract_id",
+            "legacy_2026_canonical_bootstrap", "source_fingerprint",
+            "grant execute on function public.bootstrap_legacy_contracts_private(uuid,integer) to service_role",
+            "where league_id=lid and is_active for share",
+        ):
+            self.assertIn(fragment, sql)
+        self.assertNotIn("delete from public.contracts", sql)
+        self.assertNotIn("truncate", sql)
+
     def test_rookie_board_rls_is_authenticated_membership_scoped(self):
         sql = Path("supabase/migrations/20261020_abs_2025_rookie_taxi_contract_reconciliation.sql").read_text().lower()
         self.assertIn("policy rookie_board_member_read", sql)

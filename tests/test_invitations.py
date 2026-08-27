@@ -1083,7 +1083,7 @@ class StageFourStaticTest(unittest.TestCase):
         self.assertIn("def sign_up_with_result", auth)
         self.assertIn('"has_session": bool(session)', auth)
         self.assertIn('"has_user": bool(user)', auth)
-        self.assertIn("client.postgrest.auth(access_token)", auth)
+        self.assertIn("client.postgrest.auth(effective_access_token)", auth)
         self.assertIn("client.auth.set_session(access_token, refresh_token)", auth)
         self.assertIn("def reset_password", auth)
 

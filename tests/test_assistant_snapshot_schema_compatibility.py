@@ -59,10 +59,17 @@ class FakeClient:
 class SnapshotSchemaCompatibilityTest(unittest.TestCase):
     def setUp(self):
         self.client = FakeClient()
+        self.original_auth_module = sys.modules.get("auth")
         auth_stub = types.ModuleType("auth")
         auth_stub.current_user = lambda: None
         auth_stub.service_client = lambda: self.client
         sys.modules["auth"] = auth_stub
+
+    def tearDown(self):
+        if self.original_auth_module is None:
+            sys.modules.pop("auth", None)
+        else:
+            sys.modules["auth"] = self.original_auth_module
 
     def test_global_snapshot_tables_do_not_receive_league_filter(self):
         from gm_assistant import data

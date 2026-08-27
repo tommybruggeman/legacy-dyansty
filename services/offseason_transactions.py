@@ -152,8 +152,14 @@ def load_taxi_eligibility_provenance(
 class OffseasonTransactionService:
     """Thin client for atomic authenticated canonical offseason writes."""
 
-    def __init__(self, client: Any, league_id: str):
+    def __init__(
+        self,
+        client: Any,
+        league_id: str,
+        read_client: Any | None = None,
+    ):
         self.client = client
+        self.read_client = read_client or client
         self.league_id = str(league_id)
 
     def acquire(self, *, player_id: str, league_team_id: str, season: int,
@@ -168,6 +174,27 @@ class OffseasonTransactionService:
         }
         return self.client.rpc("acquire_offseason_player_authenticated", {"p_request": request}).execute().data
 
+    def assign_rookie_taxi(
+        self,
+        *,
+        player_id: str,
+        league_team_id: str,
+        league_season_id: str,
+        normal_annual_charge: float,
+    ) -> Mapping[str, Any]:
+        """Persist a canonical rookie Taxi assignment."""
+        request = {
+            "league_id": self.league_id,
+            "player_id": str(player_id),
+            "league_team_id": str(league_team_id),
+            "league_season_id": str(league_season_id),
+            "normal_annual_charge": float(normal_annual_charge),
+        }
+        return self.client.rpc(
+            "persist_rookie_taxi_assignment_authenticated",
+            {"p_request": request},
+        ).execute().data
+
     def canonical_active_season(self) -> int:
         try:
             return int(SeasonResolver(self.client).get_active_season(self.league_id).season)
@@ -176,23 +203,23 @@ class OffseasonTransactionService:
 
     def resolve_manual_drop(self, player_id: str) -> ManualDropResolution:
         active_season = self.canonical_active_season()
-        agreements = (self.client.table("contract_agreements")
+        agreements = (self.read_client.table("contract_agreements")
                       .select("id,league_team_id,player_id,status,superseded_by_contract_id")
                       .eq("league_id", self.league_id).eq("player_id", str(player_id))
                       .in_("status", ["active", "scheduled"])
-                      .eq("superseded_by_contract_id", None).execute().data or [])
+                      .is_("superseded_by_contract_id", "null").execute().data or [])
         if len(agreements) != 1:
             raise ValueError("player must have exactly one canonical live ownership agreement")
         agreement = agreements[0]
         team_id = str(agreement.get("league_team_id") or "")
-        teams = (self.client.table("league_teams").select("id,team_name,owner_name")
+        teams = (self.read_client.table("league_teams").select("id,team_name,owner_name")
                  .eq("league_id", self.league_id).eq("id", team_id).execute().data or [])
         if len(teams) != 1:
             raise ValueError("canonical owning team is missing or ambiguous")
         team_name = str(teams[0].get("owner_name") or teams[0].get("team_name") or "").strip()
         if not team_name:
             raise ValueError("canonical owning team name is missing")
-        seasons = (self.client.table("contract_seasons")
+        seasons = (self.read_client.table("contract_seasons")
                    .select("id,season,salary,cap_hit,obligation_status")
                    .eq("contract_id", str(agreement["id"])).execute().data or [])
         current = [row for row in seasons if int(row.get("season") or 0) == active_season
@@ -204,7 +231,7 @@ class OffseasonTransactionService:
             raw_salary = current[0].get("salary")
         if raw_salary is None or Decimal(str(raw_salary)) < 0:
             raise ValueError("canonical drop salary basis is missing or invalid")
-        rules = (self.client.table("league_rules").select("default_dead_cap_pct")
+        rules = (self.read_client.table("league_rules").select("default_dead_cap_pct")
                  .eq("league_id", self.league_id).execute().data or [])
         if len(rules) != 1 or rules[0].get("default_dead_cap_pct") is None:
             raise ValueError("canonical league dead-cap rule is missing or ambiguous")

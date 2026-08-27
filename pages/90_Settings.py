@@ -10,8 +10,9 @@ from datetime import datetime, timezone
 import pandas as pd
 import streamlit as st
 from components.sidebar_nav import render_nav
-from auth import auth_client
+from auth import auth_client, service_client
 from services.config import configured_value
+from services.team_roster_state import invalidate_team_state_session_cache
 import math
 
 # ============================================================
@@ -1587,8 +1588,8 @@ elif section == "League Manager Tools":
         st.markdown("### Manual Player Add")
 
         fa_results = build_free_agent_results(
-            load_player_universe(sb_client),
-            load_league_free_agent_state(sb_client, active_league_id),
+            load_player_universe(service_client()),
+            load_league_free_agent_state(service_client(), active_league_id),
             active_season=canonical_season,
         )
         player_options = [f"{p.player} ({p.sleeper_player_id})" for p in fa_results.current]
@@ -1633,6 +1634,7 @@ elif section == "League Manager Tools":
                 salary=salary, years=years, acquisition_type="commissioner_manual_add",
                 idempotency_key=f"manual-add:{active_league_id}:{canonical_season}:{player_id}", notes=notes,
             )
+            invalidate_team_state_session_cache(st.session_state)
             log_commish_action(
                 "manual_player_add",
                 {
@@ -1667,6 +1669,7 @@ elif section == "League Manager Tools":
         transaction_service = OffseasonTransactionService(
             sb_client,
             active_league_id,
+            read_client=service_client(),
         )
         drop_resolution = None
         drop_error = None
@@ -1718,6 +1721,7 @@ elif section == "League Manager Tools":
 
         if st.button("Log Manual Drop", use_container_width=True, disabled=drop_resolution is None):
             transaction_service.release_manual_drop(player_id=drop_resolution.player_id, notes=notes)
+            invalidate_team_state_session_cache(st.session_state)
             log_commish_action(
                 "manual_player_drop",
                 {
@@ -1953,8 +1957,8 @@ elif section == "Draft Center":
         default_order = team_names[:10]
 
         rookie_results = build_free_agent_results(
-            load_player_universe(sb_client),
-            load_league_free_agent_state(sb_client, active_league_id),
+            load_player_universe(service_client()),
+            load_league_free_agent_state(service_client(), active_league_id),
             active_season=draft_year,
         )
         rookie_options = list(rookie_draft_player_options(rookie_results.rookies))
@@ -2104,8 +2108,8 @@ elif section == "Draft Center":
             st.session_state["auction_current_years"] = new_years
 
         auction_results = build_free_agent_results(
-            load_player_universe(sb_client),
-            load_league_free_agent_state(sb_client, active_league_id),
+            load_player_universe(service_client()),
+            load_league_free_agent_state(service_client(), active_league_id),
             active_season=canonical_season,
         )
         player_options = [
@@ -2268,6 +2272,7 @@ elif section == "Draft Center":
                         acquisition_type="fa_auction",
                         idempotency_key=f"fa-auction:{active_league_id}:{canonical_season}:{selected_sleeper_id}",
                     )
+                    invalidate_team_state_session_cache(st.session_state)
                     log_commish_action(
                         "finish_fa_auction",
                         {

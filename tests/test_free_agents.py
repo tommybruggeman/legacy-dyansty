@@ -11,6 +11,7 @@ from services.free_agents import (
     future_free_agents_for_season,
     future_season_options,
     load_lifetime_points,
+    load_ranking_ppg,
     load_league_free_agent_state,
     resolve_rookie_ranking_strategy,
     rookie_class_for_position,
@@ -32,12 +33,17 @@ class FakeQuery:
         self.client = client
         self.table = table
         self.filters = []
+        self.allowed = None
 
     def select(self, _columns):
         return self
 
     def eq(self, column, value):
         self.filters.append((column, value))
+        return self
+
+    def in_(self, column, values):
+        self.allowed = (column, set(values))
         return self
 
     def execute(self):
@@ -47,6 +53,9 @@ class FakeQuery:
         rows = self.client.rows.get(self.table, [])
         for column, value in self.filters:
             rows = [row for row in rows if row.get(column) == value]
+        if self.allowed:
+            column, values = self.allowed
+            rows = [row for row in rows if row.get(column) in values]
         return FakeResponse(rows)
 
 
@@ -150,24 +159,47 @@ class FreeAgentServiceTest(unittest.TestCase):
         self.assertEqual(names, {"p-1": "Canonical Team", "p-2": "Legacy Team"})
         self.assertIn("internal:legacy_contract_team_label_fallback", result.warnings)
 
-    def test_open_market_ranking_prefers_lifetime_then_roster_then_ppg(self):
+    def test_open_market_ranking_uses_previous_season_ppg_before_active_scoring(self):
         universe = [
-            player("p-1", "Lower PPG", season_ppg=10),
-            player("p-2", "Higher PPG", season_ppg=20),
-            player("p-3", "Lifetime Leader", season_ppg=None, nfl_team=None),
-            player("p-4", "Lifetime Tie Active", season_ppg=5),
-            player("p-5", "No Evidence", season_ppg=None),
+            player("p-1", "Lower Last PPG"),
+            player("p-2", "Higher Last PPG"),
+            player("p-3", "No PPG", nfl_team=None),
         ]
+        ppg = load_ranking_ppg(FakeClient({"player_season_stats": [
+            {"sleeper_id": "p-1", "season": 2025, "games": 17, "fantasy_ppg_ppr": 10},
+            {"sleeper_id": "p-2", "season": 2025, "games": 17, "fantasy_ppg_ppr": 20},
+            {"sleeper_id": "p-1", "season": 2026, "games": 0, "fantasy_ppg_ppr": 99},
+        ]}), active_season=2026)
+        self.assertFalse(ppg.active_season_started)
+        self.assertEqual(ppg.ranking_ppg, {"p-1": 10.0, "p-2": 20.0})
         result = build_free_agent_results(
             universe,
             state(),
             active_season=2026,
-            lifetime_points_by_player={"p-1": 500, "p-2": 5, "p-3": 900, "p-4": 900},
+            lifetime_points_by_player={"p-1": 900, "p-2": 5, "p-3": 9999},
+            last_season_ppg_by_player=ppg.last_ppg,
+            current_season_ppg_by_player=ppg.current_ppg,
+            ranking_ppg_by_player=ppg.ranking_ppg,
         )
-        self.assertEqual(
-            [row.sleeper_player_id for row in result.current],
-            ["p-4", "p-3", "p-1", "p-2", "p-5"],
+        self.assertEqual([row.sleeper_player_id for row in result.current], ["p-2", "p-1", "p-3"])
+
+    def test_open_market_ranking_switches_to_active_season_ppg(self):
+        ppg = load_ranking_ppg(FakeClient({"player_season_stats": [
+            {"sleeper_id": "p-1", "season": 2025, "games": 17, "fantasy_ppg_ppr": 10},
+            {"sleeper_id": "p-2", "season": 2025, "games": 17, "fantasy_ppg_ppr": 20},
+            {"sleeper_id": "p-1", "season": 2026, "games": 1, "fantasy_ppg_ppr": 25},
+            {"sleeper_id": "p-2", "season": 2026, "games": 1, "fantasy_ppg_ppr": 5},
+        ]}), active_season=2026)
+        self.assertTrue(ppg.active_season_started)
+        self.assertEqual(ppg.ranking_ppg, {"p-1": 25.0, "p-2": 5.0})
+        result = build_free_agent_results(
+            [player("p-1", "Current Leader"), player("p-2", "Last Leader")],
+            state(), active_season=2026,
+            last_season_ppg_by_player=ppg.last_ppg,
+            current_season_ppg_by_player=ppg.current_ppg,
+            ranking_ppg_by_player=ppg.ranking_ppg,
         )
+        self.assertEqual([row.sleeper_player_id for row in result.current], ["p-1", "p-2"])
 
     def test_open_market_roster_status_filters(self):
         result = build_free_agent_results(
@@ -347,14 +379,18 @@ class FreeAgentServiceTest(unittest.TestCase):
         self.assertEqual(resolve_rookie_ranking_strategy(), ("nfl_draft_position",))
         self.assertEqual(resolve_rookie_ranking_strategy(ai_rankings_available=True), ("ai_rookie_projection", "nfl_draft_position"))
 
-    def test_page_uses_three_market_names_year_text_and_full_viewport_loader(self):
+    def test_page_uses_season_ppg_columns_and_clears_loader_before_render(self):
         source = (ROOT / "pages/04_Free_Agent.py").read_text()
         for label in ("Open Market", "Expiring Contracts", "Rookie Class"):
             self.assertIn(label, source)
         self.assertNotIn('f"●  {season}"', source)
         self.assertNotIn("fa-timeline-line", source)
         self.assertIn("position: fixed; inset: 0", source)
-        self.assertLess(source.index("loading_placeholder.empty()\n\nst.markdown("), source.index('<div class="fa-hero">'))
+        self.assertIn("Last Season PPG", source)
+        self.assertIn("Current Season PPG", source)
+        self.assertIn("No games yet", source)
+        clear_after_load = source.index("loading_placeholder.empty()", source.index("results = build_free_agent_results"))
+        self.assertLess(clear_after_load, source.index('<div class="fa-hero">'))
 
     def test_free_agent_and_gm_assistant_use_shared_loader_treatment(self):
         free_agent_source = (ROOT / "pages/04_Free_Agent.py").read_text()

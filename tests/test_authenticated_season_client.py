@@ -3,9 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+import importlib
+import sys
 import unittest
-
-import auth
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -37,6 +37,10 @@ class _FakeClient:
 
 class AuthenticatedSeasonClientTests(unittest.TestCase):
     def test_refreshed_user_jwt_is_explicitly_applied_to_postgrest(self):
+        loaded_auth = sys.modules.get("auth")
+        if loaded_auth is not None and not hasattr(loaded_auth, "ACCESS_KEY"):
+            sys.modules.pop("auth", None)
+        auth = importlib.import_module("auth")
         fake_client = _FakeClient()
         session_state = {
             auth.ACCESS_KEY: "original-user-jwt",
