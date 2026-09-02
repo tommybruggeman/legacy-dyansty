@@ -12,6 +12,12 @@ NAV_CSS = """
    Shared sidebar styling
 ========================================================= */
 
+/* Hide Streamlit's built-in multipage navigation.
+   Legacy renders its own navigation below. */
+[data-testid="stSidebarNav"] {
+    display: none !important;
+}
+
 .nav-title {
     margin-top: 10px;
     margin-bottom: 18px;
