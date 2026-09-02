@@ -14,6 +14,7 @@ if str(ROOT) not in sys.path:
 
 # Reuse your Supabase client setup
 from supabase import create_client, Client
+from services.sleeper_sync_guard import require_active_season_sync_authority
 
 ENV_PATH = Path(__file__).parents[1] / "pages" / "fantasy_env"
 if ENV_PATH.exists():
@@ -24,6 +25,8 @@ else:
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 SLEEPER_LEAGUE_ID = os.getenv("SLEEPER_LEAGUE_ID", "")
+CANONICAL_LEAGUE_ID = os.getenv("LEGACY_LEAGUE_ID", "")
+SYNC_SEASON = int(os.getenv("LEGACY_SYNC_SEASON", "0") or 0)
 
 assert SUPABASE_URL and SUPABASE_KEY, "Missing Supabase env."
 assert SLEEPER_LEAGUE_ID, "Missing SLEEPER_LEAGUE_ID in env."
@@ -198,6 +201,9 @@ def sync_week(week: int) -> int:
     return total_rows
 
 def sync_recent(backfill_weeks: int = 2) -> None:
+    require_active_season_sync_authority(sb, league_id=CANONICAL_LEAGUE_ID,
+                                         expected_season=SYNC_SEASON,
+                                         sleeper_league_id=SLEEPER_LEAGUE_ID)
     wk = current_nfl_week()
     # backfill current and previous week (covers Wednesday/Sunday runs)
     start = max(1, wk - backfill_weeks + 1)

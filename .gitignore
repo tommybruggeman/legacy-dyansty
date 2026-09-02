@@ -8,3 +8,28 @@ __pycache__/
 .env.gate3-production-hold
 .streamlit/secrets.toml.gate3-production-hold
 pages/.env.gate3-production-hold
+
+# ------------------------------------------------------------
+# Legacy local/generated artifacts
+# ------------------------------------------------------------
+
+# Local Supabase runtime state
+supabase/.temp/
+
+# Temporary / backup development files
+*.tmp
+*.save
+*.before_*
+*_backup.py
+*_BACKUP.py
+
+# Packaged copies of source already stored elsewhere
+*.zip
+
+# Nested architecture reference repository metadata
+architecture-reference/.git/
+
+# macOS / Python generated files
+.DS_Store
+__pycache__/
+*.pyc

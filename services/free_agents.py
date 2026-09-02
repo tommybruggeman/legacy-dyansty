@@ -85,6 +85,8 @@ class LeagueFreeAgentState:
     visible_free_agent_ids: frozenset[str] | None = None
     visible_expiring_contract_ids: frozenset[str] | None = None
     warnings: tuple[str, ...] = ()
+    contract_seasons: tuple[Mapping[str, Any], ...] = ()
+    sleeper_players: tuple[Mapping[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -564,6 +566,7 @@ def calculate_lifetime_points(
 def load_league_free_agent_state(
     sb: Any,
     league_id: str,
+    relevant_player_ids: Iterable[Any] | None = None,
 ) -> LeagueFreeAgentState:
 
     clean_league_id = _clean(
@@ -603,6 +606,24 @@ def load_league_free_agent_state(
         warnings = []
 
 
+    try:
+        contract_seasons = _required_rows(
+            sb,
+            "contract_seasons",
+            clean_league_id,
+        )
+
+    except Exception:
+        contract_seasons = []
+
+        warnings.append(
+            (
+                "Canonical contract-season data is unavailable; "
+                "legacy remaining-years data is being used as the expiration fallback."
+            )
+        )
+
+
     teams = _required_rows(
         sb,
         "league_teams",
@@ -624,6 +645,51 @@ def load_league_free_agent_state(
             (
                 "Canonical roster-state data is unavailable; "
                 "league-scoped contracts are being used as the ownership fallback."
+            )
+        )
+
+
+    try:
+        sleeper_player_ids = {
+            player_id
+            for row in (
+                *contracts,
+                *roster_rows,
+            )
+            if (
+                player_id := _player_id(
+                    row
+                )
+            )
+        }
+
+        sleeper_player_ids = sleeper_player_ids | {
+            player_id
+            for value in (
+                relevant_player_ids
+                or ()
+            )
+            if (
+                player_id := _clean(
+                    value
+                )
+            )
+        }
+
+        sleeper_players = _load_sleeper_players(
+            sb,
+            sleeper_player_ids
+            if sleeper_player_ids
+            else None,
+        )
+
+    except Exception:
+        sleeper_players = []
+
+        warnings.append(
+            (
+                "Current Sleeper player metadata is unavailable; "
+                "player-universe metadata is being used as the fallback."
             )
         )
 
@@ -662,6 +728,16 @@ def load_league_free_agent_state(
 
         warnings=tuple(
             warnings
+        ),
+
+        contract_seasons=tuple(
+            dict(row)
+            for row in contract_seasons
+        ),
+
+        sleeper_players=tuple(
+            dict(row)
+            for row in sleeper_players
         ),
     )
 
@@ -705,6 +781,17 @@ def build_free_agent_results(
     ] = {}
 
 
+    sleeper_by_id = {
+        player_id: row
+        for row in state.sleeper_players
+        if (
+            player_id := _player_id(
+                row
+            )
+        )
+    }
+
+
     for row in player_universe:
 
         player_id = _player_id(
@@ -722,15 +809,23 @@ def build_free_agent_results(
         )
 
 
+        current_row = _overlay_sleeper_metadata(
+            row,
+            sleeper_by_id.get(
+                player_id
+            ),
+        )
+
+
         if not _eligible_player(
-            row
+            current_row
         ):
             continue
 
 
         universe_by_id.setdefault(
             player_id,
-            row,
+            current_row,
         )
 
 
@@ -815,6 +910,21 @@ def build_free_agent_results(
     ] = []
 
 
+    expiration_by_contract_id = (
+        _canonical_expirations_by_contract_id(
+            state.contract_seasons
+        )
+    )
+
+
+    salary_by_contract_id = (
+        _canonical_salary_by_contract_id(
+            state.contract_seasons,
+            season,
+        )
+    )
+
+
     for contract in state.contracts:
 
         if _is_released(
@@ -828,13 +938,23 @@ def build_free_agent_results(
         )
 
 
-        expiration = (
-            _safe_season(
-                contract.get(
-                    "end_season"
-                )
+        contract_id = _clean(
+            contract.get(
+                "id"
             )
-            or resolve_free_agent_season(
+            or contract.get(
+                "contract_id"
+            )
+        )
+
+
+        expiration = expiration_by_contract_id.get(
+            contract_id
+        )
+
+
+        if expiration is None:
+            expiration = resolve_free_agent_season(
                 season,
                 contract.get(
                     "contract_years_left"
@@ -843,7 +963,6 @@ def build_free_agent_results(
                     "years_remaining"
                 ),
             )
-        )
 
 
         if (
@@ -912,13 +1031,11 @@ def build_free_agent_results(
                     )
                 ),
 
-                nfl_team=_display(
-                    _nfl_team(
-                        player
-                    )
-                    or contract.get(
+                nfl_team=_display_nfl_team(
+                    player,
+                    contract.get(
                         "nfl_team"
-                    )
+                    ),
                 ),
 
                 last_season_ppg=_safe_float(
@@ -965,9 +1082,16 @@ def build_free_agent_results(
                     )
                 ),
 
-                salary=_safe_float(
-                    contract.get(
-                        "salary"
+                salary=(
+                    salary_by_contract_id[
+                        contract_id
+                    ]
+                    if contract_id
+                    in salary_by_contract_id
+                    else _safe_float(
+                        contract.get(
+                            "salary"
+                        )
                     )
                 ),
 
@@ -1197,6 +1321,81 @@ def _required_rows(
     ]
 
 
+def _load_sleeper_players(
+    sb: Any,
+    player_ids: Iterable[str] | None,
+    *,
+    chunk_size: int = 500,
+) -> list[Mapping[str, Any]]:
+
+    if player_ids is not None:
+        ids = sorted(
+            {
+                player_id
+                for value in player_ids
+                if (
+                    player_id := _clean(
+                        value
+                    )
+                )
+            }
+        )
+
+        rows: list[Mapping[str, Any]] = []
+
+        for start in range(
+            0,
+            len(ids),
+            chunk_size,
+        ):
+            batch = (
+                sb.table("sleeper_players")
+                .select("*")
+                .in_(
+                    "sleeper_player_id",
+                    ids[start:start + chunk_size],
+                )
+                .execute()
+                .data
+                or []
+            )
+
+            rows.extend(
+                dict(row)
+                for row in batch
+            )
+
+        return rows
+
+
+    rows = []
+    page_size = 1000
+    start = 0
+
+    while True:
+        batch = (
+            sb.table("sleeper_players")
+            .select("*")
+            .range(
+                start,
+                start + page_size - 1,
+            )
+            .execute()
+            .data
+            or []
+        )
+
+        rows.extend(
+            dict(row)
+            for row in batch
+        )
+
+        if len(batch) < page_size:
+            return rows
+
+        start += page_size
+
+
 def _owned_player_ids(
     rows: Iterable[Mapping[str, Any]],
     warnings: list[str],
@@ -1282,10 +1481,8 @@ def _current_row(
             )
         ),
 
-        nfl_team=_display(
-            _nfl_team(
-                row
-            )
+        nfl_team=_display_nfl_team(
+            row
         ),
 
         last_season_ppg=_safe_float(
@@ -1751,6 +1948,233 @@ def _eligible_player(
     }
 
 
+def _overlay_sleeper_metadata(
+    universe_row: Mapping[str, Any],
+    sleeper_row: Mapping[str, Any] | None,
+) -> Mapping[str, Any]:
+
+    if not sleeper_row:
+        return universe_row
+
+
+    merged = dict(
+        universe_row
+    )
+
+
+    position = _clean(
+        sleeper_row.get(
+            "position"
+        )
+    )
+
+
+    if position:
+        merged["pos"] = position
+
+
+    merged["nfl_team"] = _clean(
+        sleeper_row.get(
+            "team"
+        )
+    )
+
+    merged["team"] = None
+    merged["nfl_team_abbr"] = None
+    merged["pro_team"] = None
+    merged["_sleeper_team_authoritative"] = True
+
+
+    status = _clean(
+        sleeper_row.get(
+            "status"
+        )
+    )
+
+
+    if status:
+        merged["nfl_status"] = status
+
+
+    if isinstance(
+        sleeper_row.get(
+            "is_active"
+        ),
+        bool,
+    ):
+        merged["active"] = sleeper_row[
+            "is_active"
+        ]
+
+
+    return merged
+
+
+def _canonical_expirations_by_contract_id(
+    contract_seasons: Sequence[Mapping[str, Any]],
+) -> Mapping[str, int]:
+
+    maximum_season_by_contract_id: dict[
+        str,
+        int,
+    ] = {}
+
+
+    for row in contract_seasons:
+
+        status = str(
+            row.get(
+                "obligation_status"
+            )
+            or ""
+        ).strip().lower()
+
+
+        if status not in {
+            "active",
+            "scheduled",
+        }:
+            continue
+
+
+        contract_id = _clean(
+            row.get(
+                "contract_id"
+            )
+        )
+
+        obligation_season = _safe_season(
+            row.get(
+                "season"
+            )
+        )
+
+
+        if (
+            not contract_id
+            or obligation_season is None
+        ):
+            continue
+
+
+        maximum_season_by_contract_id[
+            contract_id
+        ] = max(
+            obligation_season,
+            maximum_season_by_contract_id.get(
+                contract_id,
+                obligation_season,
+            ),
+        )
+
+
+    return {
+        contract_id: maximum_season + 1
+        for contract_id, maximum_season
+        in maximum_season_by_contract_id.items()
+    }
+
+
+def _canonical_salary_by_contract_id(
+    contract_seasons: Sequence[Mapping[str, Any]],
+    active_season: int,
+) -> Mapping[str, float | None]:
+
+    candidates_by_contract_id: dict[
+        str,
+        list[tuple[int, int, Mapping[str, Any]]],
+    ] = {}
+
+
+    for row in contract_seasons:
+
+        status = str(
+            row.get(
+                "obligation_status"
+            )
+            or ""
+        ).strip().lower()
+
+        contract_id = _clean(
+            row.get(
+                "contract_id"
+            )
+        )
+
+        obligation_season = _safe_season(
+            row.get(
+                "season"
+            )
+        )
+
+
+        if (
+            status not in {
+                "active",
+                "scheduled",
+            }
+            or not contract_id
+            or obligation_season is None
+        ):
+            continue
+
+
+        if obligation_season == active_season:
+            priority = 0
+        elif (
+            obligation_season > active_season
+            and status == "scheduled"
+        ):
+            priority = 1
+        else:
+            priority = 2
+
+
+        candidates_by_contract_id.setdefault(
+            contract_id,
+            [],
+        ).append(
+            (
+                priority,
+                obligation_season
+                if priority < 2
+                else -obligation_season,
+                row,
+            )
+        )
+
+
+    salaries: dict[
+        str,
+        float | None,
+    ] = {}
+
+
+    for contract_id, candidates in candidates_by_contract_id.items():
+        selected = min(
+            candidates,
+            key=lambda candidate: (
+                candidate[0],
+                candidate[1],
+            ),
+        )[2]
+
+        salaries[contract_id] = _safe_float(
+            selected.get(
+                "cap_hit"
+            )
+            if selected.get(
+                "cap_hit"
+            ) is not None
+            else selected.get(
+                "salary"
+            )
+        )
+
+
+    return salaries
+
+
 def _active_status_priority(
     row: Mapping[str, Any],
 ) -> int:
@@ -1843,6 +2267,51 @@ def _nfl_team(
         or row.get(
             "pro_team"
         )
+    )
+
+
+def _display_nfl_team(
+    row: Mapping[str, Any],
+    fallback: Any = None,
+) -> str:
+
+    team = _nfl_team(
+        row
+    )
+
+
+    if team:
+        return (
+            "FA"
+            if team.casefold()
+            == "no team"
+            else team
+        )
+
+
+    if row.get(
+        "_sleeper_team_authoritative"
+    ):
+        return "FA"
+
+
+    fallback_team = _clean(
+        fallback
+    )
+
+
+    if (
+        fallback_team
+        and fallback_team.casefold()
+        != "no team"
+    ):
+        return fallback_team
+
+
+    return (
+        "FA"
+        if fallback_team
+        else "—"
     )
 
 

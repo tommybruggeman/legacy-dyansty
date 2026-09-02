@@ -80,8 +80,16 @@ def _cached_player_universe(context_generation: int):
 
 
 @st.cache_data(ttl=60, show_spinner=False)
-def _cached_league_state(league_id: str, context_generation: int):
-    return load_league_free_agent_state(service_client(), league_id)
+def _cached_league_state(
+    league_id: str,
+    context_generation: int,
+    relevant_player_ids: tuple[str, ...],
+):
+    return load_league_free_agent_state(
+        service_client(),
+        league_id,
+        relevant_player_ids,
+    )
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -327,6 +335,11 @@ try:
     state = _cached_league_state(
         context.league_id,
         context_generation,
+        tuple(
+            str(row.get("sleeper_id") or "").strip()
+            for row in universe
+            if str(row.get("sleeper_id") or "").strip()
+        ),
     )
 
     ppg_state = _cached_ranking_ppg(

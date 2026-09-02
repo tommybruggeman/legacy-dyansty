@@ -7,7 +7,7 @@ import time
 
 from auth import require_login, current_user, _sb, _sb_service
 from services.import_resolver import normalize_name, resolve_row
-from services.sleeper_sync import fetch_sleeper_players, to_row
+from services.sleeper_sync import refresh_sleeper_players
 
 st.set_page_config(page_title="Import Contracts", page_icon="📄", layout="centered")
 
@@ -197,29 +197,10 @@ with st.expander("Advanced: Refresh Sleeper Player Database", expanded=False):
     st.caption("Only use this if player matching seems outdated or a player is missing.")
 
     if st.button("Refresh Sleeper Player IDs", use_container_width=True):
-        with st.spinner("Downloading Sleeper players…"):
-            raw = fetch_sleeper_players()
+        with st.spinner("Downloading and refreshing Sleeper players…"):
+            refreshed_count = refresh_sleeper_players(svc)
 
-        rows = []
-        for pid, p in (raw or {}).items():
-            if not p:
-                continue
-
-            full_name = p.get("full_name") or ""
-            if not full_name.strip():
-                continue
-
-            rows.append(to_row(pid, p))
-
-        if not rows:
-            st.error("Sleeper returned 0 usable players. Try again.")
-            st.stop()
-
-        chunk_size = 500
-
-        with st.spinner(f"Upserting {len(rows)} players into Supabase…"):
-            for i in range(0, len(rows), chunk_size):
-                svc.table("sleeper_players").upsert(rows[i : i + chunk_size]).execute()
+        st.cache_data.clear()
 
         count_check = (
             svc.table("sleeper_players")
@@ -228,7 +209,10 @@ with st.expander("Advanced: Refresh Sleeper Player Database", expanded=False):
             .count
         )
 
-        st.success(f"Sleeper player database refreshed. Total players: {count_check}")
+        st.success(
+            f"Sleeper player database refreshed. "
+            f"Updated: {refreshed_count}. Total players: {count_check}"
+        )
 
 csv_template = """player_name,player_position,owner_name,original_contract_years,years_left,player_salary_current_year,sleeper_player_id
 Josh Allen,QB,Matt Smith,4,3,48.0,

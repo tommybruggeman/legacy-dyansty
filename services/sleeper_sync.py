@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import requests
+from typing import Any, Mapping
 
 SLEEPER_PLAYERS_URL = "https://api.sleeper.app/v1/players/nfl"
 
@@ -53,3 +54,52 @@ def to_row(pid: str, p: dict) -> dict:
         "is_active": bool(is_active),
         "search_name": normalize_name(full_name),
     }
+
+
+def project_sleeper_player_rows(
+    players: Mapping[str, Mapping[str, Any]] | None,
+) -> tuple[dict[str, Any], ...]:
+    rows = []
+
+    for player_id, player in (players or {}).items():
+        if not player:
+            continue
+
+        row = to_row(str(player_id), dict(player))
+        if not row["full_name"].strip():
+            continue
+
+        rows.append(row)
+
+    return tuple(rows)
+
+
+def refresh_sleeper_players(
+    sb: Any,
+    *,
+    players: Mapping[str, Mapping[str, Any]] | None = None,
+    chunk_size: int = 500,
+) -> int:
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be positive")
+
+    rows = project_sleeper_player_rows(
+        players
+        if players is not None
+        else fetch_sleeper_players()
+    )
+
+    if not rows:
+        raise ValueError("Sleeper returned no usable NFL players.")
+
+    for start in range(0, len(rows), chunk_size):
+        (
+            sb.table("sleeper_players")
+            .upsert(
+                list(rows[start:start + chunk_size]),
+                on_conflict="sleeper_player_id",
+            )
+            .execute()
+        )
+
+    return len(rows)

@@ -55,7 +55,10 @@ class FakeQuery:
             rows = [row for row in rows if row.get(column) == value]
         if self.allowed:
             column, values = self.allowed
+            self.client.in_calls.append((self.table, column, frozenset(values)))
             rows = [row for row in rows if row.get(column) in values]
+        elif self.table == "sleeper_players":
+            rows = rows[:1000]
         return FakeResponse(rows)
 
 
@@ -64,6 +67,7 @@ class FakeClient:
         self.rows = rows or {}
         self.fail_tables = set(fail_tables)
         self.calls = []
+        self.in_calls = []
 
     def table(self, name):
         return FakeQuery(self, name)
@@ -98,8 +102,14 @@ def contract(player_id, **updates):
     return row
 
 
-def state(*, contracts=(), roster_rows=(), teams=()):
-    return LeagueFreeAgentState(tuple(contracts), tuple(roster_rows), tuple(teams))
+def state(*, contracts=(), roster_rows=(), teams=(), contract_seasons=(), sleeper_players=()):
+    return LeagueFreeAgentState(
+        tuple(contracts),
+        tuple(roster_rows),
+        tuple(teams),
+        contract_seasons=tuple(contract_seasons),
+        sleeper_players=tuple(sleeper_players),
+    )
 
 
 class FreeAgentServiceTest(unittest.TestCase):
@@ -135,7 +145,9 @@ class FreeAgentServiceTest(unittest.TestCase):
         })
         loaded = load_league_free_agent_state(client, "league-1")
         self.assertEqual(len(loaded.contracts), 1)
-        self.assertTrue(all(filters == (("league_id", "league-1"),) for _table, filters in client.calls))
+        scoped_calls = [filters for table, filters in client.calls if table != "sleeper_players"]
+        self.assertTrue(all(filters == (("league_id", "league-1"),) for filters in scoped_calls))
+        self.assertIn(("sleeper_players", ()), client.calls)
 
     def test_roster_unavailable_falls_back_safely(self):
         client = FakeClient({"contracts": [contract("p-1")], "league_teams": []}, fail_tables={"team_roster_state"})
@@ -143,12 +155,217 @@ class FreeAgentServiceTest(unittest.TestCase):
         self.assertEqual(len(loaded.contracts), 1)
         self.assertIn("ownership fallback", loaded.warnings[0])
 
+    def test_targeted_sleeper_metadata_loads_relevant_player_beyond_first_thousand(self):
+        sleeper_rows = [
+            {
+                "sleeper_player_id": str(index),
+                "full_name": f"Player {index}",
+                "position": "WR",
+                "team": "FA",
+                "status": "Active",
+                "is_active": True,
+            }
+            for index in range(1201)
+        ]
+        sleeper_rows[-1].update(position="RB", team="GB")
+        client = FakeClient({
+            "contract_agreements": [],
+            "contracts": [],
+            "contract_seasons": [],
+            "league_teams": [],
+            "team_roster_state": [],
+            "sleeper_players": sleeper_rows,
+        })
+
+        relevant_ids = tuple(str(index) for index in range(1201))
+        loaded = load_league_free_agent_state(
+            client,
+            "league-1",
+            relevant_ids,
+        )
+
+        by_id = {row["sleeper_player_id"]: row for row in loaded.sleeper_players}
+        self.assertEqual((by_id["1200"]["position"], by_id["1200"]["team"]), ("RB", "GB"))
+        self.assertEqual(len(client.in_calls), 3)
+        self.assertTrue(all(len(ids) <= 500 for _table, _column, ids in client.in_calls))
+
+        result = build_free_agent_results(
+            [player("1200", "Target", pos="WR", nfl_team=None)],
+            loaded,
+            active_season=2026,
+        )
+        self.assertEqual((result.current[0].position, result.current[0].nfl_team), ("RB", "GB"))
+
     def test_future_free_agents_only_selected_expiration_year(self):
         universe = [player("p-1", "One Year"), player("p-2", "Two Years")]
         contracts = [contract("p-1", contract_years_left=1), contract("p-2", contract_years_left=2)]
         result = build_free_agent_results(universe, state(contracts=contracts), active_season=2026)
         rows = future_free_agents_for_season(result.future, 2028)
         self.assertEqual([row.sleeper_player_id for row in rows], ["p-2"])
+
+    def test_canonical_contract_seasons_override_legacy_remaining_years(self):
+        result = build_free_agent_results(
+            [player("p-1", "Canonical")],
+            state(
+                contracts=[contract("p-1", id="contract-1", contract_years_left=1)],
+                contract_seasons=[
+                    {"contract_id": "contract-1", "season": 2026, "obligation_status": "active"},
+                    {"contract_id": "contract-1", "season": 2027, "obligation_status": "scheduled"},
+                    {"contract_id": "contract-1", "season": 2028, "obligation_status": "scheduled"},
+                ],
+            ),
+            active_season=2026,
+        )
+        self.assertEqual(result.future[0].free_agent_season, 2029)
+
+    def test_canonical_one_year_contract_expires_next_season(self):
+        result = build_free_agent_results(
+            [player("p-1", "One Year")],
+            state(
+                contracts=[contract("p-1", id="contract-1", contract_years_left=4)],
+                contract_seasons=[
+                    {"contract_id": "contract-1", "season": 2026, "obligation_status": "active"},
+                ],
+            ),
+            active_season=2026,
+        )
+        self.assertEqual(result.future[0].free_agent_season, 2027)
+
+    def test_canonical_future_scheduled_season_sets_expiration(self):
+        result = build_free_agent_results(
+            [player("p-1", "Two Year")],
+            state(
+                contracts=[contract("p-1", id="contract-1", contract_years_left=1)],
+                contract_seasons=[
+                    {"contract_id": "contract-1", "season": 2026, "obligation_status": "active"},
+                    {"contract_id": "contract-1", "season": 2027, "obligation_status": "scheduled"},
+                ],
+            ),
+            active_season=2026,
+        )
+        self.assertEqual(result.future[0].free_agent_season, 2028)
+
+    def test_legacy_expiration_is_used_without_usable_contract_seasons(self):
+        result = build_free_agent_results(
+            [player("p-1", "Legacy")],
+            state(
+                contracts=[contract("p-1", id="contract-1", contract_years_left=2)],
+                contract_seasons=[
+                    {"contract_id": "contract-1", "season": 2028, "obligation_status": "voided"},
+                ],
+            ),
+            active_season=2026,
+        )
+        self.assertEqual(result.future[0].free_agent_season, 2028)
+
+    def test_current_sleeper_metadata_overrides_team_and_position(self):
+        result = build_free_agent_results(
+            [player("p-1", "Current Player", pos="WR", nfl_team="NYJ")],
+            state(sleeper_players=[{
+                "sleeper_player_id": "p-1",
+                "position": "RB",
+                "team": "DEN",
+                "status": "Active",
+                "is_active": True,
+            }]),
+            active_season=2026,
+        )
+        self.assertEqual((result.current[0].position, result.current[0].nfl_team), ("RB", "DEN"))
+
+    def test_current_sleeper_metadata_fills_blank_universe_metadata(self):
+        result = build_free_agent_results(
+            [player("11560", "Caleb Williams", pos=None, nfl_team=None)],
+            state(sleeper_players=[{
+                "sleeper_player_id": "11560",
+                "position": "QB",
+                "team": "CHI",
+                "status": "Active",
+                "is_active": True,
+            }]),
+            active_season=2026,
+        )
+        self.assertEqual((result.current[0].position, result.current[0].nfl_team), ("QB", "CHI"))
+
+    def test_current_sleeper_metadata_replaces_stale_universe_metadata(self):
+        result = build_free_agent_results(
+            [player("12504", "Kaleb Johnson", pos="WR", nfl_team=None)],
+            state(sleeper_players=[{
+                "sleeper_player_id": "12504",
+                "position": "RB",
+                "team": "GB",
+                "status": "Active",
+                "is_active": True,
+            }]),
+            active_season=2026,
+        )
+        self.assertEqual((result.current[0].position, result.current[0].nfl_team), ("RB", "GB"))
+
+    def test_current_sleeper_player_without_team_displays_fa(self):
+        result = build_free_agent_results(
+            [player("p-1", "NFL Free Agent", nfl_team="No team")],
+            state(sleeper_players=[{
+                "sleeper_player_id": "p-1",
+                "position": "WR",
+                "team": None,
+                "status": "Active",
+                "is_active": True,
+            }]),
+            active_season=2026,
+        )
+        self.assertEqual(result.current[0].nfl_team, "FA")
+        self.assertNotEqual(result.current[0].nfl_team, "No team")
+
+    def test_canonical_contract_season_cap_hit_overrides_agreement_salary(self):
+        result = build_free_agent_results(
+            [player("p-1", "Canonical Salary")],
+            state(
+                contracts=[contract("p-1", id="contract-1", salary=999)],
+                contract_seasons=[
+                    {
+                        "contract_id": "contract-1",
+                        "season": 2026,
+                        "obligation_status": "active",
+                        "salary": 20,
+                        "cap_hit": 24,
+                    },
+                    {
+                        "contract_id": "contract-1",
+                        "season": 2027,
+                        "obligation_status": "scheduled",
+                        "salary": 25,
+                        "cap_hit": 30,
+                    },
+                ],
+            ),
+            active_season=2026,
+        )
+        self.assertEqual(result.future[0].salary, 24)
+
+    def test_canonical_salary_uses_earliest_future_scheduled_obligation(self):
+        result = build_free_agent_results(
+            [player("p-1", "Scheduled Salary")],
+            state(
+                contracts=[contract("p-1", id="contract-1", salary=None)],
+                contract_seasons=[
+                    {
+                        "contract_id": "contract-1",
+                        "season": 2027,
+                        "obligation_status": "scheduled",
+                        "salary": 21,
+                        "cap_hit": 23,
+                    },
+                    {
+                        "contract_id": "contract-1",
+                        "season": 2028,
+                        "obligation_status": "scheduled",
+                        "salary": 24,
+                        "cap_hit": 26,
+                    },
+                ],
+            ),
+            active_season=2026,
+        )
+        self.assertEqual(result.future[0].salary, 23)
 
     def test_future_rows_use_canonical_team_and_league_scoped_legacy_fallback(self):
         universe = [player("p-1", "Canonical"), player("p-2", "Legacy")]
