@@ -22,8 +22,8 @@ from auth import require_login, current_user
 from services.config import configured_value
 from services.team_roster_state import (
     CanonicalTeamStateError,
+    cap_adjustment_display_rows,
     calculate_team_financials,
-    dead_cap_display_rows,
     load_team_state,
     merge_activity,
     roster_designation,
@@ -1345,7 +1345,6 @@ def load_owners_df() -> pd.DataFrame:
         st.exception(e)
         return pd.DataFrame(columns=["handle", "name"])
 
-@st.cache_data(ttl=300, show_spinner=False)
 def load_canonical_team_state_current(season: int, cache_epoch: int) -> dict:
     league_id = st.session_state.get("active_league_id") or st.session_state.get("import_league_id")
     return load_team_state(sb, league_id, season)
@@ -1444,19 +1443,62 @@ def resolve_cap_for_owner(
     )
     return f"${float(financials['cap_used']):.1f}", f"${float(financials['cap_space']):.1f} space"
 
-@st.cache_data(ttl=300, show_spinner=False)
-def load_draft_picks() -> pd.DataFrame:
-    try:
-        if sb:
-            rows = (
-                sb.table("draft_picks")
-                .select("*").order("season", desc=False).order("round", desc=False)
-                .execute().data or []
-            )
-            return pd.DataFrame(rows)
-    except Exception:
-        pass
-    return pd.DataFrame()
+def draft_picks_from_state(state: dict) -> pd.DataFrame:
+    """
+    Normalize canonical draft-pick ownership already returned by
+    read_canonical_team_state_authenticated.
+    """
+    rows = state.get("draft_picks", []) if isinstance(state, dict) else []
+
+    normalized = []
+    for row in rows:
+        original_id = str(row.get("original_league_team_id") or "").strip()
+        current_id = str(row.get("current_owner_league_team_id") or "").strip()
+
+        original_name = (
+            str(row.get("original_team_name") or "").strip()
+            or str(row.get("original_owner_name") or "").strip()
+            or original_id
+            or "Unknown"
+        )
+
+        current_name = (
+            str(row.get("current_team_name") or "").strip()
+            or str(row.get("current_owner_name") or "").strip()
+            or current_id
+            or "Unknown"
+        )
+
+        note = (
+            "Original pick"
+            if original_id == current_id
+            else f"Pick originally owned by {original_name}"
+        )
+
+        normalized.append(
+            {
+                "stable_pick_id": row.get("stable_pick_id"),
+                "season": row.get("draft_year"),
+                "round": row.get("round_number"),
+                "current_owner": current_name,
+                "original_team": original_name,
+                "note": note,
+                "asset_status": row.get("asset_status"),
+            }
+        )
+
+    return pd.DataFrame(
+        normalized,
+        columns=[
+            "stable_pick_id",
+            "season",
+            "round",
+            "current_owner",
+            "original_team",
+            "note",
+            "asset_status",
+        ],
+    )
 
 def get_roster_for_owner(
     all_roster: pd.DataFrame,
@@ -1698,12 +1740,34 @@ except Exception:
     except Exception:
         param_team = None
 
-# If the query param matches a known display name, use it
-if param_team and param_team in team_names:
+# If the query param matches a known display name, use it once per URL value
+if (
+    param_team
+    and param_team in team_names
+    and st.session_state.get("_teams_applied_param_team") != param_team
+):
     st.session_state["team_name"] = param_team
+    st.session_state["owner_picker"] = param_team
+    st.session_state["mobile_owner_picker"] = param_team
+    st.session_state["_teams_applied_param_team"] = param_team
 # Otherwise fall back to first team on first load
 elif "team_name" not in st.session_state:
     st.session_state["team_name"] = team_names[0]
+
+
+def _sync_desktop_team_picker():
+    selected = st.session_state.get("owner_picker")
+    if selected:
+        st.session_state["team_name"] = selected
+        st.session_state["mobile_owner_picker"] = selected
+
+
+def _sync_mobile_team_picker():
+    selected = st.session_state.get("mobile_owner_picker")
+    if selected:
+        st.session_state["team_name"] = selected
+        st.session_state["owner_picker"] = selected
+
 
 # ---------- ROW 1 ----------
 st.markdown('<div class="row1">', unsafe_allow_html=True)
@@ -1721,6 +1785,7 @@ with tc:
         options=team_names,
         index=team_names.index(st.session_state["team_name"]),
         key="owner_picker",
+        on_change=_sync_desktop_team_picker,
     )
     st.session_state["team_name"] = sel_name
     sel_handle = name_to_handle.get(sel_name)
@@ -2013,12 +2078,17 @@ with mid_col:
             st.caption("No players on the trade block.")
 
     # --- Draft Picks panel ---
-    picks_df = load_draft_picks() if 'picks_df' not in globals() else picks_df
+    picks_df = draft_picks_from_state(canonical_state)
     picks_html = ['<div class="panel"><h3>Draft Picks</h3>']
     if picks_df.empty:
         picks_html.append('<p style="font-size:.7rem;opacity:.65;">No draft picks data.</p>')
     else:
         minep = picks_df[picks_df["current_owner"] == sel_name].copy()
+        minep = minep[
+            minep["season"].isin(
+                [active_season, active_season + 1, active_season + 2]
+            )
+        ]
         if minep.empty:
             picks_html.append('<p style="font-size:.7rem;opacity:.65;">No draft picks data.</p>')
         else:
@@ -2187,7 +2257,7 @@ with right_col:
                 cap_adj_df["adjustment_type"]
                 .astype(str)
                 .str.strip()
-                .eq("dropped_player_charge")
+                .isin(["dropped_player_charge", "trade_carryover"])
             )
         ].copy()
 
@@ -2210,10 +2280,10 @@ with right_col:
             )
         )
 
-        for player, amount in dead_cap_display_rows(dead_cap.to_dict("records")):
+        for label, amount in cap_adjustment_display_rows(dead_cap.to_dict("records")):
             dead_parts.append(
                 f'<div class="activity-item">'
-                f'<strong>{player}</strong> · ${amount:.2f}'
+                f'<strong>{label}</strong>{f" · {amount}" if amount else ""}'
                 f'</div>'
             )
 
@@ -2445,7 +2515,7 @@ if not cap_adj_df.empty:
             cap_adj_df["adjustment_type"]
             .astype(str)
             .str.strip()
-            .eq("dropped_player_charge")
+            .isin(["dropped_player_charge", "trade_carryover"])
         )
     ].copy()
 
@@ -2473,10 +2543,8 @@ with st.container(key="teams_mobile_picker"):
         options=team_names,
         index=team_names.index(sel_name),
         key="mobile_owner_picker",
+        on_change=_sync_mobile_team_picker,
     )
-
-    if mobile_selected_team != sel_name:
-        st.session_state["team_name"] = mobile_selected_team
 
 # Build the compact top portion in ONE markdown block so Streamlit cannot
 # insert large gaps between the summary, roster, and side-by-side cards.
@@ -2679,13 +2747,14 @@ dead_rows_html: list[str] = []
 if mobile_dead_cap.empty:
     dead_rows_html.append('<div class="teams-mobile-empty">No dead cap charges.</div>')
 else:
-    for raw_player, amount in dead_cap_display_rows(mobile_dead_cap.to_dict("records")):
-        player = _mobile_escape(raw_player)
+    for raw_label, amount in cap_adjustment_display_rows(mobile_dead_cap.to_dict("records")):
+        label = _mobile_escape(raw_label)
+        amount_html = f' · <span class="teams-mobile-dead-amount">{amount}</span>' if amount else ""
         dead_rows_html.append(
             '<div class="teams-mobile-dead-row">'
             '<div class="teams-mobile-dead-main">'
-            f'<strong>{player}</strong> · '
-            f'<span class="teams-mobile-dead-amount">${amount:.2f}</span>'
+            f'<strong>{label}</strong>'
+            f'{amount_html}'
             '</div>'
             '</div>'
         )

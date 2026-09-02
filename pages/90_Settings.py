@@ -56,6 +56,20 @@ from services.offseason_transactions import (
     resolve_rookie_contract_terms,
     rookie_draft_player_options,
 )
+from services.canonical_trades import (
+    DraftPickMovement,
+    PlayerMovement,
+    RetainedSalary,
+    RetainedSeason,
+    complete_rookie_draft,
+    configure_draft_lifecycle,
+    draft_season_window,
+    execute_canonical_trade,
+    is_draft_pick_tradeable,
+    team_selection_options,
+)
+from decimal import Decimal
+from uuid import uuid4
 
 
 # ============================================================
@@ -1738,34 +1752,42 @@ elif section == "League Manager Tools":
             st.success("Manual drop completed.")
     elif tool == "Trade Tools":
         st.markdown("### Trade Tools")
-        st.caption("Build trades by entering what each team receives.")
+        st.caption("Build one atomic 2–4 team trade. All assets validate before anything moves.")
 
-        team_options = [
-            t.get("owner_name") or t.get("team_name")
-            for t in league_teams
-            if t.get("owner_name") or t.get("team_name")
-        ]
+        team_option_rows = team_selection_options(league_teams)
+        team_labels = dict(team_option_rows)
+        team_options = [team_id for team_id, _label in team_option_rows]
 
         contracts = (
-            sb_client.table("contracts")
+            service_client().table("contract_agreements")
             .select("*")
             .eq("league_id", active_league_id)
             .execute()
             .data
             or []
         )
-
-        def contract_team_name(c):
-            return (
-                c.get("owner_name")
-                or c.get("team_name")
-                or c.get("owner")
-                or c.get("fantasy_team")
-                or ""
+        player_ids = [str(c.get("sleeper_player_id")) for c in contracts if c.get("sleeper_player_id")]
+        player_rows = service_client().table("player_universe").select("sleeper_id,player_name").in_("sleeper_id", player_ids).execute().data or [] if player_ids else []
+        player_names = {str(row.get("sleeper_id")): row.get("player_name") for row in player_rows}
+        contract_by_label = {
+            f"{player_names.get(str(c.get('sleeper_player_id'))) or c.get('sleeper_player_id')} · {str(c.get('id'))[:8]}": c
+            for c in contracts
+            if c.get("id") and c.get("league_team_id") and c.get("status") in {"active", "scheduled"}
+        }
+        pick_rows = (
+            service_client().table("draft_pick_assets").select("*")
+            .eq("league_id", active_league_id).in_("draft_year", list(draft_season_window(canonical_season)))
+            .execute().data or []
+        )
+        lifecycle_rows = service_client().table("league_draft_lifecycles").select("season,status").eq("league_id", active_league_id).execute().data or []
+        pick_by_label = {
+            f"{p.get('draft_year')} Round {p.get('round_number')} · {str(p.get('stable_pick_id'))[:8]}": p
+            for p in pick_rows
+            if is_draft_pick_tradeable(
+                next((row.get("status") for row in lifecycle_rows if int(row.get("season") or 0) == int(p.get("draft_year") or 0)), ""),
+                str(p.get("asset_status") or ""),
             )
-
-        def player_label(c):
-            return f"{c.get('player_name')} ({c.get('sleeper_player_id')})"
+        }
 
         team_count_trade = st.segmented_control(
             "Number of teams",
@@ -1782,6 +1804,7 @@ elif section == "League Manager Tools":
                     st.selectbox(
                         f"Team {i + 1}",
                         team_options,
+                        format_func=lambda team_id: team_labels[team_id],
                         key=f"trade_team_{i}",
                     )
                 )
@@ -1792,34 +1815,20 @@ elif section == "League Manager Tools":
 
         st.divider()
 
-        trade_payload = []
+        player_movements = []
+        pick_movements = []
+        retained_salary = []
         receive_cols = st.columns(team_count_trade)
 
         for i, receiving_team in enumerate(selected_teams):
-            other_teams = [t for t in selected_teams if t != receiving_team]
+            receiving_team_id = receiving_team
+            other_team_ids = {team_id for team_id in selected_teams if team_id != receiving_team}
 
-            eligible_contracts = [
-                c for c in contracts
-                if contract_team_name(c) in other_teams
-            ]
-
-            eligible_player_options = [
-                player_label(c)
-                for c in eligible_contracts
-                if c.get("player_name")
-            ]
-
-            pick_options = [""] + [
-                f"{from_team} — {year} Round {round_num}"
-                for from_team in other_teams
-                for year in range(canonical_season, canonical_season + 4)
-                for round_num in range(1, 5)
-            ]
-
-            cash_from_options = [""] + other_teams
+            eligible_player_options = [label for label, c in contract_by_label.items() if str(c.get("league_team_id")) in other_team_ids]
+            pick_options = [label for label, p in pick_by_label.items() if str(p.get("current_owner_league_team_id")) in other_team_ids]
 
             with receive_cols[i]:
-                st.markdown(f"#### {receiving_team} receives")
+                st.markdown(f"#### {team_labels[receiving_team]} receives")
 
                 players_received = st.multiselect(
                     "Players received",
@@ -1833,29 +1842,21 @@ elif section == "League Manager Tools":
                     key=f"trade_picks_received_{i}",
                 )
 
-                cash_from_team = st.selectbox(
-                    "Cash from",
-                    options=cash_from_options,
-                    key=f"trade_cash_from_{i}",
-                )
-
-                cash_received = st.number_input(
-                    "Cash received",
-                    min_value=0.0,
-                    value=0.0,
-                    step=1.0,
-                    key=f"trade_cash_received_{i}",
-                )
-
-                trade_payload.append(
-                    {
-                        "receiving_team": receiving_team,
-                        "players_received": players_received,
-                        "draft_picks_received": picks_received,
-                        "cash_from_team": cash_from_team,
-                        "cash_received": cash_received,
-                    }
-                )
+                for label in players_received:
+                    contract = contract_by_label[label]
+                    movement = PlayerMovement(str(contract["id"]), str(contract["league_team_id"]), receiving_team_id)
+                    player_movements.append(movement)
+                    seasons = []
+                    st.caption(f"Retained salary: {label}")
+                    for season in range(canonical_season, min(int(contract.get("end_season") or canonical_season), canonical_season + 3) + 1):
+                        amount = st.number_input(f"{season} retained", min_value=0.0, step=1.0, key=f"trade_retained_{i}_{contract['id']}_{season}")
+                        if amount > 0:
+                            seasons.append(RetainedSeason(season, Decimal(str(amount))))
+                    if seasons:
+                        retained_salary.append(RetainedSalary(str(contract["id"]), str(contract["league_team_id"]), receiving_team_id, tuple(seasons)))
+                for label in picks_received:
+                    pick = pick_by_label[label]
+                    pick_movements.append(DraftPickMovement(str(pick["stable_pick_id"]), str(pick["current_owner_league_team_id"]), receiving_team_id))
 
         st.divider()
 
@@ -1864,18 +1865,30 @@ elif section == "League Manager Tools":
             placeholder="Optional commissioner notes...",
         )
 
-        if st.button("Process Trade", use_container_width=True):
-            log_commish_action(
-                "process_multi_team_trade",
-                {
-                    "teams": trade_payload,
-                    "notes": notes,
-                },
-            )
+        st.json({
+            "participants": [team_labels[team_id] for team_id in selected_teams],
+            "players": [vars(row) for row in player_movements],
+            "draft_picks": [vars(row) for row in pick_movements],
+            "retained_salary": [
+                {**vars(row), "seasons": [{"season": value.season, "amount": str(value.amount)} for value in row.seasons]}
+                for row in retained_salary
+            ],
+        })
 
-            st.success(
-                "Trade logged. Next step is wiring this to update contract ownership, draft pick ledger, and team cash balances."
+        if st.button("Process Trade", use_container_width=True):
+            result = execute_canonical_trade(
+                sb_client,
+                league_id=active_league_id,
+                participant_team_ids=selected_teams,
+                idempotency_key=f"settings-trade:{uuid4()}",
+                player_movements=player_movements,
+                draft_pick_movements=pick_movements,
+                retained_salary=retained_salary,
+                notes=notes,
             )
+            invalidate_team_state_session_cache(st.session_state)
+            st.cache_data.clear()
+            st.success(f"Atomic trade completed: {result['trade_id']}")
 
 # ============================================================
 # DRAFT CENTER
@@ -1901,10 +1914,36 @@ elif section == "Draft Center":
         with top_col1:
             draft_year = st.selectbox(
                 "Draft year",
-                [canonical_season, canonical_season + 1],
+                list(draft_season_window(canonical_season)),
                 index=0,
                 key="rookie_draft_year",
             )
+
+        with top_col2:
+            lifecycle_action = st.selectbox(
+                "Draft lifecycle",
+                ["scheduled", "in_progress"],
+                key="rookie_draft_lifecycle_status",
+            )
+            if st.button("Save Draft Lifecycle", use_container_width=True):
+                configured = configure_draft_lifecycle(
+                    sb_client,
+                    league_id=active_league_id,
+                    season=draft_year,
+                    status=lifecycle_action,
+                    expected_pick_count=len(league_teams) * 3,
+                )
+                st.success(f"{draft_year} draft is {configured['status']}.")
+            if st.button("Complete and Lock Draft", use_container_width=True):
+                completed_draft = complete_rookie_draft(
+                    sb_client,
+                    league_id=active_league_id,
+                    season=draft_year,
+                )
+                st.success(
+                    f"{draft_year} draft completed; "
+                    f"{completed_draft['locked_asset_count']} assets locked."
+                )
 
         default_rookie_template = pd.DataFrame(
             [

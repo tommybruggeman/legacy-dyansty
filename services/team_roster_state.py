@@ -22,8 +22,14 @@ def load_team_state(client:Any,league_id:str,season:int,league_team_id:str|None=
     if not isinstance(payload,Mapping) or payload.get("schema")!="canonical-team-state-v1":raise CanonicalTeamStateError("Canonical team state returned an invalid payload")
     if str(payload.get("league_id"))!=str(league_id) or int(payload.get("season",0))!=int(season):raise CanonicalTeamStateError("Canonical team state returned mismatched authority")
     result=dict(payload)
-    for key in("teams","roster","dead_cap","activity","cap_adjustments"):
+    for key in("teams","roster","dead_cap","activity","cap_adjustments","draft_picks"):
         if not isinstance(result.get(key),list):raise CanonicalTeamStateError(f"Canonical team state omitted {key}")
+    retained=[dict(row)for row in result.get("retained_salary",[])if isinstance(row,Mapping)]
+    retained_by_contract={}
+    for row in retained:retained_by_contract[str(row.get("contract_agreement_id"))]=retained_by_contract.get(str(row.get("contract_agreement_id")),Decimal("0"))+_money(row.get("amount"))
+    result["roster"]=[{**row,"cap_hit":max(Decimal("0"),_money(row.get("cap_hit"))-retained_by_contract.get(str(row.get("contract_agreement_id")),Decimal("0")))}for row in result["roster"]]
+    displayed_retained=[row for row in retained if not _text(league_team_id)or _text(row.get("retaining_league_team_id"))==_text(league_team_id)]
+    result["dead_cap"]=[*result["dead_cap"],*[{**row,"league_team_id":row.get("retaining_league_team_id"),"player_name":_text(row.get("player_name"))or _text(row.get("player_id"))or"Player","adjustment_type":"trade_retained_salary"}for row in displayed_retained]]
     return result
 
 def _normalized_roster(rows):
@@ -35,7 +41,22 @@ def state_roster(state:Mapping[str,Any])->list[dict[str,Any]]:return _normalized
 def state_activity(state:Mapping[str,Any],limit:int=500)->list[dict[str,Any]]:return _normalized_activity(state["activity"][:limit])
 def dead_cap_display_rows(rows:Iterable[Mapping[str,Any]])->list[tuple[str,Decimal]]:
     """Return the only two values authorized for Dead Cap presentation."""
-    return [(_text(row.get("player_name")) or "Player", _money(row.get("amount"))) for row in rows if row.get("adjustment_type")=="dropped_player_charge"]
+    return [((_text(row.get("player_name")) or "Player")+(f" — Retained Salary ({row.get('season')})"if row.get("adjustment_type")=="trade_retained_salary"else""),_money(row.get("amount")))for row in rows if row.get("adjustment_type")in{"dropped_player_charge","trade_retained_salary"}]
+def cap_adjustment_display_rows(rows:Iterable[Mapping[str,Any]])->list[tuple[str,str|None]]:
+    displayed=[]
+    for row in rows:
+        adjustment_type=row.get("adjustment_type")
+        if adjustment_type=="trade_carryover":
+            amount=_money(row.get("amount"));absolute=abs(amount);currency=f"${absolute:.0f}"if absolute==absolute.to_integral_value()else f"${absolute:.2f}"
+            counterparty=_text(row.get("counterparty_owner"))
+            if amount>0:label=f"{currency} to {counterparty}"if counterparty else f"{currency} cap traded away"
+            elif amount<0:label=f"+{currency} from {counterparty}"if counterparty else f"+{currency} cap received"
+            else:label="$0 cap trade"
+            displayed.append((label,None))
+        elif adjustment_type in{"dropped_player_charge","trade_retained_salary"}:
+            label,amount=dead_cap_display_rows([row])[0]
+            displayed.append((label,f"${amount:.2f}"))
+    return displayed
 def state_cap_adjustments(state:Mapping[str,Any])->list[dict[str,Any]]:
     canonical=list(state["dead_cap"]);keys={(str(r.get("league_team_id")),_text(r.get("player_id")).casefold(),int(r.get("season")or 0))for r in canonical};merged=list(canonical)
     for raw in state["cap_adjustments"]:

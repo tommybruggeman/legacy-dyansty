@@ -39,8 +39,8 @@ from services.offseason_transactions import (
 )
 from services.team_roster_state import (
     CanonicalTeamStateError,
+    cap_adjustment_display_rows,
     calculate_team_financials,
-    dead_cap_display_rows,
     load_team_state,
     merge_activity,
     roster_designation,
@@ -1030,7 +1030,6 @@ def get_cached_my_team():
     return my_team
 
 # ---------- data loaders ----------
-@st.cache_data(ttl=300, show_spinner=False)
 def load_canonical_team_state(league_id: str, season: int, team_id: str, cache_epoch: int) -> dict:
     return load_team_state(sb, league_id, season, team_id)
 
@@ -1489,8 +1488,8 @@ metrics = [
 ]
 
 dead_cap_tooltip_html = "".join(
-    f"<div><strong>{player}</strong><span>${amount:.2f}</span></div>"
-    for player, amount in dead_cap_display_rows(cap_adj_df.to_dict("records"))
+    f"<div><strong>{label}</strong><span>{amount or ''}</span></div>"
+    for label, amount in cap_adjustment_display_rows(cap_adj_df.to_dict("records"))
 )
 
 for col, (title, value, sub) in zip([m1, m2, m3, m4], metrics):
