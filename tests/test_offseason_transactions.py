@@ -49,7 +49,8 @@ class DropClient(Client):
 class OffseasonReadAuthorityTests(unittest.TestCase):
     def test_settings_splits_server_reads_from_authenticated_writes(self):
         source = Path("pages/90_Settings.py").read_text()
-        self.assertGreaterEqual(source.count("load_player_universe(service_client())"), 3)
+        self.assertGreaterEqual(source.count("load_player_universe(service_client())"), 2)
+        self.assertIn("load_commissioner_auction_universe(service_client())", source)
         self.assertIn("read_client=service_client()", source)
         self.assertIn('sb_client.rpc("persist_rookie_draft_board_authenticated"', source)
         self.assertGreaterEqual(source.count("OffseasonTransactionService(sb_client, active_league_id).acquire("), 2)
@@ -225,6 +226,20 @@ class ManualDropResolutionTests(unittest.TestCase):
 
 
 class OffseasonMigrationTests(unittest.TestCase):
+    def test_sleeper_only_acquisition_identity_is_additive_and_position_scoped(self):
+        sql = Path("supabase/migrations/20261109_sleeper_acquisition_identity_canonicalization.sql").read_text().lower()
+        for fragment in (
+            "ensure_acquirable_sleeper_identity_private",
+            "from public.sleeper_players",
+            "not in('qb','rb','wr','te')",
+            "insert into public.player_universe",
+            "on conflict(sleeper_id) do nothing",
+            "perform public.ensure_acquirable_sleeper_identity_private(pid)",
+        ):
+            self.assertIn(fragment, sql)
+        for destructive in ("delete from", "truncate", "drop table"):
+            self.assertNotIn(destructive, sql)
+
     def test_legacy_bootstrap_is_scoped_replay_safe_and_uses_active_flag_authority(self):
         sql = Path("supabase/migrations/20261029_legacy_contract_canonical_bootstrap.sql").read_text().lower()
         for fragment in (

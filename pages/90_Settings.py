@@ -50,7 +50,14 @@ from services.invitations import (
 )
 from services.season_rollover_ui import render_season_rollover_control
 from services.season_rollover_owner_ui import render_owner_rollover_decisions
-from services.free_agents import build_free_agent_results, load_league_free_agent_state, load_player_universe
+from services.free_agents import (
+    build_commissioner_auction_players,
+    build_free_agent_results,
+    canonical_live_owners,
+    load_commissioner_auction_universe,
+    load_league_free_agent_state,
+    load_player_universe,
+)
 from services.offseason_transactions import (
     OffseasonTransactionService,
     resolve_rookie_contract_terms,
@@ -2146,30 +2153,18 @@ elif section == "Draft Center":
             st.session_state["auction_current_bid"] = float(new_bid)
             st.session_state["auction_current_years"] = new_years
 
-        auction_results = build_free_agent_results(
-            load_player_universe(service_client()),
-            load_league_free_agent_state(service_client(), active_league_id),
-            active_season=canonical_season,
+        auction_state = load_league_free_agent_state(service_client(), active_league_id)
+        auction_players = build_commissioner_auction_players(
+            load_commissioner_auction_universe(service_client())
         )
         player_options = [
             f"{p.player} — {p.position} ({p.sleeper_player_id})"
-            for p in auction_results.current
+            for p in auction_players
         ]
-
-        contracts = (
-            sb_client.table("contracts")
-            .select("player_name,sleeper_player_id,owner_name")
-            .eq("league_id", active_league_id)
-            .execute()
-            .data
-            or []
+        contracted_ids = canonical_live_owners(
+            auction_state,
+            active_season=canonical_season,
         )
-
-        contracted_ids = {
-            str(c.get("sleeper_player_id")): c
-            for c in contracts
-            if c.get("sleeper_player_id")
-        }
 
         with st.container():
             st.markdown('<div class="auction-panel">', unsafe_allow_html=True)
@@ -2193,8 +2188,7 @@ elif section == "Draft Center":
                 selected_sleeper_id = selected_player.split("(")[-1].replace(")", "").strip()
 
             if selected_sleeper_id and selected_sleeper_id in contracted_ids:
-                contract = contracted_ids[selected_sleeper_id]
-                current_owner = contract.get("owner_name") or "another team"
+                current_owner = contracted_ids[selected_sleeper_id]
 
                 st.warning(f"{player_name} is already under contract with {current_owner}.")
 

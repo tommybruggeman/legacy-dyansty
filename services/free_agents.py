@@ -59,6 +59,14 @@ class RookieRow:
 
 
 @dataclass(frozen=True)
+class CommissionerAuctionPlayer:
+    sleeper_player_id: str
+    player: str
+    position: str
+    nfl_team: str
+
+
+@dataclass(frozen=True)
 class LifetimePointsCalculation:
     totals: Mapping[str, float]
     season_summaries_used: int
@@ -165,19 +173,84 @@ def future_season_options(
 def load_player_universe(
     sb: Any,
 ) -> tuple[Mapping[str, Any], ...]:
+    return tuple(_load_all_rows(sb, "player_universe"))
 
-    rows = (
-        sb.table("player_universe")
-        .select("*")
-        .execute()
-        .data
-        or []
-    )
 
-    return tuple(
-        dict(row)
-        for row in rows
-    )
+def load_commissioner_auction_universe(
+    sb: Any,
+) -> tuple[Mapping[str, Any], ...]:
+    """Load the complete identity population used only by commissioner auctions."""
+    universe = _load_all_rows(sb, "player_universe")
+    sleeper = _load_sleeper_players(sb, None)
+    return tuple((*universe, *sleeper))
+
+
+def build_commissioner_auction_players(
+    identity_rows: Sequence[Mapping[str, Any]],
+) -> tuple[CommissionerAuctionPlayer, ...]:
+    """Return every known Sleeper QB/RB/WR/TE, independent of market eligibility."""
+    by_id: dict[str, Mapping[str, Any]] = {}
+    for row in identity_rows:
+        player_id = _player_id(row)
+        if not player_id:
+            continue
+        existing = by_id.get(player_id, {})
+        # Later rows (the Sleeper fallback) fill or refresh identity metadata.
+        merged = dict(existing)
+        for key, value in row.items():
+            if value is not None and str(value).strip():
+                merged[key] = value
+        by_id[player_id] = merged
+
+    players = []
+    for player_id, row in by_id.items():
+        position = _clean(row.get("position") or row.get("pos") or row.get("player_position"))
+        name = _clean(row.get("full_name") or row.get("player_name") or row.get("name"))
+        if not name or not position or position.upper() not in SUPPORTED_POSITIONS:
+            continue
+        players.append(CommissionerAuctionPlayer(
+            sleeper_player_id=player_id,
+            player=name,
+            position=position.upper(),
+            nfl_team=_display(_nfl_team(row)),
+        ))
+    return tuple(sorted(players, key=lambda row: (row.player.casefold(), row.sleeper_player_id)))
+
+
+def canonical_live_owners(
+    state: LeagueFreeAgentState,
+    *,
+    active_season: int,
+) -> Mapping[str, str]:
+    """Resolve current ownership from a live agreement plus a live obligation."""
+    season = _safe_season(active_season)
+    if season is None:
+        raise ValueError("Active league season is unavailable.")
+    teams = _team_names_by_id(state.league_teams)
+    live_contract_ids = {
+        _clean(row.get("contract_id"))
+        for row in state.contract_seasons
+        if _clean(row.get("contract_id"))
+        and _safe_season(row.get("season")) is not None
+        and int(row.get("season")) >= season
+        and str(row.get("obligation_status") or "").strip().lower() in {"active", "scheduled"}
+    }
+    owners: dict[str, str] = {}
+    for agreement in state.contracts:
+        player_id = _player_id(agreement)
+        if not player_id or _is_released(agreement):
+            continue
+        contract_id = _clean(agreement.get("id") or agreement.get("contract_id"))
+        canonical = "status" in agreement or "superseded_by_contract_id" in agreement
+        if canonical and (
+            str(agreement.get("status") or "").lower() not in {"active", "scheduled"}
+            or agreement.get("superseded_by_contract_id") is not None
+            or contract_id not in live_contract_ids
+        ):
+            continue
+        team_id = _clean(agreement.get("league_team_id"))
+        owners[player_id] = teams.get(team_id, _clean(agreement.get("owner_name")) or "another team")
+    return owners
 
 
 def load_lifetime_points(
@@ -1319,6 +1392,29 @@ def _required_rows(
         dict(row)
         for row in rows
     ]
+
+
+def _load_all_rows(
+    sb: Any,
+    table_name: str,
+    *,
+    page_size: int = 1000,
+) -> list[Mapping[str, Any]]:
+    rows: list[Mapping[str, Any]] = []
+    start = 0
+    while True:
+        batch = (
+            sb.table(table_name)
+            .select("*")
+            .range(start, start + page_size - 1)
+            .execute()
+            .data
+            or []
+        )
+        rows.extend(dict(row) for row in batch)
+        if len(batch) < page_size:
+            return rows
+        start += page_size
 
 
 def _load_sleeper_players(

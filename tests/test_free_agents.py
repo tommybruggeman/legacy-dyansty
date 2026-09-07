@@ -5,8 +5,10 @@ from pathlib import Path
 
 from services.free_agents import (
     LeagueFreeAgentState,
+    build_commissioner_auction_players,
     build_free_agent_results,
     calculate_lifetime_points,
+    canonical_live_owners,
     current_free_agents_for_filters,
     future_free_agents_for_season,
     future_season_options,
@@ -46,6 +48,10 @@ class FakeQuery:
         self.allowed = (column, set(values))
         return self
 
+    def range(self, start, end):
+        self.allowed_range = (start, end)
+        return self
+
     def execute(self):
         self.client.calls.append((self.table, tuple(self.filters)))
         if self.table in self.client.fail_tables:
@@ -57,6 +63,9 @@ class FakeQuery:
             column, values = self.allowed
             self.client.in_calls.append((self.table, column, frozenset(values)))
             rows = [row for row in rows if row.get(column) in values]
+        elif hasattr(self, "allowed_range"):
+            start, end = self.allowed_range
+            rows = rows[start:end + 1]
         elif self.table == "sleeper_players":
             rows = rows[:1000]
         return FakeResponse(rows)
@@ -113,6 +122,44 @@ def state(*, contracts=(), roster_rows=(), teams=(), contract_seasons=(), sleepe
 
 
 class FreeAgentServiceTest(unittest.TestCase):
+    def test_commissioner_auction_identity_search_ignores_market_filters(self):
+        identities = [
+            player("inactive", "Inactive", active=False, nfl_status="inactive", nfl_team=None),
+            player("no-history", "No History", latest_season=None, season_ppg=None),
+            {"sleeper_player_id": "fallback", "full_name": "Sleeper Only", "position": "RB",
+             "team": None, "status": "Inactive", "is_active": False},
+            {"sleeper_player_id": "duplicate", "full_name": "Fresh Name", "position": "TE"},
+            player("duplicate", "Stale Name", pos=None),
+            player("defense", "Defense", pos="DEF"),
+        ]
+        rows = build_commissioner_auction_players(identities)
+        self.assertEqual(
+            [(row.sleeper_player_id, row.player) for row in rows],
+            [("duplicate", "Fresh Name"), ("inactive", "Inactive"),
+             ("no-history", "No History"), ("fallback", "Sleeper Only")],
+        )
+
+    def test_live_ownership_requires_live_agreement_and_obligation(self):
+        contracts = [
+            {"id": "live", "player_id": "owned", "league_team_id": "team-1",
+             "status": "active", "superseded_by_contract_id": None},
+            {"id": "dropped", "player_id": "available", "league_team_id": "team-1",
+             "status": "released", "superseded_by_contract_id": None},
+            {"id": "stale", "player_id": "stale", "league_team_id": "team-1",
+             "status": "active", "superseded_by_contract_id": None},
+        ]
+        seasons = [
+            {"contract_id": "live", "season": 2026, "obligation_status": "active"},
+            {"contract_id": "dropped", "season": 2026, "obligation_status": "released"},
+            {"contract_id": "stale", "season": 2026, "obligation_status": "voided"},
+        ]
+        owners = canonical_live_owners(
+            state(contracts=contracts, contract_seasons=seasons,
+                  teams=[{"id": "team-1", "team_name": "Team One"}]),
+            active_season=2026,
+        )
+        self.assertEqual(owners, {"owned": "Team One"})
+
     def test_active_season_resolution_and_options(self):
         context = type("Context", (), {"current_season": 2026})()
         self.assertEqual(resolve_active_league_season(context), 2026)
