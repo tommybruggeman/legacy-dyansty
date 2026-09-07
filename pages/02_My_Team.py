@@ -1905,34 +1905,46 @@ with action_designation_col:
                             )
 
                 else:
-                    payload = {
-                        "league_id": league_id,
-                        "owner_name": owner_name,
-                        "player_name": selected_designation_player,
-                        "season": active_season,
-                        "adjustment_type": adjustment_type,
-                        "amount": adjustment_amount,
-                        "note": f"{designation} designation",
-                    }
+                    sleeper_player_id = str(
+                        player_row.get("sleeper_id")
+                        or player_row.get("sleeper_player_id")
+                        or player_row.get("player_id")
+                        or ""
+                    ).strip()
 
-                    rest_request(
-                        "POST",
-                        "cap_adjustments",
-                        json_body=payload,
-                    )
+                    if not sleeper_player_id:
+                        st.error(
+                            "Canonical player ID is missing. IR assignment was not written."
+                        )
+                    else:
+                        try:
+                            OffseasonTransactionService(
+                                auth_client(),
+                                league_id,
+                            ).assign_injured_reserve(
+                                player_id=sleeper_player_id,
+                                league_team_id=str(my_team["team_id"]),
+                                league_season_id=active_league_season_id,
+                                normal_annual_charge=salary,
+                            )
 
-                    load_canonical_team_state.clear()
+                            load_canonical_team_state.clear()
 
-                    log_team_activity(
-                        designation.lower(),
-                        selected_designation_player,
-                    )
+                            log_team_activity(
+                                designation.lower(),
+                                selected_designation_player,
+                            )
 
-                    st.success(
-                        f"{selected_designation_player} added to {designation}"
-                    )
+                            st.success(
+                                f"{selected_designation_player} added to {designation}"
+                            )
 
-                    st.rerun()
+                            st.rerun()
+
+                        except Exception as exc:
+                            st.error(
+                                f"IR assignment failed: {exc}"
+                            )
 # ---------- activity ----------
 with st.container(border=True):
     st.markdown("### Recent Team Activity")

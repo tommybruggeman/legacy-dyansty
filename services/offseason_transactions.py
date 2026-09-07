@@ -119,12 +119,11 @@ def taxi_eligible_player_names(
     league_team_id: str,
     draft_year: int | None = None,
 ) -> tuple[str, ...]:
-    """Return rostered players whose canonical acquisition provenance is a rookie draft."""
+    """Return this roster's players with canonical current rookie-draft provenance."""
     drafted = {
         str(row.get("player_id") or "")
         for row in draft_assignments
-        if str(row.get("original_league_team_id") or row.get("league_team_id") or "") == str(league_team_id)
-        and bool(row.get("rookie_contract_provenance"))
+        if bool(row.get("rookie_contract_provenance"))
         and (draft_year is None or int(row.get("draft_year") or 0) == int(draft_year))
     }
     names = {
@@ -192,6 +191,27 @@ class OffseasonTransactionService:
         }
         return self.client.rpc(
             "persist_rookie_taxi_assignment_authenticated",
+            {"p_request": request},
+        ).execute().data
+
+    def assign_injured_reserve(
+        self,
+        *,
+        player_id: str,
+        league_team_id: str,
+        league_season_id: str,
+        normal_annual_charge: float,
+    ) -> Mapping[str, Any]:
+        """Persist an authenticated canonical injured-reserve designation."""
+        request = {
+            "league_id": self.league_id,
+            "player_id": str(player_id),
+            "league_team_id": str(league_team_id),
+            "league_season_id": str(league_season_id),
+            "normal_annual_charge": float(normal_annual_charge),
+        }
+        return self.client.rpc(
+            "persist_injured_reserve_assignment_authenticated",
             {"p_request": request},
         ).execute().data
 

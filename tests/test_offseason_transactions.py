@@ -73,6 +73,19 @@ class OffseasonReadAuthorityTests(unittest.TestCase):
         ]
         self.assertEqual(taxi_eligible_player_names(roster, assignments, league_team_id="mine"), ("Drafted Rookie",))
 
+    def test_traded_current_rookie_remains_eligible_on_current_roster(self):
+        roster = [{"sleeper_player_id": "traded", "player": "Traded Rookie"}]
+        assignments = [{
+            "player_id": "traded", "original_league_team_id": "drafting-team",
+            "draft_year": 2026, "rookie_contract_provenance": True,
+        }]
+        self.assertEqual(
+            taxi_eligible_player_names(
+                roster, assignments, league_team_id="current-team", draft_year=2026,
+            ),
+            ("Traded Rookie",),
+        )
+
     def test_authenticated_provenance_load_and_failure_are_fail_closed(self):
         client = Client()
         client.rows["rookie_draft_board_assignments"] = [{
