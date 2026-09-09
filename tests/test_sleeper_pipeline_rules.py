@@ -6,7 +6,7 @@ from decimal import Decimal
 from services.sleeper_pipeline import (
     build_roster_map,
     dead_cap_schedule,
-    faab_cap_adjustments,
+    describe_faab_moves,
     is_duplicate_acquisition,
     total_dead_cap,
     transactions_after_watermark,
@@ -88,16 +88,18 @@ class RosterMapTests(unittest.TestCase):
         self.assertEqual(build_roster_map([{"id": "team-a", "sleeper_roster_id": None}]), {})
 
 
-class FaabDirectionTests(unittest.TestCase):
-    def test_sender_loses_cap_and_receiver_gains_it(self):
-        rows = faab_cap_adjustments([FaabMove(3, 5, 10)], {3: "team-c", 5: "team-e"})
-        by_team = {row["league_team_id"]: row["amount"] for row in rows}
-        # Negative is relief in cap_adjustments, so the sender takes the charge.
-        self.assertEqual(by_team["team-c"], Decimal("10.00"))
-        self.assertEqual(by_team["team-e"], Decimal("-10.00"))
+class FaabReportingTests(unittest.TestCase):
+    def test_traded_faab_is_described_for_manual_entry(self):
+        note = describe_faab_moves(
+            [FaabMove(3, 5, 10)],
+            {"team-c": "Chase Seyforth", "team-e": "Nando Munoz"},
+            {3: "team-c", 5: "team-e"},
+        )
+        self.assertEqual(note, "$10 from Chase Seyforth to Nando Munoz")
 
-    def test_unmapped_roster_produces_no_adjustment(self):
-        self.assertEqual(faab_cap_adjustments([FaabMove(3, 99, 10)], {3: "team-c"}), ())
+    def test_unknown_roster_still_produces_a_readable_note(self):
+        note = describe_faab_moves([FaabMove(3, 99, 10)], {}, {3: "team-c"})
+        self.assertIn("$10", note)
 
 
 class WatermarkTests(unittest.TestCase):
@@ -131,3 +133,54 @@ class DuplicateGuardTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TradeResolutionTests(unittest.TestCase):
+    """Draft pick identity is league + year + round + ORIGINAL team."""
+
+    def test_pick_identity_uses_original_owner_not_seller(self):
+        from services.sleeper_transaction_adapter import PickMove, map_transaction
+
+        # Roster 4 originally owned the pick and is also selling it here.
+        trade = map_transaction({
+            "status": "complete", "type": "trade", "created": 1,
+            "transaction_id": "t1", "adds": None, "drops": None,
+            "roster_ids": [2, 4],
+            "draft_picks": [{"season": "2027", "round": 2,
+                             "roster_id": 4, "previous_owner_id": 4, "owner_id": 2}],
+            "waiver_budget": [],
+        })[0]
+        pick = trade.pick_moves[0]
+        self.assertEqual(pick.original_roster_id, 4)
+        self.assertEqual(pick.from_roster_id, 4)
+        self.assertEqual(pick.to_roster_id, 2)
+
+    def test_previously_traded_pick_keeps_its_original_owner(self):
+        from services.sleeper_transaction_adapter import map_transaction
+
+        # Roster 4 originally owned it; roster 3 acquired it earlier and now
+        # flips it to roster 2. Identity must still resolve against roster 4.
+        trade = map_transaction({
+            "status": "complete", "type": "trade", "created": 1,
+            "transaction_id": "t2", "adds": None, "drops": None,
+            "roster_ids": [2, 3],
+            "draft_picks": [{"season": "2028", "round": 1,
+                             "roster_id": 4, "previous_owner_id": 3, "owner_id": 2}],
+            "waiver_budget": [],
+        })[0]
+        pick = trade.pick_moves[0]
+        self.assertEqual(pick.original_roster_id, 4)
+        self.assertEqual(pick.from_roster_id, 3)
+        self.assertEqual(pick.to_roster_id, 2)
+
+    def test_trade_participants_stay_within_the_engine_limit(self):
+        from services.sleeper_transaction_adapter import map_transaction
+
+        trade = map_transaction({
+            "status": "complete", "type": "trade", "created": 1,
+            "transaction_id": "t3", "adds": {"1": 2}, "drops": {"1": 3},
+            "roster_ids": [2, 3, 4, 5], "draft_picks": [], "waiver_budget": [],
+        })[0]
+        # execute_canonical_trade accepts 2-4 teams; the league allows up to 4.
+        self.assertLessEqual(len(trade.roster_ids), 4)
+        self.assertGreaterEqual(len(trade.roster_ids), 2)

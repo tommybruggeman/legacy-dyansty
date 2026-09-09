@@ -1366,6 +1366,63 @@ elif section == "League Manager Tools":
 
     tool = st.session_state["lm_tool"]
 
+    with st.expander("Deployment diagnostics", expanded=False):
+        st.caption(
+            "What code this process is actually running. If a fix looks like it "
+            "did not deploy, check here before re-pushing."
+        )
+        try:
+            import services.offseason_transactions as _svc
+
+            diag_pid = os.getpid()
+            diag_module = getattr(_svc, "__file__", "unknown")
+            diag_commit = "unknown"
+            try:
+                head = Path(ROOT_DIR_STR) / ".git" / "HEAD"
+                if head.exists():
+                    ref = head.read_text().strip()
+                    if ref.startswith("ref: "):
+                        ref_path = Path(ROOT_DIR_STR) / ".git" / ref[5:]
+                        if ref_path.exists():
+                            diag_commit = ref_path.read_text().strip()[:12]
+                    else:
+                        diag_commit = ref[:12]
+            except Exception:
+                pass
+
+            # Symbols added at known points in history: a missing one means this
+            # process is running an older copy of the module than the checkout.
+            markers = {
+                "assign_injured_reserve": "76b19e6",
+                "list_manual_drop_candidates": "bbc14ae",
+            }
+            st.code(
+                f"pid           {diag_pid}\n"
+                f"commit        {diag_commit}\n"
+                f"module        {diag_module}",
+                language="text",
+            )
+            for symbol, since in markers.items():
+                present = hasattr(_svc.OffseasonTransactionService, symbol)
+                st.markdown(
+                    f"{'✅' if present else '❌'} `{symbol}` "
+                    f"— expected since `{since}`"
+                )
+            if not all(
+                hasattr(_svc.OffseasonTransactionService, s) for s in markers
+            ):
+                st.error(
+                    "This process is running an older copy of "
+                    "services/offseason_transactions.py than the deployed "
+                    "checkout. Reboot the app and wait for the logs to restart "
+                    "from the beginning — a browser refresh or Rerun is not a "
+                    "reboot."
+                )
+        except Exception as exc:
+            st.warning(f"Diagnostics unavailable: {exc}")
+
+
+
     st.divider()
 
     if tool == "Season Rollover":

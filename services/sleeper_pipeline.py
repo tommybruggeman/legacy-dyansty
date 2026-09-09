@@ -146,33 +146,22 @@ def build_roster_map(league_team_rows: Sequence[Mapping[str, Any]]) -> dict[int,
     return mapping
 
 
-def faab_cap_adjustments(
-    faab_moves: Sequence[Any], roster_map: Mapping[int, str],
-) -> tuple[dict[str, Any], ...]:
-    """Traded FAAB as cap adjustments.
+def describe_faab_moves(
+    faab_moves: Sequence[Any], team_names: Mapping[str, str],
+    roster_map: Mapping[int, str],
+) -> str:
+    """A readable summary of traded FAAB for manual cap entry.
 
-    The sending team loses that much cap and the receiving team gains it. In
-    ``cap_adjustments`` a negative amount is relief, so the sender takes a
-    positive charge and the receiver a negative one.
+    Sleeper moves budget, but nothing canonical tracks FAAB balances, so the
+    pipeline reports the transfer instead of writing cap adjustments from a
+    figure it cannot validate.
     """
-    rows: list[dict[str, Any]] = []
+    parts: list[str] = []
     for move in faab_moves:
-        sender = roster_map.get(move.from_roster_id)
-        receiver = roster_map.get(move.to_roster_id)
-        if not sender or not receiver:
-            continue
-        amount = _money(move.amount)
-        rows.append({
-            "league_team_id": sender, "amount": amount,
-            "adjustment_type": "faab_trade_out",
-            "note": f"FAAB traded away (${amount})",
-        })
-        rows.append({
-            "league_team_id": receiver, "amount": -amount,
-            "adjustment_type": "faab_trade_in",
-            "note": f"FAAB acquired (${amount})",
-        })
-    return tuple(rows)
+        sender = team_names.get(roster_map.get(move.from_roster_id, ""), "unknown team")
+        receiver = team_names.get(roster_map.get(move.to_roster_id, ""), "unknown team")
+        parts.append(f"${move.amount} from {sender} to {receiver}")
+    return "; ".join(parts)
 
 
 def transactions_after_watermark(
@@ -440,6 +429,144 @@ class SleeperSyncRunner:
         return None
 
 
+    # ---- trades -----------------------------------------------------------
+
+    def resolve_contract_id(self, player_id: str, league_team_id: str) -> str | None:
+        """The live agreement id a trade moves, verified against the from-team."""
+        for row in self.live_agreements(player_id):
+            if str(row.get("league_team_id") or "") == str(league_team_id):
+                return str(row.get("id"))
+        return None
+
+    def resolve_draft_pick(
+        self, *, draft_year: int, round_number: int,
+        original_team_id: str, expected_owner_team_id: str | None,
+    ) -> tuple[str | None, str | None]:
+        """Canonical stable_pick_id for a Sleeper pick, or a reason it failed.
+
+        A pick's identity is league + draft year + round + ORIGINAL team, which
+        never changes when it is traded. Sleeper's roster_id carries that
+        original owner; previous_owner_id is only the seller.
+        """
+        try:
+            rows = (self.read_client.table("draft_pick_assets")
+                    .select("stable_pick_id,current_owner_league_team_id,asset_status")
+                    .eq("league_id", self.league_id)
+                    .eq("draft_year", int(draft_year))
+                    .eq("round_number", int(round_number))
+                    .eq("original_league_team_id", str(original_team_id))
+                    .execute().data or [])
+        except Exception as exc:
+            return None, f"draft pick lookup failed: {exc}"
+
+        if len(rows) != 1:
+            return None, (
+                f"{len(rows)} canonical assets for {draft_year} round "
+                f"{round_number}; expected exactly 1. The {draft_year} draft "
+                "inventory may not be initialized yet."
+            )
+        asset = rows[0]
+        if str(asset.get("asset_status") or "") != "tradable":
+            return None, f"pick is {asset.get('asset_status')}, not tradable"
+        if expected_owner_team_id and str(
+            asset.get("current_owner_league_team_id") or ""
+        ) != str(expected_owner_team_id):
+            return None, (
+                "canonical pick owner does not match the team Sleeper traded it from"
+            )
+        return str(asset.get("stable_pick_id")), None
+
+    def apply_trade(
+        self, intent: TradeIntent, roster_map: Mapping[int, str],
+    ) -> SyncException | None:
+        from services.canonical_trades import (
+            DraftPickMovement, PlayerMovement, execute_canonical_trade,
+        )
+
+        teams = [roster_map.get(rid) for rid in intent.roster_ids]
+        if not all(teams):
+            missing = [r for r in intent.roster_ids if not roster_map.get(r)]
+            return SyncException(
+                "unmapped_roster", intent.transaction_id,
+                f"Sleeper rosters {missing} have no canonical team",
+            )
+
+        player_movements = []
+        for move in intent.player_moves:
+            from_team = roster_map.get(move.from_roster_id) if move.from_roster_id else None
+            to_team = roster_map.get(move.to_roster_id) if move.to_roster_id else None
+            if not from_team or not to_team:
+                return SyncException(
+                    "unmapped_roster", intent.transaction_id,
+                    f"Trade leg for player {move.player_id} has an unmapped roster",
+                    move.player_id,
+                )
+            contract_id = self.resolve_contract_id(move.player_id, from_team)
+            if not contract_id:
+                return SyncException(
+                    "no_live_contract", intent.transaction_id,
+                    "Traded player holds no live contract on the team Sleeper "
+                    "traded him from.",
+                    move.player_id,
+                )
+            player_movements.append(PlayerMovement(contract_id, from_team, to_team))
+
+        pick_movements = []
+        for pick in intent.pick_moves:
+            original_team = roster_map.get(pick.original_roster_id)
+            from_team = roster_map.get(pick.from_roster_id)
+            to_team = roster_map.get(pick.to_roster_id)
+            if not original_team or not from_team or not to_team:
+                return SyncException(
+                    "unmapped_roster", intent.transaction_id,
+                    f"{pick.season} round {pick.round_number} pick has an unmapped roster",
+                )
+            stable_pick_id, failure = self.resolve_draft_pick(
+                draft_year=pick.season, round_number=pick.round_number,
+                original_team_id=original_team, expected_owner_team_id=from_team,
+            )
+            if not stable_pick_id:
+                return SyncException(
+                    "ambiguous_contract", intent.transaction_id,
+                    f"{pick.season} round {pick.round_number} pick: {failure}",
+                )
+            pick_movements.append(
+                DraftPickMovement(stable_pick_id, from_team, to_team)
+            )
+
+        try:
+            execute_canonical_trade(
+                self.write_client, league_id=self.league_id,
+                participant_team_ids=teams,
+                idempotency_key=intent.idempotency_key,
+                player_movements=player_movements,
+                draft_pick_movements=pick_movements,
+                notes=f"Sleeper transaction {intent.transaction_id}",
+            )
+        except Exception as exc:
+            return SyncException(
+                "unsupported_transaction", intent.transaction_id,
+                f"Canonical trade execution failed: {exc}",
+            )
+
+        for team_id in teams:
+            self.log_activity(
+                team_id, "trade", f"{len(player_movements)} player(s)",
+                f"Trade completed in Sleeper between {len(teams)} teams.",
+            )
+
+        if intent.faab_moves:
+            # The trade itself succeeded; this is a note, not a failure.
+            self.record_exception(SyncException(
+                "unsupported_transaction", intent.transaction_id,
+                "Trade completed, but it also moved FAAB, which is not posted "
+                "automatically. Enter the cap adjustment by hand: "
+                + describe_faab_moves(
+                    intent.faab_moves, self._resolve_team_names(), roster_map,
+                ),
+            ))
+        return None
+
     def active_season(self) -> int:
         rows = (self.read_client.table("league_seasons").select("season")
                 .eq("league_id", self.league_id).eq("is_active", True)
@@ -523,10 +650,9 @@ class SleeperSyncRunner:
                         if failure is None:
                             report.acquired += 1
                     elif isinstance(intent, TradeIntent):
-                        failure = SyncException(
-                            "unsupported_transaction", tx_id,
-                            "Trades are not yet applied automatically.",
-                        )
+                        failure = self.apply_trade(intent, roster_map)
+                        if failure is None:
+                            report.traded += 1
                     else:
                         failure = None
                     if failure is not None:
