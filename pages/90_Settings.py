@@ -1679,11 +1679,15 @@ elif section == "League Manager Tools":
 
         # Sourced from live canonical agreements, not the legacy "contracts"
         # table, so rookie-draft signings are droppable like anyone else.
-        drop_candidates = transaction_service.list_manual_drop_candidates()
-        drop_candidate_ids = {
-            f"{candidate.player_name} ({candidate.player_id})": candidate.player_id
-            for candidate in drop_candidates
-        }
+        drop_catalog = transaction_service.list_manual_drop_candidates()
+
+        drop_candidate_ids: dict[str, str] = {}
+        for candidate in drop_catalog.candidates:
+            label = candidate.label
+            # Disambiguate only when two rostered players share a display label.
+            if label in drop_candidate_ids:
+                label = f"{label} ({candidate.player_id})"
+            drop_candidate_ids[label] = candidate.player_id
         player_options = sorted(drop_candidate_ids)
 
         drop_resolution = None
@@ -1691,6 +1695,22 @@ elif section == "League Manager Tools":
 
         if not player_options:
             st.info("No player on an active roster currently has a droppable contract.")
+
+        if drop_catalog.excluded:
+            with st.expander(
+                f"{len(drop_catalog.excluded)} rostered player(s) cannot be dropped",
+                expanded=False,
+            ):
+                st.caption(
+                    "These hold a live agreement but not exactly one, so the "
+                    "canonical drop path refuses them. Usually a duplicate or "
+                    "un-superseded contract that needs cleaning up."
+                )
+                for exclusion in drop_catalog.excluded:
+                    st.markdown(
+                        f"- **{exclusion.player_name}** "
+                        f"(`{exclusion.player_id}`) — {exclusion.reason}"
+                    )
 
         c1, c2 = st.columns(2)
 

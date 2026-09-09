@@ -40,6 +40,30 @@ class ManualDropResolution:
 class ManualDropCandidate:
     player_id: str
     player_name: str
+    position: str = ""
+    team_name: str = ""
+
+    @property
+    def label(self) -> str:
+        parts = self.player_name
+        if self.position:
+            parts += f" \u2014 {self.position}"
+        if self.team_name:
+            parts += f" \u00b7 {self.team_name}"
+        return parts
+
+
+@dataclass(frozen=True)
+class ManualDropExclusion:
+    player_id: str
+    player_name: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class ManualDropCatalog:
+    candidates: tuple[ManualDropCandidate, ...]
+    excluded: tuple[ManualDropExclusion, ...]
 
 
 def _money(value: Any) -> Decimal:
@@ -274,64 +298,118 @@ class OffseasonTransactionService:
             calculate_default_dead_cap(rules[0], salary_basis),
         )
 
-    def list_manual_drop_candidates(self) -> tuple[ManualDropCandidate, ...]:
-        """Every player the canonical model can actually drop, regardless of source.
+    def list_manual_drop_candidates(self) -> ManualDropCatalog:
+        """Every player the canonical model can drop, plus why anyone was left out.
 
         Sourced from live ownership agreements rather than the legacy ``contracts``
-        table, so rookies signed through the rookie draft board are included.
+        table, so rookie-draft signings are included. Names resolve through
+        ``player_universe``, which carries prospect slugs as well as Sleeper ids.
         """
         agreements = (self.read_client.table("contract_agreements")
-                      .select("player_id,status,superseded_by_contract_id")
+                      .select("player_id,league_team_id,status,superseded_by_contract_id")
                       .eq("league_id", self.league_id)
                       .in_("status", ["active", "scheduled"])
                       .is_("superseded_by_contract_id", "null").execute().data or [])
-        counts: dict[str, int] = {}
+        live: dict[str, list[str]] = {}
         for row in agreements:
             player_id = str(row.get("player_id") or "").strip()
             if player_id:
-                counts[player_id] = counts.get(player_id, 0) + 1
-        # resolve_manual_drop requires exactly one live agreement; anything
-        # ambiguous would raise there, so never offer it as a choice.
-        droppable = sorted(player_id for player_id, n in counts.items() if n == 1)
-        if not droppable:
-            return ()
-        names = self._resolve_player_names(droppable)
-        return tuple(
-            ManualDropCandidate(player_id, names.get(player_id) or f"Unnamed player {player_id}")
-            for player_id in droppable
-        )
+                live.setdefault(player_id, []).append(str(row.get("league_team_id") or ""))
 
-    def _resolve_player_names(self, player_ids: Sequence[str]) -> dict[str, str]:
-        """Canonical player names, falling back to legacy contract rows."""
-        names: dict[str, str] = {}
-        chunk_size = 150
-        for start in range(0, len(player_ids), chunk_size):
-            chunk = list(player_ids[start:start + chunk_size])
-            try:
-                rows = (self.read_client.table("players").select("sleeper_id,full_name")
-                        .in_("sleeper_id", chunk).execute().data or [])
-            except Exception:
-                rows = []
+        identity = self._resolve_player_identity(sorted(live))
+        teams = self._resolve_team_names()
+
+        candidates: list[ManualDropCandidate] = []
+        excluded: list[ManualDropExclusion] = []
+        for player_id in sorted(live):
+            team_ids = live[player_id]
+            name, position = identity.get(player_id, ("", ""))
+            display = name or f"Unresolved player {player_id}"
+            # resolve_manual_drop requires exactly one live agreement, so anything
+            # ambiguous is reported rather than silently dropped from the list.
+            if len(team_ids) != 1:
+                excluded.append(ManualDropExclusion(
+                    player_id, display,
+                    f"{len(team_ids)} live agreements — expected exactly 1",
+                ))
+                continue
+            candidates.append(ManualDropCandidate(
+                player_id, display, position, teams.get(team_ids[0], ""),
+            ))
+        return ManualDropCatalog(tuple(candidates), tuple(excluded))
+
+    def _resolve_team_names(self) -> dict[str, str]:
+        try:
+            rows = (self.read_client.table("league_teams").select("id,team_name,owner_name")
+                    .eq("league_id", self.league_id).execute().data or [])
+        except Exception:
+            return {}
+        return {
+            str(row.get("id") or ""): str(row.get("owner_name") or row.get("team_name") or "").strip()
+            for row in rows if row.get("id")
+        }
+
+    def _resolve_player_identity(
+        self, player_ids: Sequence[str],
+    ) -> dict[str, tuple[str, str]]:
+        """Map player id -> (name, position) across every identity source."""
+        wanted = set(player_ids)
+        if not wanted:
+            return {}
+        resolved: dict[str, tuple[str, str]] = {}
+
+        def absorb(rows: Sequence[Mapping[str, Any]]) -> None:
             for row in rows:
-                player_id = str(row.get("sleeper_id") or "").strip()
-                full_name = str(row.get("full_name") or "").strip()
-                if player_id and full_name:
-                    names[player_id] = full_name
-        missing = [player_id for player_id in player_ids if player_id not in names]
-        for start in range(0, len(missing), chunk_size):
-            chunk = list(missing[start:start + chunk_size])
+                player_id = str(
+                    row.get("sleeper_player_id") or row.get("sleeper_id")
+                    or row.get("player_id") or ""
+                ).strip()
+                if not player_id or player_id not in wanted or player_id in resolved:
+                    continue
+                name = str(
+                    row.get("full_name") or row.get("player_name") or row.get("name") or ""
+                ).strip()
+                position = str(
+                    row.get("position") or row.get("pos") or row.get("player_position") or ""
+                ).strip()
+                if name:
+                    resolved[player_id] = (name, position)
+
+        # player_universe is the canonical identity population and is the only
+        # source that carries 2026-style prospect slugs.
+        for table_name in ("player_universe", "players", "sleeper_players"):
+            if len(resolved) == len(wanted):
+                break
             try:
-                rows = (self.read_client.table("contracts").select("sleeper_player_id,player_name")
-                        .eq("league_id", self.league_id)
-                        .in_("sleeper_player_id", chunk).execute().data or [])
+                absorb(self._load_identity_rows(table_name))
             except Exception:
-                rows = []
-            for row in rows:
-                player_id = str(row.get("sleeper_player_id") or "").strip()
-                player_name = str(row.get("player_name") or "").strip()
-                if player_id and player_name:
-                    names.setdefault(player_id, player_name)
-        return names
+                continue
+
+        missing = sorted(wanted - set(resolved))
+        if missing:
+            for start in range(0, len(missing), 150):
+                chunk = missing[start:start + 150]
+                try:
+                    rows = (self.read_client.table("contracts")
+                            .select("sleeper_player_id,player_name")
+                            .eq("league_id", self.league_id)
+                            .in_("sleeper_player_id", chunk).execute().data or [])
+                except Exception:
+                    continue
+                absorb(rows)
+        return resolved
+
+    def _load_identity_rows(self, table_name: str) -> list[Mapping[str, Any]]:
+        rows: list[Mapping[str, Any]] = []
+        start = 0
+        page_size = 1000
+        while True:
+            batch = (self.read_client.table(table_name).select("*")
+                     .range(start, start + page_size - 1).execute().data or [])
+            rows.extend(dict(row) for row in batch)
+            if len(batch) < page_size:
+                return rows
+            start += page_size
 
     def release_manual_drop(self, *, player_id: str, notes: str = "") -> Mapping[str, Any]:
         resolved = self.resolve_manual_drop(player_id)
