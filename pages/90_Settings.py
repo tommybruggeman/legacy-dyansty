@@ -1342,6 +1342,7 @@ elif section == "League Manager Tools":
         "Manual Add",
         "Manual Drop",
         "Trade Tools",
+        "Sleeper Sync",
         "Season Rollover",
     ]
 
@@ -1667,6 +1668,132 @@ elif section == "League Manager Tools":
                 },
             )
             st.success("Manual add completed.")
+
+    elif tool == "Sleeper Sync":
+        st.markdown("### Sleeper Sync")
+        st.caption(
+            "Owner moves made in Sleeper convert into contracts automatically. "
+            "Taxi and IR stay manual."
+        )
+
+        sync_rows = (
+            sb_client.table("league_sleeper_sync")
+            .select("*")
+            .eq("league_id", active_league_id)
+            .execute()
+            .data
+            or []
+        )
+
+        if not sync_rows:
+            st.warning(
+                "No sync configuration for this league yet. Run the "
+                "`20261112_sleeper_sync_control.sql` migration in Supabase."
+            )
+        else:
+            sync_row = sync_rows[0]
+            sync_enabled = bool(sync_row.get("sync_enabled"))
+
+            status_cols = st.columns(3)
+            with status_cols[0]:
+                st.metric("Status", "Running" if sync_enabled else "Paused")
+            with status_cols[1]:
+                st.metric("Last run", str(sync_row.get("last_run_at") or "Never")[:19])
+            with status_cols[2]:
+                st.metric("Last result", str(sync_row.get("last_run_status") or "—"))
+
+            if sync_row.get("last_run_detail"):
+                st.caption(str(sync_row["last_run_detail"]))
+
+            if not sync_enabled and sync_row.get("pause_reason"):
+                st.info(f"Paused: {sync_row['pause_reason']}")
+
+            st.markdown("---")
+
+            if sync_enabled:
+                st.markdown("#### Pause the sync")
+                st.caption(
+                    "Pause before events where owners move already-contracted "
+                    "players around in Sleeper — right after a draft, most often. "
+                    "Anything that happens while paused is skipped permanently, "
+                    "not applied later."
+                )
+                pause_reason = st.text_input(
+                    "Reason",
+                    value="Post-draft roster setup",
+                    key="sleeper_sync_pause_reason",
+                )
+                if st.button("Pause sync", use_container_width=True):
+                    sb_client.table("league_sleeper_sync").update({
+                        "sync_enabled": False,
+                        "pause_reason": pause_reason,
+                        "paused_at": "now()",
+                    }).eq("league_id", active_league_id).execute()
+                    log_commish_action("sleeper_sync_paused", {"reason": pause_reason})
+                    st.success("Sync paused.")
+                    st.rerun()
+            else:
+                st.markdown("#### Resume the sync")
+                st.warning(
+                    "Resuming skips everything that happened while paused. Those "
+                    "transactions will never be applied — enter any you still "
+                    "want by hand before resuming."
+                )
+                if st.button("Resume sync", use_container_width=True, type="primary"):
+                    # Advance the watermark to now so the pause window is a gap,
+                    # not a queue waiting to flood in.
+                    resume_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+                    sb_client.table("league_sleeper_sync").update({
+                        "sync_enabled": True,
+                        "pause_reason": None,
+                        "paused_at": None,
+                        "watermark_created_ms": resume_ms,
+                    }).eq("league_id", active_league_id).execute()
+                    log_commish_action(
+                        "sleeper_sync_resumed", {"watermark_created_ms": resume_ms},
+                    )
+                    st.success("Sync resumed.")
+                    st.rerun()
+
+        st.markdown("---")
+        st.markdown("#### Needs review")
+
+        exception_rows = (
+            sb_client.table("sleeper_sync_exceptions")
+            .select("*")
+            .eq("league_id", active_league_id)
+            .eq("status", "open")
+            .order("created_at", desc=True)
+            .limit(50)
+            .execute()
+            .data
+            or []
+        )
+
+        if not exception_rows:
+            st.success("Nothing flagged.")
+        else:
+            st.caption(
+                f"{len(exception_rows)} transaction(s) the sync could not apply."
+            )
+            for row in exception_rows:
+                kind = str(row.get("exception_kind") or "unknown")
+                with st.expander(
+                    f"{kind} — {row.get('player_id') or 'transaction'} "
+                    f"({str(row.get('created_at') or '')[:19]})"
+                ):
+                    st.write(row.get("detail") or "")
+                    st.caption(
+                        f"Sleeper transaction `{row.get('sleeper_transaction_id')}`"
+                    )
+                    if st.button(
+                        "Mark resolved", key=f"resolve_exception_{row.get('id')}"
+                    ):
+                        sb_client.table("sleeper_sync_exceptions").update({
+                            "status": "resolved",
+                            "resolved_at": "now()",
+                        }).eq("id", row.get("id")).execute()
+                        st.rerun()
 
     elif tool == "Manual Drop":
         st.markdown("### Manual Player Drop")

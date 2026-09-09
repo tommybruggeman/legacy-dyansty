@@ -1766,13 +1766,29 @@ with action_designation_col:
                     label = "Injured Reserve"
                     remove_action = "ir_removed"
 
+                # Canonical Taxi rule: a rookie placed on Taxi is locked there
+                # for the whole season, so the designation cannot be lifted.
+                designation_locked = adjustment_type == "taxi_adjustment"
+
                 cols = st.columns([3, 1])
 
                 with cols[0]:
                     st.markdown(f"**{label}:** {player_name}")
+                    if designation_locked:
+                        st.caption("Locked for the season")
 
                 with cols[1]:
-                    if designation_id and st.button(
+                    if designation_locked:
+                        st.button(
+                            "Locked",
+                            key=f"remove_designation_{designation_id}",
+                            disabled=True,
+                            help=(
+                                "Taxi Squad is a season-long designation. "
+                                "This player stays on Taxi until season rollover."
+                            ),
+                        )
+                    elif designation_id and st.button(
                         "Remove",
                         key=f"remove_designation_{designation_id}"
                     ):
