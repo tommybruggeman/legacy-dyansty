@@ -1671,29 +1671,26 @@ elif section == "League Manager Tools":
     elif tool == "Manual Drop":
         st.markdown("### Manual Player Drop")
 
-        players = (
-            sb_client.table("contracts")
-            .select("player_name,sleeper_player_id")
-            .eq("league_id", active_league_id)
-            .order("player_name")
-            .execute()
-            .data
-            or []
-        )
-
-        player_options = [
-            f"{p.get('player_name')} ({p.get('sleeper_player_id')})"
-            for p in players
-            if p.get("player_name")
-        ]
-
         transaction_service = OffseasonTransactionService(
             sb_client,
             active_league_id,
             read_client=service_client(),
         )
+
+        # Sourced from live canonical agreements, not the legacy "contracts"
+        # table, so rookie-draft signings are droppable like anyone else.
+        drop_candidates = transaction_service.list_manual_drop_candidates()
+        drop_candidate_ids = {
+            f"{candidate.player_name} ({candidate.player_id})": candidate.player_id
+            for candidate in drop_candidates
+        }
+        player_options = sorted(drop_candidate_ids)
+
         drop_resolution = None
         drop_error = None
+
+        if not player_options:
+            st.info("No player on an active roster currently has a droppable contract.")
 
         c1, c2 = st.columns(2)
 
@@ -1707,7 +1704,7 @@ elif section == "League Manager Tools":
             )
             if player_search:
                 try:
-                    selected_drop_player_id = player_search.rsplit("(", 1)[-1].rstrip(")")
+                    selected_drop_player_id = drop_candidate_ids[player_search]
                     drop_resolution = transaction_service.resolve_manual_drop(selected_drop_player_id)
                 except (ValueError, TypeError) as exc:
                     drop_error = str(exc)

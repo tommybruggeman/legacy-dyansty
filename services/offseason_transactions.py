@@ -36,6 +36,12 @@ class ManualDropResolution:
     dead_cap: Decimal
 
 
+@dataclass(frozen=True)
+class ManualDropCandidate:
+    player_id: str
+    player_name: str
+
+
 def _money(value: Any) -> Decimal:
     return Decimal(str(value)).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
 
@@ -267,6 +273,65 @@ class OffseasonTransactionService:
             salary_basis, years_remaining, percentage,
             calculate_default_dead_cap(rules[0], salary_basis),
         )
+
+    def list_manual_drop_candidates(self) -> tuple[ManualDropCandidate, ...]:
+        """Every player the canonical model can actually drop, regardless of source.
+
+        Sourced from live ownership agreements rather than the legacy ``contracts``
+        table, so rookies signed through the rookie draft board are included.
+        """
+        agreements = (self.read_client.table("contract_agreements")
+                      .select("player_id,status,superseded_by_contract_id")
+                      .eq("league_id", self.league_id)
+                      .in_("status", ["active", "scheduled"])
+                      .is_("superseded_by_contract_id", "null").execute().data or [])
+        counts: dict[str, int] = {}
+        for row in agreements:
+            player_id = str(row.get("player_id") or "").strip()
+            if player_id:
+                counts[player_id] = counts.get(player_id, 0) + 1
+        # resolve_manual_drop requires exactly one live agreement; anything
+        # ambiguous would raise there, so never offer it as a choice.
+        droppable = sorted(player_id for player_id, n in counts.items() if n == 1)
+        if not droppable:
+            return ()
+        names = self._resolve_player_names(droppable)
+        return tuple(
+            ManualDropCandidate(player_id, names.get(player_id) or f"Unnamed player {player_id}")
+            for player_id in droppable
+        )
+
+    def _resolve_player_names(self, player_ids: Sequence[str]) -> dict[str, str]:
+        """Canonical player names, falling back to legacy contract rows."""
+        names: dict[str, str] = {}
+        chunk_size = 150
+        for start in range(0, len(player_ids), chunk_size):
+            chunk = list(player_ids[start:start + chunk_size])
+            try:
+                rows = (self.read_client.table("players").select("sleeper_id,full_name")
+                        .in_("sleeper_id", chunk).execute().data or [])
+            except Exception:
+                rows = []
+            for row in rows:
+                player_id = str(row.get("sleeper_id") or "").strip()
+                full_name = str(row.get("full_name") or "").strip()
+                if player_id and full_name:
+                    names[player_id] = full_name
+        missing = [player_id for player_id in player_ids if player_id not in names]
+        for start in range(0, len(missing), chunk_size):
+            chunk = list(missing[start:start + chunk_size])
+            try:
+                rows = (self.read_client.table("contracts").select("sleeper_player_id,player_name")
+                        .eq("league_id", self.league_id)
+                        .in_("sleeper_player_id", chunk).execute().data or [])
+            except Exception:
+                rows = []
+            for row in rows:
+                player_id = str(row.get("sleeper_player_id") or "").strip()
+                player_name = str(row.get("player_name") or "").strip()
+                if player_id and player_name:
+                    names.setdefault(player_id, player_name)
+        return names
 
     def release_manual_drop(self, *, player_id: str, notes: str = "") -> Mapping[str, Any]:
         resolved = self.resolve_manual_drop(player_id)
