@@ -20,9 +20,31 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from supabase import create_client
-
 from services.sleeper_pipeline import SleeperSyncRunner
+
+
+REQUIRED_ENV = (
+    "SUPABASE_URL",
+    "SUPABASE_ANON_KEY",
+    "SYNC_BOT_EMAIL",
+    "SYNC_BOT_PASSWORD",
+)
+
+
+def preflight() -> None:
+    """Report every missing secret at once, not just the first.
+
+    Never prints a value -- only whether the name resolved to something.
+    """
+    missing = [name for name in REQUIRED_ENV if not (os.getenv(name) or "").strip()]
+    print("Sleeper sync preflight:")
+    for name in REQUIRED_ENV:
+        print(f"  {'set  ' if name not in missing else 'MISSING'}  {name}")
+    if missing:
+        raise SystemExit(
+            "\nCannot run. Add these as repository secrets under "
+            "Settings -> Secrets and variables -> Actions: " + ", ".join(missing)
+        )
 
 
 def _required(name: str) -> str:
@@ -33,6 +55,9 @@ def _required(name: str) -> str:
 
 
 def build_client():
+    # Imported here so a missing secret reports before a missing package.
+    from supabase import create_client
+
     client = create_client(_required("SUPABASE_URL"), _required("SUPABASE_ANON_KEY"))
     session = client.auth.sign_in_with_password({
         "email": _required("SYNC_BOT_EMAIL"),
@@ -56,6 +81,7 @@ def enabled_league_ids(client) -> list[str]:
 
 
 def main() -> int:
+    preflight()
     client = build_client()
     league_ids = enabled_league_ids(client)
 
