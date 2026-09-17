@@ -9,6 +9,7 @@ from services.sleeper_pipeline import (
     describe_faab_moves,
     is_duplicate_acquisition,
     total_dead_cap,
+    effective_ms,
     transactions_after_watermark,
 )
 from services.sleeper_transaction_adapter import FaabMove
@@ -100,6 +101,37 @@ class FaabReportingTests(unittest.TestCase):
     def test_unknown_roster_still_produces_a_readable_note(self):
         note = describe_faab_moves([FaabMove(3, 99, 10)], {}, {3: "team-c"})
         self.assertIn("$10", note)
+
+
+class EffectiveTimeTests(unittest.TestCase):
+    """A waiver claim exists from when it is processed, not when it is typed."""
+
+    def test_processing_time_wins_over_submission_time(self):
+        # Real shape: submitted Sep 10, processed by the Sep 13 waiver run.
+        tx = {"created": 1789776542013, "status_updated": 1789959600000}
+        self.assertEqual(effective_ms(tx), 1789959600000)
+
+    def test_falls_back_to_created_when_never_processed_separately(self):
+        tx = {"created": 1789177535609, "status_updated": None}
+        self.assertEqual(effective_ms(tx), 1789177535609)
+
+    def test_claim_submitted_before_the_watermark_but_processed_after_is_kept(self):
+        # This is the case that silently lost three real signings.
+        claim = {"created": 100, "status_updated": 500, "transaction_id": "late"}
+        self.assertEqual(
+            [t["transaction_id"] for t in transactions_after_watermark([claim], 200)],
+            ["late"],
+        )
+
+    def test_ordering_follows_processing_time(self):
+        rows = [
+            {"created": 100, "status_updated": 900, "transaction_id": "submitted_first"},
+            {"created": 800, "status_updated": 850, "transaction_id": "processed_first"},
+        ]
+        self.assertEqual(
+            [t["transaction_id"] for t in transactions_after_watermark(rows, 0)],
+            ["processed_first", "submitted_first"],
+        )
 
 
 class WatermarkTests(unittest.TestCase):

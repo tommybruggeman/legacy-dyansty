@@ -164,21 +164,40 @@ def describe_faab_moves(
     return "; ".join(parts)
 
 
+def effective_ms(transaction: Mapping[str, Any]) -> int:
+    """When the transaction actually took effect.
+
+    Sleeper records `created` when an owner submits a claim and
+    `status_updated` when the waiver run processes it -- often days apart. The
+    contract only exists from the moment it is processed, so that is what the
+    watermark must track. Filtering on `created` silently skips any claim
+    submitted before the watermark but processed after it.
+    """
+    for field in ("status_updated", "created"):
+        try:
+            value = int(transaction.get(field) or 0)
+        except (TypeError, ValueError):
+            continue
+        if value:
+            return value
+    return 0
+
+
 def transactions_after_watermark(
     transactions: Sequence[Mapping[str, Any]], watermark_created_ms: int,
 ) -> tuple[Mapping[str, Any], ...]:
-    """Only transactions newer than the watermark, oldest first.
+    """Only transactions that took effect after the watermark, oldest first.
 
     Resuming from a pause moves the watermark forward to the present, so a
     paused window is skipped permanently rather than replayed late.
     """
+    cutoff = int(watermark_created_ms or 0)
     fresh = [
         tx for tx in transactions
-        if isinstance(tx, Mapping)
-        and int(tx.get("created") or 0) > int(watermark_created_ms or 0)
+        if isinstance(tx, Mapping) and effective_ms(tx) > cutoff
     ]
     return tuple(sorted(fresh, key=lambda tx: (
-        int(tx.get("created") or 0), str(tx.get("transaction_id") or ""),
+        effective_ms(tx), str(tx.get("transaction_id") or ""),
     )))
 
 
@@ -733,7 +752,7 @@ class SleeperSyncRunner:
             collected.extend(self._fetch(sleeper_league_id, week))
 
         for transaction in transactions_after_watermark(collected, watermark):
-            created = int(transaction.get("created") or 0)
+            effective = effective_ms(transaction)
             tx_id = str(transaction.get("transaction_id") or "")
             try:
                 for intent in map_transaction(transaction):
@@ -767,7 +786,7 @@ class SleeperSyncRunner:
                 break
 
             report.processed += 1
-            report.watermark_created_ms = created
+            report.watermark_created_ms = effective
             report.watermark_transaction_id = tx_id
 
         self._record_run(report)
