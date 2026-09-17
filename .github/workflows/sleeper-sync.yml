@@ -34,4 +34,5 @@ jobs:
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
           SYNC_BOT_EMAIL: ${{ secrets.SYNC_BOT_EMAIL }}
           SYNC_BOT_PASSWORD: ${{ secrets.SYNC_BOT_PASSWORD }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: python scripts/run_sleeper_sync.py

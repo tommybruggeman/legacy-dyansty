@@ -28,6 +28,11 @@ REQUIRED_ENV = (
     "SUPABASE_ANON_KEY",
     "SYNC_BOT_EMAIL",
     "SYNC_BOT_PASSWORD",
+    # Canonical tables are not readable by the `authenticated` role -- all
+    # access is meant to go through SECURITY DEFINER functions. Reads therefore
+    # use the service role, exactly as the Streamlit app does. Writes still go
+    # through the bot's own session so commissioner authority is enforced.
+    "SUPABASE_SERVICE_ROLE_KEY",
 )
 
 
@@ -54,18 +59,27 @@ def _required(name: str) -> str:
     return value
 
 
-def build_client():
+def build_clients():
+    """Return (write_client, read_client).
+
+    write_client is the sync bot's authenticated session, so every contract RPC
+    runs under require_commissioner_authority. read_client uses the service role
+    purely to read canonical tables the authenticated role cannot select from.
+    """
     # Imported here so a missing secret reports before a missing package.
     from supabase import create_client
 
-    client = create_client(_required("SUPABASE_URL"), _required("SUPABASE_ANON_KEY"))
-    session = client.auth.sign_in_with_password({
+    url = _required("SUPABASE_URL")
+    write_client = create_client(url, _required("SUPABASE_ANON_KEY"))
+    session = write_client.auth.sign_in_with_password({
         "email": _required("SYNC_BOT_EMAIL"),
         "password": _required("SYNC_BOT_PASSWORD"),
     })
     if not getattr(session, "session", None):
         raise SystemExit("Sync bot sign-in failed; check the credentials.")
-    return client
+
+    read_client = create_client(url, _required("SUPABASE_SERVICE_ROLE_KEY"))
+    return write_client, read_client
 
 
 def enabled_league_ids(client) -> list[str]:
@@ -82,8 +96,8 @@ def enabled_league_ids(client) -> list[str]:
 
 def main() -> int:
     preflight()
-    client = build_client()
-    league_ids = enabled_league_ids(client)
+    write_client, read_client = build_clients()
+    league_ids = enabled_league_ids(read_client)
 
     if not league_ids:
         print("No leagues have the Sleeper sync enabled. Nothing to do.")
@@ -91,8 +105,7 @@ def main() -> int:
 
     failed = False
     for league_id in league_ids:
-        # The bot reads and writes as itself, so RLS applies to both.
-        runner = SleeperSyncRunner(client, client, league_id)
+        runner = SleeperSyncRunner(write_client, read_client, league_id)
         try:
             report = runner.run()
         except Exception as exc:
