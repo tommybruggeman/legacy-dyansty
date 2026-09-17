@@ -383,6 +383,51 @@ class SleeperSyncRunner:
         )
         return None
 
+    def ensure_player_identity(self, player_id: str) -> str | None:
+        """Make sure the player exists in player_universe before signing him.
+
+        acquire_offseason_player_private rejects any player missing from
+        player_universe. That table is a derived snapshot, so anyone who was a
+        free agent when it was last built is absent -- which is most waiver
+        pickups. Rather than pre-loading every NFL player (which would enlarge
+        the free-agent list, since that is player_universe minus owned players),
+        this copies the single row the transaction needs from sleeper_players.
+
+        Returns None on success, or a reason the identity could not be created.
+        """
+        try:
+            existing = (self.read_client.table("player_universe")
+                        .select("sleeper_id").eq("sleeper_id", str(player_id))
+                        .limit(1).execute().data or [])
+            if existing:
+                return None
+
+            source = (self.read_client.table("sleeper_players")
+                      .select("sleeper_player_id,full_name,position")
+                      .eq("sleeper_player_id", str(player_id))
+                      .limit(1).execute().data or [])
+            if not source:
+                return (
+                    "player is unknown to both player_universe and "
+                    "sleeper_players; refresh the Sleeper player list"
+                )
+
+            row = source[0]
+            name = str(row.get("full_name") or "").strip()
+            if not name:
+                return "player has no name in sleeper_players"
+
+            # Written with the service-role client: player_universe is not
+            # writable by the authenticated role.
+            self.read_client.table("player_universe").upsert({
+                "sleeper_id": str(player_id),
+                "player_name": name,
+                "pos": str(row.get("position") or "").strip() or None,
+            }, on_conflict="sleeper_id").execute()
+            return None
+        except Exception as exc:
+            return f"could not create canonical player identity: {exc}"
+
     def apply_acquire(
         self, intent: AcquireIntent, roster_map: Mapping[int, str], active_season: int,
     ) -> SyncException | None:
@@ -391,6 +436,13 @@ class SleeperSyncRunner:
             return SyncException(
                 "unmapped_roster", intent.transaction_id,
                 f"Sleeper roster {intent.roster_id} has no canonical team",
+                intent.player_id, intent.roster_id,
+            )
+
+        identity_failure = self.ensure_player_identity(intent.player_id)
+        if identity_failure:
+            return SyncException(
+                "unmapped_roster", intent.transaction_id, identity_failure,
                 intent.player_id, intent.roster_id,
             )
 
