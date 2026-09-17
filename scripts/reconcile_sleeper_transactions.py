@@ -3,6 +3,13 @@
 Usage:
     python scripts/reconcile_sleeper_transactions.py [--since "Sep 11"] [--all]
     python scripts/reconcile_sleeper_transactions.py --player delp
+    python scripts/reconcile_sleeper_transactions.py --rosters
+
+--rosters answers a different question: not "did each move land" but "do the
+two systems agree right now". It compares every Sleeper roster against every
+live contract, which is the only way to see a player who was never transacted
+-- an original roster spot, a rookie-draft pick, or a contract written against
+the wrong player id.
 
 Reads only. For each transaction Sleeper reports, this works out the canonical
 writes it should have produced (using the same mapping the sync itself uses),
@@ -67,8 +74,12 @@ class Leg:
     # Traded FAAB is logged by hand as a cap_adjustments pair rather than
     # applied by the sync, so it is checked against that table instead.
     cap_tx_id: str | None = None
+    cap_from_roster: int | None = None
     cap_to_roster: int | None = None
     cap_amount: int | None = None
+    # Traded draft picks are checked against draft_pick_assets.
+    pick_key: tuple[int, int, int] | None = None
+    pick_to_roster: int | None = None
 
 
 def when(ms: int | None) -> str:
@@ -146,10 +157,14 @@ def legs_for(transaction, names) -> tuple[list[Leg], str | None]:
                     move.to_roster_id, True if move.to_roster_id else None,
                 ))
             for pick in intent.pick_moves:
+                origin = pick.original_roster_id
                 legs.append(Leg(
                     f"trade {str(pick.season) + ' rd' + str(pick.round_number):<22} "
                     f"r{pick.from_roster_id} -> r{pick.to_roster_id}",
                     intent.idempotency_key,
+                    pick_key=(int(pick.season), int(pick.round_number), int(origin))
+                    if origin is not None else None,
+                    pick_to_roster=pick.to_roster_id,
                 ))
             for faab in intent.faab_moves:
                 legs.append(Leg(
@@ -157,6 +172,7 @@ def legs_for(transaction, names) -> tuple[list[Leg], str | None]:
                     f"r{faab.from_roster_id} -> r{faab.to_roster_id}",
                     intent.idempotency_key,
                     cap_tx_id=intent.transaction_id,
+                    cap_from_roster=faab.from_roster_id,
                     cap_to_roster=faab.to_roster_id,
                     cap_amount=faab.amount,
                 ))
@@ -165,11 +181,120 @@ def legs_for(transaction, names) -> tuple[list[Leg], str | None]:
     return legs, noop_reason
 
 
+def resolve_names(client, player_ids) -> dict[str, str]:
+    wanted = sorted({str(pid) for pid in player_ids})
+    names: dict[str, str] = {}
+    for start in range(0, len(wanted), 100):
+        for row in (client.table("sleeper_players")
+                    .select("sleeper_player_id,full_name")
+                    .in_("sleeper_player_id", wanted[start:start + 100])
+                    .execute().data or []):
+            if row.get("full_name"):
+                names[str(row["sleeper_player_id"])] = str(row["full_name"])
+    return names
+
+
+def compare_rosters(client, league_id: str, sleeper_id: str) -> int:
+    """Who does Sleeper say is on each roster, and who does the app say.
+
+    The transaction check proves each move landed. It cannot see a player who
+    was never transacted -- an original roster spot, a rookie-draft pick, a
+    contract typed against the wrong player id. Only comparing the rosters
+    themselves catches those, and a wrong roster is a wrong cap number.
+
+    Membership only: Sleeper has no concept of salary, so there is nothing to
+    compare contract terms against.
+    """
+    teams = {}
+    for row in (client.table("league_teams")
+                .select("id,sleeper_roster_id,owner_name,team_name")
+                .eq("league_id", league_id).execute().data or []):
+        if row.get("sleeper_roster_id") is None:
+            continue
+        teams[int(row["sleeper_roster_id"])] = (
+            str(row["id"]),
+            str(row.get("owner_name") or row.get("team_name") or "").strip(),
+        )
+
+    sleeper_rosters: dict[int, set[str]] = {}
+    for roster in requests.get(
+        f"{SLEEPER_BASE}/league/{sleeper_id}/rosters", timeout=30,
+    ).json() or []:
+        try:
+            roster_id = int(roster.get("roster_id"))
+        except (TypeError, ValueError):
+            continue
+        held = set()
+        # taxi and reserve are normally inside `players`, but a roster that
+        # disagreed would silently look short, so union all three.
+        for field in ("players", "taxi", "reserve"):
+            held.update(str(pid) for pid in (roster.get(field) or []))
+        sleeper_rosters[roster_id] = held
+
+    owner_of_player: dict[str, str] = {}
+    page = 0
+    while True:
+        rows = (client.table("contract_agreements")
+                .select("player_id,league_team_id,status,superseded_by_contract_id")
+                .eq("league_id", league_id).in_("status", list(LIVE_STATUSES))
+                .is_("superseded_by_contract_id", "null")
+                .range(page * 1000, page * 1000 + 999).execute().data or [])
+        for row in rows:
+            owner_of_player[str(row["player_id"])] = str(row["league_team_id"])
+        if len(rows) < 1000:
+            break
+        page += 1
+
+    roster_of_team = {team_id: roster for roster, (team_id, _) in teams.items()}
+    everywhere = set().union(*sleeper_rosters.values()) if sleeper_rosters else set()
+
+    problems: dict[int, list[tuple[str, str, str]]] = {}
+    for roster_id, (team_id, _owner) in teams.items():
+        held = sleeper_rosters.get(roster_id, set())
+        owned = {pid for pid, tid in owner_of_player.items() if tid == team_id}
+
+        for pid in held - owned:
+            holder = owner_of_player.get(pid)
+            if holder:
+                other = roster_of_team.get(holder)
+                detail = f"the app has him on {teams.get(other, ('', '?'))[1]}"
+                problems.setdefault(roster_id, []).append(("WRONG TEAM", pid, detail))
+            else:
+                problems.setdefault(roster_id, []).append(
+                    ("NO CONTRACT", pid, "on the Sleeper roster with no live contract"))
+
+        for pid in owned - held:
+            if pid in everywhere:
+                continue  # whoever actually has him reports it as WRONG TEAM
+            problems.setdefault(roster_id, []).append(
+                ("NOT ON ROSTER", pid, "under contract but on nobody's Sleeper roster"))
+
+    names = resolve_names(
+        client, {pid for rows in problems.values() for _kind, pid, _detail in rows},
+    )
+
+    total = 0
+    for roster_id, (team_id, owner) in sorted(teams.items()):
+        rows = problems.get(roster_id) or []
+        sleeper_n = len(sleeper_rosters.get(roster_id, set()))
+        app_n = sum(1 for tid in owner_of_player.values() if tid == team_id)
+        flag = f"   <- {len(rows)} to look at" if rows else ""
+        print(f"r{roster_id:<3} {owner:<20} Sleeper {sleeper_n:>2}, app {app_n:>2}{flag}")
+        for kind, pid, detail in sorted(rows):
+            print(f"       {kind:<14} {names.get(pid, pid):<24} {detail}")
+            total += 1
+
+    print(f"\n{total} roster difference(s) across {len(teams)} teams")
+    return total
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--since", help="only report transactions at or after this date")
     parser.add_argument("--all", action="store_true", help="list clean rows too, not just problems")
     parser.add_argument("--player", help="only transactions touching this player, whole season")
+    parser.add_argument("--rosters", action="store_true",
+                        help="compare rosters as they stand now instead of transaction history")
     args = parser.parse_args()
     since = parse_since(args.since)
 
@@ -187,6 +312,9 @@ def main() -> int:
                   .eq("id", league_id).execute().data or [{}])[0]
         sleeper_id = "".join(c for c in str(league.get("sleeper_league_id") or "") if c.isdigit())
         print(f"\n=== {league.get('name') or league_id} ===")
+        if args.rosters:
+            failures += compare_rosters(client, league_id, sleeper_id)
+            continue
         print(f"watermark: {when(config.get('watermark_created_ms'))} "
               f"({config.get('watermark_created_ms')})  last run: {config.get('last_run_detail')}")
 
@@ -250,28 +378,65 @@ def main() -> int:
                         .eq("adjustment_type", "trade_carryover").execute().data or [])
         ]
 
-        names: dict[str, str] = {}
-        wanted = sorted({pid for tx in transactions for pid in player_ids(tx)})
-        for start in range(0, len(wanted), 100):
-            for row in (client.table("sleeper_players")
-                        .select("sleeper_player_id,full_name")
-                        .in_("sleeper_player_id", wanted[start:start + 100])
-                        .execute().data or []):
-                if row.get("full_name"):
-                    names[str(row["sleeper_player_id"])] = str(row["full_name"])
+        pick_owner = {}
+        for row in (client.table("draft_pick_assets")
+                    .select("draft_year,round_number,original_league_team_id,"
+                            "current_owner_league_team_id")
+                    .eq("league_id", league_id).execute().data or []):
+            origin = roster_of_team.get(str(row.get("original_league_team_id") or ""))
+            current = roster_of_team.get(str(row.get("current_owner_league_team_id") or ""))
+            if origin is None or current is None:
+                continue
+            pick_owner[(int(row["draft_year"]), int(row["round_number"]), int(origin))] = int(current)
 
-        def end_state_ok(leg: Leg) -> bool | None:
+        names = resolve_names(
+            client, {pid for tx in transactions for pid in player_ids(tx)},
+        )
+
+        def end_state(leg: Leg, moment: int) -> str | None:
+            """'by hand', 'later', 'NOT DONE', or None when uncheckable."""
             if leg.cap_tx_id:
-                owner = owner_by_roster.get(int(leg.cap_to_roster or 0), "")
-                return any(
-                    leg.cap_tx_id in note and row_owner == owner
-                    and float(amount) == float(leg.cap_amount or 0)
+                # Sending FAAB costs the sender cap space and frees the
+                # receiver's, so the sender is charged (+) and the receiver
+                # credited (-). The opposite signs would be a salary trade,
+                # which is a different thing entirely -- require both legs.
+                owed = float(leg.cap_amount or 0)
+                wanted = {
+                    (owner_by_roster.get(int(leg.cap_from_roster or 0), ""), owed),
+                    (owner_by_roster.get(int(leg.cap_to_roster or 0), ""), -owed),
+                }
+                found = {
+                    (row_owner, float(amount))
                     for row_owner, amount, note in cap_moves
-                )
+                    if leg.cap_tx_id in note
+                }
+                return "by hand" if wanted <= found else "NOT DONE"
+
+            if leg.pick_key is not None:
+                if moment < last_touch.get(leg.pick_key, 0):
+                    return "later"
+                if leg.pick_key not in pick_owner:
+                    return None
+                return ("by hand" if pick_owner[leg.pick_key] == leg.pick_to_roster
+                        else "NOT DONE")
             if leg.owned_after is None or leg.player_id is None or leg.roster_id is None:
                 return None
+            if moment < last_touch.get(leg.player_id, 0):
+                return "later"
             owns = leg.roster_id in owner_rosters.get(leg.player_id, set())
-            return owns is leg.owned_after
+            return "by hand" if owns is leg.owned_after else "NOT DONE"
+
+        # An asset's history only has to agree with the database at its END.
+        # A player added in September and dropped in October is not "missing"
+        # because he is off the roster now -- the later move decided that.
+        # Only the last transaction touching an asset is judged by end state.
+        last_touch: dict[object, int] = {}
+        for transaction in transactions:
+            moment = effective_ms(transaction)
+            for leg in legs_for(transaction, {})[0]:
+                asset = leg.player_id if leg.owned_after is not None else leg.pick_key
+                if asset is not None:
+                    last_touch[asset] = max(last_touch.get(asset, 0), moment)
 
         counts = {"OK": 0, "BY HAND": 0, "MISSING": 0, "NOOP": 0}
         lines: list[str] = []
@@ -302,14 +467,14 @@ def main() -> int:
             for leg in legs:
                 if leg.key in applied:
                     marks.append(("  in db", True))
+                    continue
+                settled = end_state(leg, effective)
+                if settled in ("by hand", "later"):
+                    marks.append((settled, True))
+                elif settled == "NOT DONE":
+                    marks.append(("NOT DONE", False))
                 else:
-                    settled = end_state_ok(leg)
-                    if settled is True:
-                        marks.append(("by hand", True))
-                    elif settled is False:
-                        marks.append(("NOT DONE", False))
-                    else:
-                        marks.append(("NOT IN DB", False))
+                    marks.append(("NOT IN DB", False))
 
             if all(leg.key in applied for leg in legs):
                 verdict = "OK"

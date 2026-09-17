@@ -496,6 +496,33 @@ class SleeperSyncRunner:
 
     # ---- trades -----------------------------------------------------------
 
+    def _trade_sides(
+        self, intent: "TradeIntent", roster_map: Mapping[int, str], team_id: str,
+    ) -> tuple[list[str], list[str]]:
+        """What this team received and what it gave up, named in full.
+
+        The feed used to read "Trade - 2 player(s)", which tells an owner
+        nothing about a trade he may not have made himself. Players, picks and
+        cash all appear, so the entry stands on its own.
+        """
+        def side(incoming: bool) -> list[str]:
+            assets: list[str] = []
+            for move in intent.player_moves:
+                roster = move.to_roster_id if incoming else move.from_roster_id
+                if roster is not None and roster_map.get(roster) == team_id:
+                    assets.append(self.player_name(move.player_id))
+            for pick in intent.pick_moves:
+                roster = pick.to_roster_id if incoming else pick.from_roster_id
+                if roster is not None and roster_map.get(roster) == team_id:
+                    assets.append(f"{pick.season} round {pick.round_number} pick")
+            for faab in intent.faab_moves:
+                roster = faab.to_roster_id if incoming else faab.from_roster_id
+                if roster is not None and roster_map.get(roster) == team_id:
+                    assets.append(f"${faab.amount} FAAB")
+            return assets
+
+        return side(True), side(False)
+
     def _resolve_team_names(self) -> dict[str, str]:
         """Canonical league_team id -> the owner name shown in the app."""
         try:
@@ -658,10 +685,15 @@ class SleeperSyncRunner:
                 f"Canonical trade execution failed: {exc}",
             )
 
+        team_names = self._resolve_team_names()
         for team_id in teams:
+            got, gave = self._trade_sides(intent, roster_map, team_id)
+            others = [team_names.get(t, "another team") for t in teams if t != team_id]
             self.log_activity(
-                team_id, "trade", f"{len(player_movements)} player(s)",
-                f"Trade completed in Sleeper between {len(teams)} teams.",
+                team_id, "trade",
+                ", ".join(got) or "nothing",
+                f"Received {', '.join(got) or 'nothing'}. "
+                f"Sent {', '.join(gave) or 'nothing'} to {' and '.join(others) or 'another team'}.",
             )
 
         if intent.faab_moves:
@@ -700,6 +732,70 @@ class SleeperSyncRunner:
             ).execute()
         except Exception:
             pass
+
+    def apply_specific(
+        self, transaction_ids: Sequence[str], *, weeks: Sequence[int] | None = None,
+    ) -> SyncReport:
+        """Apply exactly these transactions, wherever they sit in history.
+
+        Repairing a gap the watermark has already passed must never be done by
+        rewinding: the replay would also re-run adds whose player was later
+        dropped by hand, and an add that finds no live contract writes a new
+        one -- putting a released player back under contract. This applies only
+        what it is named and leaves the watermark exactly where it was.
+        """
+        wanted = {str(tx_id).strip() for tx_id in transaction_ids if str(tx_id).strip()}
+        report = SyncReport(self.league_id, enabled=True)
+        if not wanted:
+            return report
+
+        sleeper_league_id = self.sleeper_league_id()
+        roster_map = self.roster_map()
+        season = self.active_season()
+        pct = self.dead_cap_pct()
+
+        collected: list[Mapping[str, Any]] = []
+        for week in (weeks if weeks is not None else range(1, current_nfl_week() + 1)):
+            collected.extend(self._fetch(sleeper_league_id, week))
+
+        found = {
+            str(tx.get("transaction_id") or ""): tx for tx in collected
+            if str(tx.get("transaction_id") or "") in wanted
+        }
+        for missing in sorted(wanted - set(found)):
+            report.exceptions.append(SyncException(
+                "unsupported_transaction", missing,
+                "Sleeper has no such transaction in the weeks searched.",
+            ))
+
+        for tx_id in sorted(found, key=lambda key: effective_ms(found[key])):
+            for intent in map_transaction(found[tx_id]):
+                if isinstance(intent, SkippedTransaction):
+                    report.skipped += 1
+                    continue
+                if self.already_applied(intent.idempotency_key):
+                    report.replayed += 1
+                    continue
+                if isinstance(intent, ReleaseIntent):
+                    failure = self.apply_release(intent, roster_map, season, pct)
+                    if failure is None:
+                        report.released += 1
+                elif isinstance(intent, AcquireIntent):
+                    failure = self.apply_acquire(intent, roster_map, season)
+                    if failure is None:
+                        report.acquired += 1
+                elif isinstance(intent, TradeIntent):
+                    failure = self.apply_trade(intent, roster_map)
+                    if failure is None:
+                        report.traded += 1
+                else:
+                    failure = None
+                if failure is not None:
+                    report.exceptions.append(failure)
+                    self.record_exception(failure)
+            report.processed += 1
+
+        return report
 
     def run(self, *, weeks: Sequence[int] | None = None) -> SyncReport:
         """Apply every Sleeper transaction newer than the watermark.

@@ -4,7 +4,11 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Iterable, Mapping, MutableMapping
 
 class CanonicalTeamStateError(RuntimeError): pass
-def _text(value: Any)->str:return str(value or "").strip()
+def _text(value: Any)->str:
+    # pandas turns a column a row lacks into float NaN, which is truthy and
+    # stringifies to "nan". That leaked into the cap panel as "+$12 from nan".
+    if value is None or value!=value:return ""
+    return str(value or "").strip()
 def _money(value: Any)->Decimal:
     try:return Decimal(str(value or 0))
     except (InvalidOperation,ValueError,TypeError):return Decimal("0")

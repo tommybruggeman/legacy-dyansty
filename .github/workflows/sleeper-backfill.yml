@@ -1,0 +1,46 @@
+name: Sleeper backfill
+
+# Applies named Sleeper transactions the sync never picked up, without moving
+# the watermark. Manual only -- never on a schedule. Find the ids by running
+# scripts/reconcile_sleeper_transactions.py, which prints one per row.
+#
+# Do not repair a gap by rewinding the watermark instead: the replay would also
+# re-run adds whose player was later dropped by hand, and an add that finds no
+# live contract writes a new one, putting a released player back under contract.
+
+on:
+  workflow_dispatch:
+    inputs:
+      transaction_ids:
+        description: "Sleeper transaction ids, separated by spaces"
+        required: true
+        type: string
+
+concurrency:
+  # Share the sync's group: a backfill and a scheduled run must never write the
+  # same contract at the same moment.
+  group: sleeper-sync
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: pip install supabase requests
+
+      - name: Apply the named transactions
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SYNC_BOT_EMAIL: ${{ secrets.SYNC_BOT_EMAIL }}
+          SYNC_BOT_PASSWORD: ${{ secrets.SYNC_BOT_PASSWORD }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python scripts/backfill_sleeper_transactions.py ${{ inputs.transaction_ids }}

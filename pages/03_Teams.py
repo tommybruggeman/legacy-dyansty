@@ -1349,6 +1349,24 @@ def load_canonical_team_state_current(season: int, cache_epoch: int) -> dict:
     league_id = st.session_state.get("active_league_id") or st.session_state.get("import_league_id")
     return load_team_state(sb, league_id, season)
 
+# A cash trade carries no player name, so deduping on the player alone treats
+# every cash leg a team has in a season as the same row and keeps one. Amount
+# and counterparty are what make two cash legs different.
+DEAD_CAP_IDENTITY = [
+    "owner_name",
+    "player_name",
+    "adjustment_type",
+    "season",
+    "amount",
+    "counterparty_owner",
+]
+
+
+def _dead_cap_identity(df):
+    """The dedupe key, limited to columns this frame actually has."""
+    return [column for column in DEAD_CAP_IDENTITY if column in df.columns]
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def load_transactions(limit: int = 200) -> pd.DataFrame:
     """
@@ -2237,10 +2255,15 @@ with right_col:
             if not player or str(player).strip().isdigit():
                 continue
 
+            # The note carries the detail -- what a trade moved both ways, what
+            # a drop cost in dead cap. Hiding it was why a trade read as
+            # "2 player(s)".
+            note = str(r.get("note") or "").strip()
             parts.append(
                 f'<div class="activity-item">'
                 f'<strong>{action}</strong> · {player}'
-                f'<small>{ts}</small>'
+                + (f'<small>{note}</small>' if note and note.lower() != "nan" else "")
+                + f'<small>{ts}</small>'
                 f'</div>'
             )
 
@@ -2270,14 +2293,7 @@ with right_col:
         dead_cap = (
             dead_cap
             .sort_values(["season", "player_name"])
-            .drop_duplicates(
-                subset=[
-                    "owner_name",
-                    "player_name",
-                    "adjustment_type",
-                    "season",
-                ]
-            )
+            .drop_duplicates(subset=_dead_cap_identity(dead_cap))
         )
 
         for label, amount in cap_adjustment_display_rows(dead_cap.to_dict("records")):
@@ -2523,9 +2539,7 @@ if not mobile_dead_cap.empty:
     mobile_dead_cap = (
         mobile_dead_cap
         .sort_values(["season", "player_name"])
-        .drop_duplicates(
-            subset=["owner_name", "player_name", "adjustment_type", "season"]
-        )
+        .drop_duplicates(subset=_dead_cap_identity(mobile_dead_cap))
     )
 
 # Phone page title.

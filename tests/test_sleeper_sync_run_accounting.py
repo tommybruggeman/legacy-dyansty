@@ -37,6 +37,7 @@ class StubRunner(SleeperSyncRunner):
         self.releases: list[str] = []
         self.acquires: list[str] = []
         self.recorded: list[SyncException] = []
+        self.recorded_run = False
 
     def sync_config(self):
         return {"sync_enabled": True, "watermark_created_ms": 0}
@@ -69,6 +70,7 @@ class StubRunner(SleeperSyncRunner):
 
     def _record_run(self, report):
         self.report = report
+        self.recorded_run = True
 
 
 class RunAccounting(unittest.TestCase):
@@ -147,3 +149,94 @@ class RunAccounting(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BackfillNamedTransactions(unittest.TestCase):
+    """Repairing a gap must not move the watermark or touch anything else."""
+
+    def transactions(self):
+        return [
+            waiver("gap", created=1000, adds={"100": 1}),
+            waiver("later", created=9000, adds={"200": 2}),
+        ]
+
+    def test_applies_only_the_named_transaction(self):
+        runner = StubRunner(self.transactions())
+        report = runner.apply_specific(["gap"], weeks=[1])
+
+        self.assertEqual(runner.acquires, ["sleeper:gap:acquire:100"])
+        self.assertEqual(report.acquired, 1)
+        self.assertEqual(report.processed, 1)
+
+    def test_never_records_a_run_or_a_watermark(self):
+        runner = StubRunner(self.transactions())
+        report = runner.apply_specific(["gap"], weeks=[1])
+
+        self.assertFalse(runner.recorded_run)
+        self.assertEqual(report.watermark_created_ms, 0)
+        self.assertIsNone(report.watermark_transaction_id)
+
+    def test_work_already_applied_is_left_alone(self):
+        runner = StubRunner(self.transactions(), applied_keys=["sleeper:gap:acquire:100"])
+        report = runner.apply_specific(["gap"], weeks=[1])
+
+        self.assertEqual(runner.acquires, [])
+        self.assertEqual(report.replayed, 1)
+
+    def test_an_unknown_id_is_reported_rather_than_ignored(self):
+        runner = StubRunner(self.transactions())
+        report = runner.apply_specific(["gap", "nonsense"], weeks=[1])
+
+        self.assertEqual(report.acquired, 1)
+        self.assertEqual([e.transaction_id for e in report.exceptions], ["nonsense"])
+
+    def test_naming_nothing_does_nothing(self):
+        runner = StubRunner(self.transactions())
+        report = runner.apply_specific([], weeks=[1])
+
+        self.assertEqual(runner.acquires, [])
+        self.assertEqual(report.processed, 0)
+
+
+class TradeActivityWording(unittest.TestCase):
+    """A trade entry has to say what moved, both ways.
+
+    The feed read "Trade - 2 player(s)", which tells an owner nothing about a
+    deal he may not have made himself.
+    """
+
+    def runner(self):
+        r = StubRunner([])
+        r.names = {"100": "Bhayshul Tuten", "200": "Jordan Love"}
+        r.player_name = lambda pid: r.names.get(str(pid), str(pid))
+        return r
+
+    def intent(self):
+        from services.sleeper_transaction_adapter import map_transaction
+        return map_transaction({
+            "transaction_id": "t9", "type": "trade", "status": "complete",
+            "roster_ids": [1, 2],
+            "adds": {"100": 1, "200": 2}, "drops": {"100": 2, "200": 1},
+            "draft_picks": [{"season": 2027, "round": 3, "roster_id": 2,
+                             "previous_owner_id": 2, "owner_id": 1}],
+            "waiver_budget": [{"sender": 1, "receiver": 2, "amount": 4}],
+        })[0]
+
+    def test_each_side_lists_players_picks_and_cash(self):
+        runner = self.runner()
+        roster_map = {1: "team-1", 2: "team-2"}
+
+        got, gave = runner._trade_sides(self.intent(), roster_map, "team-1")
+        self.assertEqual(got, ["Bhayshul Tuten", "2027 round 3 pick"])
+        self.assertEqual(gave, ["Jordan Love", "$4 FAAB"])
+
+        got, gave = runner._trade_sides(self.intent(), roster_map, "team-2")
+        self.assertEqual(got, ["Jordan Love", "$4 FAAB"])
+        self.assertEqual(gave, ["Bhayshul Tuten", "2027 round 3 pick"])
+
+    def test_a_team_in_no_leg_of_the_trade_gets_nothing(self):
+        runner = self.runner()
+        got, gave = runner._trade_sides(
+            self.intent(), {1: "team-1", 2: "team-2"}, "team-3",
+        )
+        self.assertEqual((got, gave), ([], []))
