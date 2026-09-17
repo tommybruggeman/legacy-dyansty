@@ -448,6 +448,9 @@ class SleeperSyncRunner:
 
         agreements = self.live_agreements(intent.player_id)
         if is_duplicate_acquisition(agreements, team_id):
+            if self.already_applied(intent.idempotency_key):
+                # This run is replaying our own earlier work.
+                return None
             return SyncException(
                 "duplicate_live_contract", intent.transaction_id,
                 "This team already holds a live contract for the player, so no "
@@ -496,6 +499,21 @@ class SleeperSyncRunner:
                 str(row.get("owner_name") or row.get("team_name") or "").strip()
             for row in rows if row.get("id")
         }
+
+    def already_applied(self, idempotency_key: str) -> bool:
+        """True when a previous run already committed this exact operation.
+
+        The canonical RPCs are idempotent by key, but the pipeline's own guards
+        run first -- without this check a replay looks like a duplicate signing
+        rather than work already done.
+        """
+        try:
+            rows = (self.read_client.table("contract_events").select("id")
+                    .eq("idempotency_key", str(idempotency_key))
+                    .limit(1).execute().data or [])
+            return bool(rows)
+        except Exception:
+            return False
 
     def resolve_contract_id(self, player_id: str, league_team_id: str) -> str | None:
         """The live agreement id a trade moves, verified against the from-team."""
@@ -558,6 +576,7 @@ class SleeperSyncRunner:
             )
 
         player_movements = []
+        already_settled = 0
         for move in intent.player_moves:
             from_team = roster_map.get(move.from_roster_id) if move.from_roster_id else None
             to_team = roster_map.get(move.to_roster_id) if move.to_roster_id else None
@@ -569,10 +588,16 @@ class SleeperSyncRunner:
                 )
             contract_id = self.resolve_contract_id(move.player_id, from_team)
             if not contract_id:
+                # The player may already sit on the destination team, because
+                # the trade was entered by hand before the sync existed. That
+                # leg is satisfied, not broken.
+                if self.resolve_contract_id(move.player_id, to_team):
+                    already_settled += 1
+                    continue
                 return SyncException(
                     "no_live_contract", intent.transaction_id,
-                    "Traded player holds no live contract on the team Sleeper "
-                    "traded him from.",
+                    "Traded player holds no live contract on either the team "
+                    "Sleeper traded him from or the team he went to.",
                     move.player_id,
                 )
             player_movements.append(PlayerMovement(contract_id, from_team, to_team))
@@ -598,6 +623,14 @@ class SleeperSyncRunner:
                 )
             pick_movements.append(
                 DraftPickMovement(stable_pick_id, from_team, to_team)
+            )
+
+        if not player_movements and not pick_movements:
+            if already_settled:
+                return None
+            return SyncException(
+                "unsupported_transaction", intent.transaction_id,
+                "Trade had no resolvable player or pick movement.",
             )
 
         try:
