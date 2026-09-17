@@ -483,6 +483,20 @@ class SleeperSyncRunner:
 
     # ---- trades -----------------------------------------------------------
 
+    def _resolve_team_names(self) -> dict[str, str]:
+        """Canonical league_team id -> the owner name shown in the app."""
+        try:
+            rows = (self.read_client.table("league_teams")
+                    .select("id,team_name,owner_name")
+                    .eq("league_id", self.league_id).execute().data or [])
+        except Exception:
+            return {}
+        return {
+            str(row.get("id") or ""):
+                str(row.get("owner_name") or row.get("team_name") or "").strip()
+            for row in rows if row.get("id")
+        }
+
     def resolve_contract_id(self, player_id: str, league_team_id: str) -> str | None:
         """The live agreement id a trade moves, verified against the from-team."""
         for row in self.live_agreements(player_id):
