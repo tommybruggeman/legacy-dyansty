@@ -57,6 +57,7 @@ class SyncReport:
     released: int = 0
     acquired: int = 0
     traded: int = 0
+    replayed: int = 0
     skipped: int = 0
     exceptions: list[SyncException] = field(default_factory=list)
     watermark_created_ms: int = 0
@@ -74,6 +75,7 @@ class SyncReport:
         return (
             f"{self.processed} transaction(s): {self.acquired} signed, "
             f"{self.released} released, {self.traded} traded, "
+            f"{self.replayed} already applied, "
             f"{self.skipped} skipped, {len(self.exceptions)} flagged."
         )
 
@@ -758,6 +760,12 @@ class SleeperSyncRunner:
                 for intent in map_transaction(transaction):
                     if isinstance(intent, SkippedTransaction):
                         report.skipped += 1
+                        continue
+                    if self.already_applied(intent.idempotency_key):
+                        # Work a previous run committed. Counting it as new
+                        # would make the summary useless for reconciliation,
+                        # and re-running it would flag a false duplicate.
+                        report.replayed += 1
                         continue
                     if isinstance(intent, ReleaseIntent):
                         failure = self.apply_release(intent, roster_map, season, pct)
