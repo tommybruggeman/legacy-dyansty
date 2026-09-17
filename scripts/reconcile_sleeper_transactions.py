@@ -112,6 +112,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--since", help="only report transactions at or after this date")
     parser.add_argument("--all", action="store_true", help="list OK rows too, not just problems")
+    parser.add_argument("--player", help="only transactions touching this player, whole season")
     args = parser.parse_args()
     since = parse_since(args.since)
 
@@ -167,7 +168,16 @@ def main() -> int:
 
         for transaction in transactions:
             effective = effective_ms(transaction)
-            if effective < since:
+            if args.player:
+                # A player trace ignores --since: the question is always
+                # "everything Sleeper ever did with him", not a date window.
+                touched = any(
+                    args.player.lower() in names.get(pid, pid).lower()
+                    for pid in player_ids(transaction)
+                )
+                if not touched:
+                    continue
+            elif effective < since:
                 continue
             tx_id = str(transaction.get("transaction_id") or "")
             pairs, noop_reason = expected_keys(transaction, names)
@@ -192,7 +202,7 @@ def main() -> int:
             print(line)
 
         orphans = sorted(applied - matched_keys)
-        if orphans:
+        if orphans and not args.player:
             print(f"\n{len(orphans)} write(s) in the database with no matching Sleeper "
                   f"transaction in weeks {WEEKS.start}-{WEEKS.stop - 1}:")
             for key in orphans[:20]:
@@ -200,7 +210,8 @@ def main() -> int:
 
         print(f"\n{counts['OK']} accounted for, {counts['MISSING']} missing, "
               f"{counts['NOOP']} nothing to apply"
-              + (f", at or after {when(since)}" if since else ""))
+              + (f", touching {args.player}" if args.player
+                 else f", at or after {when(since)}" if since else ""))
         failures += counts["MISSING"]
 
     return 1 if failures else 0

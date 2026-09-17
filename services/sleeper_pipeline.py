@@ -14,9 +14,13 @@ Ordering guarantees, which the money math depends on:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
+from services.dead_cap_rules import (  # noqa: F401  (re-exported for callers)
+    NO_DEAD_CAP_SALARY_CEILING,
+    dead_cap_for_season,
+)
 from services.sleeper_transaction_adapter import (
     AcquireIntent,
     ReleaseIntent,
@@ -26,9 +30,6 @@ from services.sleeper_transaction_adapter import (
 )
 
 SLEEPER_BASE = "https://api.sleeper.app/v1"
-
-# A contract at or below this salary carries no dead cap when dropped.
-NO_DEAD_CAP_SALARY_CEILING = Decimal("1")
 
 LIVE_AGREEMENT_STATUSES = ("active", "scheduled")
 LIVE_OBLIGATION_STATUSES = ("active", "scheduled")
@@ -80,10 +81,6 @@ class SyncReport:
         )
 
 
-def _money(value: Any) -> Decimal:
-    return Decimal(str(value or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-
-
 def dead_cap_schedule(
     contract_seasons: Sequence[Mapping[str, Any]],
     *,
@@ -113,15 +110,7 @@ def dead_cap_schedule(
         basis = row.get("cap_hit")
         if basis is None:
             basis = row.get("salary")
-        basis = _money(basis)
-        if basis <= NO_DEAD_CAP_SALARY_CEILING:
-            charges.append(DeadCapCharge(season, Decimal("0.00")))
-            continue
-        charges.append(DeadCapCharge(
-            season, (basis * pct / Decimal("100")).quantize(
-                Decimal("0.01"), rounding=ROUND_HALF_UP,
-            ),
-        ))
+        charges.append(DeadCapCharge(season, dead_cap_for_season(basis, pct)))
     return tuple(sorted(charges, key=lambda charge: charge.season))
 
 

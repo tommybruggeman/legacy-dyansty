@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Mapping, Sequence
 
+from services.dead_cap_rules import dead_cap_for_season
 from services.free_agents import RookieRow
 from season_engine.resolver import SeasonAuthorityError, SeasonResolver
 
@@ -126,12 +127,15 @@ def resolve_rookie_contract_terms(
 
 
 def calculate_default_dead_cap(rules: Mapping[str, Any], salary: Any) -> Decimal:
-    percentage = Decimal(str(rules.get("default_dead_cap_pct") or 0))
-    if percentage < 0 or percentage > 100:
-        raise ValueError("default dead cap percentage is invalid")
-    return (Decimal(str(salary)) * percentage / Decimal("100")).quantize(
-        Decimal("0.01"), rounding=ROUND_HALF_UP,
-    )
+    """The penalty for dropping one contract season.
+
+    Delegates to services.dead_cap_rules so the Manual Drop screen and the
+    Sleeper sync quote the same number for the same contract.
+    """
+    try:
+        return dead_cap_for_season(salary, rules.get("default_dead_cap_pct"))
+    except ValueError:
+        raise ValueError("default dead cap percentage is invalid") from None
 
 
 def rookie_draft_player_options(rows: Sequence[RookieRow]) -> tuple[str, ...]:

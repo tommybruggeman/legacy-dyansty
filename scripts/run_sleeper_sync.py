@@ -115,7 +115,12 @@ def main() -> int:
 
         print(f"[{league_id}] {report.summary()}")
         for exception in report.exceptions:
-            print(f"[{league_id}]   flagged {exception.kind}: {exception.detail}")
+            # Name the player and transaction: a bare message leaves the
+            # commissioner guessing which move was left unapplied.
+            where = f"transaction {exception.transaction_id}"
+            if exception.player_id:
+                where = f"player {exception.player_id}, roster {exception.roster_id}, " + where
+            print(f"[{league_id}]   flagged {exception.kind} ({where}): {exception.detail}")
 
     return 1 if failed else 0
 
