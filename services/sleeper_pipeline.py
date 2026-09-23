@@ -207,6 +207,38 @@ def is_duplicate_acquisition(
     )
 
 
+def active_ownership_agreements(
+    agreements: Sequence[Mapping[str, Any]],
+    contract_seasons: Sequence[Mapping[str, Any]],
+    contract_events: Sequence[Mapping[str, Any]],
+    *,
+    active_season: int,
+) -> list[Mapping[str, Any]]:
+    """Return agreements that still represent player ownership.
+
+    Agreement status is only one part of the lifecycle.  Older drop paths
+    sometimes wrote release/dead-cap evidence without closing the agreement,
+    so release evidence is authoritative and a financial dead-cap obligation
+    must never be mistaken for roster ownership.
+    """
+    released_contracts = {
+        str(row.get("contract_id") or "")
+        for row in contract_events
+        if str(row.get("event_type") or "") in ("released", "dead_cap_created")
+    }
+    live_obligations = {
+        str(row.get("contract_id") or "")
+        for row in contract_seasons
+        if int(row.get("season") or 0) >= int(active_season)
+        and str(row.get("obligation_status") or "") in LIVE_OBLIGATION_STATUSES
+    }
+    return [
+        row for row in agreements
+        if str(row.get("id") or "") in live_obligations
+        and str(row.get("id") or "") not in released_contracts
+    ]
+
+
 class SleeperSyncRunner:
     """Fetch, map, and apply one league's Sleeper transactions."""
 
@@ -245,12 +277,29 @@ class SleeperSyncRunner:
                 .eq("league_id", self.league_id).execute().data or [])
         return build_roster_map(rows)
 
-    def live_agreements(self, player_id: str) -> list[Mapping[str, Any]]:
-        return list(self.read_client.table("contract_agreements")
+    def live_agreements(
+        self, player_id: str, active_season: int | None = None,
+    ) -> list[Mapping[str, Any]]:
+        candidates = list(self.read_client.table("contract_agreements")
                     .select("id,league_team_id,player_id,status,superseded_by_contract_id")
                     .eq("league_id", self.league_id).eq("player_id", str(player_id))
                     .in_("status", list(LIVE_AGREEMENT_STATUSES))
                     .is_("superseded_by_contract_id", "null").execute().data or [])
+        if not candidates:
+            return []
+        agreement_ids = [str(row["id"]) for row in candidates]
+        seasons = list(self.read_client.table("contract_seasons")
+                       .select("contract_id,season,obligation_status")
+                       .in_("contract_id", agreement_ids).execute().data or [])
+        events = list(self.read_client.table("contract_events")
+                      .select("contract_id,event_type")
+                      .in_("contract_id", agreement_ids)
+                      .in_("event_type", ["released", "dead_cap_created"])
+                      .execute().data or [])
+        return active_ownership_agreements(
+            candidates, seasons, events,
+            active_season=active_season if active_season is not None else self.active_season(),
+        )
 
     def contract_seasons(self, agreement_id: str) -> list[Mapping[str, Any]]:
         return list(self.read_client.table("contract_seasons")
@@ -330,7 +379,7 @@ class SleeperSyncRunner:
                 intent.player_id, intent.roster_id,
             )
 
-        agreements = self.live_agreements(intent.player_id)
+        agreements = self.live_agreements(intent.player_id, active_season)
         if not agreements:
             return SyncException(
                 "no_live_contract", intent.transaction_id,
@@ -456,7 +505,7 @@ class SleeperSyncRunner:
                 intent.player_id, intent.roster_id,
             )
 
-        agreements = self.live_agreements(intent.player_id)
+        agreements = self.live_agreements(intent.player_id, active_season)
         if is_duplicate_acquisition(agreements, team_id):
             if self.already_applied(intent.idempotency_key):
                 # This run is replaying our own earlier work.

@@ -4,6 +4,7 @@ import unittest
 from decimal import Decimal
 
 from services.sleeper_pipeline import (
+    active_ownership_agreements,
     build_roster_map,
     dead_cap_schedule,
     describe_faab_moves,
@@ -161,6 +162,51 @@ class DuplicateGuardTests(unittest.TestCase):
 
     def test_free_agent_with_no_live_contract_is_not_a_duplicate(self):
         self.assertFalse(is_duplicate_acquisition([], "team-a"))
+
+    def test_previously_released_player_can_sign_again(self):
+        agreement = {"id": "old", "league_team_id": "dropping-team"}
+        seasons = [{
+            "contract_id": "old", "season": 2026,
+            "obligation_status": "active",
+        }]
+        events = [{
+            "contract_id": "old", "event_type": "released",
+            "league_team_id": "dropping-team",
+        }]
+
+        live = active_ownership_agreements(
+            [agreement], seasons, events, active_season=2026,
+        )
+
+        self.assertEqual(live, [])
+        self.assertFalse(is_duplicate_acquisition(live, "claiming-team"))
+
+    def test_dead_cap_stays_financial_history_not_roster_ownership(self):
+        agreement = {"id": "old", "league_team_id": "dropping-team"}
+        seasons = [{
+            "contract_id": "old", "season": 2026,
+            "obligation_status": "active",
+        }]
+        dead_cap_event = {
+            "contract_id": "old", "event_type": "dead_cap_created",
+            "league_team_id": "dropping-team", "new_values": {"dead_cap_amount": 5},
+        }
+
+        live = active_ownership_agreements(
+            [agreement], seasons, [dead_cap_event], active_season=2026,
+        )
+
+        self.assertEqual(live, [])
+        self.assertEqual(dead_cap_event["league_team_id"], "dropping-team")
+        self.assertEqual(dead_cap_event["new_values"]["dead_cap_amount"], 5)
+
+    def test_stale_agreement_without_a_current_obligation_is_not_live(self):
+        live = active_ownership_agreements(
+            [{"id": "old", "league_team_id": "team-a"}],
+            [{"contract_id": "old", "season": 2025, "obligation_status": "active"}],
+            [], active_season=2026,
+        )
+        self.assertEqual(live, [])
 
 
 if __name__ == "__main__":

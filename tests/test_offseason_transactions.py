@@ -239,6 +239,48 @@ class ManualDropResolutionTests(unittest.TestCase):
 
 
 class OffseasonMigrationTests(unittest.TestCase):
+    def test_sleeper_ownership_guard_excludes_release_and_dead_cap_evidence(self):
+        sql = Path(
+            "supabase/migrations/20260922_release_aware_sleeper_ownership.sql"
+        ).read_text().lower()
+        for fragment in (
+            "player_has_live_contract_private",
+            "s.obligation_status in ('active', 'scheduled')",
+            "e.event_type in ('released', 'dead_cap_created')",
+            "not exists",
+            "s.season >= p_active_season",
+        ):
+            self.assertIn(fragment, sql)
+        later_definition = Path(
+            "supabase/migrations/20261115_sleeper_acquisition_kinds.sql"
+        ).read_text().lower()
+        self.assertIn(
+            "player_has_live_contract_private(lid,pid,active_season)",
+            later_definition,
+        )
+
+    def test_tre_harris_import_correction_voids_only_bootstrap_without_dead_cap(self):
+        sql = Path(
+            "supabase/migrations/20260922_release_aware_sleeper_ownership.sql"
+        ).read_text().lower()
+        correction = sql.split(
+            "create or replace function public.player_has_live_contract_private", 1,
+        )[0]
+        for fragment in (
+            "player_id = '12509'",
+            "origin = 'imported_initial_contract'",
+            "set obligation_status = 'voided'",
+            "set status = 'voided'",
+            "'voided', 2026, 'legacy_import_correction'",
+            "'dead_cap', 0",
+            "'1296578059884843008'",
+        ):
+            self.assertIn(fragment, correction)
+        for excluded_player in ("4035", "5947", "8154", "11655", "4037"):
+            self.assertNotIn(excluded_player, correction)
+        self.assertNotIn("insert into public.dead_cap_obligations", correction)
+        self.assertEqual(correction.count("insert into public.contract_events"), 1)
+
     def test_sleeper_only_acquisition_identity_is_additive_and_position_scoped(self):
         sql = Path("supabase/migrations/20261109_sleeper_acquisition_identity_canonicalization.sql").read_text().lower()
         for fragment in (
