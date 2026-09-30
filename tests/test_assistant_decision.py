@@ -442,12 +442,11 @@ class SerializationAndOpenAITest(unittest.TestCase):
         self.assertIn("authoritative", with_decision[-2]["content"])
         self.assertEqual(with_decision[-1], {"role": "user", "content": "Question?"})
 
-    def test_page_compiles_with_stage9_flow(self):
-        with open("/Users/tommybruggeman/Desktop/Legacy App/pages/05_GM_Assistant.py") as handle:
-            source = handle.read()
-        self.assertIn("AssistantRuntime", source)
-        self.assertIn("AssistantRuntimeInput", source)
+    def test_page_does_not_call_stage_helpers_directly(self):
+        from pathlib import Path
+        source = (Path(__file__).resolve().parents[1] / "pages" / "05_Front_Office.py").read_text()
         self.assertNotIn("build_decision_output(", source)
+        self.assertIn("run_league_ai(", source)
 
 
 if __name__ == "__main__":

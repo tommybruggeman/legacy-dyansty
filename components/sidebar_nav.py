@@ -175,6 +175,11 @@ def _render_page_links():
     )
 
     st.page_link(
+        "pages/05_Front_Office.py",
+        label="Front Office",
+    )
+
+    st.page_link(
         "pages/04_Free_Agent.py",
         label="Free Agent",
     )

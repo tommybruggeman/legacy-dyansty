@@ -415,15 +415,13 @@ class OpenAIConversationStateCompatibilityTest(unittest.TestCase):
         self.assertIn("Structured conversation state", messages[0]["content"])
         self.assertEqual(messages[-1]["content"], "What about him next year?")
 
-    def test_gm_assistant_page_uses_conversation_state_and_scoped_history(self):
-        source = (ROOT / "pages" / "05_GM_Assistant.py").read_text()
+    def test_front_office_page_uses_scoped_history_and_league_ai(self):
+        source = (ROOT / "pages" / "05_Front_Office.py").read_text()
 
-        self.assertIn("load_conversation_state", source)
-        self.assertIn("AssistantRuntime", source)
-        self.assertIn("AssistantRuntimeInput", source)
-        self.assertIn("conversation_state=conversation_state", source)
-        self.assertIn("gm_messages:{user_id}:{league_id}:{league_team_id}:{conversation_id}", source)
+        self.assertIn("run_league_ai(", source)
+        self.assertIn("gm_messages:{user_id}:{league_id}:{league_team_id}:front_office", source)
         self.assertNotIn("interpret_question(", source)
+        self.assertNotIn("AssistantRuntime(", source)
 
 
 if __name__ == "__main__":

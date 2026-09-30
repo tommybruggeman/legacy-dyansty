@@ -1,0 +1,45 @@
+name: NFL data sync
+
+on:
+  schedule:
+    # 09:00 UTC daily = 03:00 Mountain. Picks up Sunday/Monday night games the next morning.
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+    inputs:
+      only:
+        description: "Run a single loader (players, stats, values, injuries, prospects) or leave blank for all"
+        required: false
+        default: ""
+      seasons:
+        description: "Space-separated seasons for stats (blank = current + 3 prior)"
+        required: false
+        default: ""
+
+concurrency:
+  group: nfl-data-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: pip install supabase requests pandas
+
+      - name: Run NFL data sync
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          CFBD_API_KEY: ${{ secrets.CFBD_API_KEY }}
+        run: |
+          ARGS=""
+          if [ -n "${{ github.event.inputs.only }}" ]; then ARGS="$ARGS --only ${{ github.event.inputs.only }}"; fi
+          if [ -n "${{ github.event.inputs.seasons }}" ]; then ARGS="$ARGS --seasons ${{ github.event.inputs.seasons }}"; fi
+          python -m pipeline.nfl_data.run $ARGS

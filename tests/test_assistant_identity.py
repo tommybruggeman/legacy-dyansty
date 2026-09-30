@@ -485,16 +485,16 @@ class AssistantIdentityTest(unittest.TestCase):
         self.assertNotIn("openai", source.lower())
         self.assertNotIn("OpenAI", source)
 
-    def test_gm_assistant_page_uses_current_user_and_friendly_identity_error(self):
-        source = (ROOT / "pages" / "05_GM_Assistant.py").read_text()
+    def test_front_office_page_uses_current_user_and_friendly_identity_error(self):
+        source = (ROOT / "pages" / "05_Front_Office.py").read_text()
 
         self.assertIn("user = current_user() or {}", source)
         self.assertIn("request_context: AssistantRequestContext", source)
         self.assertIn("league_team_id = request_context.league_team_id", source)
-        self.assertIn("except AssistantAccessError", source)
-        self.assertIn("allow_legacy_fallback=False", source)
+        self.assertIn("Unable to determine your active team", source)
         self.assertNotIn('user_id = "default"', source)
         self.assertNotIn('league_key = "default"', source)
+
 
 
 if __name__ == "__main__":

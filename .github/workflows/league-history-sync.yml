@@ -1,0 +1,28 @@
+name: League history sync
+
+on:
+  schedule:
+    # 10:00 UTC daily (after the NFL data sync); Sleeper transactions and matchups from every season.
+    - cron: "0 10 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: league-history-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install dependencies
+        run: pip install supabase requests pandas
+      - name: Run league history sync
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python -m pipeline.league_history.run

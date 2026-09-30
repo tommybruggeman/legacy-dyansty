@@ -1338,6 +1338,7 @@ elif section == "League Manager Tools":
 
     tools = [
         "League Rules",
+        "League AI",
         "Contract Editor",
         "Manual Add",
         "Manual Drop",
@@ -1586,6 +1587,11 @@ elif section == "League Manager Tools":
                 },
             )
             st.success("League rules saved.")
+
+    elif tool == "League AI":
+        from league_ai.settings_ui import render_league_ai_settings
+
+        render_league_ai_settings(sb_client, active_league_id, sleeper_league_id)
 
     elif tool == "Contract Editor":
         st.markdown("### Contract Editor")

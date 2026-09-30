@@ -658,10 +658,10 @@ class FreeAgentServiceTest(unittest.TestCase):
 
     def test_free_agent_and_gm_assistant_use_shared_loader_treatment(self):
         free_agent_source = (ROOT / "pages/04_Free_Agent.py").read_text()
-        assistant_source = (ROOT / "pages/05_GM_Assistant.py").read_text()
+        assistant_source = (ROOT / "pages/05_Front_Office.py").read_text()
         for source, message in (
             (free_agent_source, "Loading Free Agent Market..."),
-            (assistant_source, "Loading GM Assistant..."),
+            (assistant_source, "Opening the Front Office..."),
         ):
             self.assertIn('class="legacy-loader"', source)
             self.assertIn(message, source)
