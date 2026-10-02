@@ -1,7 +1,10 @@
 # auth.py
 from __future__ import annotations
 
+import base64
+import json
 import os
+import time
 from dotenv import load_dotenv
 load_dotenv(".env")
 from pathlib import Path
@@ -141,10 +144,204 @@ REFRESH_KEY = "sb_refresh_token"
 ACTIVE_LEAGUE_KEY = "active_league_id"
 ROLE_KEY = "role"
 
+# Streamlit session_state lives only as long as the browser tab's websocket,
+# so a page refresh starts a brand new, signed-out session. The Supabase
+# tokens are mirrored into a browser cookie so the next session can pick them
+# back up on whatever page was refreshed.
+AUTH_COOKIE = "ld_auth"
+AUTH_COOKIE_MAX_AGE = 60 * 60 * 24 * 30
+COOKIE_WRITTEN_KEY = "_ld_auth_cookie_written"
+COOKIE_RESTORE_TRIED_KEY = "_ld_auth_cookie_restore_tried"
+SIGNED_OUT_KEY = "_ld_signed_out"
+
+# Refresh a little before the access token expires so the rotation happens at
+# the top of a page run, where the new refresh token is written straight back
+# to the cookie, rather than mid-page inside _sb().
+TOKEN_REFRESH_MARGIN_SECONDS = 300
+
 
 def _clear_auth_state():
     for key in [USER_KEY, ACCESS_KEY, REFRESH_KEY, ACTIVE_LEAGUE_KEY, ROLE_KEY]:
         st.session_state.pop(key, None)
+
+
+# ============================================================
+# Auth cookie
+# ============================================================
+def _encode_cookie(payload: dict) -> str:
+    raw = json.dumps(payload, separators=(",", ":")).encode()
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def _decode_cookie(value: str | None) -> dict | None:
+    if not value:
+        return None
+
+    try:
+        padded = value + "=" * (-len(value) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded.encode()).decode())
+    except Exception:
+        return None
+
+    if not isinstance(payload, dict) or not payload.get("r"):
+        return None
+
+    return payload
+
+
+def _read_auth_cookie() -> dict | None:
+    try:
+        return _decode_cookie(st.context.cookies.get(AUTH_COOKIE))
+    except Exception:
+        return None
+
+
+def _cookie_payload() -> dict | None:
+    access = st.session_state.get(ACCESS_KEY)
+    refresh = st.session_state.get(REFRESH_KEY)
+
+    if not st.session_state.get(USER_KEY) or not refresh:
+        return None
+
+    return {
+        "a": access,
+        "r": refresh,
+        "l": st.session_state.get(ACTIVE_LEAGUE_KEY),
+    }
+
+
+def _set_cookie_js(value: str, max_age: int) -> None:
+    secure = ""
+    try:
+        if str(st.context.url or "").startswith("https://"):
+            secure = "; Secure"
+    except Exception:
+        pass
+
+    cookie = f"{AUTH_COOKIE}={value}; Path=/; Max-Age={max_age}; SameSite=Lax{secure}"
+    st.html(
+        f"<script>document.cookie = {json.dumps(cookie)};</script>",
+        unsafe_allow_javascript=True,
+    )
+
+
+def persist_auth_cookie() -> None:
+    """
+    Mirror the current tokens (and active league) into the browser cookie.
+    Only emits anything when the value actually changed this session.
+    """
+    payload = _cookie_payload()
+    value = _encode_cookie(payload) if payload else ""
+
+    if st.session_state.get(COOKIE_WRITTEN_KEY) == value:
+        return
+
+    if not value and not st.session_state.get(COOKIE_WRITTEN_KEY) and not _read_auth_cookie():
+        st.session_state[COOKIE_WRITTEN_KEY] = value
+        return
+
+    try:
+        _set_cookie_js(value, AUTH_COOKIE_MAX_AGE if value else 0)
+    except Exception:
+        return
+
+    st.session_state[COOKIE_WRITTEN_KEY] = value
+
+
+def _access_token_expires_soon(access_token: str | None) -> bool:
+    if not access_token:
+        return True
+
+    try:
+        segment = access_token.split(".")[1]
+        claims = json.loads(base64.urlsafe_b64decode(segment + "=" * (-len(segment) % 4)))
+        return int(claims.get("exp", 0)) - time.time() <= TOKEN_REFRESH_MARGIN_SECONDS
+    except Exception:
+        return True
+
+
+def _restore_active_league(client) -> None:
+    """
+    A refreshed tab has lost active_league_id/role too. Prefer the league the
+    cookie remembered, as long as the user is still a member of it.
+    """
+    if st.session_state.get(ACTIVE_LEAGUE_KEY):
+        return
+
+    user = st.session_state.get(USER_KEY) or {}
+    if not user.get("id"):
+        return
+
+    try:
+        rows = (
+            client.table("league_memberships")
+            .select("league_id, role, created_at")
+            .eq("user_id", user["id"])
+            .order("created_at", desc=True)
+            .execute()
+            .data
+            or []
+        )
+    except Exception:
+        return
+
+    if not rows:
+        return
+
+    remembered = (_read_auth_cookie() or {}).get("l")
+    membership = next((row for row in rows if row.get("league_id") == remembered), rows[0])
+
+    st.session_state[ACTIVE_LEAGUE_KEY] = membership["league_id"]
+    st.session_state[ROLE_KEY] = membership.get("role", "member")
+
+
+def _restore_from_cookie() -> None:
+    if st.session_state.get(SIGNED_OUT_KEY) or st.session_state.get(COOKIE_RESTORE_TRIED_KEY):
+        return
+
+    st.session_state[COOKIE_RESTORE_TRIED_KEY] = True
+
+    payload = _read_auth_cookie()
+    if not payload:
+        return
+
+    client = _sb_anon()
+
+    try:
+        if _access_token_expires_soon(payload.get("a")):
+            response = client.auth.refresh_session(payload["r"])
+        else:
+            response = client.auth.set_session(payload["a"], payload["r"])
+    except Exception:
+        response = None
+
+    session = getattr(response, "session", None)
+    if not session or not getattr(session, "user", None):
+        # Expired or revoked: the next persist_auth_cookie() clears it.
+        return
+
+    _store_session(session)
+    client.postgrest.auth(session.access_token)
+    _restore_active_league(client)
+    st.session_state[COOKIE_WRITTEN_KEY] = st.context.cookies.get(AUTH_COOKIE)
+
+
+def _refresh_if_expiring() -> None:
+    access = st.session_state.get(ACCESS_KEY)
+    refresh = st.session_state.get(REFRESH_KEY)
+
+    if not refresh or not _access_token_expires_soon(access):
+        return
+
+    try:
+        response = _sb_anon().auth.refresh_session(refresh)
+    except Exception:
+        return
+
+    session = getattr(response, "session", None)
+    if session and getattr(session, "access_token", None):
+        st.session_state[ACCESS_KEY] = session.access_token
+        st.session_state[REFRESH_KEY] = session.refresh_token
 
 
 def _store_session(session: Any):
@@ -173,6 +370,7 @@ def restore_session():
     refresh = st.session_state.get(REFRESH_KEY)
 
     if not access:
+        _restore_from_cookie()
         return
 
     client = _sb_anon()
@@ -210,7 +408,12 @@ def current_user() -> dict | None:
 
 def require_login(redirect_to: str = "home.py"):
     if not is_logged_in():
+        # Anything rendered here is dropped by switch_page, so a dead cookie
+        # is cleared by home.py's signed-out view instead.
         st.switch_page(redirect_to)
+
+    _refresh_if_expiring()
+    persist_auth_cookie()
 
 
 # ============================================================
@@ -244,6 +447,7 @@ def sign_in(email: str, password: str):
     )
 
     session = getattr(result, "session", None)
+    st.session_state.pop(SIGNED_OUT_KEY, None)
 
     if session:
         _store_session(session)
@@ -348,12 +552,16 @@ def sign_out():
         pass
 
     _clear_auth_state()
+    # home.py's signed-out view calls persist_auth_cookie() to delete the
+    # cookie; this flag stops it being restored again in the meantime.
+    st.session_state[SIGNED_OUT_KEY] = True
 
 
 # ============================================================
 # Helpers
 # ============================================================
 def auth_client():
+    restore_session()
     access = st.session_state.get(ACCESS_KEY)
     return _sb(access)
 

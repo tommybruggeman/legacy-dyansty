@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import streamlit as st
-from auth import is_logged_in, sign_in, sign_out, sign_up, sign_up_with_result, reset_password, current_user, _sb
+from auth import is_logged_in, persist_auth_cookie, sign_in, sign_out, sign_up, sign_up_with_result, reset_password, current_user, _sb
 from services.invitations import (
     AUTH_MODE_SESSION_KEY,
     INVITE_PREVIEW_SESSION_KEY,
@@ -543,6 +543,7 @@ if is_logged_in():
 # ============================================================
 # Logged-out state
 # ============================================================
+persist_auth_cookie()
 invite_preview = get_invite_preview(invite_token)
 render_invite_notice(invite_preview)
 

@@ -26,6 +26,7 @@ import urllib.parse as urlparse
 import pandas as pd
 import streamlit as st
 
+from auth import require_login
 from components.sidebar_nav import render_nav
 from services.app_context import get_app_context
 
@@ -44,6 +45,7 @@ st.set_page_config(
 )
 
 render_nav()
+require_login()
 
 
 # ============================================================

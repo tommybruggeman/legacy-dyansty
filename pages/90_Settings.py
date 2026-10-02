@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 import pandas as pd
 import streamlit as st
 from components.sidebar_nav import render_nav
-from auth import auth_client, service_client
+from auth import auth_client, require_login, service_client
 from services.config import configured_value
 from services.team_roster_state import invalidate_team_state_session_cache
 import math
@@ -29,6 +29,7 @@ st.set_page_config(
 )
 
 render_nav()
+require_login()
 
 PAGES_DIR = os.path.abspath(os.path.dirname(__file__))
 ROOT_DIR_STR = os.path.abspath(os.path.join(PAGES_DIR, ".."))
