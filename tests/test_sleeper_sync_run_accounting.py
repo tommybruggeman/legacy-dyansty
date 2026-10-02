@@ -240,3 +240,126 @@ class TradeActivityWording(unittest.TestCase):
             self.intent(), {1: "team-1", 2: "team-2"}, "team-3",
         )
         self.assertEqual((got, gave), ([], []))
+
+
+class TradedFaabPosting(unittest.TestCase):
+    """Traded FAAB has to reach the cap panel without anyone typing it in.
+
+    The sync used to post the players and picks, then log "enter the cap
+    adjustment by hand" for the cash. Dylan's $3 to Nando on Sep 29 sat in
+    that exception and never reached either team's panel.
+    """
+
+    TEAMS = {"team-7": "Dylan Burruel", "team-8": "Nando Munoz"}
+    ROSTERS = {7: "team-7", 8: "team-8"}
+
+    def tx(self, **extra):
+        from services.sleeper_transaction_adapter import map_transaction
+        return map_transaction({
+            "transaction_id": "1410698246916984832", "type": "trade",
+            "status": "complete", "roster_ids": [7, 8],
+            "adds": {"7569": 8, "13287": 7}, "drops": {"7569": 7, "13287": 8},
+            "draft_picks": [{"season": 2027, "round": 2, "roster_id": 7,
+                             "previous_owner_id": 7, "owner_id": 8}],
+            "waiver_budget": [{"amount": 3, "sender": 7, "receiver": 8}],
+            **extra,
+        })[0]
+
+    def runner(self, existing=()):
+        runner = StubRunner([])
+        runner._resolve_team_names = lambda: dict(self.TEAMS)
+        runner.existing_faab_rows = lambda _tx: list(existing)
+        runner.inserted = []
+
+        class Table:
+            def insert(_self, rows):
+                runner.inserted.extend(rows)
+                return _self
+
+            def execute(_self):
+                return None
+
+        class Client:
+            def table(_self, name):
+                assert name == "cap_adjustments"
+                return Table()
+
+        runner.write_client = Client()
+        return runner
+
+    def test_sender_is_charged_and_receiver_credited(self):
+        from services.sleeper_pipeline import faab_cap_adjustment_rows
+
+        rows, problems = faab_cap_adjustment_rows(
+            self.tx().faab_moves, league_id="league-1", season=2026,
+            transaction_id="1410698246916984832",
+            team_names=self.TEAMS, roster_map=self.ROSTERS,
+        )
+        self.assertEqual(problems, [])
+        self.assertEqual(
+            [(r["owner_name"], r["amount"], r["counterparty_owner"], r["season"],
+              r["adjustment_type"]) for r in rows],
+            [("Dylan Burruel", 3, "Nando Munoz", 2026, "trade_carryover"),
+             ("Nando Munoz", -3, "Dylan Burruel", 2026, "trade_carryover")],
+        )
+        self.assertTrue(all("1410698246916984832" in r["note"] for r in rows))
+
+    def test_a_trade_with_picks_and_faab_posts_the_faab(self):
+        runner = self.runner()
+        self.assertIsNone(runner.post_faab_moves(self.tx(), self.ROSTERS))
+        self.assertEqual(
+            [(r["owner_name"], r["amount"]) for r in runner.inserted],
+            [("Dylan Burruel", 3), ("Nando Munoz", -3)],
+        )
+
+    def test_a_replay_never_charges_twice(self):
+        existing = [
+            {"owner_name": "Dylan Burruel", "counterparty_owner": "Nando Munoz", "amount": 3},
+            {"owner_name": "Nando Munoz", "counterparty_owner": "Dylan Burruel", "amount": "-3"},
+        ]
+        runner = self.runner(existing)
+        self.assertIsNone(runner.post_faab_moves(self.tx(), self.ROSTERS))
+        self.assertEqual(runner.inserted, [])
+
+    def test_half_posted_leg_finishes_the_missing_half(self):
+        existing = [{"owner_name": "Dylan Burruel",
+                     "counterparty_owner": "Nando Munoz", "amount": 3}]
+        runner = self.runner(existing)
+        runner.post_faab_moves(self.tx(), self.ROSTERS)
+        self.assertEqual([(r["owner_name"], r["amount"]) for r in runner.inserted],
+                         [("Nando Munoz", -3)])
+
+    def test_unmapped_roster_is_flagged_not_guessed(self):
+        runner = self.runner()
+        problem = runner.post_faab_moves(self.tx(), {7: "team-7"})
+        self.assertIsNotNone(problem)
+        self.assertIn("by hand", problem.detail)
+        self.assertEqual(runner.inserted, [])
+
+    def test_a_trade_with_no_faab_writes_nothing(self):
+        runner = self.runner()
+        self.assertIsNone(runner.post_faab_moves(self.tx(waiver_budget=[]), self.ROSTERS))
+        self.assertEqual(runner.inserted, [])
+
+    def test_cash_only_trade_is_applied_not_rejected(self):
+        runner = self.runner()
+        intent = self.tx(adds=None, drops=None, draft_picks=[])
+        self.assertIsNone(runner.apply_trade(intent, self.ROSTERS))
+        self.assertEqual([(r["owner_name"], r["amount"]) for r in runner.inserted],
+                         [("Dylan Burruel", 3), ("Nando Munoz", -3)])
+        self.assertEqual(runner.recorded, [])
+
+    def test_trade_posts_faab_after_the_canonical_trade(self):
+        from unittest import mock
+
+        runner = self.runner()
+        runner.resolve_contract_id = lambda pid, team: f"c-{pid}" if team in {
+            "team-7", "team-8"} else None
+        runner.resolve_draft_pick = lambda **_kw: ("pick-1", None)
+        runner.log_activity = lambda *a, **k: None
+        with mock.patch("services.canonical_trades.execute_canonical_trade") as trade:
+            self.assertIsNone(runner.apply_trade(self.tx(), self.ROSTERS))
+        trade.assert_called_once()
+        self.assertEqual([(r["owner_name"], r["amount"]) for r in runner.inserted],
+                         [("Dylan Burruel", 3), ("Nando Munoz", -3)])
+        self.assertEqual(runner.recorded, [])

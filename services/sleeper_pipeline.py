@@ -141,18 +141,85 @@ def describe_faab_moves(
     faab_moves: Sequence[Any], team_names: Mapping[str, str],
     roster_map: Mapping[int, str],
 ) -> str:
-    """A readable summary of traded FAAB for manual cap entry.
-
-    Sleeper moves budget, but nothing canonical tracks FAAB balances, so the
-    pipeline reports the transfer instead of writing cap adjustments from a
-    figure it cannot validate.
-    """
+    """A readable summary of traded FAAB, for the feed and for exceptions."""
     parts: list[str] = []
     for move in faab_moves:
         sender = team_names.get(roster_map.get(move.from_roster_id, ""), "unknown team")
         receiver = team_names.get(roster_map.get(move.to_roster_id, ""), "unknown team")
         parts.append(f"${move.amount} from {sender} to {receiver}")
     return "; ".join(parts)
+
+
+def faab_cap_adjustment_rows(
+    faab_moves: Sequence[Any], *, league_id: str, season: int,
+    transaction_id: str, team_names: Mapping[str, str],
+    roster_map: Mapping[int, str],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """The trade_carryover pair each traded-FAAB leg posts, plus any problems.
+
+    Sending FAAB costs the sender that much cap space and frees the
+    receiver's, so the sender is charged (+amount) and the receiver credited
+    (-amount), each naming the other. The note carries the Sleeper
+    transaction id, which is how a replay recognises a leg already posted and
+    how the reconcile script finds it.
+    """
+    rows: list[dict[str, Any]] = []
+    problems: list[str] = []
+    for move in faab_moves:
+        amount = int(move.amount)
+        if amount <= 0:
+            continue
+        sender = team_names.get(roster_map.get(move.from_roster_id, ""), "")
+        receiver = team_names.get(roster_map.get(move.to_roster_id, ""), "")
+        if not sender or not receiver or sender == receiver:
+            problems.append(
+                f"${amount} from roster {move.from_roster_id} to roster "
+                f"{move.to_roster_id}: no distinct canonical team on each side"
+            )
+            continue
+        base = {
+            "league_id": league_id, "player_name": None, "season": int(season),
+            "adjustment_type": "trade_carryover",
+        }
+        rows.append({
+            **base, "owner_name": sender, "amount": amount,
+            "counterparty_owner": receiver,
+            "note": (f"Sends ${amount} FAAB to {receiver} via Sleeper trade "
+                     f"{transaction_id} (costs ${amount} of cap space)"),
+        })
+        rows.append({
+            **base, "owner_name": receiver, "amount": -amount,
+            "counterparty_owner": sender,
+            "note": (f"Receives ${amount} FAAB from {sender} via Sleeper trade "
+                     f"{transaction_id} (frees ${amount} of cap space)"),
+        })
+    return rows, problems
+
+
+def unposted_faab_rows(
+    wanted: Sequence[Mapping[str, Any]], existing: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """The wanted rows not already in cap_adjustments for this transaction.
+
+    Matched on owner, counterparty and amount, so a replay -- or a leg someone
+    already entered by hand -- never doubles the charge.
+    """
+    def key(row: Mapping[str, Any]) -> tuple[str, str, Decimal]:
+        return (
+            str(row.get("owner_name") or ""),
+            str(row.get("counterparty_owner") or ""),
+            Decimal(str(row.get("amount") or 0)),
+        )
+
+    remaining = [key(row) for row in existing]
+    missing: list[dict[str, Any]] = []
+    for row in wanted:
+        k = key(row)
+        if k in remaining:
+            remaining.remove(k)
+        else:
+            missing.append(dict(row))
+    return missing
 
 
 def effective_ms(transaction: Mapping[str, Any]) -> int:
@@ -586,6 +653,57 @@ class SleeperSyncRunner:
             for row in rows if row.get("id")
         }
 
+    def existing_faab_rows(self, transaction_id: str) -> list[Mapping[str, Any]]:
+        """trade_carryover rows already posted for this Sleeper transaction."""
+        return list(self.read_client.table("cap_adjustments")
+                    .select("owner_name,counterparty_owner,amount,note")
+                    .eq("league_id", self.league_id)
+                    .eq("adjustment_type", "trade_carryover")
+                    .like("note", f"%{transaction_id}%")
+                    .execute().data or [])
+
+    def planned_faab_rows(
+        self, intent: TradeIntent, roster_map: Mapping[int, str],
+    ) -> tuple[list[dict[str, Any]], list[str]]:
+        """The cap rows this trade's FAAB still needs, without writing them."""
+        wanted, problems = faab_cap_adjustment_rows(
+            intent.faab_moves, league_id=self.league_id,
+            season=self.active_season(), transaction_id=intent.transaction_id,
+            team_names=self._resolve_team_names(), roster_map=roster_map,
+        )
+        if not wanted:
+            return [], problems
+        return unposted_faab_rows(
+            wanted, self.existing_faab_rows(intent.transaction_id),
+        ), problems
+
+    def post_faab_moves(
+        self, intent: TradeIntent, roster_map: Mapping[int, str],
+    ) -> SyncException | None:
+        """Post the trade's FAAB as cap adjustments, once.
+
+        Called only after the players and picks have moved, so a failure here
+        is reported for review rather than undoing a trade that happened.
+        """
+        if not intent.faab_moves:
+            return None
+        try:
+            missing, problems = self.planned_faab_rows(intent, roster_map)
+            if missing:
+                self.write_client.table("cap_adjustments").insert(missing).execute()
+        except Exception as exc:
+            problems = [f"cap adjustment write failed: {exc}"]
+        if not problems:
+            return None
+        return SyncException(
+            "unsupported_transaction", intent.transaction_id,
+            "Trade completed, but its FAAB could not be posted ("
+            + "; ".join(problems) + "). Enter the cap adjustment by hand: "
+            + describe_faab_moves(
+                intent.faab_moves, self._resolve_team_names(), roster_map,
+            ),
+        )
+
     def already_applied(self, idempotency_key: str) -> bool:
         """True when a previous run already committed this exact operation.
 
@@ -712,7 +830,10 @@ class SleeperSyncRunner:
             )
 
         if not player_movements and not pick_movements:
-            if already_settled:
+            # Cash alone is still a trade, and a trade whose players were
+            # moved by hand still owes its cash leg.
+            if already_settled or intent.faab_moves:
+                self._post_faab_or_flag(intent, roster_map)
                 return None
             return SyncException(
                 "unsupported_transaction", intent.transaction_id,
@@ -745,17 +866,16 @@ class SleeperSyncRunner:
                 f"Sent {', '.join(gave) or 'nothing'} to {' and '.join(others) or 'another team'}.",
             )
 
-        if intent.faab_moves:
-            # The trade itself succeeded; this is a note, not a failure.
-            self.record_exception(SyncException(
-                "unsupported_transaction", intent.transaction_id,
-                "Trade completed, but it also moved FAAB, which is not posted "
-                "automatically. Enter the cap adjustment by hand: "
-                + describe_faab_moves(
-                    intent.faab_moves, self._resolve_team_names(), roster_map,
-                ),
-            ))
+        self._post_faab_or_flag(intent, roster_map)
         return None
+
+    def _post_faab_or_flag(
+        self, intent: TradeIntent, roster_map: Mapping[int, str],
+    ) -> None:
+        # The trade itself succeeded; a FAAB problem is a note, not a failure.
+        problem = self.post_faab_moves(intent, roster_map)
+        if problem is not None:
+            self.record_exception(problem)
 
     def active_season(self) -> int:
         rows = (self.read_client.table("league_seasons").select("season")
