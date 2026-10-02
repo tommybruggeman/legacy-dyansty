@@ -3,6 +3,8 @@ from __future__ import annotations
 import requests
 import pandas as pd
 
+from services.standings_rules import last_completed_week, score_week
+
 
 def _as_float(x, default: float = 0.0) -> float:
     try:
@@ -19,17 +21,18 @@ def _get_json(url: str):
     return r.json()
 
 
-def _current_nfl_week(max_week: int = 25) -> int:
+def _last_scored_week(sleeper_league_id: str, max_week: int = 25) -> int:
+    try:
+        league = _get_json(f"https://api.sleeper.app/v1/league/{sleeper_league_id}")
+    except Exception:
+        league = None
+
     try:
         state = _get_json("https://api.sleeper.app/v1/state/nfl")
-        wk = int(state.get("week") or 1)
-
-        if wk <= 0:
-            return 1
-
-        return max(1, min(max_week, wk))
     except Exception:
-        return 1
+        state = None
+
+    return min(max_week, last_completed_week(league, state))
 
 
 def _roster_id_to_name(sleeper_league_id: str) -> dict[int, str]:
@@ -111,33 +114,22 @@ def _compute_week_df(sleeper_league_id: str, week: int) -> pd.DataFrame:
         if pb < 10.0 <= sb:
             pb = sb
 
-        rows.append(
-            {
-                "week": week,
-                "owner_name": na,
-                "score": pa,
-                "opp_score": pb,
-                "win": 1 if pa > pb else 0,
-            }
-        )
-
-        rows.append(
-            {
-                "week": week,
-                "owner_name": nb,
-                "score": pb,
-                "opp_score": pa,
-                "win": 1 if pb > pa else 0,
-            }
-        )
+        rows.append((na, pa, pb))
+        rows.append((nb, pb, pa))
 
     if not rows:
         return pd.DataFrame()
 
-    df = pd.DataFrame(rows)
-
-    if df["score"].abs().sum() == 0 and df["opp_score"].abs().sum() == 0:
+    if all(score == 0 and opp == 0 for _, score, opp in rows):
         return pd.DataFrame()
+
+    df = pd.DataFrame(score_week(rows)).rename(
+        columns={
+            "team": "owner_name",
+            "standing_points": "standing_points_week",
+        }
+    )
+    df["week"] = week
 
     df = df.sort_values(
         ["score", "owner_name"],
@@ -146,12 +138,6 @@ def _compute_week_df(sleeper_league_id: str, week: int) -> pd.DataFrame:
     ).reset_index(drop=True)
 
     df["weekly_rank"] = df.index + 1
-
-    top_n = min(5, len(df))
-    df["top5"] = 0
-    df.loc[: top_n - 1, "top5"] = 1
-
-    df["standing_points_week"] = (2 * df["win"] + df["top5"]).astype(int)
 
     return df
 
@@ -166,7 +152,9 @@ def build_standings_snapshot(ctx: dict) -> pd.DataFrame:
     if not sleeper_league_id:
         return pd.DataFrame()
 
-    latest_week = int(ctx.get("latest_week") or _current_nfl_week())
+    # Only finished weeks count; the week being played is left out.
+    last_scored = _last_scored_week(sleeper_league_id)
+    latest_week = min(int(ctx.get("latest_week") or last_scored), last_scored)
 
     frames = []
 
@@ -200,13 +188,13 @@ def build_standings_snapshot(ctx: dict) -> pd.DataFrame:
 
     out = big.groupby("owner_name", as_index=False).agg(
         wins=("win", "sum"),
+        losses=("loss", "sum"),
         games=("score", "count"),
         pf=("score", "sum"),
         pa=("opp_score", "sum"),
         standing_points=("standing_points_week", "sum"),
     )
 
-    out["losses"] = (out["games"] - out["wins"]).clip(lower=0)
     out["ppg"] = (out["pf"] / out["games"]).round(2)
 
     out = out.sort_values(

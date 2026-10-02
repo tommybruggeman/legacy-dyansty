@@ -12,6 +12,7 @@ import streamlit as st
 from auth import auth_client, current_user
 from season_engine import SeasonResolver
 from services.publication_context import publication_generation, published_cap_rows
+from services.standings_rules import last_completed_week, score_week
 
 
 # ---------- timing ----------
@@ -524,6 +525,21 @@ def roster_id_to_name(sleeper_league_id: str) -> dict:
 
 
 @st.cache_data(ttl=300, show_spinner=False)
+def last_scored_week(sleeper_league_id: str) -> int:
+    try:
+        league = get_json(f"https://api.sleeper.app/v1/league/{sleeper_league_id}")
+    except Exception:
+        league = None
+
+    try:
+        state = get_json("https://api.sleeper.app/v1/state/nfl")
+    except Exception:
+        state = None
+
+    return min(last_completed_week(league, state), 25)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
 def build_standings_from_sleeper(sleeper_league_id: str) -> pd.DataFrame:
     if not sleeper_league_id:
         return pd.DataFrame()
@@ -531,13 +547,14 @@ def build_standings_from_sleeper(sleeper_league_id: str) -> pd.DataFrame:
     try:
         rid_to_name = roster_id_to_name(sleeper_league_id)
         owner_map = load_owner_display_map()
-        latest_week = current_nfl_week()
+        latest_week = last_scored_week(sleeper_league_id)
     except Exception as e:
         print(f"[APP CONTEXT] build_standings setup failed: {e}", flush=True)
         return pd.DataFrame()
 
     frames = []
 
+    # Only finished weeks count; the week being played is left out.
     for week in range(1, latest_week + 1):
         try:
             rows = (
@@ -556,7 +573,7 @@ def build_standings_from_sleeper(sleeper_league_id: str) -> pd.DataFrame:
             if mid is not None:
                 by_mid.setdefault(mid, []).append(row)
 
-        week_rows = []
+        results = []
 
         for pair in by_mid.values():
             if len(pair) < 2:
@@ -580,60 +597,34 @@ def build_standings_from_sleeper(sleeper_league_id: str) -> pd.DataFrame:
             na = owner_map.get(na, na)
             nb = owner_map.get(nb, nb)
 
-            week_rows.append(
-                {
-                    "Team": na,
-                    "Score": pa,
-                    "OppScore": pb,
-                    "Win": 1 if pa > pb else 0,
-                }
-            )
-            week_rows.append(
-                {
-                    "Team": nb,
-                    "Score": pb,
-                    "OppScore": pa,
-                    "Win": 1 if pb > pa else 0,
-                }
-            )
+            results.append((na, pa, pb))
+            results.append((nb, pb, pa))
 
-        if not week_rows:
+        if not results:
             continue
 
-        df_w = pd.DataFrame(week_rows)
-
-        if df_w["Score"].abs().sum() == 0 and df_w["OppScore"].abs().sum() == 0:
+        if all(score == 0 and opp == 0 for _, score, opp in results):
             continue
 
-        df_w = df_w.sort_values(
-            ["Score", "Team"],
-            ascending=[False, True],
-            kind="mergesort",
-        ).reset_index(drop=True)
-
-        df_w["Top 5"] = 0
-        df_w.loc[: min(4, len(df_w) - 1), "Top 5"] = 1
-        df_w["Standing Points"] = (2 * df_w["Win"] + df_w["Top 5"]).astype(int)
-
-        frames.append(df_w)
+        frames.append(pd.DataFrame(score_week(results)))
 
     if not frames:
         return pd.DataFrame()
 
     big = pd.concat(frames, ignore_index=True)
 
-    out = big.groupby("Team", as_index=False).agg(
+    out = big.groupby("team", as_index=False).agg(
         **{
-            "Standing Points": ("Standing Points", "sum"),
-            "PF": ("Score", "sum"),
-            "PA": ("OppScore", "sum"),
-            "Wins": ("Win", "sum"),
-            "Top 5": ("Top 5", "sum"),
-            "Games": ("Score", "count"),
+            "Standing Points": ("standing_points", "sum"),
+            "PF": ("score", "sum"),
+            "PA": ("opp_score", "sum"),
+            "Wins": ("win", "sum"),
+            "Losses": ("loss", "sum"),
+            "Top 5": ("top5", "sum"),
+            "Games": ("score", "count"),
         }
-    )
+    ).rename(columns={"team": "Team"})
 
-    out["Losses"] = out["Games"] - out["Wins"]
     out["PF Per Game"] = (out["PF"] / out["Games"]).round(1)
     out["PA Per Game"] = (out["PA"] / out["Games"]).round(1)
 
