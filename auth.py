@@ -148,9 +148,14 @@ ROLE_KEY = "role"
 # so a page refresh starts a brand new, signed-out session. The Supabase
 # tokens are mirrored into a browser cookie so the next session can pick them
 # back up on whatever page was refreshed.
+#
+# The cookie is read and written in the browser by a tiny component rather
+# than through st.context.cookies, because Streamlit Community Cloud's proxy
+# does not forward app cookies to the server.
 AUTH_COOKIE = "ld_auth"
 AUTH_COOKIE_MAX_AGE = 60 * 60 * 24 * 30
-COOKIE_WRITTEN_KEY = "_ld_auth_cookie_written"
+BRIDGE_KEY = "_ld_auth_bridge"
+BROWSER_COOKIE_KEY = "_ld_auth_browser_cookie"
 COOKIE_RESTORE_TRIED_KEY = "_ld_auth_cookie_restore_tried"
 SIGNED_OUT_KEY = "_ld_signed_out"
 
@@ -158,6 +163,24 @@ SIGNED_OUT_KEY = "_ld_signed_out"
 # the top of a page run, where the new refresh token is written straight back
 # to the cookie, rather than mid-page inside _sb().
 TOKEN_REFRESH_MARGIN_SECONDS = 300
+
+# Writes data.write (a full cookie string) if given, then reports the cookie's
+# current value back to Python whenever it differs from what Python last saw.
+_BRIDGE_JS = """
+export default function ({ data, setStateValue }) {
+  const name = "%s=";
+  if (data && data.write) {
+    document.cookie = data.write;
+  }
+  const found = document.cookie.split("; ").find((c) => c.startsWith(name));
+  const value = found ? found.slice(name.length) : "";
+  if (!data || value !== data.reported) {
+    setStateValue("cookie", value);
+  }
+}
+""" % AUTH_COOKIE
+
+_auth_bridge = None
 
 
 def _clear_auth_state():
@@ -190,10 +213,7 @@ def _decode_cookie(value: str | None) -> dict | None:
 
 
 def _read_auth_cookie() -> dict | None:
-    try:
-        return _decode_cookie(st.context.cookies.get(AUTH_COOKIE))
-    except Exception:
-        return None
+    return _decode_cookie(st.session_state.get(BROWSER_COOKIE_KEY))
 
 
 def _cookie_payload() -> dict | None:
@@ -210,7 +230,8 @@ def _cookie_payload() -> dict | None:
     }
 
 
-def _set_cookie_js(value: str, max_age: int) -> None:
+def _cookie_string(value: str) -> str:
+    max_age = AUTH_COOKIE_MAX_AGE if value else 0
     secure = ""
     try:
         if str(st.context.url or "").startswith("https://"):
@@ -218,34 +239,54 @@ def _set_cookie_js(value: str, max_age: int) -> None:
     except Exception:
         pass
 
-    cookie = f"{AUTH_COOKIE}={value}; Path=/; Max-Age={max_age}; SameSite=Lax{secure}"
-    st.html(
-        f"<script>document.cookie = {json.dumps(cookie)};</script>",
-        unsafe_allow_javascript=True,
+    return f"{AUTH_COOKIE}={value}; Path=/; Max-Age={max_age}; SameSite=Lax{secure}"
+
+
+def _on_bridge_report() -> None:
+    state = st.session_state.get(BRIDGE_KEY) or {}
+    value = state.get("cookie") if hasattr(state, "get") else getattr(state, "cookie", None)
+    if value is not None:
+        st.session_state[BROWSER_COOKIE_KEY] = value
+
+
+def _render_bridge(write: str | None) -> None:
+    global _auth_bridge
+    if _auth_bridge is None:
+        _auth_bridge = st.components.v2.component("ld_auth_bridge", js=_BRIDGE_JS)
+
+    _auth_bridge(
+        key=BRIDGE_KEY,
+        data={"reported": st.session_state.get(BROWSER_COOKIE_KEY), "write": write},
+        on_cookie_change=_on_bridge_report,
+        height=0,
     )
 
 
-def persist_auth_cookie() -> None:
+def sync_auth_cookie() -> bool:
     """
-    Mirror the current tokens (and active league) into the browser cookie.
-    Only emits anything when the value actually changed this session.
+    Restore the login from the browser cookie and keep the cookie in step
+    with the current tokens. Call once per run, at the top level of a page.
+
+    Returns False until the browser has reported its cookie for this session;
+    the report triggers a rerun, so callers should st.stop() meanwhile.
     """
+    reported = st.session_state.get(BROWSER_COOKIE_KEY)
+
+    if reported is None:
+        _render_bridge(None)
+        return False
+
+    if st.session_state.get(USER_KEY):
+        _refresh_if_expiring()
+    else:
+        restore_session()
+
     payload = _cookie_payload()
-    value = _encode_cookie(payload) if payload else ""
-
-    if st.session_state.get(COOKIE_WRITTEN_KEY) == value:
-        return
-
-    if not value and not st.session_state.get(COOKIE_WRITTEN_KEY) and not _read_auth_cookie():
-        st.session_state[COOKIE_WRITTEN_KEY] = value
-        return
-
-    try:
-        _set_cookie_js(value, AUTH_COOKIE_MAX_AGE if value else 0)
-    except Exception:
-        return
-
-    st.session_state[COOKIE_WRITTEN_KEY] = value
+    desired = _encode_cookie(payload) if payload else ""
+    # The browser confirms every write by reporting the new value, so a write
+    # lost to a switch_page() is simply retried on the next page.
+    _render_bridge(_cookie_string(desired) if desired != reported else None)
+    return True
 
 
 def _access_token_expires_soon(access_token: str | None) -> bool:
@@ -299,6 +340,9 @@ def _restore_from_cookie() -> None:
     if st.session_state.get(SIGNED_OUT_KEY) or st.session_state.get(COOKIE_RESTORE_TRIED_KEY):
         return
 
+    if st.session_state.get(BROWSER_COOKIE_KEY) is None:
+        return
+
     st.session_state[COOKIE_RESTORE_TRIED_KEY] = True
 
     payload = _read_auth_cookie()
@@ -317,13 +361,12 @@ def _restore_from_cookie() -> None:
 
     session = getattr(response, "session", None)
     if not session or not getattr(session, "user", None):
-        # Expired or revoked: the next persist_auth_cookie() clears it.
+        # Expired or revoked: sync_auth_cookie() deletes it.
         return
 
     _store_session(session)
     client.postgrest.auth(session.access_token)
     _restore_active_league(client)
-    st.session_state[COOKIE_WRITTEN_KEY] = st.context.cookies.get(AUTH_COOKIE)
 
 
 def _refresh_if_expiring() -> None:
@@ -407,13 +450,11 @@ def current_user() -> dict | None:
 
 
 def require_login(redirect_to: str = "home.py"):
-    if not is_logged_in():
-        # Anything rendered here is dropped by switch_page, so a dead cookie
-        # is cleared by home.py's signed-out view instead.
-        st.switch_page(redirect_to)
+    if not sync_auth_cookie():
+        st.stop()
 
-    _refresh_if_expiring()
-    persist_auth_cookie()
+    if not is_logged_in():
+        st.switch_page(redirect_to)
 
 
 # ============================================================
@@ -552,8 +593,8 @@ def sign_out():
         pass
 
     _clear_auth_state()
-    # home.py's signed-out view calls persist_auth_cookie() to delete the
-    # cookie; this flag stops it being restored again in the meantime.
+    # home.py's sync_auth_cookie() deletes the cookie on the next run; this
+    # flag stops it being restored again in the meantime.
     st.session_state[SIGNED_OUT_KEY] = True
 
 
