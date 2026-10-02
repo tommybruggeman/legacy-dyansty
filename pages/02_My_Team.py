@@ -32,6 +32,12 @@ import streamlit as st
 from components.sidebar_nav import render_nav
 from auth import auth_client, require_login, current_user
 from services.my_team_context import resolve_my_team
+from services.standings_lookup import (
+    build_sleeper_team_identities,
+    resolve_team_standings_row,
+    standings_for_team_cards,
+)
+from services.app_context import build_standings_from_sleeper
 from services.offseason_transactions import (
     OffseasonTransactionService,
     load_taxi_eligibility_provenance,
@@ -1251,24 +1257,20 @@ def compute_live_standings() -> pd.DataFrame:
     return out
 
 
-def match_owner_row(df: pd.DataFrame, owner_name: str) -> pd.DataFrame:
-    if df.empty or not owner_name:
-        return pd.DataFrame()
-
-    name_col = "owner" if "owner" in df.columns else "Team" if "Team" in df.columns else None
-
-    if not name_col:
-        return pd.DataFrame()
-
-    exact = df[df[name_col].astype(str).str.lower().eq(str(owner_name).lower())]
-    if not exact.empty:
-        return exact.iloc[:1]
-
-    contains = df[df[name_col].astype(str).str.contains(str(owner_name), case=False, na=False)]
-    if not contains.empty:
-        return contains.iloc[:1]
-
-    return pd.DataFrame()
+@st.cache_data(ttl=300, show_spinner=False)
+def load_sleeper_team_identities(league_id: str) -> dict[int, dict[str, object]]:
+    if not league_id:
+        return {}
+    try:
+        users = requests.get(
+            f"https://api.sleeper.app/v1/league/{league_id}/users", timeout=25
+        ).json()
+        rosters = requests.get(
+            f"https://api.sleeper.app/v1/league/{league_id}/rosters", timeout=25
+        ).json()
+        return build_sleeper_team_identities(users or [], rosters or [])
+    except Exception:
+        return {}
 
 # ---------- load current owner ----------
 my_team = get_cached_my_team()
@@ -1379,8 +1381,8 @@ tick("after load_trade_block")
 cap_adj_df = pd.DataFrame(state_cap_adjustments(canonical_state))
 tick("after load_cap_adjustments")
 
-stand_df = load_cached_standings(league_id)
-tick("after load_cached_standings")
+stand_df = standings_for_team_cards(build_standings_from_sleeper(SLEEPER_LEAGUE_ID))
+tick("after load_live_standings")
 
 spinner_placeholder.empty()
 
@@ -1396,7 +1398,12 @@ standing_txt = "—"
 standing_points = 0
 ppg = 0.0
 
-row = match_owner_row(stand_df, owner_name)
+row = resolve_team_standings_row(
+    stand_df,
+    sleeper_roster_id=my_team.get("sleeper_roster_id"),
+    sleeper_owner_id=my_team.get("sleeper_owner_id"),
+    identities_by_roster_id=load_sleeper_team_identities(SLEEPER_LEAGUE_ID),
+)
 if not row.empty:
     r = row.iloc[0]
     record_txt = f"{int(r.get('wins', 0))} – {int(r.get('losses', 0))}"

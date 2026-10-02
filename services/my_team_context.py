@@ -26,4 +26,6 @@ def resolve_my_team(client: Any, *, user_id: str, league_id: str) -> dict | None
     return {"league_id": league_id, "team_id": team["id"],
             "team_name": team.get("team_name") or team.get("owner_name"),
             "owner_name": team.get("owner_name") or team.get("team_name"),
-            "sleeper_roster_id": team.get("sleeper_roster_id"), "role": membership.get("role")}
+            "sleeper_roster_id": team.get("sleeper_roster_id"),
+            "sleeper_owner_id": team.get("sleeper_user_id"),
+            "role": membership.get("role")}

@@ -19,6 +19,8 @@ class MyTeamContextTest(unittest.TestCase):
         result=resolve_my_team(Client(),user_id="u1",league_id="l1")
         self.assertEqual(result["team_name"],"Correct Team")
         self.assertEqual(result["team_id"],"t1")
+        self.assertEqual(result["sleeper_roster_id"],4)
+        self.assertEqual(result["sleeper_owner_id"],"su")
     def test_does_not_authorize_via_display_name_or_legacy_team_id(self):
         client=Client(); client.data["league_memberships"][0]["league_team_id"]=None
         with self.assertRaises(MyTeamContextError): resolve_my_team(client,user_id="u1",league_id="l1")

@@ -20,6 +20,12 @@ import streamlit as st
 from components.sidebar_nav import render_nav
 from auth import require_login, current_user
 from services.config import configured_value
+from services.standings_lookup import (
+    build_sleeper_team_identities,
+    resolve_team_standings_row,
+    standings_for_team_cards,
+)
+from services.app_context import build_standings_from_sleeper
 from services.team_roster_state import (
     CanonicalTeamStateError,
     cap_adjustment_display_rows,
@@ -1168,110 +1174,29 @@ def _compute_week_df(league_id: str, week: int) -> pd.DataFrame:
 @st.cache_data(ttl=300, show_spinner=False)
 def load_live_standings() -> pd.DataFrame:
     """
-    Build full-season standings purely from Sleeper weekly matchups,
-    normalized for this Teams page.
+    Use the exact live standings snapshot builder used by the Standings page.
     """
-    if not SLEEPER_LEAGUE_ID:
-        return pd.DataFrame()
-
-    latest_wk = _current_nfl_week(max_week=25)
-
-    frames: list[pd.DataFrame] = []
-    for wk in range(1, latest_wk + 1):
-        df_w = _compute_week_df(SLEEPER_LEAGUE_ID, wk)
-        if not df_w.empty:
-            frames.append(df_w)
-
-    if not frames:
-        return pd.DataFrame()
-
-    big = pd.concat(frames, ignore_index=True)
-
-    agg = big.groupby("Team", as_index=False).agg(
-        Standing_Points=("StandingPoints_wk", "sum"),
-        PF=("Score", "sum"),
-        PA=("OppScore", "sum"),
-        Wins=("Win", "sum"),
-        Games=("Score", "count"),
+    standings = standings_for_team_cards(
+        build_standings_from_sleeper(SLEEPER_LEAGUE_ID)
     )
+    if standings.empty:
+        return standings
+    standings = standings.sort_values(
+        ["standing_points", "pf"], ascending=[False, False]
+    ).reset_index(drop=True)
+    standings["rank"] = standings.index + 1
+    return standings
 
-    agg["Losses"] = (agg["Games"] - agg["Wins"]).clip(lower=0)
-    agg["PPG"]    = (agg["PF"] / agg["Games"]).round(1)
-
-    agg = agg.sort_values(["Standing_Points", "PF"], ascending=[False, False]).reset_index(drop=True)
-    agg["Rank"] = agg.index + 1
-
-    agg = agg.rename(columns={
-        "Team": "owner_name",
-        "Wins": "wins",
-        "Losses": "losses",
-        "PF": "pf",
-        "PPG": "ppg",
-        "Rank": "rank",
-        "Standing_Points": "standing_points",
-    })
-
-    return agg[["owner_name", "wins", "losses", "pf", "ppg", "rank", "standing_points"]]
-
-def match_standings_row(stand_df: pd.DataFrame, sel_name: str, sel_handle: Optional[str]) -> pd.DataFrame:
-    """
-    Match the selected team to a row in stand_df.
-
-    Priority:
-      1) Exact handle match (sel_handle) against owner_name / owner / handle / username columns.
-      2) Exact display-name match (sel_name) against owner_name.
-      3) Contains + fuzzy match on owner_name vs sel_name.
-    """
-    if stand_df.empty:
-        return pd.DataFrame()
-
-    from difflib import SequenceMatcher
-
-    def _norm_local(s: str) -> str:
-        return re.sub(r"[^a-z0-9]", "", (s or "").strip().lower())
-
-    work = stand_df.copy()
-
-    # --- 1) Try handle-based match first ---
-    if sel_handle:
-        handle_cols = []
-        for c in work.columns:
-            lc = c.lower()
-            if lc in {"owner_name", "owner", "handle", "sleeper_username", "sleeper_handle", "username", "user_name"}:
-                handle_cols.append(c)
-
-        for c in handle_cols:
-            col_vals = work[c].astype(str)
-            mask = col_vals.str.strip().str.casefold() == sel_handle.strip().casefold()
-            hit = work[mask]
-            if not hit.empty:
-                return hit.iloc[:1]
-
-    # --- 2) Exact display-name match on owner_name ---
-    if "owner_name" in work.columns:
-        hit = work[work["owner_name"].astype(str).str.strip() == sel_name]
-        if not hit.empty:
-            return hit.iloc[:1]
-
-        # contains
-        mask = work["owner_name"].astype(str).str.contains(re.escape(sel_name), case=False, na=False)
-        hit = work[mask]
-        if not hit.empty:
-            return hit.iloc[:1]
-
-        # --- 3) Fuzzy match on owner_name vs sel_name ---
-        best_score, best_idx = 0.0, -1
-        target = _norm_local(sel_name)
-        for i, val in work["owner_name"].astype(str).items():
-            s = SequenceMatcher(None, target, _norm_local(val)).ratio()
-            if s > best_score:
-                best_score, best_idx = s, i
-
-        if best_score >= 0.82 and best_idx >= 0:
-            return work.loc[[best_idx]]
-
-    # No match
-    return pd.DataFrame()
+@st.cache_data(ttl=300, show_spinner=False)
+def load_sleeper_team_identities(league_id: str) -> dict[int, dict[str, object]]:
+    if not league_id:
+        return {}
+    try:
+        users = _get_json(f"https://api.sleeper.app/v1/league/{league_id}/users") or []
+        rosters = _get_json(f"https://api.sleeper.app/v1/league/{league_id}/rosters") or []
+        return build_sleeper_team_identities(users, rosters)
+    except Exception:
+        return {}
 def ensure_active_league_from_user() -> Optional[str]:
     if st.session_state.get("active_league_id"):
         return st.session_state["active_league_id"]
@@ -1318,12 +1243,12 @@ def load_owners_df() -> pd.DataFrame:
 
     if not sb or not league_id:
 
-        return pd.DataFrame(columns=["handle", "name"])
+        return pd.DataFrame(columns=["handle", "name", "sleeper_roster_id", "sleeper_owner_id"])
 
     try:
         rows = (
             sb.table("league_teams")
-            .select("owner_name, team_name")
+            .select("owner_name, team_name, sleeper_roster_id, sleeper_user_id")
             .eq("league_id", league_id)
             .order("owner_name")
             .execute()
@@ -1334,16 +1259,17 @@ def load_owners_df() -> pd.DataFrame:
         df = pd.DataFrame(rows)
 
         if df.empty:
-            return pd.DataFrame(columns=["handle", "name"])
+            return pd.DataFrame(columns=["handle", "name", "sleeper_roster_id", "sleeper_owner_id"])
 
         df["name"] = df["team_name"].fillna(df["owner_name"])
         df["handle"] = df["owner_name"]
+        df["sleeper_owner_id"] = df["sleeper_user_id"]
 
-        return df[["handle", "name"]].dropna().drop_duplicates()
+        return df[["handle", "name", "sleeper_roster_id", "sleeper_owner_id"]].drop_duplicates()
 
     except Exception as e:
         st.exception(e)
-        return pd.DataFrame(columns=["handle", "name"])
+        return pd.DataFrame(columns=["handle", "name", "sleeper_roster_id", "sleeper_owner_id"])
 
 def load_canonical_team_state_current(season: int, cache_epoch: int) -> dict:
     league_id = st.session_state.get("active_league_id") or st.session_state.get("import_league_id")
@@ -1683,59 +1609,6 @@ else:
     is_admin = True
 
 
-# --- Normalize handles so owners_df.handle matches stand_df.owner_name ---
-# This fixes cases like Nando: owners_df has "Nandio", Sleeper standings use "nandorio".
-if not stand_df.empty:
-    from difflib import SequenceMatcher
-
-    stand_handles = stand_df["owner_name"].astype(str).tolist()
-
-    corrected = {}
-    for raw_h in owners_df["handle"].astype(str):
-        h = raw_h.strip()
-
-        # Exact match: keep as-is
-        if h in stand_handles:
-            corrected[h] = h
-            continue
-
-        # Fuzzy match handle -> any standings handle
-        best_score, best_handle = 0.0, None
-        for s in stand_handles:
-            score = SequenceMatcher(None, h.lower(), s.lower()).ratio()
-            if score > best_score:
-                best_score, best_handle = score, s
-
-        # "Nandio" vs "nandorio" is ~0.85, so 0.75 catches it safely
-        if best_score >= 0.75 and best_handle:
-            corrected[h] = best_handle
-
-    # Apply corrections back into owners_df.handle
-    owners_df["handle"] = (
-        owners_df["handle"]
-        .astype(str)
-        .map(lambda h: corrected.get(h.strip(), h.strip()))
-    )
-
-# Now that handles are corrected to match stand_df, rebuild the maps
-owner_map = dict(zip(owners_df["handle"], owners_df["name"]))
-name_to_handle = {n: h for h, n in zip(owners_df["handle"], owners_df["name"])}
-
-# Attach Sleeper handles from owners_df to standings so we can match by handle,
-# not just by display name. This helps for Nando / Mekel where names may differ.
-if not stand_df.empty and not owners_df.empty:
-    try:
-        tmp = owners_df.rename(columns={"name": "owner_name"})
-        # left join: keep all standings rows, add "handle" when we find a match
-        stand_df = stand_df.merge(
-            tmp[["owner_name", "handle"]],
-            on="owner_name",
-            how="left",
-        )
-    except Exception:
-        # if merge fails for any reason, just keep the original standings
-        pass
-
 # ---------- selection ----------
 team_names = sorted(owners_df["name"])
 
@@ -1806,7 +1679,8 @@ with tc:
         on_change=_sync_desktop_team_picker,
     )
     st.session_state["team_name"] = sel_name
-    sel_handle = name_to_handle.get(sel_name)
+    selected_team = owners_df[owners_df["name"].eq(sel_name)].iloc[0]
+    sel_handle = selected_team.get("handle")
 
 # --- compute stats from standings (live) ---
 record_txt = "0 – 0"
@@ -1815,7 +1689,12 @@ sp_val = 0          # Standing Points
 ppg_val = 0.0
 
 if not stand_df.empty:
-    row = match_standings_row(stand_df, sel_name, sel_handle)
+    row = resolve_team_standings_row(
+        stand_df,
+        sleeper_roster_id=selected_team.get("sleeper_roster_id"),
+        sleeper_owner_id=selected_team.get("sleeper_owner_id"),
+        identities_by_roster_id=load_sleeper_team_identities(SLEEPER_LEAGUE_ID),
+    )
     if not row.empty:
         r = row.iloc[0]
         w  = int(r.get("wins", 0) or 0)

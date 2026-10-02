@@ -553,6 +553,9 @@ def build_standings_from_sleeper(sleeper_league_id: str) -> pd.DataFrame:
         return pd.DataFrame()
 
     frames = []
+    # Carry each row's Sleeper roster id so pages match teams by id,
+    # not by the display name shown in the Team column.
+    team_roster_ids = {}
 
     # Only finished weeks count; the week being played is left out.
     for week in range(1, latest_week + 1):
@@ -597,6 +600,9 @@ def build_standings_from_sleeper(sleeper_league_id: str) -> pd.DataFrame:
             na = owner_map.get(na, na)
             nb = owner_map.get(nb, nb)
 
+            team_roster_ids[na] = a.get("roster_id")
+            team_roster_ids[nb] = b.get("roster_id")
+
             results.append((na, pa, pb))
             results.append((nb, pb, pa))
 
@@ -627,6 +633,7 @@ def build_standings_from_sleeper(sleeper_league_id: str) -> pd.DataFrame:
 
     out["PF Per Game"] = (out["PF"] / out["Games"]).round(1)
     out["PA Per Game"] = (out["PA"] / out["Games"]).round(1)
+    out["sleeper_roster_id"] = out["Team"].map(team_roster_ids)
 
     return out
 
