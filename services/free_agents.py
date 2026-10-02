@@ -293,6 +293,12 @@ def load_ranking_ppg(
     Load last-season and current-season PPG for the
     free-agent market.
 
+    PPG comes from the nightly weekly stats
+    (nfl_player_stats, regular season only), so the
+    current season fills in as games are played.
+    player_season_stats only covers completed seasons and
+    fills any player the weekly feed is missing.
+
     Before the active season has any completed-game scoring,
     the market ranks by the previous season.
 
@@ -313,89 +319,37 @@ def load_ranking_ppg(
 
     last_season = season - 1
 
-    try:
-        rows = (
-            sb.table(
-                "player_season_stats"
-            )
-            .select(
-                "sleeper_id,"
-                "season,"
-                "games,"
-                "fantasy_ppg_ppr"
-            )
-            .in_(
-                "season",
-                [
-                    last_season,
-                    season,
-                ],
-            )
-            .execute()
-            .data
-            or []
-        )
+    weekly_ppg = _weekly_ppg_by_season(
+        sb,
+        (
+            last_season,
+            season,
+        ),
+    )
 
-    except Exception:
-        return PpgRankingState(
-            active_season=season,
-            last_season=last_season,
-            active_season_started=False,
-            current_ppg={},
-            last_ppg={},
-            ranking_ppg={},
-        )
+    season_table_ppg = _season_table_ppg_by_season(
+        sb,
+        (
+            last_season,
+            season,
+        ),
+    )
 
     current_ppg: dict[
         str,
         float,
-    ] = {}
+    ] = {
+        **season_table_ppg.get(season, {}),
+        **weekly_ppg.get(season, {}),
+    }
 
     last_ppg: dict[
         str,
         float,
-    ] = {}
-
-    for row in rows:
-        row_season = _safe_season(
-            row.get(
-                "season"
-            )
-        )
-
-        player_id = _player_id(
-            row
-        )
-
-        games = _safe_nonnegative_int(
-            row.get(
-                "games"
-            )
-        )
-
-        ppg = _safe_float(
-            row.get(
-                "fantasy_ppg_ppr"
-            )
-        )
-
-        if (
-            not player_id
-            or games is None
-            or games <= 0
-            or ppg is None
-        ):
-            continue
-
-        if row_season == season:
-            current_ppg[
-                player_id
-            ] = ppg
-
-        elif row_season == last_season:
-            last_ppg[
-                player_id
-            ] = ppg
+    ] = {
+        **season_table_ppg.get(last_season, {}),
+        **weekly_ppg.get(last_season, {}),
+    }
 
     active_season_started = bool(
         current_ppg
@@ -415,6 +369,211 @@ def load_ranking_ppg(
         last_ppg=last_ppg,
         ranking_ppg=ranking_ppg,
     )
+
+
+def _weekly_ppg_by_season(
+    sb: Any,
+    seasons: Sequence[int],
+    *,
+    page_size: int = 1000,
+) -> dict[int, dict[str, float]]:
+    """
+    Regular-season PPR points per game played, from
+    one row per player per week in nfl_player_stats.
+    """
+
+    totals: dict[
+        tuple[int, str],
+        float,
+    ] = {}
+
+    weeks: dict[
+        tuple[int, str],
+        set[int],
+    ] = {}
+
+    for season in seasons:
+        start = 0
+
+        while True:
+            try:
+                batch = (
+                    sb.table(
+                        "nfl_player_stats"
+                    )
+                    .select(
+                        "sleeper_id,"
+                        "season,"
+                        "week,"
+                        "season_type,"
+                        "fantasy_points_ppr"
+                    )
+                    .eq(
+                        "season",
+                        season,
+                    )
+                    .eq(
+                        "season_type",
+                        "REG",
+                    )
+                    .range(
+                        start,
+                        start + page_size - 1,
+                    )
+                    .execute()
+                    .data
+                    or []
+                )
+
+            except Exception:
+                break
+
+            for row in batch:
+                player_id = _player_id(
+                    row
+                )
+
+                week = _safe_nonnegative_int(
+                    row.get(
+                        "week"
+                    )
+                )
+
+                points = _safe_float(
+                    row.get(
+                        "fantasy_points_ppr"
+                    )
+                )
+
+                if (
+                    not player_id
+                    or week is None
+                    or points is None
+                ):
+                    continue
+
+                key = (
+                    season,
+                    player_id,
+                )
+
+                totals[key] = (
+                    totals.get(key, 0.0)
+                    + points
+                )
+
+                weeks.setdefault(
+                    key,
+                    set(),
+                ).add(week)
+
+            if len(batch) < page_size:
+                break
+
+            start += page_size
+
+    ppg: dict[
+        int,
+        dict[str, float],
+    ] = {}
+
+    for (
+        season,
+        player_id,
+    ), total in totals.items():
+        games = len(
+            weeks[
+                (
+                    season,
+                    player_id,
+                )
+            ]
+        )
+
+        ppg.setdefault(
+            season,
+            {},
+        )[player_id] = round(
+            total / games,
+            3,
+        )
+
+    return ppg
+
+
+def _season_table_ppg_by_season(
+    sb: Any,
+    seasons: Sequence[int],
+) -> dict[int, dict[str, float]]:
+
+    try:
+        rows = (
+            sb.table(
+                "player_season_stats"
+            )
+            .select(
+                "sleeper_id,"
+                "season,"
+                "games,"
+                "fantasy_ppg_ppr"
+            )
+            .in_(
+                "season",
+                list(
+                    seasons
+                ),
+            )
+            .execute()
+            .data
+            or []
+        )
+
+    except Exception:
+        return {}
+
+    ppg: dict[
+        int,
+        dict[str, float],
+    ] = {}
+
+    for row in rows:
+        row_season = _safe_season(
+            row.get(
+                "season"
+            )
+        )
+
+        player_id = _player_id(
+            row
+        )
+
+        games = _safe_nonnegative_int(
+            row.get(
+                "games"
+            )
+        )
+
+        value = _safe_float(
+            row.get(
+                "fantasy_ppg_ppr"
+            )
+        )
+
+        if (
+            row_season not in seasons
+            or not player_id
+            or games is None
+            or games <= 0
+            or value is None
+        ):
+            continue
+
+        ppg.setdefault(
+            row_season,
+            {},
+        )[player_id] = value
+
+    return ppg
 
 
 def calculate_lifetime_points(

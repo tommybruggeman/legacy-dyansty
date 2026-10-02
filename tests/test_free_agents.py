@@ -465,6 +465,34 @@ class FreeAgentServiceTest(unittest.TestCase):
         )
         self.assertEqual([row.sleeper_player_id for row in result.current], ["p-1", "p-2"])
 
+    def test_current_season_ppg_comes_from_weekly_stats(self):
+        ppg = load_ranking_ppg(FakeClient({
+            "nfl_player_stats": [
+                {"sleeper_id": "p-1", "season": 2026, "week": 1, "season_type": "REG", "fantasy_points_ppr": 20},
+                {"sleeper_id": "p-1", "season": 2026, "week": 2, "season_type": "REG", "fantasy_points_ppr": 10},
+                {"sleeper_id": "p-2", "season": 2026, "week": 1, "season_type": "REG", "fantasy_points_ppr": 30},
+                {"sleeper_id": "p-2", "season": 2025, "week": 1, "season_type": "REG", "fantasy_points_ppr": 8},
+                {"sleeper_id": "p-2", "season": 2025, "week": 19, "season_type": "POST", "fantasy_points_ppr": 50},
+            ],
+            "player_season_stats": [
+                {"sleeper_id": "p-1", "season": 2025, "games": 17, "fantasy_ppg_ppr": 12},
+                {"sleeper_id": "p-2", "season": 2025, "games": 17, "fantasy_ppg_ppr": 99},
+            ],
+        }), active_season=2026)
+        self.assertTrue(ppg.active_season_started)
+        self.assertEqual(ppg.current_ppg, {"p-1": 15.0, "p-2": 30.0})
+        self.assertEqual(ppg.last_ppg, {"p-1": 12.0, "p-2": 8.0})
+        self.assertEqual(ppg.ranking_ppg, ppg.current_ppg)
+        result = build_free_agent_results(
+            [player("p-1", "Two Games"), player("p-2", "One Big Game")],
+            state(), active_season=2026,
+            last_season_ppg_by_player=ppg.last_ppg,
+            current_season_ppg_by_player=ppg.current_ppg,
+            ranking_ppg_by_player=ppg.ranking_ppg,
+        )
+        self.assertEqual([row.sleeper_player_id for row in result.current], ["p-2", "p-1"])
+        self.assertEqual([row.current_season_ppg for row in result.current], [30.0, 15.0])
+
     def test_open_market_roster_status_filters(self):
         result = build_free_agent_results(
             [player("p-1", "Rostered"), player("p-2", "Unsigned", nfl_team=None)], state(), active_season=2026
