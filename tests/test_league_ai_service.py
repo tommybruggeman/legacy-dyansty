@@ -199,7 +199,10 @@ class ClientLoopTests(unittest.TestCase):
 
     def test_missing_key_without_sdk(self):
         cfg = LeagueAIConfig(enabled=True, api_key_present=False, model="m", max_output_tokens=100, max_tool_calls=1, timeout_seconds=1)
-        result = ClaudeClient(cfg).run(system=[], messages=[{"role": "user", "content": "q"}])
+        from unittest import mock
+
+        with mock.patch("league_ai.client.api_key", return_value=""):  # a local secrets file must not leak into this test
+            result = ClaudeClient(cfg).run(system=[], messages=[{"role": "user", "content": "q"}])
         self.assertIn(result.error_code, {"missing_api_key", "sdk_unavailable"})
         self.assertTrue(human_message(result.error_code))
 
