@@ -14,6 +14,10 @@ from league_ai.service import AnswerResult, LeagueDataSources, answer, build_pac
 from league_ai.tools.nfl import build_registry
 from league_ai.tools.history import history_tools, pack_history_summary
 from league_ai.memory import Memory
+from league_ai.learning import Ledger, learning_pack_lines
+from league_ai.routing import effort_for, topic as question_topic
+from league_ai.usage import record as record_usage, row_from_trace
+from league_ai.tools.nfl import NflData
 from services.team_roster_state import load_team_state
 from league_ai.tools import ToolRegistry
 
@@ -85,13 +89,59 @@ def _cached_pack(league_id: str, season: int, league_team_id: str, user_id: str,
         history_loader=lambda: pack_history_summary(client, league_id),
         private_memory_loader=memory.private_notes,
         league_notebook_loader=memory.league_notes,
+        learning_loader=lambda: learning_pack_lines(client, league_id, user_id, season),
         data_freshness={"league state": "live from the app database", "standings": "live from Sleeper", **data_freshness(client)},
     )
     asker = Asker(user_id=user_id, league_id=league_id, league_team_id=league_team_id, owner_name=owner_name, team_name=team_name, role=role)
     return build_pack(sources, asker)
 
 
-def run_league_ai(*, request_context: Any, team: dict, question: str, history: list[dict[str, str]], tools: ToolRegistry | None = None) -> AnswerResult:
+TOOL_STATUS = {
+    "get_player_profile": "Pulling up the player profile",
+    "get_player_stats": "Checking the stats",
+    "compare_players": "Comparing players",
+    "get_injury_report": "Checking the injury report",
+    "get_prospects": "Scouting the prospects",
+    "get_market_values": "Checking market values",
+    "search_players": "Searching the player pool",
+    "simulate_trade": "Running the trade through the cap",
+    "get_league_history": "Digging through league history",
+    "get_waiver_prices": "Looking up what pickups cost here",
+    "get_trade_tendencies": "Checking who trades with whom",
+    "get_matchup_history": "Checking matchup history",
+    "remember": "Making a note",
+    "forget": "Updating my notes",
+    "log_prediction": "Logging this call so I can grade it after the games",
+    "get_my_track_record": "Checking how my past calls graded",
+}
+
+
+class LiveAnswer:
+    """Streams an answer into the chat bubble: a status line for each tool, text as it arrives."""
+
+    def __init__(self) -> None:
+        self.status = st.empty()
+        self.body = st.empty()
+        self.text = ""
+        self.status.caption("Thinking…")
+
+    def __call__(self, kind: str, payload: Any) -> None:
+        if kind == "round":
+            self.text = ""  # text before a tool call is replaced by the next round's answer
+        elif kind == "tool":
+            self.status.caption(TOOL_STATUS.get(str(payload), "Checking the data") + "…")
+            self.body.empty()
+        elif kind == "text":
+            self.text += str(payload or "")
+            self.status.empty()
+            self.body.markdown(self.text.replace("$", "\\$") + " ▌")
+
+    def finish(self) -> None:
+        self.status.empty()
+        self.body.empty()
+
+
+def run_league_ai(*, request_context: Any, team: dict, question: str, history: list[dict[str, str]], tools: ToolRegistry | None = None, on_event: Any = None, week_context: str | None = None) -> AnswerResult:
     client = auth_client()
     league_id = request_context.league_id
     league = _league_row(client, league_id)
@@ -110,13 +160,22 @@ def run_league_ai(*, request_context: Any, team: dict, question: str, history: l
     if tools is None:
         state = _cached_state(league_id, int(request_context.current_season), request_context.user_id, epoch)
         rules = _cached_rules(league_id, request_context.user_id, epoch)
-        tools = build_registry(client, league_state=state, salary_cap=rules.get("salary_cap", 225), dead_cap_pct=float(rules.get("default_dead_cap_pct", 50) or 50), extra=[*history_tools(client, league_id), *memory.tools()])
-    result = answer(question=question, history=history, asker=asker, sources=sources, tools=tools, client=ClaudeClient(), pack=pack)
+        nfl = NflData(client, league_state=state)
+        ledger = Ledger(client, league_id=league_id, user_id=request_context.user_id, league_team_id=request_context.league_team_id,
+                        season=int(request_context.current_season), week=_cached_nfl_week(),
+                        resolve_player=lambda name: next(iter(nfl.find_players(name, limit=1)), None),
+                        conversation_id=lambda: st.session_state.get(CONVERSATION_KEY))
+        tools = build_registry(client, league_state=state, salary_cap=rules.get("salary_cap", 225), dead_cap_pct=float(rules.get("default_dead_cap_pct", 50) or 50),
+                               extra=[*history_tools(client, league_id), *memory.tools(), *ledger.tools()])
+    result = answer(question=question, history=history, asker=asker, sources=sources, tools=tools, client=ClaudeClient(), pack=pack, on_event=on_event,
+                    week_context=week_context, turn_effort=effort_for(question))
     if any(name in ("remember", "forget") for name in result.trace.tool_calls):
         st.session_state[MEMORY_EPOCH_KEY] = memory_epoch + 1  # rebuild the pack next turn so new notes show
     if result.ok:
         full = [*history, {"role": "user", "content": question}, {"role": "assistant", "content": result.text}]
         st.session_state[CONVERSATION_KEY] = memory.save_conversation(st.session_state.get(CONVERSATION_KEY), full)
+    record_usage(client, row_from_trace(result.trace, league_id=league_id, user_id=request_context.user_id, feature="chat",
+                                        topic=question_topic(question), conversation_id=st.session_state.get(CONVERSATION_KEY)))
     return result
 
 
@@ -218,6 +277,8 @@ def render_quick_prompts() -> str | None:
 # ---- Front Office ---------------------------------------------------------------
 
 from league_ai.front_office import (  # noqa: E402
+    mobile_status,
+    brief_fingerprint,
     brief_facts, data_brief, merge_brief, rotating_prompts, build_tiles, current_opponent, generate_brief, head_to_head, load_brief, nfl_week, power_movement, power_rankings, save_brief, season_table, snapshot_power,
 )
 from league_ai.settings_store import apply_sleeper_scoring, fetch_sleeper_scoring, load_settings  # noqa: E402
@@ -310,9 +371,10 @@ def weekly_brief(*, request_context: Any, team: dict, fo: dict, force: bool = Fa
     league_id = request_context.league_id
     season = int(request_context.current_season)
     week = int(fo.get("week") or 0)
+    fingerprint = brief_fingerprint(fo.get("data_brief"))
     if not force:
         cached = load_brief(client, league_id, request_context.user_id, season, week)
-        if cached:
+        if cached and cached.get("_fingerprint") in (None, fingerprint) and not (cached.get("_fingerprint") is None and _brief_older_than(cached, hours=24)):
             return cached
     cfg = load_config()
     if not cfg.ready:
@@ -328,10 +390,23 @@ def weekly_brief(*, request_context: Any, team: dict, fo: dict, force: bool = Fa
     opponent = fo.get("opponent")
     facts = brief_facts(client, state=state, team_id=request_context.league_team_id, owner=owner_name, opponent=opponent, h2h=fo.get("h2h"), standings=fo.get("standings") or [],
                         weakest_slot=fo.get("weakest_slot"), salary_cap=float(fo.get("salary_cap") or 225))
-    sections = generate_brief(pack=pack, tools=None, owner=owner_name, week=week, opponent=opponent["owner_name"] if opponent else None, facts=facts)
+    sections = generate_brief(pack=pack, tools=None, owner=owner_name, week=week, opponent=opponent["owner_name"] if opponent else None, facts=facts,
+                              on_trace=lambda trace: record_usage(client, row_from_trace(trace, league_id=league_id, user_id=request_context.user_id, feature="brief")))
     if sections:
+        sections["_fingerprint"] = fingerprint  # regenerate when injuries or the opponent change
         save_brief(client, league_id, request_context.user_id, request_context.league_team_id, season, week, sections)
     return sections
+
+
+def _brief_older_than(sections: dict, hours: int) -> bool:
+    """Briefs saved before fingerprints existed: refresh once they're a day old."""
+    from datetime import datetime, timedelta, timezone
+
+    try:
+        made = datetime.fromisoformat(str(sections.get("_generated_at")).replace("Z", "+00:00"))
+        return datetime.now(timezone.utc) - made > timedelta(hours=hours)
+    except Exception:
+        return False
 
 
 FRONT_OFFICE_CSS = """
@@ -368,6 +443,52 @@ FRONT_OFFICE_CSS = """
 .st-key-lai_prompts button { border-radius:999px !important; border:1px solid rgba(226,188,91,.4) !important; background:rgba(255,255,255,.03) !important;
              font-size:.85rem !important; padding:.3rem .8rem !important; white-space:nowrap; }
 .st-key-lai_prompts button:hover { border-color:#E2BC5B !important; background:rgba(226,188,91,.12) !important; }
+/* Chip buttons look like pills everywhere */
+[data-testid="stHorizontalBlock"]:has(.fo-chips-marker) button { border-radius:999px !important; border:1px solid rgba(226,188,91,.4) !important;
+             background:rgba(255,255,255,.03) !important; font-size:.85rem !important; padding:.3rem .8rem !important; white-space:nowrap; }
+[data-testid="stHorizontalBlock"]:has(.fo-chips-marker) button:hover { border-color:#E2BC5B !important; background:rgba(226,188,91,.12) !important; }
+[data-testid="stElementContainer"]:has(.fo-chips-marker), [data-testid="stElementContainer"]:has(.fo-footer-marker) { display:none !important; }
+/* ☰ popover: plain glyph, no box, no caret */
+[data-testid="stHorizontalBlock"]:has(.fo-hdr) [data-testid="stPopover"] button { border:none !important; background:transparent !important; font-size:1.5rem !important; padding:0 .2rem !important; color:#F5EBD7 !important; min-height:0 !important; }
+[data-testid="stHorizontalBlock"]:has(.fo-hdr) [data-testid="stPopover"] button svg { display:none !important; }
+[data-testid="stHorizontalBlock"]:has(.fo-hdr) [data-testid="stPopover"] { display:flex; justify-content:flex-end; }
+.fo-mobile { display:none; }
+/* Desktop: no ☰, header spans the row */
+@media (min-width: 641px) {
+  [data-testid="stHorizontalBlock"]:has(.fo-hdr) > [data-testid="stColumn"]:last-child { display:none !important; }
+  [data-testid="stHorizontalBlock"]:has(.fo-hdr) > [data-testid="stColumn"]:first-child { flex:1 1 100% !important; width:100% !important; }
+}
+/* ---- Phone layout: Option A, nothing but the conversation ---- */
+@media (max-width: 640px) {
+  .block-container { padding-top:1.2rem !important; padding-bottom:9.5rem !important; }
+  .fo-tiles, .fo-sec, .fo-brief, .fo-card, .fo-who { display:none !important; }
+  .fo-hdr { padding:0; gap:10px; align-items:center; }
+  .fo-hdr h1 { font-size:1.75rem; }
+  .fo-badge { font-size:.62rem; padding:.18rem .55rem; margin:0; }
+  [data-testid="stHorizontalBlock"]:has(.fo-hdr) { flex-direction:row !important; flex-wrap:nowrap !important; align-items:center !important; border-bottom:1px solid rgba(226,188,91,.16); padding-bottom:.5rem; }
+  [data-testid="stHorizontalBlock"]:has(.fo-hdr) > [data-testid="stColumn"]:first-child { flex:1 1 auto !important; width:auto !important; min-width:0 !important; }
+  [data-testid="stHorizontalBlock"]:has(.fo-hdr) > [data-testid="stColumn"]:last-child { flex:0 0 auto !important; width:auto !important; min-width:0 !important; }
+  .fo-mobile { display:block; text-align:center; opacity:.55; font-size:.8rem; margin:.2rem 0 .2rem; }
+  /* desktop footer hidden on phones (☰ has the same controls) */
+  [data-testid="stHorizontalBlock"]:has(.fo-footer-marker) { display:none !important; }
+  /* starter chips pinned just above the input, scrolling sideways */
+  [data-testid="stHorizontalBlock"]:has(.fo-chips-marker) { position:fixed; left:0; right:0; bottom:6.4rem; z-index:100000; margin:0; padding:.4rem 1rem .5rem;
+             flex-direction:row !important; flex-wrap:nowrap !important; overflow-x:auto; gap:.45rem !important; scrollbar-width:none;
+             background:#0B1615; }
+  [data-testid="stHorizontalBlock"]:has(.fo-chips-marker)::-webkit-scrollbar { display:none; }
+  [data-testid="stHorizontalBlock"]:has(.fo-chips-marker) [data-testid="stColumn"] { flex:0 0 auto !important; width:auto !important; min-width:0 !important; }
+  [data-testid="stHorizontalBlock"]:has(.fo-chips-marker) button { font-size:.82rem !important; padding:.3rem .8rem !important; }
+  /* rounded pill input */
+  [data-testid="stBottom"] > div { padding-top:.4rem !important; }
+  [data-testid="stChatInput"], [data-testid="stChatInput"] > div, [data-testid="stChatInput"] [data-baseweb="textarea"], [data-testid="stChatInput"] [data-baseweb="base-input"] {
+             border-radius:26px !important; }
+  [data-testid="stChatInput"] { border:1px solid rgba(226,188,91,.55) !important; background:rgba(255,255,255,.03) !important; overflow:hidden; }
+  [data-testid="stChatInput"] [data-baseweb="textarea"], [data-testid="stChatInput"] [data-baseweb="base-input"], [data-testid="stChatInput"] textarea { border:none !important; background:transparent !important; box-shadow:none !important; }
+  [data-testid="stChatInput"] textarea { padding-left:.9rem !important; }
+  [data-testid="stChatInputSubmitButton"] { border-radius:50% !important; }
+  [data-testid="stChatMessage"] { padding:.4rem 0; }
+  [data-testid="stChatMessageContent"] { font-size:.95rem; line-height:1.5; }
+}
 </style>
 """
 
@@ -389,6 +510,29 @@ def render_front_office_header(owner_name: str, week: int, freshness: str) -> No
         f'<div class="fo-who"><div class="n">{_esc(owner_name)}</div><div class="m">Week {week} · {_esc(freshness)}</div></div></div>',
         unsafe_allow_html=True,
     )
+
+
+def _svg_avatar(text: str, bg: str, fg: str) -> str:
+    from urllib.parse import quote
+
+    svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">'
+           f'<rect width="64" height="64" rx="14" fill="{bg}"/>'
+           f'<text x="32" y="41" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="26" font-weight="800" fill="{fg}">{text}</text></svg>')
+    return "data:image/svg+xml;utf8," + quote(svg)
+
+
+GM_AVATAR = _svg_avatar("GM", "#E2BC5B", "#0B1615")
+
+
+def owner_avatar(owner_name: str | None) -> str:
+    initial = ((owner_name or "").strip()[:1] or "?").upper()
+    return _svg_avatar(initial, "#C9453B", "#FFFFFF")
+
+
+def render_mobile_status(week: int, tiles: list[dict[str, Any]] | None) -> None:
+    line = mobile_status(week, tiles)
+    if line:
+        st.markdown(f'<div class="fo-mobile">{_esc(line)}</div>', unsafe_allow_html=True)
 
 
 def render_tiles(tiles: list[dict[str, Any]]) -> None:
@@ -423,19 +567,51 @@ def render_brief(brief: dict[str, Any] | None, *, generating: bool = False) -> N
     st.markdown(html_out, unsafe_allow_html=True)
 
 
+def render_report_card(request_context: Any) -> None:
+    """'How my calls have graded': this owner's record, recent graded calls with the diagnosis, and the playbook."""
+    client = auth_client()
+    ledger = Ledger(client, league_id=request_context.league_id, user_id=request_context.user_id, league_team_id=request_context.league_team_id,
+                    season=int(request_context.current_season), week=_cached_nfl_week())
+    rec = ledger.track_record(limit=6)
+    try:
+        lessons = (client.table("league_ai_lessons").select("lesson, evidence_count").eq("league_id", request_context.league_id).eq("active", True)
+                   .order("evidence_count", desc=True).limit(6).execute().data or [])
+    except Exception:
+        lessons = []
+    record = rec.get("record") or {}
+    label = "Assistant GM report card" + (" · " + ", ".join(f"{k.replace('_', '/')} {v}" for k, v in record.items()) if record else "")
+    with st.expander(label, expanded=False):
+        if not record and not rec.get("open_calls"):
+            st.caption("No graded calls yet. Ask who to start, who to add, or whether to take a trade; I log the call and grade it after the games.")
+        elif not record:
+            st.caption(f"{rec['open_calls']} call(s) waiting on games to finish. Grades land the morning after the last game of the week.")
+        for r in rec.get("recent") or []:
+            mark = "✅" if r["result"] == "right" else "❌"
+            st.markdown(f"{mark} **{_esc(r['when'])}** · {_esc(r['call'])} ({_esc(r['points'])})" + (f"  \n<span class='fo-note'>{_esc(r['why'])}</span>" if r.get("why") else ""),
+                        unsafe_allow_html=True)
+        if lessons:
+            st.markdown("**What I've learned in this league**")
+            for l in lessons:
+                st.markdown(f"- {_esc(l['lesson'])}" + (f" <span class='fo-note'>(seen {int(l.get('evidence_count') or 1)}x)</span>" if (l.get("evidence_count") or 1) > 1 else ""),
+                            unsafe_allow_html=True)
+
+
 def render_fo_prompts(week: int | None = None) -> str | None:
     prompts = rotating_prompts(week=week)
     with st.container(key="lai_prompts"):
         cols = st.columns(len(prompts))
-        for col, text in zip(cols, prompts):
+        clicked = None
+        for i, (col, text) in enumerate(zip(cols, prompts)):
             with col:
+                if i == 0:
+                    st.markdown('<span class="fo-chips-marker"></span>', unsafe_allow_html=True)
                 if st.button(text, key=f"fo_prompt_{abs(hash(text))}", use_container_width=True):
-                    return text
-    return None
+                    clicked = text
+    return clicked
 
 
 def front_office_opening(owner_name: str | None, ready: bool = True) -> str:
     first = (owner_name or "").split(" ")[0] or "there"
     if not ready:
         return f"Hey {first}. The Assistant GM isn't configured on this deployment yet."
-    return f"Morning, {first}. Brief's above. What are we working on?"
+    return f"Morning, {first}. What are we working on?"

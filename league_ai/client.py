@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from league_ai.config import LeagueAIConfig, api_key, load_config
 from league_ai.tools import ToolRegistry
@@ -31,6 +31,7 @@ class Trace:
     stop_reason: str | None = None
     error_code: str | None = None
     content_types: list[str] = field(default_factory=list)
+    effort: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -45,6 +46,7 @@ class Trace:
             "stop_reason": self.stop_reason,
             "error_code": self.error_code,
             "content_types": list(self.content_types),
+            "effort": self.effort,
         }
 
 
@@ -119,6 +121,15 @@ class ClaudeClient:
         self._sdk = anthropic.Anthropic(api_key=key, timeout=self.config.timeout_seconds, max_retries=2)
         return self._sdk
 
+    def _call(self, client: Any, kwargs: dict[str, Any], on_event: Callable[[str, Any], None] | None) -> Any:
+        if on_event is not None and hasattr(client.messages, "stream"):
+            with client.messages.stream(**kwargs) as stream:
+                for event in stream:
+                    if _block_attr(event, "type") == "text":
+                        _emit(on_event, "text", _block_attr(event, "text", ""))
+                return stream.get_final_message()
+        return client.messages.create(**kwargs)
+
     def run(
         self,
         *,
@@ -126,7 +137,16 @@ class ClaudeClient:
         messages: list[dict[str, Any]],
         tools: ToolRegistry | None = None,
         max_tool_calls: int | None = None,
+        on_event: Callable[[str, Any], None] | None = None,
+        turn_effort: str | None = None,
     ) -> ClientResult:
+        """Run the tool loop. With on_event, text streams as ("text", delta),
+        each model round starts with ("round", n), and each tool call is announced
+        as ("tool", name) before it runs, so the page can show live progress.
+
+        turn_effort sets effort for this question only, as a per-message effort change
+        placed before the latest user message, which keeps the cached league pack valid.
+        A fixed LEAGUE_AI_EFFORT wins over it."""
         trace = Trace(model=self.config.model)
         start = time.perf_counter()
         limit = self.config.max_tool_calls if max_tool_calls is None else max_tool_calls
@@ -137,6 +157,10 @@ class ClaudeClient:
             return ClientResult(False, "", trace, str(exc))
 
         history = [dict(m) for m in messages]
+        per_turn = None if self.config.effort else turn_effort
+        if per_turn and history and history[-1].get("role") == "user":
+            history.insert(len(history) - 1, {"role": "system", "content": [], "output_config": {"effort": per_turn}})
+        trace.effort = self.config.effort or per_turn
         tool_specs = tools.specs() if tools and len(tools) else []
         text_out = ""
         try:
@@ -149,7 +173,22 @@ class ClaudeClient:
                 }
                 if tool_specs:
                     kwargs["tools"] = tool_specs
-                response = client.messages.create(**kwargs)
+                if self.config.effort:
+                    kwargs["output_config"] = {"effort": self.config.effort}
+                if per_turn:
+                    kwargs["extra_headers"] = {"anthropic-beta": PER_MESSAGE_EFFORT_BETA}
+                _emit(on_event, "round", trace.rounds + 1)
+                try:
+                    response = self._call(client, kwargs, on_event)
+                except Exception as exc:
+                    if not per_turn or _classify(exc) != "bad_request":
+                        raise
+                    # per-message effort rejected (beta unavailable): drop it and answer at the default effort
+                    history[:] = [m for m in history if not (m.get("role") == "system" and m.get("output_config"))]
+                    kwargs.pop("extra_headers", None)
+                    per_turn = None
+                    trace.effort = None
+                    response = self._call(client, kwargs, on_event)
                 trace.rounds += 1
                 _usage(trace, response)
                 content = _block_attr(response, "content") or []
@@ -167,6 +206,7 @@ class ClaudeClient:
                         result_text = "Tool call limit reached for this answer. Answer now with the information you already have, and say what you could not check."
                     else:
                         trace.tool_calls.append(name)
+                        _emit(on_event, "tool", name)
                         result_text = tools.call(name, _block_attr(block, "input") or {}) if tools else "{}"
                     results.append({"type": "tool_result", "tool_use_id": _block_attr(block, "id"), "content": result_text})
                 history.append({"role": "user", "content": results})
@@ -183,6 +223,18 @@ class ClaudeClient:
         if trace.stop_reason == "max_tokens":
             text_out += "\n\n_(answer cut off: output budget reached)_"
         return ClientResult(True, text_out, trace)
+
+
+PER_MESSAGE_EFFORT_BETA = "mid-conversation-output-config-2026-07-01"
+
+
+def _emit(on_event: Callable[[str, Any], None] | None, kind: str, payload: Any) -> None:
+    if on_event is None:
+        return
+    try:  # a display callback must never break the answer
+        on_event(kind, payload)
+    except Exception:
+        pass
 
 
 def _classify(exc: BaseException) -> str:
@@ -205,6 +257,8 @@ def _classify(exc: BaseException) -> str:
         return "rate_limited"
     if "auth" in lowered:
         return "auth_error"
+    if "badrequest" in lowered:
+        return "bad_request"
     return "provider_error"
 
 
@@ -217,7 +271,7 @@ HUMAN_MESSAGES = {
     "connection_error": "League AI couldn't reach Anthropic. Check the network and try again.",
     "bad_request": "League AI sent a request Anthropic rejected. This is a bug worth reporting.",
     "empty_response": "League AI returned nothing. Try rephrasing the question.",
-    "output_budget_exhausted": "League AI ran out of output budget before answering. Raise LEAGUE_AI_MAX_OUTPUT_TOKENS or ask a narrower question.",
+    "output_budget_exhausted": "That one was too big to finish in a single answer. Try asking about one part of it at a time.",
     "provider_error": "League AI hit an unexpected provider error. Try again.",
     "disabled": "League AI is turned off for this deployment.",
     "league_state_unavailable": "League AI could not load the league state. Open My Team first, then try again.",

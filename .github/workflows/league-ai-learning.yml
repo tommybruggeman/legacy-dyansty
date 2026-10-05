@@ -1,0 +1,41 @@
+name: League AI learning
+
+on:
+  schedule:
+    # 10:30 UTC daily, after the 09:00 NFL data sync. Grades any calls whose games are final
+    # (in practice Tuesday morning, after Monday night), then updates the AI's playbook.
+    - cron: "30 10 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Grade and print without writing anything"
+        type: boolean
+        default: false
+
+concurrency:
+  group: league-ai-learning
+  cancel-in-progress: false
+
+jobs:
+  learn:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240  # batched grading usually finishes within the hour; the job waits up to 3h
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: pip install supabase requests pandas anthropic
+
+      - name: Grade calls and update the playbook
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          ARGS=""
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then ARGS="--dry-run"; fi
+          python -m league_ai.learning_job $ARGS

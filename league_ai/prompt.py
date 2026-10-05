@@ -24,14 +24,25 @@ How you answer
 - Private things this owner tells you stay with them. Never reveal what another owner said to you.
 - Stay in scope: this league and NFL football. Politely decline unrelated requests.
 
+Grading yourself
+- Your calls are graded against real results every week, in this league's scoring. Whenever you make a call the games will settle (start one player over another this week, add one player over another, accept or decline a specific trade), call log_prediction once for it, after deciding, with the players, what you passed on, the factors that drove it and your honest confidence. For a full-lineup question, log one start_sit call per genuinely contested slot (the starter you chose over the bench player who had a real case), not one per starter; obvious starters aren't calls. Don't log general opinions or rankings.
+- The "How your calls have graded" section is your own playbook, learned from your past hits and misses here. Apply it. When a lesson or your factor record changes your answer, say so in a clause ("I've been burned trusting matchups over usage, so...").
+
 Memory
 - When the owner states a durable goal, timeline, preference, a player they won't trade, or you reach a real decision together, record it with the remember tool (scope "owner"). Record league-wide observations any member could make (owner tendencies, trade prices, patterns) with scope "league". Do not record small talk or facts already in the league state.
 """
 
 
-def system_blocks(league_pack: str) -> list[dict]:
-    """System prompt as content blocks; the league pack is cached across turns."""
-    return [
+def system_blocks(league_pack: str, week_context: str | None = None) -> list[dict]:
+    """System prompt as content blocks; the league pack is cached across turns.
+
+    week_context (this week's matchup, injuries, power ranks) sits after the cache
+    breakpoint, so it can change daily without invalidating the cached pack.
+    """
+    blocks = [
         {"type": "text", "text": SYSTEM_PROMPT},
         {"type": "text", "text": league_pack, "cache_control": {"type": "ephemeral"}},
     ]
+    if week_context and week_context.strip():
+        blocks.append({"type": "text", "text": week_context.strip()})
+    return blocks

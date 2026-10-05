@@ -52,6 +52,7 @@ class LeagueDataSources:
     state_loader: Callable[[], Mapping[str, Any]] | None = None
     private_memory_loader: Callable[[], list[str]] | None = None
     league_notebook_loader: Callable[[], list[str]] | None = None
+    learning_loader: Callable[[], list[str]] | None = None
     data_freshness: dict[str, str] = field(default_factory=dict)
 
 
@@ -92,6 +93,7 @@ def build_pack(sources: LeagueDataSources, asker: Asker) -> str:
         past_seasons=_safe(sources.history_loader, []),
         private_memory=_safe(sources.private_memory_loader, []),
         league_notebook=_safe(sources.league_notebook_loader, []),
+        learning=_safe(sources.learning_loader, []),
         data_freshness=dict(sources.data_freshness),
     )
     return build_league_pack(inputs)
@@ -124,6 +126,9 @@ def answer(
     client: ClaudeClient | None = None,
     config: LeagueAIConfig | None = None,
     pack: str | None = None,
+    on_event: Callable[[str, Any], None] | None = None,
+    week_context: str | None = None,
+    turn_effort: str | None = None,
 ) -> AnswerResult:
     config = config or load_config()
     if not config.enabled:
@@ -144,5 +149,5 @@ def answer(
         messages.append({"role": "user", "content": question.strip()})
 
     runner = client or ClaudeClient(config)
-    result: ClientResult = runner.run(system=system_blocks(league_pack), messages=messages, tools=tools)
+    result: ClientResult = runner.run(system=system_blocks(league_pack, week_context), messages=messages, tools=tools, on_event=on_event, turn_effort=turn_effort)
     return AnswerResult(result.ok, result.text, result.trace, result.error_code, pack_chars=len(league_pack))

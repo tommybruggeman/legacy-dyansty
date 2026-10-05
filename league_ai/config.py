@@ -11,9 +11,10 @@ from dataclasses import dataclass
 
 
 DEFAULT_MODEL = "claude-sonnet-5-5"
-DEFAULT_MAX_OUTPUT_TOKENS = 12000  # adaptive thinking tokens count against this
+DEFAULT_MAX_OUTPUT_TOKENS = 12000  # thinking tokens count against this (Sonnet 5.5 thinks by default)
 DEFAULT_MAX_TOOL_CALLS = 15
 DEFAULT_TIMEOUT_SECONDS = 60.0
+EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
 
 
 def _setting(name: str) -> str:
@@ -43,6 +44,7 @@ class LeagueAIConfig:
     max_output_tokens: int
     max_tool_calls: int
     timeout_seconds: float
+    effort: str | None = None  # None = the model's default; set LEAGUE_AI_EFFORT to override
 
     @property
     def ready(self) -> bool:
@@ -69,6 +71,7 @@ def load_config() -> LeagueAIConfig:
         max_output_tokens=_int("LEAGUE_AI_MAX_OUTPUT_TOKENS", DEFAULT_MAX_OUTPUT_TOKENS, 1000, 32000),
         max_tool_calls=_int("LEAGUE_AI_MAX_TOOL_CALLS", DEFAULT_MAX_TOOL_CALLS, 0, 30),
         timeout_seconds=_float("LEAGUE_AI_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS),
+        effort=(_setting("LEAGUE_AI_EFFORT").lower() if _setting("LEAGUE_AI_EFFORT").lower() in EFFORT_LEVELS else None),
     )
 
 

@@ -8,16 +8,22 @@ from components.sidebar_nav import render_nav
 from auth import current_user, require_login
 from gm_assistant.data import load_gm_context
 from gm_assistant.request_context import AssistantRequestContext
+from league_ai.front_office import week_context as _week_context
 from league_ai.page_glue import (
     CONVERSATION_KEY,
     front_office_data,
     front_office_opening,
+    GM_AVATAR,
     league_ai_available,
+    LiveAnswer,
+    owner_avatar,
     list_conversations,
     load_conversation,
     render_brief,
     render_fo_prompts,
     render_front_office_header,
+    render_mobile_status,
+    render_report_card,
     render_tiles,
     run_league_ai,
     start_new_conversation,
@@ -82,8 +88,69 @@ except Exception as exc:  # the chat still works if the header data fails
     print(f"FRONT_OFFICE_HEADER_ERROR {type(exc).__name__}: {exc}", flush=True)
 
 loading_placeholder.empty()
-render_front_office_header(owner_team_name, fo["week"] if fo else 0, _ai_status)
+_h_left, _h_right = st.columns([6, 1])
+with _h_left:
+    render_front_office_header(owner_team_name, fo["week"] if fo else 0, _ai_status)
 
+# ----------------------------
+# CHAT STATE (opens clean; past threads via the footer / phone menu)
+# ----------------------------
+history_key = f"gm_messages:{user_id}:{league_id}:{league_team_id}:front_office"
+pending_hash_key = f"gm_pending_prompt_hash:{user_id}:{league_id}:{league_team_id}:front_office"
+
+if history_key not in st.session_state:
+    st.session_state[history_key] = [{"role": "assistant", "content": front_office_opening(owner_team_name, _ai_ok)}]
+
+gm_messages = st.session_state[history_key]
+
+
+def _conversation_controls(suffix: str) -> None:
+    """New conversation + past conversations (footer on both desktop and phone)."""
+    show_key = f"fo_show_past_{suffix}"
+    if suffix == "menu":
+        c_new = c_past = st.container()
+    else:
+        c_new, c_past, _ = st.columns([1.2, 1.5, 6])
+    with c_new:
+        if suffix == "footer":
+            st.markdown('<span class="fo-footer-marker"></span>', unsafe_allow_html=True)
+        if st.button("New conversation", key=f"fo_new_conversation_{suffix}"):
+            start_new_conversation()
+            st.session_state[history_key] = [{"role": "assistant", "content": front_office_opening(owner_team_name, _ai_ok)}]
+            st.session_state.pop(show_key, None)
+            st.rerun()
+    with c_past:
+        if suffix == "menu":
+            st.session_state[show_key] = True
+        elif st.button("Past conversations", key=f"fo_past_conversations_{suffix}"):
+            st.session_state[show_key] = not st.session_state.get(show_key, False)
+    if st.session_state.get(show_key):
+        past = list_conversations(request_context)  # titles only; one small query
+        if not past:
+            st.caption("No saved conversations yet.")
+            return
+        labels = [f"{str(c.get('updated_at') or '')[:10]} · {c.get('title') or 'Conversation'}" for c in past]
+        choice = st.selectbox("Open a past conversation", ["—", *labels], key=f"fo_past_choice_{suffix}", label_visibility="collapsed")
+        if choice != "—":
+            chosen = past[labels.index(choice)]
+            loaded = load_conversation(request_context, str(chosen["id"]))
+            if loaded:
+                st.session_state[history_key] = loaded
+                st.session_state.pop(show_key, None)
+                st.session_state.pop(f"fo_past_choice_{suffix}", None)
+                st.rerun()
+
+
+# Phone: ☰ menu in the header corner (desktop hides it and uses the footer)
+with _h_right:
+    with st.popover("☰"):
+        _conversation_controls("menu")
+
+# Phone: one grey status line under the header
+if fo:
+    render_mobile_status(fo["week"], fo["tiles"])
+
+# Tiles + weekly brief (desktop only; the phone CSS hides them)
 brief_slot = None
 if fo:
     render_tiles(fo["tiles"])
@@ -95,20 +162,17 @@ else:
 if not _ai_ok:
     st.warning(_ai_status)
 
-# ----------------------------
-# CHAT STATE (opens clean; past threads via the footer)
-# ----------------------------
-history_key = f"gm_messages:{user_id}:{league_id}:{league_team_id}:front_office"
-pending_hash_key = f"gm_pending_prompt_hash:{user_id}:{league_id}:{league_team_id}:front_office"
-
-if history_key not in st.session_state:
-    st.session_state[history_key] = [{"role": "assistant", "content": front_office_opening(owner_team_name, _ai_ok)}]
-
-gm_messages = st.session_state[history_key]
+try:
+    render_report_card(request_context)
+except Exception as exc:  # the report card is optional; never block the chat
+    print(f"FRONT_OFFICE_REPORT_CARD_ERROR {type(exc).__name__}: {exc}", flush=True)
 
 _clicked = render_fo_prompts(fo["week"] if fo else None)
 if _clicked:
     st.session_state.gm_pending_prompt = _clicked
+
+
+_me_avatar = owner_avatar(owner_team_name)
 
 
 def _render_chat_markdown(text: str) -> None:
@@ -117,7 +181,7 @@ def _render_chat_markdown(text: str) -> None:
 
 
 for msg in gm_messages:
-    with st.chat_message(msg["role"], avatar=("🏈" if msg["role"] == "assistant" else None)):
+    with st.chat_message(msg["role"], avatar=(GM_AVATAR if msg["role"] == "assistant" else _me_avatar)):
         _render_chat_markdown(msg["content"])
 
 # ----------------------------
@@ -132,49 +196,26 @@ if prompt:
         st.stop()
     st.session_state[pending_hash_key] = prompt_hash
     gm_messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
+    with st.chat_message("user", avatar=_me_avatar):
         _render_chat_markdown(prompt)
-    with st.chat_message("assistant", avatar="🏈"):
-        with st.spinner("Working on it..."):
-            result = run_league_ai(request_context=request_context, team=team, question=prompt, history=gm_messages[:-1])
-            print(result.trace_line(), flush=True)
-            response = result.text if result.ok else result.human_error
-            if result.ok:
-                _render_chat_markdown(response)
-            else:
-                st.error(response)
-            st.session_state.pop(pending_hash_key, None)
+    with st.chat_message("assistant", avatar=GM_AVATAR):
+        live = LiveAnswer()
+        result = run_league_ai(request_context=request_context, team=team, question=prompt, history=gm_messages[:-1], on_event=live,
+                               week_context=_week_context(fo, owner_team_name))
+        live.finish()
+        print(result.trace_line(), flush=True)
+        response = result.text if result.ok else result.human_error
+        if result.ok:
+            _render_chat_markdown(response)
+        else:
+            st.error(response)
+        st.session_state.pop(pending_hash_key, None)
     gm_messages.append({"role": "assistant", "content": response})
 
 # ----------------------------
-# FOOTER: new / past conversations
+# FOOTER (desktop): new / past conversations
 # ----------------------------
-f1, f2, f3 = st.columns([1.2, 1.5, 6])
-with f1:
-    if st.button("New conversation", key="fo_new_conversation"):
-        start_new_conversation()
-        st.session_state[history_key] = [{"role": "assistant", "content": front_office_opening(owner_team_name, _ai_ok)}]
-        st.session_state.pop("fo_show_past", None)
-        st.rerun()
-with f2:
-    if st.button("Past conversations", key="fo_past_conversations"):
-        st.session_state["fo_show_past"] = not st.session_state.get("fo_show_past", False)
-
-if st.session_state.get("fo_show_past"):
-    past = list_conversations(request_context)  # titles only; one small query
-    if not past:
-        st.caption("No saved conversations yet.")
-    else:
-        labels = [f"{str(c.get('updated_at') or '')[:10]} · {c.get('title') or 'Conversation'}" for c in past]
-        choice = st.selectbox("Open a past conversation", ["—", *labels], key="fo_past_choice", label_visibility="collapsed")
-        if choice != "—":
-            chosen = past[labels.index(choice)]
-            loaded = load_conversation(request_context, str(chosen["id"]))
-            if loaded:
-                st.session_state[history_key] = loaded
-                st.session_state.pop("fo_show_past", None)
-                st.session_state.pop("fo_past_choice", None)
-                st.rerun()
+_conversation_controls("footer")
 
 # ----------------------------
 # WEEKLY BRIEF (filled last so the page is usable immediately; cached per week)

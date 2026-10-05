@@ -161,3 +161,66 @@ class DataBriefTests(unittest.TestCase):
         self.assertEqual(merged["injuries"]["call"], "Start X.")
         self.assertEqual(merged["matchup"]["stakes"], "Big game.")
         self.assertEqual(merged["injuries"]["items"], b["injuries"]["items"])
+
+
+class MobileStatusTests(unittest.TestCase):
+    def test_one_line_from_tiles(self):
+        from league_ai.front_office import mobile_status
+
+        tiles = [
+            {"value": "3-0", "label": "Record · 2nd of 10", "tone": "good"},
+            {"value": "RB", "label": "Weakest spot · -4.1 vs median", "tone": "warn"},
+            {"value": "vs Burruel", "label": "Week 4 · H2H 1-3", "tone": None},
+            {"value": "$7", "label": "Cap space", "tone": "warn"},
+        ]
+        self.assertEqual(mobile_status(4, tiles), "Week 4 · 3-0, 2nd of 10 · $7 cap · vs Burruel")
+
+    def test_handles_missing_tiles(self):
+        from league_ai.front_office import mobile_status
+
+        self.assertEqual(mobile_status(0, None), "")
+
+
+class WeekContextTests(unittest.TestCase):
+    def _fo(self):
+        return {
+            "week": 5, "season": 2026, "opponent": {"owner_name": "Dylan Burruel", "week": 5},
+            "data_brief": {"injuries": {"items": [{"player": "Breece Hall", "status": "Questionable · knee"}]},
+                           "matchup": {"headline": "vs Dylan Burruel", "lines": ["Burruel 3-1 at 120.5 ppg vs your 4-0 at 131.2 ppg"]}},
+            "rankings": [
+                {"owner": "Dylan Burruel", "now_rank": 1, "dynasty_rank": 3, "starters": ["QB Josh Allen (24.1)"]},
+                {"owner": "Tommy Bruggeman", "now_rank": 2, "dynasty_rank": 1, "weakest_slot": "TE", "weakest_note": "-12% vs league median",
+                 "strongest_slot": "WR", "starters": ["WR Ja'Marr Chase (21.0)"]},
+            ],
+        }
+
+    def test_includes_week_opponent_injuries_and_ranks(self):
+        from datetime import date
+        from league_ai.front_office import week_context
+
+        text = week_context(self._fo(), "Tommy Bruggeman", today=date(2026, 10, 2))
+        self.assertIn("Fri Oct 2, 2026", text)
+        self.assertIn("NFL week 5", text)
+        self.assertIn("vs Dylan Burruel", text)
+        self.assertIn("Breece Hall (Questionable · knee)", text)
+        self.assertIn("#1 Dylan Burruel, #2 Tommy Bruggeman", text)
+        self.assertIn("weakest slot TE (-12% vs league median)", text)
+        self.assertIn("Opponent Dylan Burruel's best lineup", text)
+
+    def test_empty_without_data(self):
+        from league_ai.front_office import week_context
+
+        self.assertEqual(week_context(None, "Tommy"), "")
+
+
+class BriefFingerprintTests(unittest.TestCase):
+    def test_changes_when_injuries_or_opponent_change(self):
+        from league_ai.front_office import brief_fingerprint
+
+        base = {"injuries": {"items": [{"player": "A", "status": "Questionable"}]}, "matchup": {"headline": "vs X"}}
+        same = {"injuries": {"items": [{"player": "A", "status": "Questionable"}]}, "matchup": {"headline": "vs X", "lines": ["new line"]}}
+        worse = {"injuries": {"items": [{"player": "A", "status": "Out"}]}, "matchup": {"headline": "vs X"}}
+        other_opp = {"injuries": {"items": [{"player": "A", "status": "Questionable"}]}, "matchup": {"headline": "vs Y"}}
+        self.assertEqual(brief_fingerprint(base), brief_fingerprint(same))
+        self.assertNotEqual(brief_fingerprint(base), brief_fingerprint(worse))
+        self.assertNotEqual(brief_fingerprint(base), brief_fingerprint(other_opp))

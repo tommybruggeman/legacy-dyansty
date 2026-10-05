@@ -82,6 +82,61 @@ class ClientLoopTests(unittest.TestCase):
         self.assertEqual(result.trace.rounds, 1)
         self.assertNotIn("tools", sdk.calls[0])
 
+    def test_on_event_announces_rounds_and_tools(self):
+        reg = ToolRegistry()
+        reg.register(ToolSpec("get_injury_report", "inj", {"type": "object", "properties": {}}, lambda: {"status": "Out"}))
+        sdk = FakeSDK([
+            _resp([_tool_use("tu1", "get_injury_report", {})], stop="tool_use"),
+            _resp([_text("He's out.")]),
+        ])
+        events = []
+        result = ClaudeClient(CONFIG, sdk_client=sdk).run(system=[], messages=[{"role": "user", "content": "q"}], tools=reg,
+                                                          on_event=lambda kind, payload: events.append((kind, payload)))
+        self.assertTrue(result.ok)
+        self.assertEqual(events, [("round", 1), ("tool", "get_injury_report"), ("round", 2)])
+
+    def test_streams_text_when_sdk_supports_it(self):
+        class _Stream:
+            def __init__(self, resp):
+                self.resp = resp
+            def __enter__(self):
+                return self
+            def __exit__(self, *a):
+                return False
+            def __iter__(self):
+                for chunk in ("He's ", "out."):
+                    yield SimpleNamespace(type="text", text=chunk)
+            def get_final_message(self):
+                return self.resp
+
+        class StreamSDK(FakeSDK):
+            def stream(self, **kwargs):
+                self.calls.append(kwargs)
+                return _Stream(self.responses.pop(0))
+
+        sdk = StreamSDK([_resp([_text("He's out.")])])
+        events = []
+        result = ClaudeClient(CONFIG, sdk_client=sdk).run(system=[], messages=[{"role": "user", "content": "q"}],
+                                                          on_event=lambda kind, payload: events.append((kind, payload)))
+        self.assertEqual(result.text, "He's out.")
+        self.assertEqual(events, [("round", 1), ("text", "He's "), ("text", "out.")])
+
+    def test_effort_sent_only_when_configured(self):
+        from dataclasses import replace
+
+        sdk = FakeSDK([_resp([_text("a")]), _resp([_text("b")])])
+        ClaudeClient(CONFIG, sdk_client=sdk).run(system=[], messages=[{"role": "user", "content": "q"}])
+        ClaudeClient(replace(CONFIG, effort="medium"), sdk_client=sdk).run(system=[], messages=[{"role": "user", "content": "q"}])
+        self.assertNotIn("output_config", sdk.calls[0])
+        self.assertEqual(sdk.calls[1]["output_config"], {"effort": "medium"})
+
+    def test_week_context_goes_after_cached_pack(self):
+        blocks = system_blocks("PACK", "## This week\n- NFL week 5")
+        self.assertEqual(blocks[1].get("cache_control"), {"type": "ephemeral"})
+        self.assertEqual(blocks[2]["text"], "## This week\n- NFL week 5")
+        self.assertNotIn("cache_control", blocks[2])
+        self.assertEqual(len(system_blocks("PACK")), 2)
+
     def test_tool_loop_executes_and_feeds_results_back(self):
         reg = ToolRegistry()
         reg.register(ToolSpec("get_player_profile", "profile", {"type": "object", "properties": {"name": {"type": "string"}}},
@@ -190,7 +245,7 @@ class ThinkingBlockTests(unittest.TestCase):
         sdk = FakeSDK([_resp([{"type": "thinking", "thinking": "..."}], stop="max_tokens")])
         result = ClaudeClient(CONFIG, sdk_client=sdk).run(system=[], messages=[{"role": "user", "content": "q"}])
         self.assertEqual(result.error_code, "output_budget_exhausted")
-        self.assertIn("output budget", human_message(result.error_code))
+        self.assertIn("too big to finish", human_message(result.error_code))
 
 
 if __name__ == "__main__":

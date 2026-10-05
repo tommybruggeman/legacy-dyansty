@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       only:
-        description: "Run a single loader (players, stats, values, injuries, prospects) or leave blank for all"
+        description: "Run a single loader (players, stats, games, values, injuries, prospects) or leave blank for all"
         required: false
         default: ""
       seasons:

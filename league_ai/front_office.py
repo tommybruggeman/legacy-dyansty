@@ -297,6 +297,19 @@ def brief_facts(client: Any, *, state: Mapping[str, Any], team_id: str, owner: s
     return "\n".join(lines)
 
 
+def brief_fingerprint(data: Mapping[str, Any] | None) -> str:
+    """Short hash of the facts the brief's verdicts depend on (injury list + opponent).
+
+    A cached brief whose fingerprint differs is stale: news broke since it was written.
+    """
+    import hashlib
+
+    data = data or {}
+    items = [f"{i.get('player')}|{i.get('status')}" for i in (data.get("injuries") or {}).get("items") or []]
+    headline = (data.get("matchup") or {}).get("headline") or ""
+    return hashlib.sha256(json.dumps({"inj": sorted(items), "vs": headline}, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+
+
 def brief_key(season: int, week: int) -> tuple[int, int]:
     return season, week
 
@@ -338,11 +351,17 @@ def parse_brief(text: str) -> dict[str, Any] | None:
     return data
 
 
-def generate_brief(*, pack: str, tools: ToolRegistry | None, owner: str, week: int, opponent: str | None, facts: str = "", client: ClaudeClient | None = None) -> dict[str, Any] | None:
+def generate_brief(*, pack: str, tools: ToolRegistry | None, owner: str, week: int, opponent: str | None, facts: str = "", client: ClaudeClient | None = None,
+                   on_trace: Callable[[Any], None] | None = None) -> dict[str, Any] | None:
     system = [{"type": "text", "text": SYSTEM_PROMPT}, {"type": "text", "text": pack, "cache_control": {"type": "ephemeral"}}]
     question = BRIEF_INSTRUCTIONS.replace("{owner}", owner).replace("{week}", str(week)).replace("{opponent}", opponent or "no game this week").replace("{facts}", facts or "(none)")
     runner = client or ClaudeClient(brief_config())
     result = runner.run(system=system, messages=[{"role": "user", "content": question}], tools=None, max_tool_calls=0)
+    if on_trace is not None:
+        try:
+            on_trace(result.trace)
+        except Exception:
+            pass
     if not result.ok:
         return None
     return parse_brief(result.text)
@@ -421,3 +440,52 @@ def merge_brief(data: dict[str, Any], model: dict[str, Any] | None) -> dict[str,
         if not out["matchup"].get("lines"):
             out["matchup"]["lines"] = (model.get("matchup") or {}).get("lines") or []
     return out
+
+
+def mobile_status(week: int, tiles: list[dict[str, Any]] | None) -> str:
+    """One grey line for phones: 'Week 4 · 3-0, 2nd of 10 · $7 cap · vs Burruel'."""
+    record = cap = opp = ""
+    for t in tiles or []:
+        label, value = str(t.get("label") or ""), str(t.get("value") or "")
+        if label.startswith("Record"):
+            rank = label.split("·", 1)[1].strip() if "·" in label else ""
+            record = f"{value}, {rank}" if rank else value
+        elif label == "Cap space":
+            cap = f"{value} cap"
+        elif value.startswith("vs "):
+            opp = value
+    parts = [f"Week {week}"] if week else []
+    return " · ".join(p for p in parts + [record, cap, opp] if p)
+
+
+def week_context(fo: Mapping[str, Any] | None, owner: str, today: date | None = None) -> str:
+    """'This week' block for the chat: date, NFL week, opponent, injuries, power ranks and starters.
+
+    Built from the Front Office data the page already loaded, so it costs no extra queries.
+    """
+    if not fo:
+        return ""
+    today = today or date.today()
+    lines = [f"## This week (as of {today.strftime('%a %b %-d, %Y')})", f"- NFL week {fo.get('week') or '?'} of the {fo.get('season') or ''} season."]
+    brief = fo.get("data_brief") or {}
+    mu = brief.get("matchup") or {}
+    if fo.get("opponent"):
+        lines.append(f"- {owner}'s matchup this week: {mu.get('headline') or 'vs ' + str(fo['opponent'].get('owner_name'))}." + (" " + "; ".join(mu.get("lines") or []) + "." if mu.get("lines") else ""))
+    else:
+        lines.append(f"- {owner} has no matchup this week.")
+    items = (brief.get("injuries") or {}).get("items") or []
+    lines.append("- Injuries on " + owner + "'s roster: " + ("; ".join(f"{i.get('player')} ({i.get('status')})" for i in items) if items else "none reported") + ".")
+    rankings = fo.get("rankings") or []
+    if rankings:
+        ordered = sorted(rankings, key=lambda r: r.get("now_rank") or 99)
+        lines.append("- Power rankings now (app's lineup-strength model, not standings): " + ", ".join(f"#{r.get('now_rank')} {r.get('owner')}" for r in ordered) + ".")
+        mine = next((r for r in rankings if r.get("owner") == owner), None)
+        if mine:
+            lines.append(f"- {owner}: power #{mine.get('now_rank')} now, dynasty #{mine.get('dynasty_rank')}; strongest slot {mine.get('strongest_slot') or '?'}, weakest slot {mine.get('weakest_slot') or '?'}" + (f" ({mine.get('weakest_note')})" if mine.get("weakest_note") else "") + ".")
+            if mine.get("starters"):
+                lines.append(f"- {owner}'s best lineup by the app's strength model (position, player, strength score blending recent and season PPG with market tier): " + ", ".join(mine["starters"]) + ".")
+        opp_name = (fo.get("opponent") or {}).get("owner_name")
+        opp = next((r for r in rankings if opp_name and r.get("owner") == opp_name), None)
+        if opp and opp.get("starters"):
+            lines.append(f"- Opponent {opp_name}'s best lineup by the model: " + ", ".join(opp["starters"]) + ".")
+    return "\n".join(lines)

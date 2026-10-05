@@ -102,3 +102,24 @@ def render_league_ai_settings(client: Any, league_id: str, sleeper_league_id: st
             st.success("League AI settings saved.")
         except Exception as exc:
             st.error(f"Could not save: {exc}")
+
+    render_weekly_reports(client, league_id)
+
+
+def render_weekly_reports(client: Any, league_id: str) -> None:
+    """Commissioner view of the weekly League AI report (also emailed when SMTP is set up)."""
+    st.markdown("#### Weekly AI report")
+    try:
+        rows = (client.table("league_ai_reports").select("week_start, week_end, html").eq("league_id", league_id)
+                .order("week_start", desc=True).limit(26).execute().data or [])
+    except Exception:
+        rows = []
+    if not rows:
+        st.caption("No reports yet. The first one is written the Tuesday after the AI has been used for a week.")
+        return
+    labels = [f"{r['week_start']} to {r['week_end']}" for r in rows]
+    choice = st.selectbox("Week", labels, key="league_ai_report_week")
+    report = rows[labels.index(choice)]
+    import streamlit.components.v1 as components
+
+    components.html(f"<div style='background:#fff;color:#111;padding:16px;border-radius:8px'>{report.get('html') or ''}</div>", height=900, scrolling=True)

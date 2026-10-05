@@ -41,6 +41,7 @@ class PackInputs:
     past_seasons: list[str] = field(default_factory=list)
     private_memory: list[str] = field(default_factory=list)
     league_notebook: list[str] = field(default_factory=list)
+    learning: list[str] = field(default_factory=list)
     activity_limit: int = 40
     data_freshness: dict[str, str] = field(default_factory=dict)
 
@@ -312,6 +313,8 @@ def build_league_pack(inputs: PackInputs) -> str:
         parts.append("## What you remember about this owner (private)\n" + "\n".join(f"- {m}" for m in inputs.private_memory))
     if inputs.league_notebook:
         parts.append("## League notebook (shared observations)\n" + "\n".join(f"- {m}" for m in inputs.league_notebook))
+    if inputs.learning:
+        parts.append("## How your calls have graded (your own playbook, learned from real results in this league)\n" + "\n".join(f"- {m}" for m in inputs.learning))
 
     if inputs.data_freshness:
         parts.append("## Data freshness\n" + "\n".join(f"- {k}: {v}" for k, v in inputs.data_freshness.items()))

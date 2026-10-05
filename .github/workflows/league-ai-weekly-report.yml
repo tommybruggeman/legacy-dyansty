@@ -1,0 +1,41 @@
+name: League AI weekly report
+
+on:
+  schedule:
+    # Tuesdays 15:00 UTC (9:00 Mountain), after Monday night games are graded.
+    - cron: "0 15 * * 2"
+  workflow_dispatch:
+    inputs:
+      email:
+        description: "Send the email (uncheck to only save it to the app)"
+        type: boolean
+        default: true
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: pip install supabase requests pandas
+
+      - name: Build, save and email the report
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          REPORT_TO: ${{ secrets.REPORT_TO }}
+          REPORT_DETAIL: ${{ vars.REPORT_DETAIL }}
+        run: |
+          ARGS=""
+          if [ "${{ github.event.inputs.email }}" = "false" ]; then ARGS="--no-email"; fi
+          python -m league_ai.weekly_report $ARGS

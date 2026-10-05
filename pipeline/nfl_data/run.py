@@ -14,6 +14,7 @@ from typing import Any
 
 from pipeline.nfl_data.common import fetch_json, fetch_text, log_run, now_iso, service_client, upsert_rows
 from pipeline.nfl_data.crosswalk import CROSSWALK_URL, Crosswalk
+from pipeline.nfl_data.games import GAMES_URL, read_csv as read_games_csv, transform_games
 from pipeline.nfl_data.injuries import ESPN_INJURIES_URLS, NFLVERSE_INJURIES_URL, read_csv as read_injuries_csv, transform_espn, transform_nflverse
 from pipeline.nfl_data.market_values import PICKS_URL, VALUES_URL, read_csv as read_values_csv, transform_picks, transform_values
 from pipeline.nfl_data.nflverse_stats import SNAPS_URL, STATS_URL, read_csv as read_stats_csv, transform_stats
@@ -117,6 +118,17 @@ def sync_injuries(client: Any, crosswalk: Crosswalk, seasons: list[int]) -> int:
     return written
 
 
+def sync_games(client: Any, seasons: list[int]) -> int:
+    rows = transform_games(read_games_csv(fetch_text(GAMES_URL, timeout=120)), seasons)
+    try:
+        return upsert_rows(client, "nfl_games", rows, on_conflict="game_id")
+    except Exception as exc:
+        if "nfl_games" in str(exc) and ("PGRST205" in str(exc) or "does not exist" in str(exc) or "schema cache" in str(exc)):
+            print("[nfl_data] games skipped: nfl_games table not created yet (run migration 20261124_league_ai_learning.sql)", flush=True)
+            return 0
+        raise
+
+
 def sync_prospects(client: Any, crosswalk: Crosswalk, seasons: list[int]) -> int:
     import os
 
@@ -134,7 +146,7 @@ def sync_prospects(client: Any, crosswalk: Crosswalk, seasons: list[int]) -> int
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--only", choices=["players", "stats", "values", "injuries", "prospects"], default=None)
+    parser.add_argument("--only", choices=["players", "stats", "games", "values", "injuries", "prospects"], default=None)
     parser.add_argument("--seasons", nargs="*", type=int, default=None)
     args = parser.parse_args(argv)
 
@@ -148,6 +160,8 @@ def main(argv: list[str] | None = None) -> int:
         ok &= _run(client, "sleeper_players", lambda: sync_players(client, crosswalk))
     if args.only in (None, "stats"):
         ok &= _run(client, "nflverse_stats", lambda: sync_stats(client, crosswalk, seasons))
+    if args.only in (None, "games"):
+        ok &= _run(client, "nflverse_games", lambda: sync_games(client, seasons))
     if args.only in (None, "values"):
         ok &= _run(client, "dynastyprocess_values", lambda: sync_values(client, crosswalk))
     if args.only in (None, "injuries"):
