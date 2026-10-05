@@ -93,7 +93,17 @@ class ClientLoopTests(unittest.TestCase):
         result = ClaudeClient(CONFIG, sdk_client=sdk).run(system=[], messages=[{"role": "user", "content": "q"}], tools=reg,
                                                           on_event=lambda kind, payload: events.append((kind, payload)))
         self.assertTrue(result.ok)
-        self.assertEqual(events, [("round", 1), ("tool", "get_injury_report"), ("round", 2)])
+        self.assertEqual(events, [("round", 1), ("reset", None), ("tool", "get_injury_report"), ("round", 2)])
+
+    def test_answer_written_alongside_log_prediction_is_kept(self):
+        reg = ToolRegistry()
+        reg.register(ToolSpec("log_prediction", "log", {"type": "object", "properties": {}}, lambda **kw: {"logged": True}))
+        sdk = FakeSDK([
+            _resp([_text("Start Young: the Lions allow 299 passing yards a game."), _tool_use("t1", "log_prediction", {})], stop="tool_use"),
+            _resp([_text("Logged at 52%.")]),
+        ])
+        result = ClaudeClient(CONFIG, sdk_client=sdk).run(system=[], messages=[{"role": "user", "content": "q"}], tools=reg)
+        self.assertEqual(result.text, "Start Young: the Lions allow 299 passing yards a game.\n\nLogged at 52%.")
 
     def test_streams_text_when_sdk_supports_it(self):
         class _Stream:

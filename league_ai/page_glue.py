@@ -126,8 +126,10 @@ class LiveAnswer:
         self.status.caption("Thinking…")
 
     def __call__(self, kind: str, payload: Any) -> None:
-        if kind == "round":
-            self.text = ""  # text before a tool call is replaced by the next round's answer
+        if kind == "reset":
+            self.text = ""  # text before a lookup is replaced by the next round's answer
+        elif kind == "round" and self.text:
+            self.text += "\n\n"
         elif kind == "tool":
             self.status.caption(TOOL_STATUS.get(str(payload), "Checking the data") + "…")
             self.body.empty()
@@ -614,4 +616,13 @@ def front_office_opening(owner_name: str | None, ready: bool = True) -> str:
     first = (owner_name or "").split(" ")[0] or "there"
     if not ready:
         return f"Hey {first}. The Assistant GM isn't configured on this deployment yet."
-    return f"Morning, {first}. What are we working on?"
+    return f"{_greeting()}, {first}. What are we working on?"
+
+
+def _greeting(now: Any = None) -> str:
+    """Time-of-day greeting in league time (Mountain)."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    hour = (now or datetime.now(ZoneInfo("America/Denver"))).hour
+    return "Morning" if 4 <= hour < 12 else "Afternoon" if hour < 17 else "Evening"

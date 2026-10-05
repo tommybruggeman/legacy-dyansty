@@ -141,8 +141,9 @@ class ClaudeClient:
         turn_effort: str | None = None,
     ) -> ClientResult:
         """Run the tool loop. With on_event, text streams as ("text", delta),
-        each model round starts with ("round", n), and each tool call is announced
-        as ("tool", name) before it runs, so the page can show live progress.
+        each model round starts with ("round", n), each tool call is announced
+        as ("tool", name) before it runs, and ("reset", None) means the text so
+        far was a preamble the next round replaces.
 
         turn_effort sets effort for this question only, as a per-message effort change
         placed before the latest user message, which keeps the cached league pack valid.
@@ -163,6 +164,7 @@ class ClaudeClient:
         trace.effort = self.config.effort or per_turn
         tool_specs = tools.specs() if tools and len(tools) else []
         text_out = ""
+        kept_text = ""
         try:
             while True:
                 kwargs: dict[str, Any] = {
@@ -173,6 +175,8 @@ class ClaudeClient:
                 }
                 if tool_specs:
                     kwargs["tools"] = tool_specs
+                    # cache the growing conversation too, so each tool round re-reads it at a tenth of the price
+                    kwargs["extra_body"] = {"cache_control": {"type": "ephemeral"}}
                 if self.config.effort:
                     kwargs["output_config"] = {"effort": self.config.effort}
                 if per_turn:
@@ -194,10 +198,16 @@ class ClaudeClient:
                 content = _block_attr(response, "content") or []
                 trace.stop_reason = _block_attr(response, "stop_reason")
                 trace.content_types = [str(_block_attr(b, "type")) for b in content]
-                text_out = "\n".join(_block_attr(b, "text", "") for b in content if _block_attr(b, "type") == "text").strip()
+                round_text = "\n".join(_block_attr(b, "text", "") for b in content if _block_attr(b, "type") == "text").strip()
+                text_out = "\n\n".join(x for x in [kept_text, round_text] if x)
                 tool_uses = [b for b in content if _block_attr(b, "type") == "tool_use"]
                 if trace.stop_reason != "tool_use" or not tool_uses:
                     break
+                if all(_block_attr(b, "name") in SILENT_TOOLS for b in tool_uses):
+                    kept_text = text_out  # the answer came with a bookkeeping call (log/remember): keep it
+                else:
+                    kept_text = ""  # text before a lookup is a preamble; the next round's answer replaces it
+                    _emit(on_event, "reset", None)
                 history.append({"role": "assistant", "content": _content_to_api(content)})
                 results = []
                 for block in tool_uses:
@@ -226,6 +236,8 @@ class ClaudeClient:
 
 
 PER_MESSAGE_EFFORT_BETA = "mid-conversation-output-config-2026-07-01"
+# Tools that only record something; text written alongside them is part of the answer, not a preamble.
+SILENT_TOOLS = frozenset({"log_prediction", "remember", "forget"})
 
 
 def _emit(on_event: Callable[[str, Any], None] | None, kind: str, payload: Any) -> None:
