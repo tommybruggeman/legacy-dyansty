@@ -12,6 +12,7 @@ from collections import defaultdict
 from decimal import Decimal
 from typing import Any, Iterable, Mapping
 
+from league_ai.nfl_data import bye_weeks, team_code
 from league_ai.tools import ToolRegistry, ToolSpec
 
 STAT_FIELDS = [
@@ -87,6 +88,19 @@ class NflData:
         self.salary_cap = Decimal(str(salary_cap or 225))
         self.dead_cap_pct = float(dead_cap_pct or 50)
         self._roster_index: dict[str, list[dict[str, Any]]] | None = None
+        self._byes: dict[str, int] | None = None
+
+    def bye_week(self, nfl_team: Any) -> int | None:
+        """This season's bye week for an NFL team (latest season in nfl_games), loaded once per registry."""
+        if not nfl_team:
+            return None
+        if self._byes is None:
+            try:
+                latest = self.client.table("nfl_games").select("season").eq("game_type", "REG").order("season", desc=True).limit(1).execute().data or []
+                self._byes = bye_weeks(self.client, int(latest[0]["season"])) if latest else {}
+            except Exception:
+                self._byes = {}
+        return self._byes.get(team_code(nfl_team))
 
     # ---- players ---------------------------------------------------------
     def find_players(self, name: str, position: str | None = None, limit: int = 5) -> list[dict[str, Any]]:
@@ -419,6 +433,7 @@ def _profile_dict(data: NflData, p: dict[str, Any], include_market: bool = True)
         "name": p.get("full_name"),
         "position": p.get("position"),
         "nfl_team": p.get("team") or "free agent / unsigned",
+        "bye_week": data.bye_week(p.get("team")),
         "age": p.get("age"),
         "birthdate": p.get("birthdate"),
         "years_exp": p.get("years_exp"),
@@ -529,6 +544,7 @@ def tool_search_players(data: NflData, position: str | None = None, nfl_team: st
         if league_free_agents_only and c:
             continue
         r["league_status"] = (f"{c['owner']} · ${c['cap_hit']:g} x {c['years_left']}yr" if c else "free agent in this league")
+        r["bye_week"] = data.bye_week(r.get("team"))
         out.append(r)
         if len(out) >= limit:
             break

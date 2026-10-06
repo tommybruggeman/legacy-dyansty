@@ -9,7 +9,7 @@ from auth import auth_client
 from league_ai.client import ClaudeClient
 from league_ai.config import load_config
 from league_ai.context_pack import Asker
-from league_ai.nfl_data import data_freshness
+from league_ai.nfl_data import bye_weeks, data_freshness
 from league_ai.service import AnswerResult, LeagueDataSources, answer, build_pack, load_league_rules
 from league_ai.tools.nfl import build_registry
 from league_ai.tools.history import history_tools, pack_history_summary
@@ -331,15 +331,27 @@ def _cached_roster_positions(league_id: str, sleeper_league_id: str | None, user
     return list(s.roster_positions or [])
 
 
+@st.cache_data(ttl=12 * 3600, show_spinner=False)
+def _cached_byes(season: int) -> dict[str, int]:
+    """NFL team -> bye week for the season (the schedule is fixed, so one query per half day)."""
+    return bye_weeks(auth_client(), season)
+
+
 @st.cache_data(ttl=6 * 3600, show_spinner=False)
-def _cached_power(league_id: str, season: int, user_id: str, epoch: int, positions: tuple[str, ...], actual_ppg: tuple[tuple[str, float], ...] = ()) -> list[dict]:
+def _cached_power(league_id: str, season: int, user_id: str, epoch: int, positions: tuple[str, ...], actual_ppg: tuple[tuple[str, float], ...] = (), week: int = 0) -> list[dict]:
     client = auth_client()
     state = _cached_state(league_id, season, user_id, epoch)
-    rankings = power_rankings(client, state, season, list(positions), dict(actual_ppg))
+    rankings = power_rankings(client, state, season, list(positions), dict(actual_ppg), byes=_cached_byes(season), week=week)
     snapshot_power(client, league_id, rankings)
+
+    def bye_label(p: Any) -> str:
+        return f"{p.position} {p.name} ({p.nfl_team})"
+
     return [{"team_id": tp.team_id, "owner": tp.owner, "now_rank": tp.now_rank, "now_score": tp.now_score, "dynasty_rank": tp.dynasty_rank, "dynasty_score": tp.dynasty_score,
              "weakest_slot": tp.weakest_slot, "weakest_note": tp.weakest_note, "strongest_slot": tp.strongest_slot,
-             "starters": [f"{p.position} {p.name} ({p.now:.1f})" for p in tp.starters]} for tp in rankings]
+             "starters": [f"{p.position} {p.name} ({p.now:.1f})" for p in tp.starters],
+             "week_starters": [f"{p.position} {p.name} ({p.now:.1f})" for p in tp.week_starters],
+             "on_bye": [bye_label(p) for p in tp.on_bye], "on_bye_names": [p.name for p in tp.on_bye], "bye_next": [bye_label(p) for p in tp.bye_next]} for tp in rankings]
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
@@ -363,9 +375,9 @@ def front_office_data(*, request_context: Any, team: dict) -> dict[str, Any]:
     positions = tuple(_cached_roster_positions(league_id, sleeper_id, request_context.user_id))
     standings = _cached_standings(league_id, season, request_context.user_id, sleeper_id)
     actual_ppg = tuple((str(r.get("Team")), float(r.get("PF Per Game") or 0)) for r in standings if r.get("Games", 1))
-    rankings_raw = _cached_power(league_id, season, request_context.user_id, epoch, positions, actual_ppg)
-    rankings = [SimpleNamespace(**r) for r in rankings_raw]
     week = _cached_nfl_week()
+    rankings_raw = _cached_power(league_id, season, request_context.user_id, epoch, positions, actual_ppg, week)
+    rankings = [SimpleNamespace(**r) for r in rankings_raw]
     # roster id -> owner from league_teams
     try:
         teams = client.table("league_teams").select("id, owner_name, sleeper_roster_id").eq("league_id", league_id).execute().data or []
@@ -380,7 +392,13 @@ def front_office_data(*, request_context: Any, team: dict) -> dict[str, Any]:
                         standings=standings, rankings=rankings, opponent=opponent, h2h=h2h, movement=movement)
     mine = next((r for r in rankings_raw if r["team_id"] == request_context.league_team_id), None)
     instant = data_brief(client, state=state, team_id=request_context.league_team_id, owner=owner_name, opponent=opponent, h2h=h2h, standings=standings)
-    return {"tiles": tiles, "data_brief": instant, "week": week, "opponent": opponent, "h2h": h2h, "standings": standings, "owner_name": owner_name, "league_name": league.get("name") or "the league",
+    if mine and mine.get("on_bye"):
+        instant["byes"] = list(mine["on_bye"])
+        # bye players lead the "Injuries & lineup" card: they have to come out of the lineup too
+        items = instant["injuries"]["items"]
+        instant["injuries"]["items"] = ([{"player": n, "status": f"Bye · week {week}"} for n in mine.get("on_bye_names") or []] + items)[:5]
+    bye_teams = sorted(t for t, w in _cached_byes(season).items() if w == week)
+    return {"tiles": tiles, "data_brief": instant, "week": week, "bye_teams": bye_teams, "opponent": opponent, "h2h": h2h, "standings": standings, "owner_name": owner_name, "league_name": league.get("name") or "the league",
             "season": season, "rankings": rankings_raw, "weakest_slot": mine["weakest_slot"] if mine else None, "salary_cap": float(rules.get("salary_cap", 225) or 225)}
 
 
@@ -407,7 +425,8 @@ def weekly_brief(*, request_context: Any, team: dict, fo: dict, force: bool = Fa
     state = _cached_state(league_id, season, request_context.user_id, epoch)
     opponent = fo.get("opponent")
     facts = brief_facts(client, state=state, team_id=request_context.league_team_id, owner=owner_name, opponent=opponent, h2h=fo.get("h2h"), standings=fo.get("standings") or [],
-                        weakest_slot=fo.get("weakest_slot"), salary_cap=float(fo.get("salary_cap") or 225))
+                        weakest_slot=fo.get("weakest_slot"), salary_cap=float(fo.get("salary_cap") or 225),
+                        on_bye=(fo.get("data_brief") or {}).get("byes"))
     sections = generate_brief(pack=pack, tools=None, owner=owner_name, week=week, opponent=opponent["owner_name"] if opponent else None, facts=facts,
                               on_trace=lambda trace: record_usage(client, row_from_trace(trace, league_id=league_id, user_id=request_context.user_id, feature="brief")))
     if sections:

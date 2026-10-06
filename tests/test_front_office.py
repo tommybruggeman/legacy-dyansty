@@ -227,3 +227,57 @@ class BriefFingerprintTests(unittest.TestCase):
         self.assertEqual(brief_fingerprint(base), brief_fingerprint(same))
         self.assertNotEqual(brief_fingerprint(base), brief_fingerprint(worse))
         self.assertNotEqual(brief_fingerprint(base), brief_fingerprint(other_opp))
+
+
+class ByeWeekTests(unittest.TestCase):
+    def test_bye_weeks_from_games(self):
+        from league_ai.nfl_data import bye_weeks_from_games
+
+        games = [{"week": 1, "home_team": "KC", "away_team": "LA"}, {"week": 1, "home_team": "BUF", "away_team": "MIA"},
+                 {"week": 2, "home_team": "KC", "away_team": "BUF"},
+                 {"week": 3, "home_team": "LA", "away_team": "BUF"}, {"week": 3, "home_team": "MIA", "away_team": "KC"}]
+        byes = bye_weeks_from_games(games)
+        self.assertEqual(byes["LAR"], 2)  # nflverse "LA" -> Sleeper "LAR"
+        self.assertNotIn("KC", byes)  # plays every week
+        self.assertEqual(byes["MIA"], 2)
+        self.assertEqual(bye_weeks_from_games([]), {})
+
+    def test_bye_players_benched_but_scores_unchanged(self):
+        from league_ai.power import PlayerStrength
+
+        def p(sid, pos, now, nfl):
+            return PlayerStrength(sleeper_id=sid, name=sid, position=pos, team_id="a", owner="A", now=now, dynasty=now, available=True, nfl_team=nfl)
+
+        players = [p("QB1", "QB", 25, "KC"), p("WR1", "WR", 20, "DAL"), p("WR2", "WR", 12, "NYG"), p("WR3", "WR", 10, "SF")]
+        teams = [{"league_team_id": "a", "owner_name": "A"}]
+        plain = compute_power(players, teams, ["QB", "WR", "WR"])[0]
+        tp = compute_power(players, teams, ["QB", "WR", "WR"], byes={"DAL": 6, "SF": 7}, week=6)[0]
+        self.assertEqual(tp.now_score, plain.now_score)
+        self.assertEqual([x.name for x in tp.starters], ["QB1", "WR1", "WR2"])
+        self.assertEqual([x.name for x in tp.week_starters], ["QB1", "WR2", "WR3"])
+        self.assertEqual([x.name for x in tp.on_bye], ["WR1"])
+        self.assertEqual([x.name for x in tp.bye_next], ["WR3"])
+
+    def test_week_context_lists_byes(self):
+        from datetime import date
+        from league_ai.front_office import week_context
+
+        fo = {"week": 6, "season": 2026, "opponent": {"owner_name": "Dylan Burruel", "week": 6}, "bye_teams": ["DAL", "KC"],
+              "data_brief": {"injuries": {"items": []}, "matchup": {"headline": "vs Dylan Burruel", "lines": []}},
+              "rankings": [{"owner": "Tommy Bruggeman", "now_rank": 1, "dynasty_rank": 1, "starters": ["WR CeeDee Lamb (20.0)"], "week_starters": ["WR Puka Nacua (18.0)"],
+                            "on_bye": ["WR CeeDee Lamb (DAL)"], "bye_next": ["QB Brock Purdy (SF)"]},
+                           {"owner": "Dylan Burruel", "now_rank": 2, "dynasty_rank": 2, "starters": ["QB Patrick Mahomes (22.0)"], "week_starters": ["QB Jared Goff (18.0)"], "on_bye": ["QB Patrick Mahomes (KC)"]}]}
+        text = week_context(fo, "Tommy Bruggeman", today=date(2026, 10, 6))
+        self.assertIn("on bye in week 6: DAL, KC", text)
+        self.assertIn("ON BYE this week (cannot score; never recommend starting them): WR CeeDee Lamb (DAL)", text)
+        self.assertIn("Puka Nacua", text)
+        self.assertNotIn("CeeDee Lamb (20.0)", text)
+        self.assertIn("NEXT week (week 7): QB Brock Purdy (SF)", text)
+        self.assertIn("Dylan Burruel's players on bye this week: QB Patrick Mahomes (KC)", text)
+
+    def test_fingerprint_unchanged_without_byes(self):
+        from league_ai.front_office import brief_fingerprint
+
+        base = {"injuries": {"items": []}, "matchup": {"headline": "vs X"}}
+        self.assertEqual(brief_fingerprint(base), brief_fingerprint({**base, "byes": []}))
+        self.assertNotEqual(brief_fingerprint(base), brief_fingerprint({**base, "byes": ["WR A (DAL)"]}))

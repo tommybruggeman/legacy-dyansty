@@ -30,3 +30,52 @@ def data_freshness(client: Any) -> dict[str, str]:
     if not out:
         out["NFL data"] = "not loaded yet (nightly sync has not run)"
     return out
+
+
+# nflverse schedule codes -> Sleeper team codes (nfl_players.team uses Sleeper's)
+TEAM_ALIASES = {"LA": "LAR", "WSH": "WAS", "JAC": "JAX"}
+
+
+def team_code(value: Any) -> str:
+    code = str(value or "").strip().upper()
+    return TEAM_ALIASES.get(code, code)
+
+
+def bye_weeks_from_games(rows: list[dict[str, Any]]) -> dict[str, int]:
+    """NFL team -> bye week, from one season's regular-season nfl_games rows.
+
+    A team's bye is the one week in the season's range it has no game. Teams with
+    zero or several missing weeks (schedule not fully loaded) are left out rather than guessed.
+    """
+    played: dict[str, set[int]] = {}
+    weeks: set[int] = set()
+    for r in rows:
+        try:
+            week = int(r.get("week"))
+        except Exception:
+            continue
+        weeks.add(week)
+        for side in ("home_team", "away_team"):
+            code = team_code(r.get(side))
+            if code:
+                played.setdefault(code, set()).add(week)
+    if not weeks:
+        return {}
+    season_weeks = set(range(min(weeks), max(weeks) + 1))
+    out: dict[str, int] = {}
+    for code, seen in played.items():
+        missing = season_weeks - seen
+        if len(missing) == 1:
+            out[code] = missing.pop()
+    return out
+
+
+def bye_weeks(client: Any, season: int) -> dict[str, int]:
+    """One query over nfl_games; empty when the schedule isn't loaded."""
+    if client is None:
+        return {}
+    try:
+        rows = client.table("nfl_games").select("week, home_team, away_team").eq("season", season).eq("game_type", "REG").limit(400).execute().data or []
+    except Exception:
+        return {}
+    return bye_weeks_from_games(rows)

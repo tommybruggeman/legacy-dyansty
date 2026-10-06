@@ -54,6 +54,7 @@ class PlayerStrength:
     age: float | None = None
     years_left: int = 1
     injury: str | None = None
+    nfl_team: str | None = None
 
 
 @dataclass
@@ -69,9 +70,12 @@ class TeamPower:
     weakest_slot: str | None = None
     weakest_note: str | None = None
     strongest_slot: str | None = None
+    week_starters: list[PlayerStrength] = field(default_factory=list)  # best lineup with this week's bye players benched
+    on_bye: list[PlayerStrength] = field(default_factory=list)
+    bye_next: list[PlayerStrength] = field(default_factory=list)
 
 
-def player_strength(row: Mapping[str, Any], *, recent_ppg: float | None, season_ppg: float | None, pos_rank: float | None, age: float | None, injury_status: str | None) -> PlayerStrength:
+def player_strength(row: Mapping[str, Any], *, recent_ppg: float | None, season_ppg: float | None, pos_rank: float | None, age: float | None, injury_status: str | None, nfl_team: str | None = None) -> PlayerStrength:
     pos = str(row.get("pos") or row.get("position") or "").upper()
     tier = tier_points(pos, pos_rank)
     parts, weights = [], []
@@ -100,6 +104,7 @@ def player_strength(row: Mapping[str, Any], *, recent_ppg: float | None, season_
         sleeper_id=str(row.get("sleeper_player_id") or row.get("player_id") or ""), name=str(row.get("player_name") or ""), position=pos,
         team_id=str(row.get("league_team_id") or ""), owner=str(row.get("owner_name") or ""), now=round(now, 2), dynasty=round(dynasty, 2),
         available=available, recent_ppg=recent_ppg, season_ppg=season_ppg, pos_rank=pos_rank, age=age, years_left=years, injury=injury_status,
+        nfl_team=nfl_team or None,
     )
 
 
@@ -118,8 +123,14 @@ def fill_lineup(players: Iterable[PlayerStrength], slots: list[str], key: str = 
     return lineup, bench
 
 
-def compute_power(players: list[PlayerStrength], teams: list[Mapping[str, Any]], roster_positions: list[str], actual_ppg: Mapping[str, float] | None = None) -> list[TeamPower]:
-    """actual_ppg: owner name -> points per game this season in league scoring (blended 55/45 with the roster projection when present)."""
+def compute_power(players: list[PlayerStrength], teams: list[Mapping[str, Any]], roster_positions: list[str], actual_ppg: Mapping[str, float] | None = None,
+                  byes: Mapping[str, int] | None = None, week: int | None = None) -> list[TeamPower]:
+    """actual_ppg: owner name -> points per game this season in league scoring (blended 55/45 with the roster projection when present).
+
+    byes (NFL team -> bye week) and week only shape week_starters / on_bye / bye_next; the power scores
+    stay bye-neutral so rankings don't dip and rebound around bye weeks.
+    """
+    byes = byes or {}
     actual_ppg = {k.casefold(): v for k, v in (actual_ppg or {}).items()}
     slots = [s for s in roster_positions if s not in {"BN", "IR", "TAXI"}] or ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "SUPER_FLEX"]
     by_team: dict[str, list[PlayerStrength]] = defaultdict(list)
@@ -149,8 +160,14 @@ def compute_power(players: list[PlayerStrength], teams: list[Mapping[str, Any]],
             slot_scores[grp] += p.now
             counts[grp] += 1
         avg_slots = {g: slot_scores[g] / counts[g] for g in slot_scores}
+        on_bye = [p for p in roster if week and p.nfl_team and byes.get(p.nfl_team) == week]
+        bye_next = [p for p in roster if week and p.nfl_team and byes.get(p.nfl_team) == week + 1]
+        week_lineup = lineup
+        if on_bye:
+            bye_ids = {p.sleeper_id for p in on_bye}
+            week_lineup, _ = fill_lineup([p for p in roster if p.sleeper_id not in bye_ids], slots, "now")
         out.append(TeamPower(team_id=tid, owner=str(t.get("owner_name") or ""), now_score=round(now_score, 1), dynasty_score=round(dynasty_score, 1),
-                             starters=[p for _, p in lineup], slot_scores=avg_slots))
+                             starters=[p for _, p in lineup], slot_scores=avg_slots, week_starters=[p for _, p in week_lineup], on_bye=on_bye, bye_next=bye_next))
     # ranks
     for i, tp in enumerate(sorted(out, key=lambda x: -x.now_score), start=1):
         tp.now_rank = i
