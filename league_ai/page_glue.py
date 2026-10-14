@@ -9,7 +9,7 @@ from auth import auth_client
 from league_ai.client import ClaudeClient
 from league_ai.config import load_config
 from league_ai.context_pack import Asker
-from league_ai.nfl_data import bye_weeks, data_freshness, defense_vs_position, season_games, week_matchups
+from league_ai.nfl_data import add_weather, bye_weeks, data_freshness, defense_vs_position, season_games, week_matchups
 from league_ai.service import AnswerResult, LeagueDataSources, answer, build_pack, load_league_rules
 from league_ai.tools.nfl import build_registry
 from league_ai.tools.history import history_tools, pack_history_summary
@@ -342,7 +342,7 @@ def _cached_power(league_id: str, season: int, user_id: str, epoch: int, positio
     client = auth_client()
     state = _cached_state(league_id, season, user_id, epoch)
     rankings = power_rankings(client, state, season, list(positions), dict(actual_ppg), byes=_cached_byes(season), week=week,
-                              games=week_matchups(season_games(client, season), week) if week else {}, dvp=defense_vs_position(client, season))
+                              games=add_weather(week_matchups(season_games(client, season), week), season, week) if week else {}, dvp=defense_vs_position(client, season))
     snapshot_power(client, league_id, rankings)
 
     def bye_label(p: Any) -> str:

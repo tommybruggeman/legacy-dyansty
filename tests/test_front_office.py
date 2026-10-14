@@ -291,7 +291,7 @@ class MatchupTests(unittest.TestCase):
                 {"week": 7, "home_team": "KC", "away_team": "BUF", "home_score": None, "spread_line": -2.5, "total_line": 50.5, "gameday": "2026-10-18"}]
         self.assertEqual(current_week_from_games(rows), 7)
         games = week_matchups(rows, 7)
-        self.assertEqual(games["KC"], {"opponent": "BUF", "home": True, "implied_points": 24.0, "gameday": "2026-10-18"})
+        self.assertEqual({k: games["KC"][k] for k in ("opponent", "home", "implied_points", "gameday")}, {"opponent": "BUF", "home": True, "implied_points": 24.0, "gameday": "2026-10-18"})
         self.assertEqual(games["BUF"]["implied_points"], 26.5)
         self.assertEqual(week_matchups(rows, 6)["LAR"]["opponent"], "SF")
 
@@ -374,3 +374,38 @@ class ToolMatchupTests(unittest.TestCase):
             self.assertIn("ON BYE", allen["this_week"]["matchup"])
         finally:
             nfl_data._CACHE.clear()
+
+
+class WeatherTests(unittest.TestCase):
+    def test_kickoff_forecast_averages_first_three_hours_for_open_air_only(self):
+        from league_ai.nfl_data import kickoff_forecasts
+
+        games = [{"stadium": "Lambeau Field", "roof": "outdoors", "gameday": "2026-10-18", "gametime": "13:00"},
+                 {"stadium": "Ford Field", "roof": "dome", "gameday": "2026-10-18", "gametime": "13:00"},
+                 {"stadium": "Mercedes-Benz Stadium", "roof": None, "gameday": "2026-10-18", "gametime": "16:25"}]
+        seen = {}
+
+        def fake(url, params):
+            seen.update(params)
+            times = [f"2026-10-18T{h:02d}:00" for h in range(24)]
+            return [{"hourly": {"time": times, "temperature_2m": [40.0] * 24, "wind_speed_10m": [10.0] * 13 + [20.0, 22.0, 24.0] + [5.0] * 8, "precipitation": [0.0] * 13 + [0.1, 0.2, 0.1] + [0.0] * 8}}]
+
+        out = kickoff_forecasts(games, fake)
+        self.assertEqual(seen["latitude"], "44.5013")  # only the open-air venue is asked for
+        self.assertEqual(out, {"Lambeau Field": {"temp_f": 40, "wind_mph": 22, "precip_in": 0.4, "source": "forecast"}})
+        self.assertEqual(kickoff_forecasts(games, lambda *a: (_ for _ in ()).throw(RuntimeError("offline"))), {})
+
+    def test_wind_hurts_passing_and_helps_rushing_but_not_indoors(self):
+        from league_ai.nfl_data import game_multiplier, matchup_note, total_multiplier
+
+        windy = {"opponent": "CHI", "home": True, "implied_points": 22.5, "roof": "outdoors", "weather": {"temp_f": 35, "wind_mph": 22, "precip_in": 0.0, "source": "forecast"}}
+        dome = {**windy, "roof": "dome"}
+        self.assertAlmostEqual(game_multiplier("QB", windy), 0.88)
+        self.assertAlmostEqual(game_multiplier("RB", windy), 1.03)
+        self.assertEqual(game_multiplier("QB", dome), 1.0)
+        shootout = {"opponent": "CHI", "home": True, "implied_points": 31.5, "roof": "dome"}
+        self.assertAlmostEqual(game_multiplier("WR", shootout), 1.1)
+        self.assertEqual(total_multiplier("QB", {**windy, "implied_points": 14.0}, {"factor": 0.6}), 0.8)  # capped
+        note = matchup_note("QB", windy, None)
+        self.assertIn("outdoors, 35F, wind 22 mph (forecast)", note)
+        self.assertIn("indoors", matchup_note("QB", dome, None))

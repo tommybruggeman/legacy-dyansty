@@ -12,7 +12,7 @@ from collections import defaultdict
 from decimal import Decimal
 from typing import Any, Iterable, Mapping
 
-from league_ai.nfl_data import bye_weeks, current_week_from_games, defense_vs_position, matchup_label, matchup_multiplier, matchup_note, season_games, team_code, week_matchups
+from league_ai.nfl_data import add_weather, bye_weeks, current_week_from_games, defense_vs_position, matchup_label, matchup_note, season_games, team_code, total_multiplier, week_matchups, weather_text
 from league_ai.tools import ToolRegistry, ToolSpec
 
 STAT_FIELDS = [
@@ -116,15 +116,16 @@ class NflData:
         team = team_code(nfl_team)
         if self.bye_week(team) == week:
             return {"week": week, "matchup": "ON BYE: does not play this week, scores 0"}
-        game = week_matchups(rows, week).get(team)
+        game = add_weather(week_matchups(rows, week), season, week).get(team)
         if not game:
             return None
         pos = str(position or "").upper()
         rating = defense_vs_position(self.client, season).get((game["opponent"], pos))
-        out: dict[str, Any] = {"week": week, "matchup": matchup_note(pos, game, rating), "gameday": game.get("gameday")}
+        out: dict[str, Any] = {"week": week, "matchup": matchup_note(pos, game, rating), "gameday": game.get("gameday"), "kickoff_et": game.get("gametime"),
+                               "vegas_implied_team_points": game.get("implied_points"), "weather": weather_text(game),
+                               "lineup_effect": f"{(total_multiplier(pos, game, rating) - 1) * 100:+.0f}% to a typical week (defense matchup, Vegas total and weather combined)"}
         if rating:
-            out["defense_vs_position"] = {"rank_toughest_first": f"{rating['rank']} of {rating['teams']}", "ppr_allowed_per_game": rating["ppg_allowed"], "games": rating["games"],
-                                          "label": matchup_label(rating), "lineup_effect": f"{(matchup_multiplier(rating['factor']) - 1) * 100:+.0f}% to a typical week"}
+            out["defense_vs_position"] = {"rank_toughest_first": f"{rating['rank']} of {rating['teams']}", "ppr_allowed_per_game": rating["ppg_allowed"], "games": rating["games"], "label": matchup_label(rating)}
         return out
 
     # ---- players ---------------------------------------------------------

@@ -12,7 +12,7 @@ import requests
 from league_ai.client import ClaudeClient
 from league_ai.config import LeagueAIConfig, load_config
 from league_ai.context_pack import team_summaries
-from league_ai.nfl_data import matchup_multiplier, matchup_note, team_code
+from league_ai.nfl_data import matchup_note, team_code, total_multiplier
 from league_ai.power import PlayerStrength, TeamPower, compute_power, player_strength
 from league_ai.prompt import SYSTEM_PROMPT
 from league_ai.tools import ToolRegistry
@@ -174,13 +174,13 @@ def power_rankings(client: Any, state: Mapping[str, Any], season: int, roster_po
 
 
 def apply_matchups(players: list[PlayerStrength], games: Mapping[str, Mapping[str, Any]], dvp: Mapping[tuple[str, str], Mapping[str, Any]]) -> None:
-    """Set each player's week_now (now x matchup multiplier) and a short matchup note for this week's game."""
+    """Set each player's week_now (now x defense matchup x game environment) and a short note for this week's game."""
     for p in players:
         game = games.get(p.nfl_team or "")
         if not game:
             continue
         rating = dvp.get((game["opponent"], p.position))
-        p.week_now = round(p.now * matchup_multiplier(rating.get("factor") if rating else None), 2)
+        p.week_now = round(p.now * total_multiplier(p.position, game, rating), 2)
         p.matchup = matchup_note(p.position, game, rating)
 
 
@@ -292,7 +292,7 @@ def brief_facts(client: Any, *, state: Mapping[str, Any], team_id: str, owner: s
     if on_bye:
         lines.append("- ON BYE this week (score 0, must be benched): " + ", ".join(on_bye))
     if matchups:
-        lines.append("- MATCHUPS for the best lineup this week (player, matchup-adjusted strength, opponent defense vs position, Vegas implied team points): " + "; ".join(matchups))
+        lines.append("- MATCHUPS for the best lineup this week (player, matchup-adjusted strength, opponent defense vs position, Vegas implied team points, weather): " + "; ".join(matchups))
     me = team_record(standings, owner)
     if me:
         lines.append(f"- ME {owner}: {me['record']}, rank {me['rank']}, {me['ppg']} ppg, {me['standing_points']} standing points")
@@ -515,7 +515,7 @@ def week_context(fo: Mapping[str, Any] | None, owner: str, today: date | None = 
             lines.append(f"- {owner}: power #{mine.get('now_rank')} now, dynasty #{mine.get('dynasty_rank')}; strongest slot {mine.get('strongest_slot') or '?'}, weakest slot {mine.get('weakest_slot') or '?'}" + (f" ({mine.get('weakest_note')})" if mine.get("weakest_note") else "") + ".")
             starters = mine.get("week_starters") or mine.get("starters")
             if starters:
-                lines.append(f"- {owner}'s best lineup this week by the app's strength model, bye and injured players already benched (position, player, strength score blending recent and season PPG with market tier, adjusted up to +/-15% for the matchup; then this week's game: opponent, how that defense ranks against the position, Vegas implied team points): " + "; ".join(starters) + ".")
+                lines.append(f"- {owner}'s best lineup this week by the app's strength model, bye and injured players already benched (position, player, strength score blending recent and season PPG with market tier, adjusted up to +/-20% for the defense matchup, Vegas implied points and weather; then this week's game: opponent, how that defense ranks against the position, Vegas implied team points, roof and kickoff weather): " + "; ".join(starters) + ".")
             if mine.get("week_bench"):
                 lines.append(f"- {owner}'s best bench options this week, same format: " + "; ".join(mine["week_bench"]) + ".")
             if mine.get("on_bye"):
