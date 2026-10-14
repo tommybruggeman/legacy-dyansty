@@ -12,7 +12,7 @@ from collections import defaultdict
 from decimal import Decimal
 from typing import Any, Iterable, Mapping
 
-from league_ai.nfl_data import bye_weeks, team_code
+from league_ai.nfl_data import bye_weeks, current_week_from_games, defense_vs_position, matchup_label, matchup_multiplier, matchup_note, season_games, team_code, week_matchups
 from league_ai.tools import ToolRegistry, ToolSpec
 
 STAT_FIELDS = [
@@ -88,19 +88,44 @@ class NflData:
         self.salary_cap = Decimal(str(salary_cap or 225))
         self.dead_cap_pct = float(dead_cap_pct or 50)
         self._roster_index: dict[str, list[dict[str, Any]]] | None = None
-        self._byes: dict[str, int] | None = None
+        self._season: int | None = None
 
-    def bye_week(self, nfl_team: Any) -> int | None:
-        """This season's bye week for an NFL team (latest season in nfl_games), loaded once per registry."""
-        if not nfl_team:
-            return None
-        if self._byes is None:
+    def schedule_season(self) -> int | None:
+        """Latest season in nfl_games, looked up once per registry."""
+        if self._season is None:
             try:
                 latest = self.client.table("nfl_games").select("season").eq("game_type", "REG").order("season", desc=True).limit(1).execute().data or []
-                self._byes = bye_weeks(self.client, int(latest[0]["season"])) if latest else {}
+                self._season = int(latest[0]["season"]) if latest else 0
             except Exception:
-                self._byes = {}
-        return self._byes.get(team_code(nfl_team))
+                self._season = 0
+        return self._season or None
+
+    def bye_week(self, nfl_team: Any) -> int | None:
+        season = self.schedule_season() if nfl_team else None
+        return bye_weeks(self.client, season).get(team_code(nfl_team)) if season else None
+
+    def this_week(self, nfl_team: Any, position: Any) -> dict[str, Any] | None:
+        """This week's game for a player's NFL team: opponent, how that defense ranks against the position, Vegas implied points."""
+        season = self.schedule_season() if nfl_team else None
+        if not season:
+            return None
+        rows = season_games(self.client, season)
+        week = current_week_from_games(rows)
+        if not week:
+            return None
+        team = team_code(nfl_team)
+        if self.bye_week(team) == week:
+            return {"week": week, "matchup": "ON BYE: does not play this week, scores 0"}
+        game = week_matchups(rows, week).get(team)
+        if not game:
+            return None
+        pos = str(position or "").upper()
+        rating = defense_vs_position(self.client, season).get((game["opponent"], pos))
+        out: dict[str, Any] = {"week": week, "matchup": matchup_note(pos, game, rating), "gameday": game.get("gameday")}
+        if rating:
+            out["defense_vs_position"] = {"rank_toughest_first": f"{rating['rank']} of {rating['teams']}", "ppr_allowed_per_game": rating["ppg_allowed"], "games": rating["games"],
+                                          "label": matchup_label(rating), "lineup_effect": f"{(matchup_multiplier(rating['factor']) - 1) * 100:+.0f}% to a typical week"}
+        return out
 
     # ---- players ---------------------------------------------------------
     def find_players(self, name: str, position: str | None = None, limit: int = 5) -> list[dict[str, Any]]:
@@ -434,6 +459,7 @@ def _profile_dict(data: NflData, p: dict[str, Any], include_market: bool = True)
         "position": p.get("position"),
         "nfl_team": p.get("team") or "free agent / unsigned",
         "bye_week": data.bye_week(p.get("team")),
+        "this_week": data.this_week(p.get("team"), p.get("position")) or "no game data for this week",
         "age": p.get("age"),
         "birthdate": p.get("birthdate"),
         "years_exp": p.get("years_exp"),

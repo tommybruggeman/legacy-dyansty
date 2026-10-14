@@ -9,7 +9,7 @@ from auth import auth_client
 from league_ai.client import ClaudeClient
 from league_ai.config import load_config
 from league_ai.context_pack import Asker
-from league_ai.nfl_data import bye_weeks, data_freshness
+from league_ai.nfl_data import bye_weeks, data_freshness, defense_vs_position, season_games, week_matchups
 from league_ai.service import AnswerResult, LeagueDataSources, answer, build_pack, load_league_rules
 from league_ai.tools.nfl import build_registry
 from league_ai.tools.history import history_tools, pack_history_summary
@@ -341,16 +341,20 @@ def _cached_byes(season: int) -> dict[str, int]:
 def _cached_power(league_id: str, season: int, user_id: str, epoch: int, positions: tuple[str, ...], actual_ppg: tuple[tuple[str, float], ...] = (), week: int = 0) -> list[dict]:
     client = auth_client()
     state = _cached_state(league_id, season, user_id, epoch)
-    rankings = power_rankings(client, state, season, list(positions), dict(actual_ppg), byes=_cached_byes(season), week=week)
+    rankings = power_rankings(client, state, season, list(positions), dict(actual_ppg), byes=_cached_byes(season), week=week,
+                              games=week_matchups(season_games(client, season), week) if week else {}, dvp=defense_vs_position(client, season))
     snapshot_power(client, league_id, rankings)
 
     def bye_label(p: Any) -> str:
         return f"{p.position} {p.name} ({p.nfl_team})"
 
+    def week_label(p: Any) -> str:
+        return f"{p.position} {p.name} ({p.score('week_now'):.1f}" + (f", {p.matchup})" if p.matchup else ")")
+
     return [{"team_id": tp.team_id, "owner": tp.owner, "now_rank": tp.now_rank, "now_score": tp.now_score, "dynasty_rank": tp.dynasty_rank, "dynasty_score": tp.dynasty_score,
              "weakest_slot": tp.weakest_slot, "weakest_note": tp.weakest_note, "strongest_slot": tp.strongest_slot,
              "starters": [f"{p.position} {p.name} ({p.now:.1f})" for p in tp.starters],
-             "week_starters": [f"{p.position} {p.name} ({p.now:.1f})" for p in tp.week_starters],
+             "week_starters": [week_label(p) for p in tp.week_starters], "week_bench": [week_label(p) for p in tp.week_bench],
              "on_bye": [bye_label(p) for p in tp.on_bye], "on_bye_names": [p.name for p in tp.on_bye], "bye_next": [bye_label(p) for p in tp.bye_next]} for tp in rankings]
 
 
@@ -424,9 +428,10 @@ def weekly_brief(*, request_context: Any, team: dict, fo: dict, force: bool = Fa
                         owner_name, team_name, role, int(st.session_state.get(MEMORY_EPOCH_KEY, 0)))
     state = _cached_state(league_id, season, request_context.user_id, epoch)
     opponent = fo.get("opponent")
+    mine = next((r for r in fo.get("rankings") or [] if r.get("team_id") == request_context.league_team_id), None)
     facts = brief_facts(client, state=state, team_id=request_context.league_team_id, owner=owner_name, opponent=opponent, h2h=fo.get("h2h"), standings=fo.get("standings") or [],
                         weakest_slot=fo.get("weakest_slot"), salary_cap=float(fo.get("salary_cap") or 225),
-                        on_bye=(fo.get("data_brief") or {}).get("byes"))
+                        on_bye=(fo.get("data_brief") or {}).get("byes"), matchups=(mine or {}).get("week_starters"))
     sections = generate_brief(pack=pack, tools=None, owner=owner_name, week=week, opponent=opponent["owner_name"] if opponent else None, facts=facts,
                               on_trace=lambda trace: record_usage(client, row_from_trace(trace, league_id=league_id, user_id=request_context.user_id, feature="brief")))
     if sections:

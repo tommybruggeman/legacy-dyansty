@@ -281,3 +281,96 @@ class ByeWeekTests(unittest.TestCase):
         base = {"injuries": {"items": []}, "matchup": {"headline": "vs X"}}
         self.assertEqual(brief_fingerprint(base), brief_fingerprint({**base, "byes": []}))
         self.assertNotEqual(brief_fingerprint(base), brief_fingerprint({**base, "byes": ["WR A (DAL)"]}))
+
+
+class MatchupTests(unittest.TestCase):
+    def test_week_matchups_implied_points(self):
+        from league_ai.nfl_data import current_week_from_games, week_matchups
+
+        rows = [{"week": 6, "home_team": "SF", "away_team": "LA", "home_score": 24, "spread_line": 3.0, "total_line": 47.0},
+                {"week": 7, "home_team": "KC", "away_team": "BUF", "home_score": None, "spread_line": -2.5, "total_line": 50.5, "gameday": "2026-10-18"}]
+        self.assertEqual(current_week_from_games(rows), 7)
+        games = week_matchups(rows, 7)
+        self.assertEqual(games["KC"], {"opponent": "BUF", "home": True, "implied_points": 24.0, "gameday": "2026-10-18"})
+        self.assertEqual(games["BUF"]["implied_points"], 26.5)
+        self.assertEqual(week_matchups(rows, 6)["LAR"]["opponent"], "SF")
+
+    def test_defense_vs_position_ranks_and_shrinks(self):
+        from league_ai.nfl_data import defense_vs_position_from_stats, matchup_label, matchup_multiplier
+
+        rows = []
+        for week in (1, 2, 3, 4):
+            rows += [{"week": week, "position": "WR", "opponent": "SF", "fantasy_points_ppr": 10},
+                     {"week": week, "position": "WR", "opponent": "LA", "fantasy_points_ppr": 30},
+                     {"week": week, "position": "WR", "opponent": "KC", "fantasy_points_ppr": 20},
+                     {"week": week, "position": "WR", "opponent": "BUF", "fantasy_points_ppr": 20}]
+        dvp = defense_vs_position_from_stats(rows)
+        self.assertEqual(dvp[("SF", "WR")]["rank"], 1)
+        self.assertEqual(dvp[("LAR", "WR")]["rank"], 4)
+        self.assertEqual(dvp[("SF", "WR")]["ppg_allowed"], 10.0)
+        # raw 0.5x average, shrunk with 4 games vs a 3-game prior
+        self.assertAlmostEqual(dvp[("SF", "WR")]["factor"], 1 - 0.5 * 4 / 7, places=3)
+        self.assertEqual(matchup_label(dvp[("SF", "WR")]), "tough")
+        self.assertEqual(matchup_label(dvp[("LAR", "WR")]), "soft")
+        self.assertEqual(matchup_multiplier(0.2), 0.85)
+        self.assertEqual(matchup_multiplier(None), 1.0)
+
+    def test_tough_matchup_flips_a_close_call_but_not_a_stud(self):
+        from league_ai.front_office import apply_matchups
+        from league_ai.power import PlayerStrength
+
+        def p(sid, pos, now, nfl):
+            return PlayerStrength(sleeper_id=sid, name=sid, position=pos, team_id="a", owner="A", now=now, dynasty=now, available=True, nfl_team=nfl)
+
+        players = [p("Stud", "WR", 22, "DAL"), p("Close1", "WR", 14, "NYG"), p("Close2", "WR", 13.5, "SEA")]
+        games = {"DAL": {"opponent": "SF", "home": False, "implied_points": 20.5}, "NYG": {"opponent": "SF", "home": True, "implied_points": 18.0},
+                 "SEA": {"opponent": "LAR", "home": True, "implied_points": 26.0}}
+        dvp = {("SF", "WR"): {"rank": 1, "teams": 32, "ppg_allowed": 25.0, "factor": 0.8, "games": 6}, ("LAR", "WR"): {"rank": 32, "teams": 32, "ppg_allowed": 45.0, "factor": 1.2, "games": 6}}
+        apply_matchups(players, games, dvp)
+        tp = compute_power(players, [{"league_team_id": "a", "owner_name": "A"}], ["WR", "WR"], week=7)[0]
+        self.assertEqual([x.name for x in tp.week_starters], ["Stud", "Close2"])
+        self.assertEqual([x.name for x in tp.starters], ["Stud", "Close1"])  # season view ignores the matchup
+        self.assertIn("@ SF, tough: SF allows 1st-fewest PPR to WR", players[0].matchup)
+        self.assertIn("soft: LAR allows 1st-most PPR to WR", players[2].matchup)
+        self.assertIn("team implied 26.0 pts", players[2].matchup)
+
+
+class ToolMatchupTests(unittest.TestCase):
+    def test_profile_shows_this_weeks_matchup_and_byes(self):
+        import league_ai.nfl_data as nfl_data
+        from league_ai.tools.nfl import NflData, tool_get_player_profile
+        from tests.test_league_ai_tools import PLAYERS, FakeQuery
+
+        class PagedQuery(FakeQuery):
+            def range(self, start, end):
+                self._order = []
+                self.rows = self.rows[start:end + 1]
+                return self
+
+        games = [{"season": 2026, "game_type": "REG", "week": 1, "home_team": "ATL", "away_team": "CAR", "home_score": 20},
+                 {"season": 2026, "game_type": "REG", "week": 1, "home_team": "BUF", "away_team": "TB", "home_score": 17},
+                 {"season": 2026, "game_type": "REG", "week": 2, "home_team": "TB", "away_team": "ATL", "home_score": None, "spread_line": 1.0, "total_line": 45.0},
+                 {"season": 2026, "game_type": "REG", "week": 3, "home_team": "BUF", "away_team": "ATL", "home_score": None},
+                 {"season": 2026, "game_type": "REG", "week": 3, "home_team": "CAR", "away_team": "TB", "home_score": None}]
+        stats = [{"season": 2026, "season_type": "REG", "week": 1, "position": "RB", "opponent": "TB", "fantasy_points_ppr": 8, "gsis_id": "x"},
+                 {"season": 2026, "season_type": "REG", "week": 1, "position": "RB", "opponent": "CAR", "fantasy_points_ppr": 30, "gsis_id": "y"},
+                 {"season": 2026, "season_type": "REG", "week": 1, "position": "RB", "opponent": "ATL", "fantasy_points_ppr": 20, "gsis_id": "z"},
+                 {"season": 2026, "season_type": "REG", "week": 1, "position": "RB", "opponent": "BUF", "fantasy_points_ppr": 22, "gsis_id": "w"}]
+
+        class Client:
+            tables = {"nfl_players": PLAYERS, "nfl_games": games, "nfl_player_stats": stats, "nfl_market_values": [], "nfl_injuries": [], "nfl_practice_reports": []}
+            def table(self, name): return PagedQuery(self.tables.get(name, []))
+
+        nfl_data._CACHE.clear()
+        try:
+            data = NflData(Client(), league_state=fixture_state())
+            bijan = tool_get_player_profile(data, "Bijan Robinson")
+            self.assertEqual(bijan["this_week"]["week"], 2)
+            self.assertIn("@ TB, tough: TB allows 1st-fewest PPR to RB", bijan["this_week"]["matchup"])
+            self.assertIn("team implied 22.0 pts", bijan["this_week"]["matchup"])
+            self.assertEqual(bijan["this_week"]["defense_vs_position"]["rank_toughest_first"], "1 of 4")
+            allen = tool_get_player_profile(data, "Josh Allen")
+            self.assertEqual(allen["bye_week"], 2)
+            self.assertIn("ON BYE", allen["this_week"]["matchup"])
+        finally:
+            nfl_data._CACHE.clear()
