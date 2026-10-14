@@ -20,7 +20,7 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from pipeline.nfl_data.common import service_client  # also puts the repo root on sys.path
 
@@ -138,7 +138,7 @@ def sync_one(sdk: Any, req: Req, messages: list[dict[str, Any]] | None = None, u
     return Res("", usage, batch=False)
 
 
-def make_runner(*, use_batch: bool = True, poll_seconds: int = 60, max_wait_seconds: int = 3 * 3600) -> Runner:
+def make_runner(*, use_batch: bool = True, poll_seconds: int = 60, max_wait_seconds: int = 90 * 60) -> Runner:
     import anthropic
 
     sdk = anthropic.Anthropic(api_key=api_key(), timeout=180, max_retries=3)
@@ -193,7 +193,8 @@ def _sub(a: dict[str, int], b: dict[str, int]) -> dict[str, int]:
 # ---- the job ---------------------------------------------------------------------------
 
 def run(client: Any, runner: Runner, *, season: int | None = None, web_search: bool = True, dry_run: bool = False,
-        stats: WeeklyStats | None = None, now: datetime | None = None, main_model: str | None = None) -> dict[str, Any]:
+        stats: WeeklyStats | None = None, now: datetime | None = None, main_model: str | None = None,
+        playbook_runner: Runner | None = None, rebuild: bool = False) -> dict[str, Any]:
     stats = stats or WeeklyStats()
     now = now or datetime.now(timezone.utc)
     main_model = main_model or load_config().model
@@ -251,32 +252,108 @@ def run(client: Any, runner: Runner, *, season: int | None = None, web_search: b
                                                        "process_error": diag.get("process_error"), "factors": pred.get("factors"),
                                                        "factor_review": diag.get("factor_review"), "lesson": diag.get("lesson")})
 
-    # 3. scorecard and playbook per league (one batched call per league)
-    cards: dict[str, tuple[int, dict[str, Any], list[dict[str, Any]]]] = {}
-    pb_reqs: list[Req] = []
-    for lid, new_items in new_by_league.items():
-        current_season = max(int(r["season"]) for r in open_rows if str(r["league_id"]) == lid)
-        graded_rows = (client.table("league_ai_predictions").select("kind, factors, confidence, correct, cause").eq("league_id", lid)
+    # 3. scorecard and playbook per league. The scorecard is saved first (no model needed), so a slow or failed
+    # playbook call can never leave the chat without its record. Leagues with graded calls but no lessons yet
+    # (a playbook step that never finished, or --rebuild) get their playbook rebuilt from every graded call.
+    playbook_runner = playbook_runner or runner
+    cards: dict[str, tuple[int, dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]] = {}
+    for lid, current_season in _leagues_to_review(client, open_rows, new_by_league, season, rebuild):
+        graded_rows = (client.table("league_ai_predictions").select("kind, factors, confidence, correct, cause, process_error, result, lesson").eq("league_id", lid)
                        .eq("season", current_season).eq("status", "graded").limit(5000).execute().data or [])
+        if not graded_rows:
+            continue
         card = scorecard(graded_rows)
         lessons = client.table("league_ai_lessons").select("*").eq("league_id", lid).eq("active", True).limit(100).execute().data or []
-        cards[lid] = (current_season, card, lessons)
-        system, prompt = consolidate_request(lessons, new_items, card)
-        pb_reqs.append(Req(id=f"playbook:{lid}", system=system, prompt=prompt, model=main_model, feature="playbook", league_id=lid))
-    pb_answers = runner(pb_reqs) if pb_reqs else {}
-    _record_all(client, pb_reqs, pb_answers, summary, dry_run)
-
-    for lid, (current_season, card, lessons) in cards.items():
-        playbook = parse_playbook(pb_answers.get(f"playbook:{lid}", Res("")).text)
-        summary["leagues"].append({"league_id": lid, "new": len(new_by_league[lid]), "scorecard": card, "lessons": len(playbook or [])})
+        new_items = new_by_league.get(lid) or []
+        if not new_items and (rebuild or not lessons):
+            new_items = [{"kind": r.get("kind"), "right": r.get("correct"), "cause": r.get("cause"), "process_error": r.get("process_error"),
+                          "factors": r.get("factors"), "factor_review": (r.get("result") or {}).get("factor_review"), "lesson": r.get("lesson")} for r in graded_rows]
+        if not new_items:
+            continue
+        cards[lid] = (current_season, card, lessons, new_items)
         if dry_run:
-            print(f"[learning] league {lid} scorecard {card}\n[learning] proposed playbook {playbook}", flush=True)
+            print(f"[learning] league {lid} scorecard {card}", flush=True)
             continue
         client.table("league_ai_scorecards").upsert({"league_id": lid, "season": current_season, "stats": card, "computed_at": now.isoformat()},
                                                     on_conflict="league_id,season").execute()
+
+    pb_reqs: list[Req] = []
+    for lid, (_, card, lessons, new_items) in cards.items():
+        system, prompt = consolidate_request(lessons, new_items, card)
+        pb_reqs.append(Req(id=f"playbook:{lid}", system=system, prompt=prompt, model=main_model, feature="playbook", league_id=lid))
+    pb_answers = playbook_runner(pb_reqs) if pb_reqs else {}
+    _record_all(client, pb_reqs, pb_answers, summary, dry_run)
+
+    for lid, (_, card, lessons, new_items) in cards.items():
+        playbook = parse_playbook(pb_answers.get(f"playbook:{lid}", Res("")).text)
+        summary["leagues"].append({"league_id": lid, "new": len(new_by_league.get(lid) or []), "scorecard": card, "lessons": len(playbook or [])})
+        if dry_run:
+            print(f"[learning] league {lid} proposed playbook {playbook}", flush=True)
+            continue
         if playbook is not None:
             apply_playbook(client, lid, lessons, playbook, now)
+        else:
+            print(f"[learning] league {lid}: playbook answer unreadable; lessons unchanged", flush=True)
     return summary
+
+
+def _leagues_to_review(client: Any, open_rows: list[dict[str, Any]], new_by_league: Mapping[str, Any], season: int | None, rebuild: bool) -> list[tuple[str, int]]:
+    """(league, season) pairs whose scorecard and playbook need writing: any league with new grades, plus
+    every league with graded calls this season but no active lessons (or all of them on --rebuild)."""
+    seasons: dict[str, int] = {}
+    for r in open_rows:
+        lid = str(r["league_id"])
+        seasons[lid] = max(seasons.get(lid, 0), int(r["season"]))
+    try:
+        graded = client.table("league_ai_predictions").select("league_id, season").eq("status", "graded").limit(5000).execute().data or []
+    except Exception:
+        graded = []
+    latest = max([int(r["season"]) for r in graded] + ([season] if season else []), default=0)
+    with_grades = {str(r["league_id"]) for r in graded if int(r["season"]) == latest}
+    out = {lid: seasons.get(lid, latest) for lid in new_by_league}
+    for lid in with_grades - set(out):
+        if rebuild:
+            out[lid] = latest
+            continue
+        try:
+            has_lessons = client.table("league_ai_lessons").select("id").eq("league_id", lid).eq("active", True).limit(1).execute().data
+        except Exception:
+            has_lessons = True
+        if not has_lessons:
+            out[lid] = latest
+    return sorted(out.items())
+
+
+def repair(client: Any, *, dry_run: bool = False) -> dict[str, int]:
+    """One-off cleanup after the grading fixes: void restated duplicate calls, and reopen graded start/sit and
+    pickup calls with several alternatives (scored on the old average-of-alternatives rule) so the next run
+    regrades them against the best alternative."""
+    rows = client.table("league_ai_predictions").select("*").in_("status", ["open", "graded"]).limit(5000).execute().data or []
+    rows.sort(key=lambda r: str(r.get("created_at") or ""), reverse=True)  # newest first: the newest call of a restated pair counts
+
+    def ids(players: Any) -> frozenset[str]:
+        return frozenset(str(p.get("sleeper_id") or p.get("name")) for p in players or [])
+
+    kept: list[dict[str, Any]] = []
+    voided = reopened = 0
+    for r in rows:
+        dup = next((k for k in kept if k["league_id"] == r["league_id"] and k.get("user_id") == r.get("user_id") and k["kind"] == r["kind"]
+                    and k["season"] == r["season"] and (r["kind"] == "trade" or k["week"] == r["week"])
+                    and ids(k["pick"]) == ids(r["pick"]) and ids(k["over"]) & ids(r["over"])), None)
+        if dup is not None:
+            voided += 1
+            if not dry_run:
+                client.table("league_ai_predictions").update({"status": "void"}).eq("id", r["id"]).execute()
+            continue
+        kept.append(r)
+        if r["status"] == "graded" and r["kind"] != "trade" and len(r.get("over") or []) > 1:
+            reopened += 1
+            if not dry_run:
+                client.table("league_ai_predictions").update({
+                    "status": "open", "graded_at": None, "correct": None, "pick_points": None, "over_points": None, "margin": None,
+                    "result": None, "cause": None, "process_error": None, "diagnosis": None, "lesson": None}).eq("id", r["id"]).execute()
+    print(f"[learning] repair: {voided} duplicate call(s) voided, {reopened} multi-alternative call(s) reopened for regrading", flush=True)
+    return {"voided": voided, "reopened": reopened}
 
 
 def _record_all(client: Any, reqs: list[Req], answers: dict[str, Res], summary: dict[str, Any], dry_run: bool) -> None:
@@ -312,6 +389,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--no-search", action="store_true")
     parser.add_argument("--no-batch", action="store_true")
+    parser.add_argument("--rebuild", action="store_true", help="rebuild every league's scorecard and playbook from all graded calls")
+    parser.add_argument("--repair", action="store_true", help="void duplicate calls and regrade multi-alternative calls first")
     args = parser.parse_args(argv)
     client = service_client()
     cfg = load_config()
@@ -319,7 +398,12 @@ def main(argv: list[str] | None = None) -> int:
         print("[learning] ANTHROPIC_API_KEY is not set (add it as a GitHub Actions secret); nothing graded", flush=True)
         return 0
     try:
-        summary = run(client, make_runner(use_batch=not args.no_batch), web_search=not args.no_search, dry_run=args.dry_run, main_model=cfg.model)
+        if args.repair:
+            repair(client, dry_run=args.dry_run)
+        # the playbook is one call per league per week: answer it directly, since the batch discount saves under a cent
+        # and a batch that outlives the job is how the playbook went unwritten
+        summary = run(client, make_runner(use_batch=not args.no_batch), web_search=not args.no_search, dry_run=args.dry_run, main_model=cfg.model,
+                      playbook_runner=make_runner(use_batch=False), rebuild=args.rebuild)
     except Exception as exc:
         if "league_ai_predictions" in str(exc) and ("PGRST205" in str(exc) or "schema cache" in str(exc)):
             print("[learning] tables not created yet (run migration 20261124_league_ai_learning.sql); nothing graded", flush=True)

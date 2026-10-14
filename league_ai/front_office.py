@@ -353,7 +353,8 @@ def parse_brief(text: str) -> dict[str, Any] | None:
 
 def generate_brief(*, pack: str, tools: ToolRegistry | None, owner: str, week: int, opponent: str | None, facts: str = "", client: ClaudeClient | None = None,
                    on_trace: Callable[[Any], None] | None = None) -> dict[str, Any] | None:
-    system = [{"type": "text", "text": SYSTEM_PROMPT}, {"type": "text", "text": pack, "cache_control": {"type": "ephemeral"}}]
+    # no cache_control: a brief is one call a week per owner, so a cache write (25% surcharge) is never read back
+    system = [{"type": "text", "text": SYSTEM_PROMPT}, {"type": "text", "text": pack}]
     question = BRIEF_INSTRUCTIONS.replace("{owner}", owner).replace("{week}", str(week)).replace("{opponent}", opponent or "no game this week").replace("{facts}", facts or "(none)")
     runner = client or ClaudeClient(brief_config())
     result = runner.run(system=system, messages=[{"role": "user", "content": question}], tools=None, max_tool_calls=0)

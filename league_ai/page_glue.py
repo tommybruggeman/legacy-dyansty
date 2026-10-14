@@ -166,7 +166,7 @@ def run_league_ai(*, request_context: Any, team: dict, question: str, history: l
         ledger = Ledger(client, league_id=league_id, user_id=request_context.user_id, league_team_id=request_context.league_team_id,
                         season=int(request_context.current_season), week=_cached_nfl_week(),
                         resolve_player=lambda name: next(iter(nfl.find_players(name, limit=1)), None),
-                        conversation_id=lambda: st.session_state.get(CONVERSATION_KEY))
+                        conversation_id=lambda: st.session_state.get(CONVERSATION_KEY), question=lambda: question)
         tools = build_registry(client, league_state=state, salary_cap=rules.get("salary_cap", 225), dead_cap_pct=float(rules.get("default_dead_cap_pct", 50) or 50),
                                extra=[*history_tools(client, league_id), *memory.tools(), *ledger.tools()])
     result = answer(question=question, history=history, asker=asker, sources=sources, tools=tools, client=ClaudeClient(), pack=pack, on_event=on_event,

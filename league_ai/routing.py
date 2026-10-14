@@ -10,7 +10,7 @@ import re
 TOPICS = ("trade", "lineup", "waivers", "contracts", "draft", "strategy", "lookup", "other")
 
 _RULES: list[tuple[str, tuple[str, ...]]] = [
-    ("trade", ("trade", "deal for", "offer", "package", "buy low", "sell high", "deadline")),
+    ("trade", ("trade", "deal for", "offer", "package", "buy low", "sell high", "deadline", "straight up", "straight swap", "swap", "in return")),
     ("lineup", ("start", "sit ", "bench", "lineup", "flex", "who do i play", "streamer", "stream ")),
     ("waivers", ("waiver", "pick up", "pickup", "free agent", "faab", "add ", "drop ")),
     ("contracts", ("contract", "cap ", "salary", "extension", "cut ", "release", "dead cap", "tag")),
@@ -18,6 +18,7 @@ _RULES: list[tuple[str, tuple[str, ...]]] = [
     ("strategy", ("contender", "rebuild", "retool", "window", "plan", "long term", "dynasty value", "worth")),
 ]
 _LOOKUP = re.compile(r"^(what('?s| is| are)|how (much|many)|who('?s| is| are) (on|my)|when|list|show|which team)\b")
+_SWAP = re.compile(r"^[a-z.'\- ]{3,40} for [a-z.'\- ]{3,40}\??$")  # "Waddle for Devonta Smith?"
 _DECISION = re.compile(r"\b(should i|would you|better|or|vs\.?|versus|accept|decline|keep|worth it)\b")
 
 
@@ -26,6 +27,8 @@ def topic(question: str) -> str:
     for name, words in _RULES:
         if any(w in q for w in words):
             return name
+    if _SWAP.match(q.strip()):
+        return "trade"
     return "lookup" if _LOOKUP.search(q.strip()) else "other"
 
 

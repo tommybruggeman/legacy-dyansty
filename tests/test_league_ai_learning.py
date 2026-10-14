@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from league_ai.learning import (
     Ledger, consolidate, diagnose, diagnostic_facts, grade, is_due, league_points, learning_pack_lines, record_by, scorecard,
 )
-from league_ai.learning_job import Res, WeeklyStats, completed_week, run
+from league_ai.learning_job import Res, WeeklyStats, completed_week, repair, run
 
 
 class MemQuery:
@@ -108,6 +108,20 @@ class GradingTests(unittest.TestCase):
         self.assertEqual(out["margin"], -13.5)
         self.assertEqual(out["result"]["players"]["222"]["weeks"][4], 21.5)
 
+    def test_start_sit_against_several_alternatives_uses_the_best_one(self):
+        c = {"sleeper_id": "333", "name": "Player C", "position": "RB"}
+        pts = {("111", 4): 14.4, ("222", 4): 0.0, ("333", 4): 16.2}
+        out = grade(_pred(over=[B, c]), lambda sid, w: pts.get((sid, w), 0.0))
+        self.assertFalse(out["correct"])  # the old average (8.1) would have called this right
+        self.assertEqual((out["pick_points"], out["over_points"], out["margin"]), (14.4, 16.2, -1.8))
+
+    def test_several_starters_are_judged_by_the_weakest_one(self):
+        c = {"sleeper_id": "333", "name": "Player C", "position": "RB"}
+        pts = {("111", 4): 20.0, ("333", 4): 6.0, ("222", 4): 9.0}
+        out = grade(_pred(pick=[A, c]), lambda sid, w: pts.get((sid, w), 0.0))
+        self.assertFalse(out["correct"])
+        self.assertEqual(out["pick_points"], 6.0)
+
     def test_trade_decline_is_right_when_received_side_scores_less(self):
         pts = {("111", w): 5.0 for w in range(4, 8)} | {("222", w): 12.0 for w in range(4, 8)}
         out = grade(_pred(kind="trade", verdict="decline", horizon_weeks=4), lambda sid, w: pts.get((sid, w), 0.0))
@@ -169,6 +183,33 @@ class LedgerTests(unittest.TestCase):
         statuses = [r["status"] for r in db.tables["league_ai_predictions"]]
         self.assertEqual(statuses, ["void", "open"])
         self.assertEqual(db.tables["league_ai_predictions"][0]["status"], "void")
+
+    def test_restated_call_with_overlapping_alternatives_replaces_the_old_one(self):
+        db = MemDB()
+        ledger = self._ledger(db)
+        people = {"player a": {"sleeper_id": "111", "full_name": "Player A"}, "player b": {"sleeper_id": "222", "full_name": "Player B"},
+                  "player c": {"sleeper_id": "333", "full_name": "Player C"}}
+        ledger.resolve_player = lambda n: people.get(n.lower())
+        ledger.log_prediction("start_sit", ["Player A"], ["Player B", "Player C"], "x", {}, 0.8)
+        ledger.log_prediction("start_sit", ["Player A"], ["Player B"], "restated", {}, 0.65)
+        self.assertEqual([r["status"] for r in db.tables["league_ai_predictions"]], ["void", "open"])
+
+    def test_same_trade_asked_in_another_week_is_one_call(self):
+        db = MemDB()
+        ledger = self._ledger(db)
+        ledger.resolve_player = lambda n: {"player a": {"sleeper_id": "111", "full_name": "Player A"}, "player b": {"sleeper_id": "222", "full_name": "Player B"}}.get(n.lower())
+        ledger.log_prediction("trade", ["Player A"], ["Player B"], "x", {}, 0.55, verdict="accept")
+        out = ledger.log_prediction("trade", ["Player A"], ["Player B"], "x", {}, 0.55, verdict="accept", week=6)
+        self.assertFalse(out["logged"])
+        self.assertEqual(len(db.tables["league_ai_predictions"]), 1)
+
+    def test_question_defaults_to_what_the_owner_asked(self):
+        db = MemDB()
+        ledger = self._ledger(db)
+        ledger.question = lambda: "Penix or Ward this week?"
+        ledger.log_prediction("start_sit", ["Player A"], ["Somebody"], "x", {}, 0.6)
+        ledger.log_prediction("pickup", ["Player A"], ["Somebody Else"], "x", {}, 0.6, question="Who do I add?")
+        self.assertEqual([r["question"] for r in db.tables["league_ai_predictions"]], ["Penix or Ward this week?", "Who do I add?"])
 
     def test_rejects_ungradeable_calls(self):
         ledger = self._ledger(MemDB())
@@ -313,6 +354,61 @@ class JobTests(unittest.TestCase):
 
         run(db, runner, stats=stats, main_model="claude-sonnet-5-5")
         self.assertEqual(seen[0], ("claude-haiku-4-5", False, "grading_review"))
+
+    def test_league_with_grades_but_no_lessons_gets_its_playbook_without_new_grades(self):
+        db = MemDB({
+            "nfl_games": [{"season": 2026, "game_type": "REG", "week": 4, "home_score": 20}],
+            "league_ai_predictions": [_pred(id="g1", status="graded", correct=False, cause="fluke", lesson="Trust snaps.", result={"factor_review": {"matchup": "misled"}})],
+            "league_ai_lessons": [],
+            "league_ai_scorecards": [],
+        })
+        seen = []
+
+        def batch_runner(reqs):
+            raise AssertionError("nothing to grade, so no batch")
+
+        def direct(reqs):
+            seen.extend(reqs)
+            return {r.id: Res(json.dumps([{"lesson": "Trust snap share in close calls.", "kind": "start_sit", "factor": "recent_usage", "evidence_count": 1}]),
+                              {"input_tokens": 3000, "output_tokens": 400}) for r in reqs}
+
+        run(db, batch_runner, playbook_runner=direct, stats=WeeklyStats(get_json=lambda url: {}), main_model="claude-sonnet-5-5")
+        self.assertEqual([r.feature for r in seen], ["playbook"])
+        self.assertIn("Trust snaps.", seen[0].prompt)
+        self.assertEqual(db.tables["league_ai_scorecards"][0]["stats"]["by_kind"]["start_sit"], "0-1 (0%)")
+        self.assertEqual(db.tables["league_ai_lessons"][0]["lesson"], "Trust snap share in close calls.")
+        # next day: lessons exist and nothing new was graded, so no model call at all
+        seen.clear()
+        run(db, batch_runner, playbook_runner=direct, stats=WeeklyStats(get_json=lambda url: {}), main_model="claude-sonnet-5-5")
+        self.assertEqual(seen, [])
+
+    def test_scorecard_is_saved_even_when_the_playbook_call_fails(self):
+        db = self._db()
+        stats = WeeklyStats(get_json=lambda url: {"111": {"rec": 2}, "222": {"rec": 7}})
+
+        def runner(reqs):
+            return {r.id: Res('{"cause": "fluke", "lesson": null}') for r in reqs}
+
+        def broken(reqs):
+            raise RuntimeError("batch never finished")
+
+        with self.assertRaises(RuntimeError):
+            run(db, runner, playbook_runner=broken, stats=stats, main_model="claude-sonnet-5-5")
+        self.assertEqual(db.tables["league_ai_scorecards"][0]["stats"]["by_kind"]["start_sit"], "0-1 (0%)")
+
+    def test_repair_voids_restatements_and_reopens_multi_alternative_grades(self):
+        c = {"sleeper_id": "333", "name": "Player C"}
+        db = MemDB({"league_ai_predictions": [
+            _pred(id="old", status="graded", correct=True, over=[B, c], created_at="2026-10-06T19:55", cause="fluke"),
+            _pred(id="new", status="graded", correct=True, over=[B, c, {"sleeper_id": "444"}], created_at="2026-10-06T20:31", cause="usage_shift"),
+            _pred(id="single", status="graded", correct=False, created_at="2026-10-06T19:53", pick=[c], over=[B]),
+        ]})
+        out = repair(db)
+        rows = {r["id"]: r for r in db.tables["league_ai_predictions"]}
+        self.assertEqual(out, {"voided": 1, "reopened": 1})
+        self.assertEqual(rows["old"]["status"], "void")
+        self.assertEqual((rows["new"]["status"], rows["new"]["correct"], rows["new"]["cause"]), ("open", None, None))
+        self.assertEqual(rows["single"]["status"], "graded")
 
     def test_dry_run_writes_nothing(self):
         db = self._db()

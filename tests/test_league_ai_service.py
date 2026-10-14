@@ -105,6 +105,19 @@ class ClientLoopTests(unittest.TestCase):
         result = ClaudeClient(CONFIG, sdk_client=sdk).run(system=[], messages=[{"role": "user", "content": "q"}], tools=reg)
         self.assertEqual(result.text, "Start Young: the Lions allow 299 passing yards a game.\n\nLogged at 52%.")
 
+    def test_bare_acknowledgement_never_replaces_the_answer(self):
+        reg = ToolRegistry()
+        reg.register(ToolSpec("log_prediction", "log", {"type": "object", "properties": {}}, lambda **kw: {"logged": True}))
+        reg.register(ToolSpec("get_player_stats", "stats", {"type": "object", "properties": {}}, lambda **kw: {"ppg": 13.4}))
+        answer_text = ("Start Penix at OP with Mahomes on bye: he is at 13.4 ppg on a full snap share and faces a Baltimore defense "
+                       "that has allowed 24 points a game, while every flex option is under 10 ppg. Ward stays at QB.")
+        sdk = FakeSDK([
+            _resp([_text(answer_text), _tool_use("t1", "get_player_stats", {}), _tool_use("t2", "log_prediction", {})], stop="tool_use"),
+            _resp([_text("Logged.")]),
+        ])
+        result = ClaudeClient(CONFIG, sdk_client=sdk).run(system=[], messages=[{"role": "user", "content": "*bye"}], tools=reg)
+        self.assertEqual(result.text, answer_text)
+
     def test_streams_text_when_sdk_supports_it(self):
         class _Stream:
             def __init__(self, resp):

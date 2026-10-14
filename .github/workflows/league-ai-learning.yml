@@ -11,6 +11,14 @@ on:
         description: "Grade and print without writing anything"
         type: boolean
         default: false
+      rebuild:
+        description: "Rebuild every league's scorecard and playbook from all graded calls"
+        type: boolean
+        default: false
+      repair:
+        description: "Void duplicate calls and regrade multi-alternative calls first"
+        type: boolean
+        default: false
 
 concurrency:
   group: league-ai-learning
@@ -19,7 +27,7 @@ concurrency:
 jobs:
   learn:
     runs-on: ubuntu-latest
-    timeout-minutes: 240  # batched grading usually finishes within the hour; the job waits up to 3h
+    timeout-minutes: 240  # batched grading usually finishes within the hour; the job waits up to 90 min, then answers directly
     steps:
       - uses: actions/checkout@v4
 
@@ -37,5 +45,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           ARGS=""
-          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then ARGS="--dry-run"; fi
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then ARGS="$ARGS --dry-run"; fi
+          if [ "${{ github.event.inputs.rebuild }}" = "true" ]; then ARGS="$ARGS --rebuild"; fi
+          if [ "${{ github.event.inputs.repair }}" = "true" ]; then ARGS="$ARGS --repair"; fi
           python -m league_ai.learning_job $ARGS

@@ -24,6 +24,10 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(topic("Waiver targets and prices"), "waivers")
         self.assertEqual(topic("Who should I start this week?"), "lineup")
         self.assertEqual(topic("What is my record?"), "lookup")
+        self.assertEqual(topic("Waddle for Devonta smith?"), "trade")
+        self.assertEqual(topic("London for Devonta"), "trade")
+        self.assertEqual(topic("start sit for week 5"), "lineup")
+        self.assertEqual(topic("What can you tell me about nick bosa"), "other")
 
 
 class CostTests(unittest.TestCase):

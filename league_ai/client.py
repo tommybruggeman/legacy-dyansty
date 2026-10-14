@@ -165,6 +165,7 @@ class ClaudeClient:
         tool_specs = tools.specs() if tools and len(tools) else []
         text_out = ""
         kept_text = ""
+        best_text = ""  # the fullest answer any round wrote, in case the last round only says "Logged."
         try:
             while True:
                 kwargs: dict[str, Any] = {
@@ -200,6 +201,8 @@ class ClaudeClient:
                 trace.content_types = [str(_block_attr(b, "type")) for b in content]
                 round_text = "\n".join(_block_attr(b, "text", "") for b in content if _block_attr(b, "type") == "text").strip()
                 text_out = "\n\n".join(x for x in [kept_text, round_text] if x)
+                if len(text_out) > len(best_text):
+                    best_text = text_out
                 tool_uses = [b for b in content if _block_attr(b, "type") == "tool_use"]
                 if trace.stop_reason != "tool_use" or not tool_uses:
                     break
@@ -227,6 +230,10 @@ class ClaudeClient:
             trace.latency_ms = int((time.perf_counter() - start) * 1000)
             return ClientResult(False, "", trace, trace.error_code)
         trace.latency_ms = int((time.perf_counter() - start) * 1000)
+        if len(text_out) < SHORT_ANSWER_CHARS and len(best_text) >= 150:
+            # the model wrote its answer, then made a bookkeeping or follow-up call and closed with a bare
+            # acknowledgement ("Logged."): show the answer it wrote, not the acknowledgement
+            text_out = best_text
         if not text_out:
             trace.error_code = "empty_response" if trace.stop_reason != "max_tokens" else "output_budget_exhausted"
             return ClientResult(False, "", trace, trace.error_code)
@@ -236,6 +243,7 @@ class ClaudeClient:
 
 
 PER_MESSAGE_EFFORT_BETA = "mid-conversation-output-config-2026-07-01"
+SHORT_ANSWER_CHARS = 60
 # Tools that only record something; text written alongside them is part of the answer, not a preamble.
 SILENT_TOOLS = frozenset({"log_prediction", "remember", "forget"})
 

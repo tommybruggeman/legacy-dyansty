@@ -44,7 +44,7 @@ class Ledger:
 
     def __init__(self, client: Any, *, league_id: str, user_id: str, league_team_id: str | None, season: int, week: int,
                  resolve_player: Callable[[str], dict[str, Any] | None] | None = None,
-                 conversation_id: Callable[[], str | None] | None = None):
+                 conversation_id: Callable[[], str | None] | None = None, question: Callable[[], str | None] | None = None):
         self.client = client
         self.league_id = league_id
         self.user_id = user_id
@@ -53,6 +53,7 @@ class Ledger:
         self.week = int(week or 1)
         self.resolve_player = resolve_player
         self.conversation_id = conversation_id or (lambda: None)
+        self.question = question or (lambda: None)
 
     def _players(self, names: Iterable[Any]) -> list[dict[str, Any]]:
         out = []
@@ -90,7 +91,7 @@ class Ledger:
             "conversation_id": self.conversation_id(), "kind": kind, "season": self.season, "status": "open",
             "week": int(week or self.week), "horizon_weeks": int(horizon_weeks or DEFAULT_HORIZON[kind]),
             "pick": picks, "over": overs, "verdict": (str(verdict).lower() if verdict else None),
-            "question": (question or "")[:500] or None, "rationale": (rationale or "")[:1200] or None,
+            "question": (question or self._asked() or "")[:500] or None, "rationale": (rationale or "")[:1200] or None,
             "factors": clean_factors,
             "confidence": None if confidence is None else max(0.0, min(1.0, float(confidence))),
         }
@@ -106,22 +107,34 @@ class Ledger:
             out["warning"] = "could not match these names to NFL players, so they can't be graded: " + ", ".join(unresolved)
         return out
 
+    def _asked(self) -> str | None:
+        try:
+            return self.question()
+        except Exception:
+            return None
+
     def _previous_call(self, row: Mapping[str, Any]) -> str | None:
-        """Same players, same week, still open: an exact repeat is skipped; a reversed call voids the old one."""
+        """Same players, same week, still open: an exact repeat is skipped; a reversed or restated call voids the old one.
+
+        Restated means the same pick against an overlapping set of alternatives ("Penix over Corum and Thomas", then
+        "Penix over Corum, Thomas and Odunze"), so one decision is graded once."""
         def ids(players: Iterable[Mapping[str, Any]]) -> frozenset[str]:
             return frozenset(str(p.get("sleeper_id") or p.get("name")) for p in players)
 
         pick, over = ids(row["pick"]), ids(row["over"])
         try:
-            existing = (self.client.table("league_ai_predictions").select("id, pick, over, verdict").eq("league_id", self.league_id).eq("user_id", self.user_id)
-                        .eq("kind", row["kind"]).eq("season", row["season"]).eq("week", row["week"]).eq("status", "open").limit(50).execute().data or [])
+            q = (self.client.table("league_ai_predictions").select("id, pick, over, verdict").eq("league_id", self.league_id).eq("user_id", self.user_id)
+                 .eq("kind", row["kind"]).eq("season", row["season"]).eq("status", "open"))
+            if row["kind"] != "trade":  # a trade is the same trade whichever week it was asked about
+                q = q.eq("week", row["week"])
+            existing = q.limit(50).execute().data or []
         except Exception:
             return None
         for e in existing:
             e_pick, e_over = ids(e.get("pick") or []), ids(e.get("over") or [])
             if e_pick == pick and e_over == over and (e.get("verdict") or None) == row.get("verdict"):
                 return "duplicate"
-            if (e_pick == over and e_over == pick) or (e_pick == pick and e_over == over):  # changed its mind: the newest call counts
+            if (e_pick == over and e_over == pick) or (e_pick == pick and e_over & over):  # changed its mind or restated it: the newest call counts
                 try:
                     self.client.table("league_ai_predictions").update({"status": "void"}).eq("id", e["id"]).execute()
                 except Exception:
@@ -260,11 +273,15 @@ def grade(pred: Mapping[str, Any], points: Callable[[str, int], float]) -> dict[
         return None
     weeks = grade_weeks(pred)
     per_player = {p["sleeper_id"]: {"name": p.get("name"), "weeks": {w: points(p["sleeper_id"], w) for w in weeks}} for p in picks + overs}
-    pick_pts = round(sum(sum(per_player[p["sleeper_id"]]["weeks"].values()) for p in picks), 2)
-    over_pts = round(sum(sum(per_player[p["sleeper_id"]]["weeks"].values()) for p in overs), 2)
-    if pred.get("kind") == "start_sit" and len(picks) != len(overs):
-        # compare per-player averages when the call isn't one-for-one
-        pick_pts, over_pts = round(pick_pts / len(picks), 2), round(over_pts / len(overs), 2)
+    totals = {sid: sum(v["weeks"].values()) for sid, v in per_player.items()}
+    if pred.get("kind") == "trade":
+        pick_pts = round(sum(totals[p["sleeper_id"]] for p in picks), 2)
+        over_pts = round(sum(totals[p["sleeper_id"]] for p in overs), 2)
+    else:
+        # a start/sit or pickup call is right only if no player passed on beat the weakest player chosen:
+        # "start Penix over Corum, Thomas and Lemon" is wrong when Corum outscores Penix, whatever the others did
+        pick_pts = round(min(totals[p["sleeper_id"]] for p in picks), 2)
+        over_pts = round(max(totals[p["sleeper_id"]] for p in overs), 2)
     favored = pick_pts >= over_pts
     correct = favored if pred.get("kind") != "trade" or pred.get("verdict") == "accept" else not favored
     return {"pick_points": pick_pts, "over_points": over_pts, "correct": correct, "margin": round(pick_pts - over_pts, 2),

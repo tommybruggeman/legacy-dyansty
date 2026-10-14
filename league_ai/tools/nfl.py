@@ -498,7 +498,8 @@ def tool_compare_players(data: NflData, names: list[str], seasons: list[int] | N
         p = matches[0]
         prof = _profile_dict(data, p)
         stats = data.stats_summary(p.get("sleeper_id"), p.get("gsis_id"), seasons)
-        prof["stats"] = {s: v["totals"] for s, v in stats.get("seasons", {}).items()}
+        by_season = stats.get("seasons", {})  # newest first
+        prof["stats"] = {s: v["totals"] for s, v in (by_season.items() if seasons else list(by_season.items())[:2])}
         prof["recent"] = stats.get("recent")
         out[p.get("full_name") or name] = prof
     return out
@@ -617,7 +618,7 @@ def build_registry(client: Any, *, league_state: Mapping[str, Any], salary_cap: 
     ))
     reg.register(ToolSpec(
         "compare_players",
-        "Side-by-side profile, league contract, market value and per-season stats for 2 to 5 players.",
+        "Side-by-side profile, league contract, market value, recent weeks and per-season stats (this season and last, unless seasons is given) for 2 to 5 players.",
         {"type": "object", "properties": {"names": {"type": "array", "items": {"type": "string"}}, "seasons": {"type": "array", "items": {"type": "integer"}}}, "required": ["names"]},
         lambda names, seasons=None: tool_compare_players(data, names, seasons),
     ))

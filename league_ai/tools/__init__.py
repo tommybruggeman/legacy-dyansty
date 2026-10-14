@@ -50,6 +50,18 @@ class ToolRegistry:
         if isinstance(result, str):
             return result
         try:
-            return json.dumps(result, default=str)
+            # compact: no padding, and no empty fields. Every tool result is re-read on each later round
+            # of the answer, so its size is paid several times over.
+            return json.dumps(_compact(result), default=str, separators=(",", ":"))
         except Exception:
             return str(result)
+
+
+def _compact(value: Any) -> Any:
+    """Drop None, empty strings and empty containers; zeros and False stay (they carry information)."""
+    if isinstance(value, dict):
+        out = {k: _compact(v) for k, v in value.items()}
+        return {k: v for k, v in out.items() if v is not None and v != "" and v != [] and v != {}}
+    if isinstance(value, (list, tuple)):
+        return [_compact(v) for v in value]
+    return value
