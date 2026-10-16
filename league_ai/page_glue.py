@@ -113,6 +113,7 @@ TOOL_STATUS = {
     "forget": "Updating my notes",
     "log_prediction": "Logging this call so I can grade it after the games",
     "get_my_track_record": "Checking how my past calls graded",
+    "find_trade_targets": "Scanning every roster for trades that work for both sides",
 }
 
 
@@ -167,8 +168,18 @@ def run_league_ai(*, request_context: Any, team: dict, question: str, history: l
                         season=int(request_context.current_season), week=_cached_nfl_week(),
                         resolve_player=lambda name: next(iter(nfl.find_players(name, limit=1)), None),
                         conversation_id=lambda: st.session_state.get(CONVERSATION_KEY), question=lambda: question)
+        from league_ai.front_office import build_player_strengths
+        from league_ai.tools.history import LeagueHistory
+        from league_ai.trade_finder import load_league, trade_finder_tools
+
+        season = int(request_context.current_season)
+        finder = trade_finder_tools(
+            lambda: load_league(client, state, season, _cached_roster_positions(league_id, league.get("sleeper_league_id"), request_context.user_id),
+                                rules.get("salary_cap", 225), request_context.league_team_id, build_player_strengths),
+            LeagueHistory(client, league_id),
+        )
         tools = build_registry(client, league_state=state, salary_cap=rules.get("salary_cap", 225), dead_cap_pct=float(rules.get("default_dead_cap_pct", 50) or 50),
-                               extra=[*history_tools(client, league_id), *memory.tools(), *ledger.tools()])
+                               extra=[*history_tools(client, league_id), *memory.tools(), *ledger.tools(), *finder])
     result = answer(question=question, history=history, asker=asker, sources=sources, tools=tools, client=ClaudeClient(), pack=pack, on_event=on_event,
                     week_context=week_context, turn_effort=effort_for(question))
     if any(name in ("remember", "forget") for name in result.trace.tool_calls):
