@@ -382,6 +382,20 @@ class JobTests(unittest.TestCase):
         run(db, batch_runner, playbook_runner=direct, stats=WeeklyStats(get_json=lambda url: {}), main_model="claude-sonnet-5-5")
         self.assertEqual(seen, [])
 
+    def test_rebuild_uses_every_graded_call_even_when_this_run_grades_one(self):
+        db = self._db()
+        db.tables["league_ai_predictions"].append(_pred(id="g0", week=3, status="graded", correct=True, cause="fluke", lesson="Trust snaps."))
+        stats = WeeklyStats(get_json=lambda url: {"111": {"rec": 2}, "222": {"rec": 7}})
+        prompts = []
+
+        def runner(reqs):
+            prompts.extend(r.prompt for r in reqs if r.feature == "playbook")
+            return {r.id: Res('{"cause": "fluke", "lesson": null}' if r.feature != "playbook" else "[]") for r in reqs}
+
+        run(db, runner, stats=stats, main_model="claude-sonnet-5-5", rebuild=True)
+        self.assertEqual(len(prompts), 1)
+        self.assertIn("Trust snaps.", prompts[0])
+
     def test_scorecard_is_saved_even_when_the_playbook_call_fails(self):
         db = self._db()
         stats = WeeklyStats(get_json=lambda url: {"111": {"rec": 2}, "222": {"rec": 7}})

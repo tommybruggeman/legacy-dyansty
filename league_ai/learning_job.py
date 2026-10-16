@@ -265,7 +265,7 @@ def run(client: Any, runner: Runner, *, season: int | None = None, web_search: b
         card = scorecard(graded_rows)
         lessons = client.table("league_ai_lessons").select("*").eq("league_id", lid).eq("active", True).limit(100).execute().data or []
         new_items = new_by_league.get(lid) or []
-        if not new_items and (rebuild or not lessons):
+        if rebuild or not lessons:  # rebuild from every graded call, not just the ones graded in this run
             new_items = [{"kind": r.get("kind"), "right": r.get("correct"), "cause": r.get("cause"), "process_error": r.get("process_error"),
                           "factors": r.get("factors"), "factor_review": (r.get("result") or {}).get("factor_review"), "lesson": r.get("lesson")} for r in graded_rows]
         if not new_items:
