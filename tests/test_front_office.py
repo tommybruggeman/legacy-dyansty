@@ -24,7 +24,10 @@ class TierTests(unittest.TestCase):
         out = player_strength(row, recent_ppg=20, season_ppg=18, pos_rank=5, age=24, injury_status="Out")
         self.assertFalse(out.available)
         old = player_strength(row, recent_ppg=20, season_ppg=18, pos_rank=5, age=31, injury_status=None)
-        self.assertLess(old.dynasty, healthy.dynasty)
+        self.assertEqual(old.dynasty, healthy.dynasty)  # the market rank already prices age; no second penalty
+        young_unranked = player_strength(row, recent_ppg=20, season_ppg=18, pos_rank=None, age=24, injury_status=None)
+        old_unranked = player_strength(row, recent_ppg=20, season_ppg=18, pos_rank=None, age=31, injury_status=None)
+        self.assertLess(old_unranked.dynasty, young_unranked.dynasty)
         q = player_strength(row, recent_ppg=20, season_ppg=18, pos_rank=5, age=24, injury_status="Questionable")
         self.assertLess(q.now, healthy.now)
 

@@ -88,7 +88,8 @@ def player_strength(row: Mapping[str, Any], *, recent_ppg: float | None, season_
         now *= 0.93
     years = int(row.get("contract_years_left") or 1)
     age_pen = 1.0
-    if age is not None and pos in PEAK_AGE:
+    # the market rank already prices age; only apply the age curve when there is no market rank
+    if age is not None and pos in PEAK_AGE and pos_rank is None:
         over = max(0.0, float(age) - PEAK_AGE[pos])
         age_pen = max(0.4, 1.0 - AGE_DECAY[pos] * over)
         if float(age) < PEAK_AGE[pos] - 3:

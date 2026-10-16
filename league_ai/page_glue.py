@@ -105,6 +105,7 @@ TOOL_STATUS = {
     "get_market_values": "Checking market values",
     "search_players": "Searching the player pool",
     "simulate_trade": "Running the trade through the cap",
+    "evaluate_trade": "Weighing the trade from both sides",
     "get_league_history": "Digging through league history",
     "get_waiver_prices": "Looking up what pickups cost here",
     "get_trade_tendencies": "Checking who trades with whom",
@@ -178,7 +179,7 @@ def run_league_ai(*, request_context: Any, team: dict, question: str, history: l
         season = int(request_context.current_season)
         finder = trade_finder_tools(
             lambda: load_league(client, state, season, _cached_roster_positions(league_id, league.get("sleeper_league_id"), request_context.user_id),
-                                rules.get("salary_cap", 225), request_context.league_team_id, build_player_strengths),
+                                rules.get("salary_cap", 225), request_context.league_team_id, build_player_strengths, league_id=league_id),
             LeagueHistory(client, league_id),
             outcomes=ledger.trade_outcomes, current_season=season,
         )
