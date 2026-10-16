@@ -114,6 +114,8 @@ TOOL_STATUS = {
     "log_prediction": "Logging this call so I can grade it after the games",
     "get_my_track_record": "Checking how my past calls graded",
     "find_trade_targets": "Scanning every roster for trades that work for both sides",
+    "get_owner_trade_profile": "Checking how that owner trades",
+    "record_trade_response": "Noting how they answered",
 }
 
 
@@ -167,7 +169,8 @@ def run_league_ai(*, request_context: Any, team: dict, question: str, history: l
         ledger = Ledger(client, league_id=league_id, user_id=request_context.user_id, league_team_id=request_context.league_team_id,
                         season=int(request_context.current_season), week=_cached_nfl_week(),
                         resolve_player=lambda name: next(iter(nfl.find_players(name, limit=1)), None),
-                        conversation_id=lambda: st.session_state.get(CONVERSATION_KEY), question=lambda: question)
+                        conversation_id=lambda: st.session_state.get(CONVERSATION_KEY), question=lambda: question,
+                        owner_of=lambda sid, name: (nfl.league_contract(sid, name) or {}).get("owner"))
         from league_ai.front_office import build_player_strengths
         from league_ai.tools.history import LeagueHistory
         from league_ai.trade_finder import load_league, trade_finder_tools
@@ -177,6 +180,7 @@ def run_league_ai(*, request_context: Any, team: dict, question: str, history: l
             lambda: load_league(client, state, season, _cached_roster_positions(league_id, league.get("sleeper_league_id"), request_context.user_id),
                                 rules.get("salary_cap", 225), request_context.league_team_id, build_player_strengths),
             LeagueHistory(client, league_id),
+            outcomes=ledger.trade_outcomes, current_season=season,
         )
         tools = build_registry(client, league_state=state, salary_cap=rules.get("salary_cap", 225), dead_cap_pct=float(rules.get("default_dead_cap_pct", 50) or 50),
                                extra=[*history_tools(client, league_id), *memory.tools(), *ledger.tools(), *finder])

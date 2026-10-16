@@ -44,7 +44,8 @@ class Ledger:
 
     def __init__(self, client: Any, *, league_id: str, user_id: str, league_team_id: str | None, season: int, week: int,
                  resolve_player: Callable[[str], dict[str, Any] | None] | None = None,
-                 conversation_id: Callable[[], str | None] | None = None, question: Callable[[], str | None] | None = None):
+                 conversation_id: Callable[[], str | None] | None = None, question: Callable[[], str | None] | None = None,
+                 owner_of: Callable[[str | None, str | None], str | None] | None = None):
         self.client = client
         self.league_id = league_id
         self.user_id = user_id
@@ -54,6 +55,7 @@ class Ledger:
         self.resolve_player = resolve_player
         self.conversation_id = conversation_id or (lambda: None)
         self.question = question or (lambda: None)
+        self.owner_of = owner_of  # (sleeper_id, name) -> the league owner who rosters that player
 
     def _players(self, names: Iterable[Any]) -> list[dict[str, Any]]:
         out = []
@@ -95,17 +97,77 @@ class Ledger:
             "factors": clean_factors,
             "confidence": None if confidence is None else max(0.0, min(1.0, float(confidence))),
         }
+        if kind == "trade":
+            partner = self._partner(picks)
+            if partner:
+                row["partner"] = partner
         replaced = self._previous_call(row)
         if replaced == "duplicate":
             return {"logged": False, "note": "this exact call is already logged for that week; nothing added"}
         try:
             self.client.table("league_ai_predictions").insert(row).execute()
         except Exception as exc:
-            return {"error": f"could not log the call: {type(exc).__name__}"}
+            if "partner" not in row:
+                return {"error": f"could not log the call: {type(exc).__name__}"}
+            try:  # the partner column arrives with migration 20261125; log the call without it until then
+                self.client.table("league_ai_predictions").insert({k: v for k, v in row.items() if k != "partner"}).execute()
+            except Exception as exc2:
+                return {"error": f"could not log the call: {type(exc2).__name__}"}
         out: dict[str, Any] = {"logged": True, "grades_after_week": row["week"] + row["horizon_weeks"] - 1}
         if unresolved:
             out["warning"] = "could not match these names to NFL players, so they can't be graded: " + ", ".join(unresolved)
         return out
+
+    def _partner(self, players: list[dict[str, Any]]) -> str | None:
+        if not self.owner_of:
+            return None
+        for p in players:
+            try:
+                owner = self.owner_of(p.get("sleeper_id"), p.get("name"))
+            except Exception:
+                owner = None
+            if owner:
+                return str(owner)
+        return None
+
+    def record_trade_response(self, response: str, partner: str | None = None, receive: list[Any] | None = None, send: list[Any] | None = None,
+                              note: str | None = None) -> dict[str, Any]:
+        """The owner said how another owner answered a trade. Tied to the matching logged trade call when there is one."""
+        response = str(response or "").strip().lower()
+        if response not in ("accepted", "declined", "countered"):
+            return {"error": "response must be accepted, declined or countered"}
+        gets, gives = self._players(receive or []), self._players(send or [])
+        if not partner:
+            partner = self._partner(gets)
+        try:
+            calls = (self.client.table("league_ai_predictions").select("id, pick, over, partner, created_at").eq("league_id", self.league_id).eq("user_id", self.user_id)
+                     .eq("kind", "trade").in_("status", ["open", "graded"]).order("created_at", desc=True).limit(50).execute().data or [])
+        except Exception:
+            calls = []
+        ids = lambda players: {str(p.get("sleeper_id") or p.get("name")) for p in players or []}
+        want_get, want_give = ids(gets), ids(gives)
+        match = next((c for c in calls if (want_get and want_get & ids(c.get("pick"))) or (want_give and want_give & ids(c.get("over")))
+                      or (not want_get and not want_give and partner and str(c.get("partner") or "").casefold() == partner.casefold())), None)
+        if match:
+            gets = gets or list(match.get("pick") or [])
+            gives = gives or list(match.get("over") or [])
+            partner = partner or match.get("partner")
+        row = {"league_id": self.league_id, "user_id": self.user_id, "prediction_id": (match or {}).get("id"), "partner": partner, "outcome": response,
+               "source": "chat", "receives": gets, "sends": gives, "note": (note or "")[:500] or None}
+        try:
+            self.client.table("league_ai_trade_outcomes").insert(row).execute()
+        except Exception as exc:
+            return {"error": f"could not record the response: {type(exc).__name__}"}
+        return {"recorded": True, "matched_logged_call": bool(match), "partner": partner}
+
+    def trade_outcomes(self, partner: str | None = None, limit: int = 30) -> list[dict[str, Any]]:
+        try:
+            q = self.client.table("league_ai_trade_outcomes").select("partner, outcome, source, receives, sends, note, occurred_at, created_at").eq("league_id", self.league_id).eq("user_id", self.user_id)
+            if partner:
+                q = q.ilike("partner", f"%{partner}%")
+            return q.order("created_at", desc=True).limit(limit).execute().data or []
+        except Exception:
+            return []
 
     def _asked(self) -> str | None:
         try:
@@ -179,6 +241,19 @@ class Ledger:
                     "question": {"type": "string", "description": "the owner's question, briefly"},
                 }, "required": ["kind", "pick", "rationale", "factors", "confidence"]},
                 lambda **kw: self.log_prediction(**kw),
+            ),
+            ToolSpec(
+                "record_trade_response",
+                "Record how another owner answered a trade: accepted, declined or countered, with their reason or counter in note. Call it whenever this owner reports one "
+                "('he said no', 'not interested', 'he countered with X'), naming the players this owner would receive and send. Private to this owner.",
+                {"type": "object", "properties": {
+                    "response": {"type": "string", "enum": ["accepted", "declined", "countered"]},
+                    "partner": {"type": "string", "description": "the other owner"},
+                    "receive": {**player_list, "description": "players this owner would have received"},
+                    "send": {**player_list, "description": "players this owner would have sent"},
+                    "note": {"type": "string", "description": "their reason or counteroffer"},
+                }, "required": ["response"]},
+                lambda **kw: self.record_trade_response(**kw),
             ),
             ToolSpec(
                 "get_my_track_record",

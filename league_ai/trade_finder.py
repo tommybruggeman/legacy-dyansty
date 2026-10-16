@@ -176,9 +176,24 @@ def _why(league: League, team_id: str, mode: str, sends: list[PlayerStrength], r
     return "; ".join(dict.fromkeys(parts)) + f"; {window}"
 
 
-def trade_finder_tools(load: Callable[[], tuple[League, Mapping[str, float], str]], history: Any | None = None) -> list[ToolSpec]:
-    """load() -> (League, cap space by team id, asker team id); called once per answer that needs it."""
+def trade_finder_tools(load: Callable[[], tuple[League, Mapping[str, float], str]], history: Any | None = None,
+                       outcomes: Callable[..., list[Mapping[str, Any]]] | None = None, current_season: int | None = None) -> list[ToolSpec]:
+    """load() -> (League, cap space by team id, asker team id); called once per answer that needs it.
+    history: LeagueHistory for completed trades; outcomes(partner=None) -> this owner's recorded trade outcomes."""
     cache: dict[str, Any] = {}
+
+    def profiles() -> dict[str, dict[str, Any]]:
+        if "profiles" not in cache:
+            cache["profiles"] = _load_profiles(history, current_season) if history is not None else {}
+        return cache["profiles"]
+
+    def my_pitches() -> dict[str, dict[str, int]]:
+        if "pitches" not in cache:
+            try:
+                cache["pitches"] = pitch_record(outcomes()) if outcomes else {}
+            except Exception:
+                cache["pitches"] = {}
+        return cache["pitches"]
 
     def run(position: str | None = None, goal: str | None = None, partner: str | None = None, limit: int = 5) -> dict[str, Any]:
         if "league" not in cache:
@@ -187,6 +202,23 @@ def trade_finder_tools(load: Callable[[], tuple[League, Mapping[str, float], str
                           partner=partner, limit=max(1, min(int(limit or 5), 8)))
         if history is not None and out.get("ideas"):
             out["league_trade_habits"] = _habits(history, {i["partner"] for i in out["ideas"]}, out.get("upgrading"))
+            prof, pitches = profiles(), my_pitches()
+            for idea in out["ideas"]:
+                p = prof.get(str(idea["partner"]))
+                if p:
+                    idea["partner_style"] = f"{p['trades']} trades here; {p['style']}; acquires mostly {', '.join(list(p['positions_acquired'])[:2]) or 'nothing yet'}"
+                if pitches.get(str(idea["partner"])):
+                    idea["your_past_pitches_to_them"] = pitches[str(idea["partner"])]
+        return out
+
+    def profile(owner: str) -> dict[str, Any]:
+        prof = profiles()
+        name = next((k for k in prof if owner.casefold() in k.casefold()), None)
+        out: dict[str, Any] = {"owner": name or owner, "profile": prof.get(name) if name else "no completed trades on record"}
+        mine = [o for o in (outcomes(partner=name or owner) if outcomes else [])]
+        if mine:
+            out["your_pitches_to_them"] = pitch_record(mine).get(str(name or owner)) or pitch_record(mine)
+            out["what_they_said"] = [o.get("note") for o in mine if o.get("note")][:5]
         return out
 
     return [ToolSpec(
@@ -201,7 +233,32 @@ def trade_finder_tools(load: Callable[[], tuple[League, Mapping[str, float], str
             "limit": {"type": "integer", "minimum": 1, "maximum": 8},
         }},
         run,
+    ), ToolSpec(
+        "get_owner_trade_profile",
+        "How one owner trades, from every completed trade in this league on Sleeper: how often, with whom, positions they buy and sell, picks in and out, "
+        "whether they buy youth or veterans, plus how this owner's own past pitches to them went (accepted, declined, not completed) and what they said. "
+        "Use before pitching or pricing a trade with that owner.",
+        {"type": "object", "properties": {"owner": {"type": "string"}}, "required": ["owner"]},
+        profile,
     )]
+
+
+def _load_profiles(history: Any, current_season: int | None) -> dict[str, dict[str, Any]]:
+    try:
+        rows = (history.client.table("league_history_events").select("event_id, season, owner_name, player_id, player_name, position, details, summary")
+                .eq("league_id", history.league_id).eq("kind", "trade").limit(5000).execute().data or [])
+    except Exception:
+        return {}
+    ids = sorted({str(r["player_id"]) for r in rows if r.get("player_id")})
+    ages: dict[str, float] = {}
+    for i in range(0, len(ids), 150):
+        try:
+            for r in history.client.table("nfl_players").select("sleeper_id, age").in_("sleeper_id", ids[i:i + 150]).execute().data or []:
+                if r.get("age") is not None:
+                    ages[str(r["sleeper_id"])] = float(r["age"])
+        except Exception:
+            pass
+    return owner_profiles(rows, ages, current_season)
 
 
 def _habits(history: Any, partners: set[str], position: str | None) -> dict[str, Any]:
@@ -235,3 +292,86 @@ def load_league(client: Any, state: Mapping[str, Any], season: int, roster_posit
     cap = {str(t["league_team_id"]): float(calculate_team_financials(roster, adjustments, salary_cap=salary_cap, league_team_id=str(t["league_team_id"]))["cap_space"])
            for t in teams}
     return League(players, teams, roster_positions), cap, str(asker_team_id)
+
+
+# ---- owner trade profiles (from every completed trade on Sleeper) ------------------------------------
+
+def owner_profiles(trade_rows: list[Mapping[str, Any]], ages: Mapping[str, float] | None = None, current_season: int | None = None) -> dict[str, dict[str, Any]]:
+    """How each owner trades, from league_history_events trade legs (one row per player or pick that moved)."""
+    ages = ages or {}
+    trades: dict[str, Mapping[str, Any]] = {}
+    for r in trade_rows:
+        tid = str(r.get("event_id") or "").split(":")[1] if str(r.get("event_id") or "").startswith("sleeper:") else str(r.get("summary") or "")
+        trades.setdefault(tid, r)
+    stats: dict[str, dict[str, Any]] = defaultdict(lambda: {"trades": 0, "by_season": defaultdict(int), "partners": defaultdict(int), "got": defaultdict(int), "gave": defaultdict(int),
+                                                            "picks_in": 0, "picks_out": 0, "ages_in": [], "ages_out": []})
+    for tid, r in trades.items():
+        d = r.get("details") or {}
+        parts = [p for p in d.get("participants") or [] if p]
+        season = int(r.get("season") or 0)
+        for owner in parts:
+            s = stats[owner]
+            s["trades"] += 1
+            s["by_season"][season] += 1
+            for other in parts:
+                if other != owner:
+                    s["partners"][other] += 1
+        for leg in d.get("players") or []:
+            pos = leg.get("position") or "?"
+            age = _age_at(ages.get(str(_leg_id(trade_rows, tid, leg))), season, current_season)
+            if leg.get("to"):
+                stats[leg["to"]]["got"][pos] += 1
+                if age is not None:
+                    stats[leg["to"]]["ages_in"].append(age)
+            if leg.get("from"):
+                stats[leg["from"]]["gave"][pos] += 1
+                if age is not None:
+                    stats[leg["from"]]["ages_out"].append(age)
+        for pk in d.get("picks") or []:
+            if pk.get("to"):
+                stats[pk["to"]]["picks_in"] += 1
+            if pk.get("from"):
+                stats[pk["from"]]["picks_out"] += 1
+    out = {}
+    for owner, s in stats.items():
+        style = []
+        net_picks = s["picks_in"] - s["picks_out"]
+        if abs(net_picks) >= 2:
+            style.append("collects draft picks" if net_picks > 0 else "spends draft picks to win now")
+        if len(s["ages_in"]) >= 2 and len(s["ages_out"]) >= 2:
+            a_in, a_out = sum(s["ages_in"]) / len(s["ages_in"]), sum(s["ages_out"]) / len(s["ages_out"])
+            if a_in - a_out >= 1.5:
+                style.append(f"buys veterans (gets players about {a_in:.0f}, sends about {a_out:.0f})")
+            elif a_out - a_in >= 1.5:
+                style.append(f"buys youth (gets players about {a_in:.0f}, sends about {a_out:.0f})")
+        out[owner] = {
+            "trades": s["trades"],
+            "trades_by_season": dict(sorted(s["by_season"].items())),
+            "favorite_partners": dict(sorted(s["partners"].items(), key=lambda x: -x[1])[:3]),
+            "positions_acquired": dict(sorted(s["got"].items(), key=lambda x: -x[1])),
+            "positions_sent": dict(sorted(s["gave"].items(), key=lambda x: -x[1])),
+            "picks": f"{s['picks_in']} in, {s['picks_out']} out",
+            "style": "; ".join(style) or "no clear lean yet",
+        }
+    return out
+
+
+def _leg_id(rows: list[Mapping[str, Any]], tid: str, leg: Mapping[str, Any]) -> str | None:
+    for r in rows:
+        if str(r.get("event_id") or "").startswith(f"sleeper:{tid}:p") and r.get("player_name") == leg.get("player"):
+            return r.get("player_id")
+    return None
+
+
+def _age_at(age_now: float | None, season: int, current_season: int | None) -> float | None:
+    if age_now is None:
+        return None
+    return float(age_now) - max(0, (current_season or season) - season)
+
+
+def pitch_record(outcomes: list[Mapping[str, Any]]) -> dict[str, dict[str, int]]:
+    """This owner's trade pitches by partner: accepted / declined / countered / not_completed counts."""
+    out: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    for o in outcomes:
+        out[str(o.get("partner") or "unknown")][str(o.get("outcome"))] += 1
+    return {k: dict(v) for k, v in out.items()}

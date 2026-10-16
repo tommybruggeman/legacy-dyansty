@@ -19,7 +19,7 @@ import sys
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Mapping
 
 from pipeline.nfl_data.common import service_client  # also puts the repo root on sys.path
@@ -294,7 +294,79 @@ def run(client: Any, runner: Runner, *, season: int | None = None, web_search: b
             apply_playbook(client, lid, lessons, playbook, now)
         else:
             print(f"[learning] league {lid}: playbook answer unreadable; lessons unchanged", flush=True)
+    try:
+        summary["trade_outcomes"] = track_trade_outcomes(client, now=now, dry_run=dry_run)
+    except Exception as exc:  # never let outcome tracking break grading
+        print(f"[learning] trade outcome tracking skipped: {type(exc).__name__}: {exc}", flush=True)
     return summary
+
+
+NOT_MADE_AFTER_DAYS = 10
+
+
+def _ids(players: Any) -> set[str]:
+    return {str(p.get("sleeper_id")) for p in players or [] if isinstance(p, Mapping) and p.get("sleeper_id")}
+
+
+def track_trade_outcomes(client: Any, *, now: datetime | None = None, dry_run: bool = False) -> dict[str, int]:
+    """Did the trades the AI pitched or judged happen? Sleeper only publishes completed trades, so a logged trade call
+    is 'accepted' when a completed Sleeper trade moved one of its incoming players and one of its outgoing players
+    together after it was asked, and 'not_completed' when nothing like it happened within NOT_MADE_AFTER_DAYS.
+    Declines and counters come from chat (Ledger.record_trade_response). No model calls."""
+    now = now or datetime.now(timezone.utc)
+    calls = (client.table("league_ai_predictions").select("id, league_id, user_id, pick, over, partner, created_at")
+             .eq("kind", "trade").in_("status", ["open", "graded"]).gte("created_at", (now - timedelta(days=120)).isoformat())
+             .limit(2000).execute().data or [])
+    out = {"accepted": 0, "not_completed": 0}
+    if not calls:
+        return out
+    done = client.table("league_ai_trade_outcomes").select("prediction_id, outcome").in_("prediction_id", [c["id"] for c in calls]).limit(5000).execute().data or []
+    settled = {str(d["prediction_id"]) for d in done if d.get("outcome") in ("accepted", "not_completed")}
+    trades_by_league: dict[str, dict[str, dict[str, Any]]] = {}
+    for c in calls:
+        if str(c["id"]) in settled:
+            continue
+        lid = str(c["league_id"])
+        if lid not in trades_by_league:
+            rows = (client.table("league_history_events").select("event_id, player_id, occurred_at").eq("league_id", lid).eq("kind", "trade")
+                    .gte("occurred_at", (now - timedelta(days=130)).isoformat()).limit(5000).execute().data or [])
+            by_tid: dict[str, dict[str, Any]] = {}
+            for r in rows:
+                parts = str(r.get("event_id") or "").split(":")
+                if len(parts) < 2 or parts[0] != "sleeper" or not r.get("player_id"):
+                    continue
+                t = by_tid.setdefault(parts[1], {"players": set(), "occurred_at": r.get("occurred_at")})
+                t["players"].add(str(r["player_id"]))
+            trades_by_league[lid] = by_tid
+        asked = _parse_ts(c.get("created_at")) or now
+        gets, gives = _ids(c.get("pick")), _ids(c.get("over"))
+        hit = None
+        for tid, t in trades_by_league[lid].items():
+            when = _parse_ts(t["occurred_at"])
+            if when and when >= asked - timedelta(days=1) and t["players"] & gets and t["players"] & gives:
+                hit = (tid, t["occurred_at"])
+                break
+        base = {"league_id": lid, "user_id": c["user_id"], "prediction_id": c["id"], "partner": c.get("partner"),
+                "receives": c.get("pick") or [], "sends": c.get("over") or []}
+        if hit:
+            row = {**base, "outcome": "accepted", "source": "sleeper", "sleeper_transaction_id": hit[0], "occurred_at": hit[1]}
+        elif now - asked >= timedelta(days=NOT_MADE_AFTER_DAYS):
+            row = {**base, "outcome": "not_completed", "source": "inferred", "occurred_at": now.isoformat()}
+        else:
+            continue
+        out[row["outcome"]] += 1
+        print(f"[learning] trade call {c['id']}: {row['outcome']}" + (f" (Sleeper trade {hit[0]})" if hit else ""), flush=True)
+        if not dry_run:
+            client.table("league_ai_trade_outcomes").insert(row).execute()
+    return out
+
+
+def _parse_ts(v: Any) -> datetime | None:
+    try:
+        d = datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+        return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+    except Exception:
+        return None
 
 
 def _leagues_to_review(client: Any, open_rows: list[dict[str, Any]], new_by_league: Mapping[str, Any], season: int | None, rebuild: bool) -> list[tuple[str, int]]:
