@@ -93,8 +93,9 @@ class Valuer:
 
 
 def team_windows(players: Iterable[PlayerStrength], teams: Iterable[Mapping[str, Any]], now_rank: Mapping[str, int], dynasty_rank: Mapping[str, int],
-                 overrides: Mapping[str, str] | None = None, records: Mapping[str, tuple[int, int]] | None = None) -> dict[str, str]:
-    """Each team's window from its lineup ranks, record and roster age. overrides (team id or owner name -> window)
+                 overrides: Mapping[str, str] | None = None, records: Mapping[str, tuple[int, int]] | None = None,
+                 leanings: Mapping[str, str] | None = None) -> dict[str, str]:
+    """Each team's window from its lineup ranks, record, roster age and trading history (leanings). overrides (team id or owner name -> window)
     come from what owners have said ('Grady is rebuilding') and always win."""
     teams = list(teams)
     n = len(teams) or 1
@@ -127,6 +128,8 @@ def team_windows(players: Iterable[PlayerStrength], teams: Iterable[Mapping[str,
         if ages:
             avg = sum(ages) / len(ages)
             score += 0.25 if avg >= 27.5 else -0.25 if avg <= 24.5 else 0.0
+        lean = (leanings or {}).get(str(t.get("owner_name") or ""))  # how this owner has actually traded (backtest)
+        score += 0.5 if lean == "contending" else -0.5 if lean == "rebuilding" else 0.0
         out[tid] = "contending" if score >= 1.0 else "rebuilding" if score <= -1.0 else "middle"
     return out
 

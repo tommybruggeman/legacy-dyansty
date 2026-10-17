@@ -19,6 +19,10 @@ on:
         description: "Void duplicate calls and regrade multi-alternative calls first"
         type: boolean
         default: false
+      backtest:
+        description: "Replay every completed league trade through the trade engine now (otherwise Tuesdays)"
+        type: boolean
+        default: false
 
 concurrency:
   group: league-ai-learning
@@ -48,4 +52,5 @@ jobs:
           if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then ARGS="$ARGS --dry-run"; fi
           if [ "${{ github.event.inputs.rebuild }}" = "true" ]; then ARGS="$ARGS --rebuild"; fi
           if [ "${{ github.event.inputs.repair }}" = "true" ]; then ARGS="$ARGS --repair"; fi
+          if [ "${{ github.event.inputs.backtest }}" = "true" ]; then ARGS="$ARGS --backtest"; fi
           python -m league_ai.learning_job $ARGS

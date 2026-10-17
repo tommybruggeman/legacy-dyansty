@@ -194,7 +194,7 @@ def _sub(a: dict[str, int], b: dict[str, int]) -> dict[str, int]:
 
 def run(client: Any, runner: Runner, *, season: int | None = None, web_search: bool = True, dry_run: bool = False,
         stats: WeeklyStats | None = None, now: datetime | None = None, main_model: str | None = None,
-        playbook_runner: Runner | None = None, rebuild: bool = False) -> dict[str, Any]:
+        playbook_runner: Runner | None = None, rebuild: bool = False, backtest: bool | None = None) -> dict[str, Any]:
     stats = stats or WeeklyStats()
     now = now or datetime.now(timezone.utc)
     main_model = main_model or load_config().model
@@ -298,7 +298,27 @@ def run(client: Any, runner: Runner, *, season: int | None = None, web_search: b
         summary["trade_outcomes"] = track_trade_outcomes(client, now=now, dry_run=dry_run)
     except Exception as exc:  # never let outcome tracking break grading
         print(f"[learning] trade outcome tracking skipped: {type(exc).__name__}: {exc}", flush=True)
+    if backtest if backtest is not None else now.weekday() == 1:  # weekly, with the Tuesday report
+        try:
+            summary["trade_backtest"] = run_trade_backtests(client, now=now, dry_run=dry_run)
+        except Exception as exc:
+            print(f"[learning] trade backtest skipped: {type(exc).__name__}: {exc}", flush=True)
     return summary
+
+
+def run_trade_backtests(client: Any, *, now: datetime, dry_run: bool = False) -> dict[str, Any]:
+    """Replay every completed trade per league, report the engine's hit rate, and save each owner's revealed lean. No model calls."""
+    from league_ai.trade_backtest import backtest, load_trades, save_styles
+
+    out: dict[str, Any] = {}
+    leagues = {str(r["league_id"]) for r in (client.table("league_history_events").select("league_id").eq("kind", "trade").limit(5000).execute().data or [])}
+    for lid in sorted(leagues):
+        result = backtest(load_trades(client, lid))
+        out[lid] = {k: result[k] for k in ("trades", "graded", "hit_rate")}
+        print(f"[learning] trade backtest {lid}: {result['graded']} trades graded, hit rate {result['hit_rate']}, leans {result['owner_now_weight']}", flush=True)
+        if not dry_run:
+            save_styles(client, lid, result, now)
+    return out
 
 
 NOT_MADE_AFTER_DAYS = 10
@@ -463,6 +483,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-batch", action="store_true")
     parser.add_argument("--rebuild", action="store_true", help="rebuild every league's scorecard and playbook from all graded calls")
     parser.add_argument("--repair", action="store_true", help="void duplicate calls and regrade multi-alternative calls first")
+    parser.add_argument("--backtest", action="store_true", help="replay every completed league trade through the trade engine now (otherwise Tuesdays)")
     args = parser.parse_args(argv)
     client = service_client()
     cfg = load_config()
@@ -475,7 +496,7 @@ def main(argv: list[str] | None = None) -> int:
         # the playbook is one call per league per week: answer it directly, since the batch discount saves under a cent
         # and a batch that outlives the job is how the playbook went unwritten
         summary = run(client, make_runner(use_batch=not args.no_batch), web_search=not args.no_search, dry_run=args.dry_run, main_model=cfg.model,
-                      playbook_runner=make_runner(use_batch=False), rebuild=args.rebuild)
+                      playbook_runner=make_runner(use_batch=False), rebuild=args.rebuild, backtest=True if args.backtest else None)
     except Exception as exc:
         if "league_ai_predictions" in str(exc) and ("PGRST205" in str(exc) or "schema cache" in str(exc)):
             print("[learning] tables not created yet (run migration 20261124_league_ai_learning.sql); nothing graded", flush=True)

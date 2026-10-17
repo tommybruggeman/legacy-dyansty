@@ -30,7 +30,7 @@ class League:
 
     def __init__(self, players: list[PlayerStrength], teams: list[Mapping[str, Any]], roster_positions: list[str] | None,
                  windows: Mapping[str, str] | None = None, records: Mapping[str, tuple[int, int]] | None = None,
-                 pick_values: list[tuple[str, float]] | None = None):
+                 pick_values: list[tuple[str, float]] | None = None, leanings: Mapping[str, str] | None = None):
         self.slots = _slots(roster_positions)
         self.teams = {str(t["league_team_id"]): t for t in teams}
         self.players = players
@@ -42,10 +42,11 @@ class League:
         self.dynasty_rank = {tid: tp.dynasty_rank for tid, tp in power.items()}
         self.records = dict(records or {})
         self.pick_values = list(pick_values or [])
+        self.leanings = dict(leanings or {})
         self.set_windows(windows)
 
     def set_windows(self, overrides: Mapping[str, str] | None) -> None:
-        self.windows = team_windows(self.players, self.teams.values(), self.now_rank, self.dynasty_rank, overrides, self.records)
+        self.windows = team_windows(self.players, self.teams.values(), self.now_rank, self.dynasty_rank, overrides, self.records, self.leanings)
         self.valuer = Valuer(self.players, self.windows)
 
     def window(self, team_id: str) -> str:
@@ -506,7 +507,11 @@ def load_league(client: Any, state: Mapping[str, Any], season: int, roster_posit
             records = {tid: (w, l) for tid, (w, l) in tally.items()}
         except Exception:
             pass
-    return League(players, teams, roster_positions, records=records, pick_values=_pick_values(client, season)), cap, str(asker_team_id)
+    leanings: dict[str, str] = {}
+    if league_id:
+        from league_ai.trade_backtest import load_styles
+        leanings = load_styles(client, league_id)
+    return League(players, teams, roster_positions, records=records, pick_values=_pick_values(client, season), leanings=leanings), cap, str(asker_team_id)
 
 
 def _market_values(client: Any, ids: list[str]) -> dict[str, float]:
