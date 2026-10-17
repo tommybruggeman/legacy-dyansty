@@ -47,6 +47,7 @@ from services.team_roster_state import (
     CanonicalTeamStateError,
     cap_adjustment_display_rows,
     calculate_team_financials,
+    invalidate_team_state_session_cache,
     load_team_state,
     merge_activity,
     roster_designation,
@@ -1799,21 +1800,40 @@ with action_designation_col:
                         "Remove",
                         key=f"remove_designation_{designation_id}"
                     ):
-                        rest_request(
-                            "DELETE",
-                            "cap_adjustments",
-                            params={"id": f"eq.{designation_id}"},
-                        )
+                        # Delete as the signed-in manager so cap_adjustments
+                        # RLS checks team authority. An RLS miss deletes zero
+                        # rows without raising, so confirm a row came back.
+                        try:
+                            deleted = (
+                                auth_client()
+                                .table("cap_adjustments")
+                                .delete()
+                                .eq("id", designation_id)
+                                .eq("adjustment_type", "ir_adjustment")
+                                .execute()
+                                .data
+                                or []
+                            )
+                        except Exception as exc:
+                            deleted = []
+                            st.error(f"{label} removal failed: {exc}")
+                        else:
+                            if not deleted:
+                                st.error(
+                                    f"{player_name} was not removed from {label}. "
+                                    "You can only change your own team's designations."
+                                )
 
-                        load_canonical_team_state.clear()
+                        if deleted:
+                            invalidate_team_state_session_cache(st.session_state)
 
-                        log_team_activity(
-                            remove_action,
-                            player_name,
-                        )
+                            log_team_activity(
+                                remove_action,
+                                player_name,
+                            )
 
-                        st.toast(f"{player_name} removed from {label}")
-                        st.rerun()
+                            st.toast(f"{player_name} removed from {label}")
+                            st.rerun()
 
             st.markdown("---")
 
@@ -1833,6 +1853,21 @@ with action_designation_col:
                 league_team_id=my_team["team_id"],
                 draft_year=active_season,
             ))
+        else:
+            # IR candidates: Taxi is locked for the season, so a Taxi player
+            # can never move to IR, and the current IR player is already there.
+            designated_names = set()
+            if not current_designations.empty:
+                designated_names = set(
+                    current_designations["player_name"].dropna().astype(str)
+                )
+            roster_options = sorted(
+                str(r.get("player"))
+                for r in my_roster.to_dict(orient="records")
+                if r.get("player")
+                and roster_designation(r) is None
+                and str(r.get("player")) not in designated_names
+            ) if not my_roster.empty else []
 
         selected_designation_player = st.selectbox(
             "Player",
@@ -1845,6 +1880,19 @@ with action_designation_col:
             ["Taxi Squad", "Injured Reserve"],
             key="designation_type",
         )
+
+        # Show who already holds the selected spot, read from the canonical
+        # roster so Taxi (which has no removable designation row) shows too.
+        held_designation = "taxi" if designation == "Taxi Squad" else "ir"
+        current_holders = sorted(
+            str(r.get("player"))
+            for r in my_roster.to_dict(orient="records")
+            if r.get("player") and roster_designation(r) == held_designation
+        ) if not my_roster.empty else []
+        if current_holders:
+            st.info(f"Current {designation}: {', '.join(current_holders)}")
+        else:
+            st.caption(f"Current {designation}: open")
 
         if selected_designation_player:
             player_row = my_roster[
@@ -1881,8 +1929,17 @@ with action_designation_col:
                     ]
 
                 if not existing_designation.empty:
+                    # One player per designation per team (the IR RPC also
+                    # rejects a second IR row). Swapping is remove, then add.
+                    current_name = (
+                        existing_designation["player_name"].dropna().astype(str).iloc[0]
+                        if "player_name" in existing_designation.columns
+                        and existing_designation["player_name"].notna().any()
+                        else "the current player"
+                    )
                     st.warning(
-                        f"{team_name} already has a player designated to {designation}. Remove the current player before assigning a new one."
+                        f"{team_name} already has {current_name} on {designation}. "
+                        f"Remove {current_name} above, then designate a new player."
                     )
 
                 elif designation == "Taxi Squad":
@@ -1909,7 +1966,7 @@ with action_designation_col:
                                 normal_annual_charge=salary,
                             )
 
-                            load_canonical_team_state.clear()
+                            invalidate_team_state_session_cache(st.session_state)
 
                             log_team_activity(
                                 designation.lower(),
@@ -1951,7 +2008,7 @@ with action_designation_col:
                                 normal_annual_charge=salary,
                             )
 
-                            load_canonical_team_state.clear()
+                            invalidate_team_state_session_cache(st.session_state)
 
                             log_team_activity(
                                 designation.lower(),
