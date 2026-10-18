@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Iterable, Mapping
 
-from league_ai.nfl_data import _cached, _ordinal, season_games, season_stat_rows, team_code
+from league_ai.nfl_data import _cached, _ordinal, season_games, season_stat_rows, situational_splits, team_code
 
 SHORT_WEEK_DAYS = 5   # Thursday after Sunday is 4 days
 LONG_REST_DAYS = 10   # off a bye (or a Thursday game followed by a Sunday ten days later)
@@ -181,6 +181,182 @@ def tendency_text(t: Mapping[str, Any] | None) -> str | None:
     return f"pass rate {_pct(t['pass_rate'])}{tilt}, {t['plays_per_game']} plays/g" + (f", targets {targets}" if targets else "")
 
 
+MIN_BLITZED_DROPBACKS = 30
+
+
+def _blend(cur: Mapping[str, Any] | None, last: Mapping[str, Any] | None, weight_key: str, keys: tuple[str, ...]) -> dict[str, Any] | None:
+    """Weighted mix of this season's and last season's split, by sample size; this season alone once it is big enough."""
+    if not cur and not last:
+        return None
+    a, b = dict(cur or {}), dict(last or {})
+    wa, wb = float(a.get(weight_key) or 0), float(b.get(weight_key) or 0)
+    if wa >= 2 * MIN_BLITZED_DROPBACKS or not wb:
+        a["sample"] = "this season"
+        return a
+    if not wa:
+        b["sample"] = "last season"
+        return b
+    out = dict(a)
+    for k in keys:
+        if a.get(k) is not None and b.get(k) is not None:
+            out[k] = round((a[k] * wa + b[k] * wb) / (wa + wb), 3)
+    out[weight_key] = int(wa + wb)
+    out["sample"] = "this season and last"
+    return out
+
+
+class Situational:
+    """Blitz, pressure and box-count tendencies (nfl_situational_splits), this season blended with last."""
+
+    def __init__(self, cur: Mapping[tuple[str, str], Mapping[str, Any]], last: Mapping[tuple[str, str], Mapping[str, Any]]):
+        self.cur, self.last = cur, last
+        defenses = {k[1]: v for k, v in cur.items() if k[0] == "defense"}
+        self.defenses = defenses
+        rates = [d.get("blitz_rate") for d in defenses.values() if d.get("blitz_rate") is not None]
+        self.league_blitz = sum(rates) / len(rates) if rates else None
+        self.blitz_rank = {t: i for i, t in enumerate(sorted(defenses, key=lambda t: -(defenses[t].get("blitz_rate") or 0)), start=1)}
+        self.ranks: dict[str, dict[str, int]] = {}
+        for key in ("allowed_deep_rate", "rb_targets_allowed_pg", "allowed_te_target_share", "allowed_adot"):
+            have = [t for t in defenses if defenses[t].get(key) is not None]
+            self.ranks[key] = {t: i for i, t in enumerate(sorted(have, key=lambda t: -defenses[t][key]), start=1)}  # 1 = allows the most
+        self.coverage = {k[1]: v for k, v in cur.items() if k[0] == "defense" and v.get("man_rate") is not None}
+        self.coverage_season = "this season"
+        if not self.coverage:
+            self.coverage = {k[1]: v for k, v in last.items() if k[0] == "defense" and v.get("man_rate") is not None}
+            self.coverage_season = "last season"
+        cov = list(self.coverage.values())
+        self.league_man = sum(v["man_rate"] for v in cov) / len(cov) if cov else None
+        self.league_two_high = sum(v.get("two_high_rate") or 0 for v in cov) / len(cov) if cov else None
+        self.qb_by_team: dict[str, str] = {}
+        for (kind, key), m in sorted(cur.items(), key=lambda kv: -(kv[1].get("dropbacks") or 0)):
+            if kind == "qb" and m.get("team") and m["team"] not in self.qb_by_team:
+                self.qb_by_team[m["team"]] = key
+
+    def __bool__(self) -> bool:
+        return bool(self.defenses)
+
+    def qb(self, gsis: str | None) -> dict[str, Any] | None:
+        if not gsis:
+            return None
+        return _blend(self.cur.get(("qb", gsis)), self.last.get(("qb", gsis)), "blitzed", ("epa_vs_blitz", "epa_no_blitz", "sack_rate_vs_blitz", "sack_rate_no_blitz"))
+
+    def rb(self, gsis: str | None) -> dict[str, Any] | None:
+        if not gsis:
+            return None
+        return _blend(self.cur.get(("rb", gsis)), self.last.get(("rb", gsis)), "carries_stacked", ("ypc_stacked", "ypc_light", "epa_stacked", "epa_light"))
+
+    def coverage_lean(self, team: str) -> tuple[str | None, str | None]:
+        """('man' | 'zone' | None, 'two_high' | 'single_high' | None): what the defense leans on vs league average."""
+        c = self.coverage.get(team)
+        if not c or self.league_man is None:
+            return None, None
+        shell = None
+        if c.get("two_high_rate") is not None and self.league_two_high is not None:
+            shell = "two_high" if c["two_high_rate"] >= self.league_two_high + 0.08 else "single_high" if c["two_high_rate"] <= self.league_two_high - 0.08 else None
+        man = "man" if c["man_rate"] >= self.league_man + 0.08 else "zone" if c["man_rate"] <= self.league_man - 0.08 else None
+        return man, shell
+
+    def style_text(self, team: str) -> str | None:
+        """How the defense defends the pass: depth allowed, dump-offs, coverage shell."""
+        d = self.defenses.get(team)
+        if not d:
+            return None
+        n = len(self.defenses)
+        bits = []
+        if d.get("allowed_adot") is not None:
+            bits.append(f"throws against it average {d['allowed_adot']} air yards, deep shots {(d.get('allowed_deep_rate') or 0) * 100:.0f}% ({_ordinal(self.ranks['allowed_deep_rate'].get(team, 0))} most of {n}), "
+                        f"EPA allowed {d.get('epa_deep_allowed') or 0:+.2f} deep / {d.get('epa_short_allowed') or 0:+.2f} short")
+        if d.get("rb_targets_allowed_pg") is not None:
+            bits.append(f"RB targets allowed {d['rb_targets_allowed_pg']}/g ({_ordinal(self.ranks['rb_targets_allowed_pg'].get(team, 0))} most), TE share {(d.get('allowed_te_target_share') or 0) * 100:.0f}% ({_ordinal(self.ranks['allowed_te_target_share'].get(team, 0))} most)")
+        c = self.coverage.get(team)
+        if c:
+            bits.append(f"{self.coverage_season}: man {c['man_rate'] * 100:.0f}% (league {self.league_man * 100:.0f}%), two-high safeties {(c.get('two_high_rate') or 0) * 100:.0f}% (league {(self.league_two_high or 0) * 100:.0f}%)")
+        return "; ".join(bits) or None
+
+    def _coverage_note(self, split: Mapping[str, Any] | None, opponent: str, who: str) -> str | None:
+        """'vs two-high last season -0.12 EPA (vs +0.05 single-high)' for the shell and man/zone the opponent leans on."""
+        if not split:
+            return None
+        man, shell = self.coverage_lean(opponent)
+        bits = []
+        for lean, other in ((shell, {"two_high": "single_high", "single_high": "two_high"}.get(shell or "")), (man, {"man": "zone", "zone": "man"}.get(man or ""))):
+            if lean and split.get(f"epa_vs_{lean}") is not None and split.get(f"epa_vs_{other}") is not None and (split.get(f"plays_vs_{lean}") or 0) >= 25:
+                bits.append(f"{lean.replace('_', '-')} {split[f'epa_vs_{lean}']:+.2f} EPA vs {split[f'epa_vs_{other}']:+.2f} {other.replace('_', '-')} ({split.get(f'plays_vs_{lean}')} plays)")
+        if not bits:
+            return None
+        return f"{opponent} leans {' and '.join(x for x in (shell, man) if x).replace('_', '-')}; {who} vs " + "; vs ".join(bits) + f" ({split.get('_season', 'last season')})"
+
+    def _with_coverage(self, kind: str, gsis: str | None) -> dict[str, Any] | None:
+        """This season's coverage split if charted yet, else last season's."""
+        for season_rows, label in ((self.cur, "this season"), (self.last, "last season")):
+            row = season_rows.get((kind, gsis or ""))
+            if row and row.get("plays_vs_man") is not None:
+                return {**row, "_season": label}
+        return None
+
+    def defense_text(self, team: str) -> str | None:
+        d = self.defenses.get(team)
+        if not d or d.get("blitz_rate") is None:
+            return None
+        n = len(self.defenses)
+        style = self.style_text(team)
+        return (f"{team} blitzes {d['blitz_rate'] * 100:.0f}% of dropbacks ({_ordinal(self.blitz_rank[team])} most of {n}), pressure {(d.get('pressure_rate') or 0) * 100:.0f}%, "
+                f"EPA allowed {d.get('epa_allowed_blitz') or 0:+.2f} blitzing / {d.get('epa_allowed_no_blitz') or 0:+.2f} not; 8+ box on {(d.get('stacked_box_rate') or 0) * 100:.0f}% of runs"
+                + (f"; {style}" if style else ""))
+
+    def _qb_for(self, position: str, team: str | None, gsis: str | None) -> tuple[str | None, dict[str, Any] | None]:
+        key = gsis if position == "QB" else self.qb_by_team.get(team or "")
+        return key, self.qb(key)
+
+    def multiplier(self, position: str, team: str | None, gsis: str | None, opponent: str | None) -> float:
+        """A QB who falls apart against the blitz, facing a blitz-heavy defense, loses up to 4% (gains up to 4% if he feasts on it).
+
+        His receivers get half that effect; running backs none (their box-count data is too thin to move a score).
+        """
+        pos = str(position or "").upper()
+        if pos not in ("QB", "WR", "TE") or not opponent or self.league_blitz is None:
+            return 1.0
+        d = self.defenses.get(opponent)
+        _, q = self._qb_for(pos, team, gsis)
+        if not d or not q or d.get("blitz_rate") is None or q.get("epa_vs_blitz") is None or q.get("epa_no_blitz") is None or (q.get("blitzed") or 0) < MIN_BLITZED_DROPBACKS:
+            return 1.0
+        effect = (q["epa_vs_blitz"] - q["epa_no_blitz"]) * (d["blitz_rate"] - self.league_blitz)
+        effect = max(-0.04, min(0.04, effect))
+        return 1 + (effect if pos == "QB" else effect / 2)
+
+    def note(self, position: str, team: str | None, gsis: str | None, opponent: str | None) -> str | None:
+        pos = str(position or "").upper()
+        if not opponent:
+            return None
+        d = self.defenses.get(opponent)
+        if pos in ("QB", "WR", "TE"):
+            key, q = self._qb_for(pos, team, gsis)
+            if not d or not q or d.get("blitz_rate") is None or q.get("epa_vs_blitz") is None:
+                return None
+            who = "" if pos == "QB" else f"his QB {q.get('name') or ''} "
+            text = (f"{opponent} blitzes {d['blitz_rate'] * 100:.0f}% ({_ordinal(self.blitz_rank.get(opponent, 0))} most); {who}vs blitz {q['epa_vs_blitz']:+.2f} EPA/dropback, "
+                    f"{q.get('epa_no_blitz') or 0:+.2f} not blitzed, sacked {(q.get('sack_rate_vs_blitz') or 0) * 100:.0f}% when blitzed ({q.get('blitzed')} blitzed dropbacks, {q['sample']})")
+            if pos == "QB":
+                if q.get("epa_deep") is not None and d.get("allowed_deep_rate") is not None:
+                    text += (f"; he averages {q.get('adot')} air yards, {q['epa_deep']:+.2f} EPA on deep throws / {q.get('epa_short') or 0:+.2f} short, "
+                             f"and {opponent} allows deep shots on {d['allowed_deep_rate'] * 100:.0f}% of throws")
+                cov = self._coverage_note(self._with_coverage("qb", key), opponent, "he")
+            else:
+                cov = self._coverage_note(self._with_coverage("rec", gsis), opponent, "he")
+            return text + (f"; {cov}" if cov else "")
+        if pos == "RB":
+            r = self.rb(gsis)
+            bits = []
+            if d and d.get("stacked_box_rate") is not None:
+                bits.append(f"{opponent} puts 8+ in the box on {d['stacked_box_rate'] * 100:.0f}% of runs, blitzes {d.get('blitz_rate', 0) * 100:.0f}%")
+            if d and d.get("rb_targets_allowed_pg") is not None:
+                bits.append(f"{opponent} allows {d['rb_targets_allowed_pg']} RB targets/g ({_ordinal(self.ranks['rb_targets_allowed_pg'].get(opponent, 0))} most of {len(self.defenses)}): checkdown and dump-off volume")
+            if r and r.get("ypc_light") is not None:
+                bits.append(f"he averages {r['ypc_light']:.1f} ypc vs light boxes, {r.get('ypc_stacked') or 0:.1f} vs 8+ ({r.get('carries_stacked')} carries, {r['sample']})")
+            return "; ".join(bits) or None
+        return None
+
+
 class TeamContext:
     """Everything team-level for one week, built from cached reads: this season, last season, all loaded seasons for coach history."""
 
@@ -198,6 +374,7 @@ class TeamContext:
         self.last_tendencies = team_tendencies(season_stat_rows(client, self.season - 1)) if last else {}
         history = {self.season - i: season_games(client, self.season - i) for i in range(0, history_seasons + 1)}
         self.after_bye = coach_after_bye({s: r for s, r in history.items() if r})
+        self.situational = Situational(situational_splits(client, self.season), situational_splits(client, self.season - 1))
 
     def __bool__(self) -> bool:  # an empty context (tables not loaded) isn't cached
         return bool(self.coaches or self.tendencies)
@@ -252,7 +429,8 @@ class TeamContext:
             return None
         text = f"{team} D allows {d['pa_per_game']} pts/g ({_rank_word(d['rank'], d['teams'])})"
         prof = defense_profile_text(getattr(self, "defense_profiles", {}).get(team))
-        return text + (f"; {prof}" if prof else "")
+        situ = self.situational.defense_text(team) if getattr(self, "situational", None) else None
+        return text + (f"; {prof}" if prof else "") + (f"; {situ}" if situ else "")
 
     def game_flags(self, team: str, opponent: str | None) -> dict[str, Any]:
         """Rest flags for the game dicts week_matchups returns (used by the scoring multiplier and the note)."""

@@ -508,3 +508,41 @@ class ScheduleOutlookTests(unittest.TestCase):
         self.assertEqual((out["soft"], out["tough"], out["games"]), (1, 1, 3))
         self.assertEqual(out["avg_matchup_effect"], "+0.0%")
         self.assertEqual(out["fantasy_playoffs"], {"weeks": "10-10", "avg_matchup_effect": "+0.0%", "games": 1})
+
+
+class SituationalTests(unittest.TestCase):
+    def test_splits_from_pbp_and_ftn(self):
+        import pandas as pd
+        from pipeline.nfl_data.situational import transform_splits
+
+        plays, ftn = [], []
+        for i in range(60):
+            blitz = i % 2 == 0
+            plays.append({"game_id": "g", "play_id": i, "season": 2026, "week": 1 + i // 30, "season_type": "REG", "posteam": "CAR", "defteam": "MIN", "qb_dropback": 1, "rush": 0,
+                          "epa": -0.5 if blitz else 0.2, "sack": 1 if blitz and i % 4 == 0 else 0, "qb_hit": 0, "yards_gained": 5, "passer_player_id": "qb1", "passer_player_name": "B.Young",
+                          "rusher_player_id": None, "rusher_player_name": None})
+            ftn.append({"nflverse_game_id": "g", "nflverse_play_id": i, "n_blitzers": 2 if blitz else 0, "n_pass_rushers": 6 if blitz else 4, "n_defense_box": 6, "is_qb_out_of_pocket": False})
+        rows = transform_splits(pd.DataFrame(plays), pd.DataFrame(ftn), 2026)
+        by = {(r["kind"], r["key"]): r["metrics"] for r in rows}
+        self.assertEqual(by[("defense", "MIN")]["blitz_rate"], 0.5)
+        self.assertEqual(by[("qb", "qb1")]["epa_vs_blitz"], -0.5)
+        self.assertEqual(by[("qb", "qb1")]["epa_no_blitz"], 0.2)
+        self.assertEqual(by[("qb", "qb1")]["blitzed"], 30)
+
+    def test_blitz_heavy_defense_downgrades_a_qb_who_struggles_against_it(self):
+        from league_ai.team_context import Situational
+
+        cur = {("defense", "MIN"): {"blitz_rate": 0.7, "pressure_rate": 0.24, "stacked_box_rate": 0.08, "epa_allowed_blitz": -0.18, "epa_allowed_no_blitz": -0.27},
+               ("defense", "PHI"): {"blitz_rate": 0.2, "stacked_box_rate": 0.05}, ("defense", "NYG"): {"blitz_rate": 0.3, "stacked_box_rate": 0.1},
+               ("qb", "shough"): {"team": "NO", "name": "T.Shough", "dropbacks": 218, "blitzed": 72, "epa_vs_blitz": -0.26, "epa_no_blitz": 0.07, "sack_rate_vs_blitz": 0.1},
+               ("qb", "young"): {"team": "CAR", "name": "B.Young", "dropbacks": 171, "blitzed": 42, "epa_vs_blitz": 0.17, "epa_no_blitz": 0.23}}
+        situ = Situational(cur, {})
+        self.assertEqual(situ.multiplier("QB", "NO", "shough", "MIN"), 0.96)  # capped at -4%
+        self.assertAlmostEqual(situ.multiplier("WR", "NO", None, "MIN"), 0.98)  # receivers get half, via the team's main QB
+        self.assertEqual(situ.multiplier("QB", "NO", "shough", None), 1.0)
+        self.assertAlmostEqual(situ.multiplier("QB", "CAR", "young", "PHI"), 1 + (0.17 - 0.23) * (0.2 - 0.4))
+        note = situ.note("QB", "NO", "shough", "MIN")
+        self.assertIn("MIN blitzes 70% (1st most)", note)
+        self.assertIn("vs blitz -0.26 EPA/dropback, +0.07 not blitzed, sacked 10% when blitzed (72 blitzed dropbacks, this season)", note)
+        self.assertIn("his QB T.Shough", situ.note("WR", "NO", None, "MIN"))
+        self.assertIn("8+ in the box on 8% of runs", situ.note("RB", "MIN", None, "MIN"))

@@ -359,7 +359,8 @@ def _cached_power(league_id: str, season: int, user_id: str, epoch: int, positio
     ctx = team_context(client, season, week) if week else None
     if ctx:
         ctx.annotate(games)
-    rankings = power_rankings(client, state, season, list(positions), dict(actual_ppg), byes=_cached_byes(season), week=week, games=games, dvp=defense_vs_position(client, season))
+    rankings = power_rankings(client, state, season, list(positions), dict(actual_ppg), byes=_cached_byes(season), week=week, games=games, dvp=defense_vs_position(client, season),
+                              situational=ctx.situational if ctx else None)
     snapshot_power(client, league_id, rankings)
 
     def bye_label(p: Any) -> str:

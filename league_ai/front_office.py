@@ -118,6 +118,7 @@ def build_player_strengths(client: Any, state: Mapping[str, Any], season: int) -
     ages: dict[str, float] = {}
     injuries: dict[str, str] = {}
     nfl_teams: dict[str, str] = {}
+    gsis: dict[str, str] = {}
     try:
         latest = client.table("nfl_market_values").select("scrape_date").order("scrape_date", desc=True).limit(1).execute().data or []
         latest_date = latest[0]["scrape_date"] if latest else None
@@ -137,7 +138,9 @@ def build_player_strengths(client: Any, state: Mapping[str, Any], season: int) -
             except Exception:
                 pass
         try:
-            for r in client.table("nfl_players").select("sleeper_id, age, injury_status, team").in_("sleeper_id", chunk).execute().data or []:
+            for r in client.table("nfl_players").select("sleeper_id, age, injury_status, team, gsis_id").in_("sleeper_id", chunk).execute().data or []:
+                if r.get("gsis_id"):
+                    gsis[str(r["sleeper_id"])] = str(r["gsis_id"])
                 if r.get("team"):
                     nfl_teams[str(r["sleeper_id"])] = team_code(r["team"])
                 if r.get("age") is not None:
@@ -161,27 +164,36 @@ def build_player_strengths(client: Any, state: Mapping[str, Any], season: int) -
         recent = pts[-4:]
         recent_ppg = round(sum(recent) / len(recent), 2) if recent else None
         out.append(player_strength(row, recent_ppg=recent_ppg, season_ppg=season_ppg, pos_rank=market.get(sid), age=ages.get(sid), injury_status=injuries.get(sid), nfl_team=nfl_teams.get(sid)))
+        out[-1].gsis_id = gsis.get(sid)
     return out
 
 
 def power_rankings(client: Any, state: Mapping[str, Any], season: int, roster_positions: list[str], actual_ppg: Mapping[str, float] | None = None,
                    byes: Mapping[str, int] | None = None, week: int | None = None,
-                   games: Mapping[str, Mapping[str, Any]] | None = None, dvp: Mapping[tuple[str, str], Mapping[str, Any]] | None = None) -> list[TeamPower]:
-    """games: NFL team -> this week's game (league_ai.nfl_data.week_matchups); dvp: (defense, position) -> rating."""
+                   games: Mapping[str, Mapping[str, Any]] | None = None, dvp: Mapping[tuple[str, str], Mapping[str, Any]] | None = None, situational: Any = None) -> list[TeamPower]:
+    """games: NFL team -> this week's game (league_ai.nfl_data.week_matchups); dvp: (defense, position) -> rating;
+    situational: league_ai.team_context.Situational (blitz / box tendencies), optional."""
     players = build_player_strengths(client, state, season)
-    apply_matchups(players, games or {}, dvp or {})
+    apply_matchups(players, games or {}, dvp or {}, situational)
     return compute_power(players, state.get("teams", []), roster_positions, actual_ppg, byes=byes, week=week)
 
 
-def apply_matchups(players: list[PlayerStrength], games: Mapping[str, Mapping[str, Any]], dvp: Mapping[tuple[str, str], Mapping[str, Any]]) -> None:
+def apply_matchups(players: list[PlayerStrength], games: Mapping[str, Mapping[str, Any]], dvp: Mapping[tuple[str, str], Mapping[str, Any]], situational: Any = None) -> None:
     """Set each player's week_now (now x defense matchup x game environment) and a short note for this week's game."""
     for p in players:
         game = games.get(p.nfl_team or "")
         if not game:
             continue
         rating = dvp.get((game["opponent"], p.position))
-        p.week_now = round(p.now * total_multiplier(p.position, game, rating), 2)
-        p.matchup = matchup_note(p.position, game, rating)
+        mult = total_multiplier(p.position, game, rating)
+        note = matchup_note(p.position, game, rating)
+        if situational:
+            mult = max(0.8, min(1.2, mult * situational.multiplier(p.position, p.nfl_team, p.gsis_id, game["opponent"])))
+            # full blitz / coverage lines for QBs and RBs only: receivers share their QB's line, and the tools give the rest on demand
+            extra = situational.note(p.position, p.nfl_team, p.gsis_id, game["opponent"]) if p.position in ("QB", "RB") else None
+            note = f"{note}; {extra}" if note and extra else note or extra
+        p.week_now = round(p.now * mult, 2)
+        p.matchup = note
 
 
 def snapshot_power(client: Any, league_id: str, rankings: list[TeamPower]) -> None:

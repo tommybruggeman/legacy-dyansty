@@ -105,7 +105,7 @@ class NflData:
         season = self.schedule_season() if nfl_team else None
         return bye_weeks(self.client, season).get(team_code(nfl_team)) if season else None
 
-    def this_week(self, nfl_team: Any, position: Any) -> dict[str, Any] | None:
+    def this_week(self, nfl_team: Any, position: Any, gsis_id: str | None = None) -> dict[str, Any] | None:
         """This week's game for a player's NFL team: opponent, how that defense ranks against the position, Vegas implied points."""
         season = self.schedule_season() if nfl_team else None
         if not season:
@@ -128,7 +128,15 @@ class NflData:
         rating = defense_vs_position(self.client, season).get((game["opponent"], pos))
         out: dict[str, Any] = {"week": week, "matchup": matchup_note(pos, game, rating), "gameday": game.get("gameday"), "kickoff_et": game.get("gametime"),
                                "vegas_implied_team_points": game.get("implied_points"), "weather": weather_text(game),
-                               "lineup_effect": f"{(total_multiplier(pos, game, rating) - 1) * 100:+.0f}% to a typical week (defense matchup, Vegas total and weather combined)"}
+                               "lineup_effect": f"{(total_multiplier(pos, game, rating) - 1) * 100:+.0f}% to a typical week (defense matchup, Vegas total, weather and rest combined)"}
+        situ = getattr(ctx, "situational", None) if ctx else None
+        if situ:
+            gsis = gsis_id
+            note = situ.note(pos, team, gsis, game["opponent"])
+            if note:
+                out["blitz_and_box"] = note
+                total = max(0.8, min(1.2, total_multiplier(pos, game, rating) * situ.multiplier(pos, team, gsis, game["opponent"])))
+                out["lineup_effect"] = f"{(total - 1) * 100:+.0f}% to a typical week (defense matchup, Vegas total, weather, rest and blitz response combined)"
         if ctx:
             opp = game["opponent"]
             out["team_context"] = {k: v for k, v in {"offense": ctx.offense_text(team), "rest": ctx.rest_text(team), "opponent_defense": ctx.defense_text(opp),
@@ -469,7 +477,7 @@ def _profile_dict(data: NflData, p: dict[str, Any], include_market: bool = True)
         "position": p.get("position"),
         "nfl_team": p.get("team") or "free agent / unsigned",
         "bye_week": data.bye_week(p.get("team")),
-        "this_week": data.this_week(p.get("team"), p.get("position")) or "no game data for this week",
+        "this_week": data.this_week(p.get("team"), p.get("position"), p.get("gsis_id")) or "no game data for this week",
         "age": p.get("age"),
         "birthdate": p.get("birthdate"),
         "years_exp": p.get("years_exp"),

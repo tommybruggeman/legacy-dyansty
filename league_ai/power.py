@@ -55,6 +55,7 @@ class PlayerStrength:
     years_left: int = 1
     injury: str | None = None
     nfl_team: str | None = None
+    gsis_id: str | None = None
     week_now: float | None = None  # now adjusted for this week's matchup; None = no matchup data
     matchup: str | None = None
 

@@ -284,6 +284,26 @@ def defense_vs_position(client: Any, season: int) -> dict[tuple[str, str], dict[
     return defense_vs_position_from_stats(season_stat_rows(client, season))
 
 
+def situational_splits(client: Any, season: int) -> dict[tuple[str, str], dict[str, Any]]:
+    """(kind, key) -> metrics from nfl_situational_splits: ('defense', team), ('qb', gsis), ('rb', gsis). Empty until the table exists."""
+    if client is None:
+        return {}
+
+    def load() -> dict[tuple[str, str], dict[str, Any]]:
+        try:
+            rows = client.table("nfl_situational_splits").select("kind, key, team, name, metrics").eq("season", season).limit(1000).execute().data or []
+        except Exception:
+            return {}
+        out = {}
+        for r in rows:
+            metrics = dict(r.get("metrics") or {})
+            metrics.update({"team": team_code(r.get("team")), "name": r.get("name")})
+            out[(str(r["kind"]), team_code(r["key"]) if r["kind"] == "defense" else str(r["key"]))] = metrics
+        return out
+
+    return _cached(("situ", int(season)), load)
+
+
 LEAGUE_AVG_IMPLIED = 22.5
 
 
