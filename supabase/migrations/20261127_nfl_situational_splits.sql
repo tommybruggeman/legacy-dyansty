@@ -4,8 +4,8 @@
 
 create table if not exists public.nfl_situational_splits (
   season integer not null,
-  kind text not null check (kind in ('defense', 'qb', 'rb')),
-  key text not null,              -- defense: team code; qb/rb: gsis player id
+  kind text not null check (kind in ('defense', 'qb', 'rb', 'rec')),
+  key text not null,              -- defense: team code; qb/rb/rec: gsis player id
   team text,
   name text,
   metrics jsonb not null default '{}'::jsonb,
