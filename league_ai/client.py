@@ -285,7 +285,7 @@ SHORT_ANSWER_CHARS = 60
 ACK_CHARS = 25  # a closing line this short after a full answer is an acknowledgement ("Logged.")
 KEEP_TEXT_CHARS = 150  # text at least this long before a lookup is reasoning, not a "let me check" preamble
 # Tools that only record something; text written alongside them is part of the answer, not a preamble.
-SILENT_TOOLS = frozenset({"log_prediction", "remember", "forget"})
+SILENT_TOOLS = frozenset({"log_prediction", "record_trade_response", "remember", "forget"})
 
 
 FINAL_ANSWER_NUDGE = ("Write your complete answer to my question now, using what you already found. "

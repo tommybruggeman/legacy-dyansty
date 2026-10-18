@@ -26,6 +26,15 @@ class MemQuery:
         self.filters.append(lambda r: r.get(k) in vals)
         return self
 
+    def gte(self, k, v):
+        self.filters.append(lambda r: r.get(k) is not None and r.get(k) >= v)
+        return self
+
+    def ilike(self, k, pat):
+        needle = pat.strip("%").casefold()
+        self.filters.append(lambda r: needle in str(r.get(k) or "").casefold())
+        return self
+
     def or_(self, expr):
         opts = [part.split(".eq.") for part in expr.split(",")]
         self.filters.append(lambda r: any(str(r.get(k)) == v for k, v in opts))
@@ -219,7 +228,7 @@ class LedgerTests(unittest.TestCase):
 
     def test_tool_specs(self):
         names = [t.name for t in self._ledger(MemDB()).tools()]
-        self.assertEqual(names, ["log_prediction", "get_my_track_record"])
+        self.assertEqual(names, ["log_prediction", "record_trade_response", "get_my_track_record"])
 
 
 class ModelStepTests(unittest.TestCase):

@@ -20,6 +20,7 @@ from pipeline.nfl_data.market_values import PICKS_URL, VALUES_URL, read_csv as r
 from pipeline.nfl_data.nflverse_stats import SNAPS_URL, STATS_URL, read_csv as read_stats_csv, transform_stats
 from pipeline.nfl_data.sleeper_players import SLEEPER_PLAYERS_URL, transform_players
 from pipeline.nfl_data.prospects import build_prospects, fetch_season_inputs
+from pipeline.nfl_data.situational import FTN_URL, PARTICIPATION_URL, PBP_URL, read_ftn, read_participation, read_pbp, transform_splits
 
 
 def current_nfl_season(today: date | None = None) -> int:
@@ -129,6 +130,42 @@ def sync_games(client: Any, seasons: list[int]) -> int:
         raise
 
 
+def sync_situational(client: Any, seasons: list[int], crosswalk: Crosswalk | None = None) -> int:
+    """Blitz / pressure / box-count splits for this season and last (FTN charting exists from 2022)."""
+    import requests
+
+    from pipeline.nfl_data.common import HEADERS
+
+    positions: dict[str, str] = {}
+    if crosswalk is not None and "gsis_id" in crosswalk.frame.columns:
+        for g, pos in zip(crosswalk.frame["gsis_id"], crosswalk.frame["position"]):
+            if isinstance(g, str) and isinstance(pos, str):
+                positions[g] = pos.upper()
+    written = 0
+    for season in [s for s in seasons[-2:] if s >= 2022]:
+        try:
+            pbp_resp = requests.get(PBP_URL.format(season=season), timeout=180, headers=HEADERS)
+            pbp_resp.raise_for_status()
+            try:
+                participation = read_participation(fetch_text(PARTICIPATION_URL.format(season=season), timeout=180))
+            except Exception:
+                participation = None  # coverage charting is published after the season; current season usually has none yet
+            rows = transform_splits(read_pbp(pbp_resp.content), read_ftn(fetch_text(FTN_URL.format(season=season), timeout=120)), season,
+                                    positions=positions, participation=participation)
+        except Exception as exc:
+            print(f"[nfl_data] situational {season}: unavailable ({type(exc).__name__}: {exc})", flush=True)
+            continue
+        try:
+            written += upsert_rows(client, "nfl_situational_splits", rows, on_conflict="season,kind,key")
+        except Exception as exc:
+            if "nfl_situational_splits" in str(exc) and ("PGRST205" in str(exc) or "does not exist" in str(exc) or "schema cache" in str(exc)):
+                print("[nfl_data] situational skipped: run migration 20261127_nfl_situational_splits.sql first", flush=True)
+                return written
+            raise
+        print(f"[nfl_data] situational {season}: {len(rows)} rows", flush=True)
+    return written
+
+
 def sync_prospects(client: Any, crosswalk: Crosswalk, seasons: list[int]) -> int:
     import os
 
@@ -146,7 +183,7 @@ def sync_prospects(client: Any, crosswalk: Crosswalk, seasons: list[int]) -> int
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--only", choices=["players", "stats", "games", "values", "injuries", "prospects"], default=None)
+    parser.add_argument("--only", choices=["players", "stats", "games", "values", "injuries", "prospects", "situational"], default=None)
     parser.add_argument("--seasons", nargs="*", type=int, default=None)
     args = parser.parse_args(argv)
 
@@ -166,6 +203,8 @@ def main(argv: list[str] | None = None) -> int:
         ok &= _run(client, "dynastyprocess_values", lambda: sync_values(client, crosswalk))
     if args.only in (None, "injuries"):
         ok &= _run(client, "injuries", lambda: sync_injuries(client, crosswalk, seasons))
+    if args.only in (None, "situational"):
+        ok &= _run(client, "situational_splits", lambda: sync_situational(client, seasons, crosswalk))
     if args.only in (None, "prospects"):
         ok &= _run(client, "cfbd_prospects", lambda: sync_prospects(client, crosswalk, seasons))
     return 0 if ok else 1

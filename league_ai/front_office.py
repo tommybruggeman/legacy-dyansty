@@ -12,6 +12,7 @@ import requests
 from league_ai.client import ClaudeClient
 from league_ai.config import LeagueAIConfig, load_config
 from league_ai.context_pack import team_summaries
+from league_ai.nfl_data import matchup_note, team_code, total_multiplier
 from league_ai.power import PlayerStrength, TeamPower, compute_power, player_strength
 from league_ai.prompt import SYSTEM_PROMPT
 from league_ai.tools import ToolRegistry
@@ -116,6 +117,8 @@ def build_player_strengths(client: Any, state: Mapping[str, Any], season: int) -
     market: dict[str, float] = {}
     ages: dict[str, float] = {}
     injuries: dict[str, str] = {}
+    nfl_teams: dict[str, str] = {}
+    gsis: dict[str, str] = {}
     try:
         latest = client.table("nfl_market_values").select("scrape_date").order("scrape_date", desc=True).limit(1).execute().data or []
         latest_date = latest[0]["scrape_date"] if latest else None
@@ -135,7 +138,11 @@ def build_player_strengths(client: Any, state: Mapping[str, Any], season: int) -
             except Exception:
                 pass
         try:
-            for r in client.table("nfl_players").select("sleeper_id, age, injury_status").in_("sleeper_id", chunk).execute().data or []:
+            for r in client.table("nfl_players").select("sleeper_id, age, injury_status, team, gsis_id").in_("sleeper_id", chunk).execute().data or []:
+                if r.get("gsis_id"):
+                    gsis[str(r["sleeper_id"])] = str(r["gsis_id"])
+                if r.get("team"):
+                    nfl_teams[str(r["sleeper_id"])] = team_code(r["team"])
                 if r.get("age") is not None:
                     ages[str(r["sleeper_id"])] = float(r["age"])
                 if r.get("injury_status"):
@@ -156,13 +163,37 @@ def build_player_strengths(client: Any, state: Mapping[str, Any], season: int) -
         season_ppg = round(sum(pts) / len(pts), 2) if pts else None
         recent = pts[-4:]
         recent_ppg = round(sum(recent) / len(recent), 2) if recent else None
-        out.append(player_strength(row, recent_ppg=recent_ppg, season_ppg=season_ppg, pos_rank=market.get(sid), age=ages.get(sid), injury_status=injuries.get(sid)))
+        out.append(player_strength(row, recent_ppg=recent_ppg, season_ppg=season_ppg, pos_rank=market.get(sid), age=ages.get(sid), injury_status=injuries.get(sid), nfl_team=nfl_teams.get(sid)))
+        out[-1].gsis_id = gsis.get(sid)
     return out
 
 
-def power_rankings(client: Any, state: Mapping[str, Any], season: int, roster_positions: list[str], actual_ppg: Mapping[str, float] | None = None) -> list[TeamPower]:
+def power_rankings(client: Any, state: Mapping[str, Any], season: int, roster_positions: list[str], actual_ppg: Mapping[str, float] | None = None,
+                   byes: Mapping[str, int] | None = None, week: int | None = None,
+                   games: Mapping[str, Mapping[str, Any]] | None = None, dvp: Mapping[tuple[str, str], Mapping[str, Any]] | None = None, situational: Any = None) -> list[TeamPower]:
+    """games: NFL team -> this week's game (league_ai.nfl_data.week_matchups); dvp: (defense, position) -> rating;
+    situational: league_ai.team_context.Situational (blitz / box tendencies), optional."""
     players = build_player_strengths(client, state, season)
-    return compute_power(players, state.get("teams", []), roster_positions, actual_ppg)
+    apply_matchups(players, games or {}, dvp or {}, situational)
+    return compute_power(players, state.get("teams", []), roster_positions, actual_ppg, byes=byes, week=week)
+
+
+def apply_matchups(players: list[PlayerStrength], games: Mapping[str, Mapping[str, Any]], dvp: Mapping[tuple[str, str], Mapping[str, Any]], situational: Any = None) -> None:
+    """Set each player's week_now (now x defense matchup x game environment) and a short note for this week's game."""
+    for p in players:
+        game = games.get(p.nfl_team or "")
+        if not game:
+            continue
+        rating = dvp.get((game["opponent"], p.position))
+        mult = total_multiplier(p.position, game, rating)
+        note = matchup_note(p.position, game, rating)
+        if situational:
+            mult = max(0.8, min(1.2, mult * situational.multiplier(p.position, p.nfl_team, p.gsis_id, game["opponent"])))
+            # full blitz / coverage lines for QBs and RBs only: receivers share their QB's line, and the tools give the rest on demand
+            extra = situational.note(p.position, p.nfl_team, p.gsis_id, game["opponent"]) if p.position in ("QB", "RB") else None
+            note = f"{note}; {extra}" if note and extra else note or extra
+        p.week_now = round(p.now * mult, 2)
+        p.matchup = note
 
 
 def snapshot_power(client: Any, league_id: str, rankings: list[TeamPower]) -> None:
@@ -247,7 +278,8 @@ FACTS:
 {facts}"""
 
 
-def brief_facts(client: Any, *, state: Mapping[str, Any], team_id: str, owner: str, opponent: dict[str, Any] | None, h2h: dict[str, Any] | None, standings: list[dict[str, Any]], weakest_slot: str | None, salary_cap: float) -> str:
+def brief_facts(client: Any, *, state: Mapping[str, Any], team_id: str, owner: str, opponent: dict[str, Any] | None, h2h: dict[str, Any] | None, standings: list[dict[str, Any]], weakest_slot: str | None, salary_cap: float,
+                on_bye: list[str] | None = None, matchups: list[str] | None = None) -> str:
     """Pre-gathered facts so the brief needs no tool calls: roster injuries, opponent line, free agents at the weak spot, cap."""
     roster = [r for r in state_roster(state) if str(r.get("league_team_id")) == team_id]
     ids = [str(r.get("sleeper_player_id") or r.get("player_id") or "") for r in roster]
@@ -269,6 +301,10 @@ def brief_facts(client: Any, *, state: Mapping[str, Any], team_id: str, owner: s
             lines.append(f"- INJURY {r.get('full_name')}: {r.get('injury_status')} ({r.get('injury_body_part') or 'unspecified'}), Sleeper only")
     if not any(l.startswith("- INJURY") for l in lines):
         lines.append("- INJURY none reported on this roster")
+    if on_bye:
+        lines.append("- ON BYE this week (score 0, must be benched): " + ", ".join(on_bye))
+    if matchups:
+        lines.append("- MATCHUPS for the best lineup this week (player, matchup-adjusted strength, opponent defense vs position, Vegas implied team points, weather): " + "; ".join(matchups))
     me = team_record(standings, owner)
     if me:
         lines.append(f"- ME {owner}: {me['record']}, rank {me['rank']}, {me['ppg']} ppg, {me['standing_points']} standing points")
@@ -307,7 +343,10 @@ def brief_fingerprint(data: Mapping[str, Any] | None) -> str:
     data = data or {}
     items = [f"{i.get('player')}|{i.get('status')}" for i in (data.get("injuries") or {}).get("items") or []]
     headline = (data.get("matchup") or {}).get("headline") or ""
-    return hashlib.sha256(json.dumps({"inj": sorted(items), "vs": headline}, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+    payload: dict[str, Any] = {"inj": sorted(items), "vs": headline}
+    if data.get("byes"):
+        payload["bye"] = sorted(data["byes"])  # only when present, so bye-free briefs keep their fingerprint
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:16]
 
 
 def brief_key(season: int, week: int) -> tuple[int, int]:
@@ -474,6 +513,11 @@ def week_context(fo: Mapping[str, Any] | None, owner: str, today: date | None = 
         lines.append(f"- {owner}'s matchup this week: {mu.get('headline') or 'vs ' + str(fo['opponent'].get('owner_name'))}." + (" " + "; ".join(mu.get("lines") or []) + "." if mu.get("lines") else ""))
     else:
         lines.append(f"- {owner} has no matchup this week.")
+    if fo.get("playoff_start_week"):
+        lines.append(f"- Fantasy playoffs start in week {fo['playoff_start_week']} (pass it as playoff_start_week to get_schedule_outlook).")
+    bye_teams = fo.get("bye_teams") or []
+    if bye_teams:
+        lines.append(f"- NFL teams on bye in week {fo.get('week')}: {', '.join(bye_teams)}. Their players do not play this week and score 0.")
     items = (brief.get("injuries") or {}).get("items") or []
     lines.append("- Injuries on " + owner + "'s roster: " + ("; ".join(f"{i.get('player')} ({i.get('status')})" for i in items) if items else "none reported") + ".")
     rankings = fo.get("rankings") or []
@@ -483,10 +527,23 @@ def week_context(fo: Mapping[str, Any] | None, owner: str, today: date | None = 
         mine = next((r for r in rankings if r.get("owner") == owner), None)
         if mine:
             lines.append(f"- {owner}: power #{mine.get('now_rank')} now, dynasty #{mine.get('dynasty_rank')}; strongest slot {mine.get('strongest_slot') or '?'}, weakest slot {mine.get('weakest_slot') or '?'}" + (f" ({mine.get('weakest_note')})" if mine.get("weakest_note") else "") + ".")
-            if mine.get("starters"):
-                lines.append(f"- {owner}'s best lineup by the app's strength model (position, player, strength score blending recent and season PPG with market tier): " + ", ".join(mine["starters"]) + ".")
+            starters = mine.get("week_starters") or mine.get("starters")
+            if starters:
+                lines.append(f"- {owner}'s best lineup this week by the app's strength model, bye and injured players already benched (position, player, strength score blending recent and season PPG with market tier, adjusted up to +/-20% for the defense matchup, Vegas implied points and weather; then this week's game: opponent, how that defense ranks against the position, Vegas implied team points, roof and kickoff weather): " + "; ".join(starters) + ".")
+            if mine.get("week_bench"):
+                lines.append(f"- {owner}'s best bench options this week, same format: " + "; ".join(mine["week_bench"]) + ".")
+            if mine.get("team_notes"):
+                lines.append(f"- Team context for {owner}'s players' NFL teams this week (play-calling this season and last, head coach, rest/bye and coach's record after byes, the defense they face):\n" + "\n".join(f"  - {n}" for n in mine["team_notes"]))
+            if mine.get("on_bye"):
+                lines.append(f"- {owner}'s players ON BYE this week (cannot score; never recommend starting them): " + ", ".join(mine["on_bye"]) + ".")
+            elif bye_teams:
+                lines.append(f"- None of {owner}'s players are on bye this week.")
+            if mine.get("bye_next"):
+                lines.append(f"- {owner}'s players on bye NEXT week (week {int(fo.get('week') or 0) + 1}): " + ", ".join(mine["bye_next"]) + ".")
         opp_name = (fo.get("opponent") or {}).get("owner_name")
         opp = next((r for r in rankings if opp_name and r.get("owner") == opp_name), None)
-        if opp and opp.get("starters"):
-            lines.append(f"- Opponent {opp_name}'s best lineup by the model: " + ", ".join(opp["starters"]) + ".")
+        if opp and (opp.get("week_starters") or opp.get("starters")):
+            lines.append(f"- Opponent {opp_name}'s best lineup this week by the model: " + "; ".join(opp.get("week_starters") or opp["starters"]) + ".")
+        if opp and opp.get("on_bye"):
+            lines.append(f"- Opponent {opp_name}'s players on bye this week: " + ", ".join(opp["on_bye"]) + ".")
     return "\n".join(lines)

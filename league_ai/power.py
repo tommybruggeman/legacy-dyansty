@@ -54,6 +54,14 @@ class PlayerStrength:
     age: float | None = None
     years_left: int = 1
     injury: str | None = None
+    nfl_team: str | None = None
+    gsis_id: str | None = None
+    week_now: float | None = None  # now adjusted for this week's matchup; None = no matchup data
+    matchup: str | None = None
+
+    def score(self, key: str) -> float:
+        value = getattr(self, key)
+        return self.now if value is None else value
 
 
 @dataclass
@@ -69,9 +77,13 @@ class TeamPower:
     weakest_slot: str | None = None
     weakest_note: str | None = None
     strongest_slot: str | None = None
+    week_starters: list[PlayerStrength] = field(default_factory=list)  # best lineup this week: byes benched, ordered by matchup-adjusted score
+    week_bench: list[PlayerStrength] = field(default_factory=list)
+    on_bye: list[PlayerStrength] = field(default_factory=list)
+    bye_next: list[PlayerStrength] = field(default_factory=list)
 
 
-def player_strength(row: Mapping[str, Any], *, recent_ppg: float | None, season_ppg: float | None, pos_rank: float | None, age: float | None, injury_status: str | None) -> PlayerStrength:
+def player_strength(row: Mapping[str, Any], *, recent_ppg: float | None, season_ppg: float | None, pos_rank: float | None, age: float | None, injury_status: str | None, nfl_team: str | None = None) -> PlayerStrength:
     pos = str(row.get("pos") or row.get("position") or "").upper()
     tier = tier_points(pos, pos_rank)
     parts, weights = [], []
@@ -88,7 +100,8 @@ def player_strength(row: Mapping[str, Any], *, recent_ppg: float | None, season_
         now *= 0.93
     years = int(row.get("contract_years_left") or 1)
     age_pen = 1.0
-    if age is not None and pos in PEAK_AGE:
+    # the market rank already prices age; only apply the age curve when there is no market rank
+    if age is not None and pos in PEAK_AGE and pos_rank is None:
         over = max(0.0, float(age) - PEAK_AGE[pos])
         age_pen = max(0.4, 1.0 - AGE_DECAY[pos] * over)
         if float(age) < PEAK_AGE[pos] - 3:
@@ -99,11 +112,12 @@ def player_strength(row: Mapping[str, Any], *, recent_ppg: float | None, season_
         sleeper_id=str(row.get("sleeper_player_id") or row.get("player_id") or ""), name=str(row.get("player_name") or ""), position=pos,
         team_id=str(row.get("league_team_id") or ""), owner=str(row.get("owner_name") or ""), now=round(now, 2), dynasty=round(dynasty, 2),
         available=available, recent_ppg=recent_ppg, season_ppg=season_ppg, pos_rank=pos_rank, age=age, years_left=years, injury=injury_status,
+        nfl_team=nfl_team or None,
     )
 
 
 def fill_lineup(players: Iterable[PlayerStrength], slots: list[str], key: str = "now") -> tuple[list[tuple[str, PlayerStrength]], list[PlayerStrength]]:
-    pool = sorted([p for p in players if (key != "now" or p.available)], key=lambda p: getattr(p, key), reverse=True)
+    pool = sorted([p for p in players if (key == "dynasty" or p.available)], key=lambda p: p.score(key), reverse=True)
     used: set[str] = set()
     lineup: list[tuple[str, PlayerStrength]] = []
     ordered = [s for s in slots if s in FIXED] + [s for s in slots if s in FLEX]
@@ -117,8 +131,14 @@ def fill_lineup(players: Iterable[PlayerStrength], slots: list[str], key: str = 
     return lineup, bench
 
 
-def compute_power(players: list[PlayerStrength], teams: list[Mapping[str, Any]], roster_positions: list[str], actual_ppg: Mapping[str, float] | None = None) -> list[TeamPower]:
-    """actual_ppg: owner name -> points per game this season in league scoring (blended 55/45 with the roster projection when present)."""
+def compute_power(players: list[PlayerStrength], teams: list[Mapping[str, Any]], roster_positions: list[str], actual_ppg: Mapping[str, float] | None = None,
+                  byes: Mapping[str, int] | None = None, week: int | None = None) -> list[TeamPower]:
+    """actual_ppg: owner name -> points per game this season in league scoring (blended 55/45 with the roster projection when present).
+
+    byes (NFL team -> bye week) and week only shape week_starters / week_bench / on_bye / bye_next (as does each
+    player's matchup-adjusted week_now); the power scores stay bye- and matchup-neutral so rankings don't dip and rebound around bye weeks.
+    """
+    byes = byes or {}
     actual_ppg = {k.casefold(): v for k, v in (actual_ppg or {}).items()}
     slots = [s for s in roster_positions if s not in {"BN", "IR", "TAXI"}] or ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "SUPER_FLEX"]
     by_team: dict[str, list[PlayerStrength]] = defaultdict(list)
@@ -148,8 +168,12 @@ def compute_power(players: list[PlayerStrength], teams: list[Mapping[str, Any]],
             slot_scores[grp] += p.now
             counts[grp] += 1
         avg_slots = {g: slot_scores[g] / counts[g] for g in slot_scores}
+        on_bye = [p for p in roster if week and p.nfl_team and byes.get(p.nfl_team) == week]
+        bye_next = [p for p in roster if week and p.nfl_team and byes.get(p.nfl_team) == week + 1]
+        bye_ids = {p.sleeper_id for p in on_bye}
+        week_lineup, week_bench = fill_lineup([p for p in roster if p.sleeper_id not in bye_ids], slots, "week_now")
         out.append(TeamPower(team_id=tid, owner=str(t.get("owner_name") or ""), now_score=round(now_score, 1), dynasty_score=round(dynasty_score, 1),
-                             starters=[p for _, p in lineup], slot_scores=avg_slots))
+                             starters=[p for _, p in lineup], slot_scores=avg_slots, week_starters=[p for _, p in week_lineup], week_bench=[p for p in week_bench if p.position in FIXED][:6], on_bye=on_bye, bye_next=bye_next))
     # ranks
     for i, tp in enumerate(sorted(out, key=lambda x: -x.now_score), start=1):
         tp.now_rank = i
