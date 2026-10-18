@@ -13,6 +13,7 @@ from decimal import Decimal
 from typing import Any, Iterable, Mapping
 
 from league_ai.nfl_data import add_weather, bye_weeks, current_week_from_games, defense_vs_position, matchup_label, matchup_note, season_games, team_code, total_multiplier, week_matchups, weather_text
+from league_ai.team_context import schedule_outlook, team_context
 from league_ai.tools import ToolRegistry, ToolSpec
 
 STAT_FIELDS = [
@@ -116,7 +117,11 @@ class NflData:
         team = team_code(nfl_team)
         if self.bye_week(team) == week:
             return {"week": week, "matchup": "ON BYE: does not play this week, scores 0"}
-        game = add_weather(week_matchups(rows, week), season, week).get(team)
+        games = add_weather(week_matchups(rows, week), season, week)
+        ctx = team_context(self.client, season, week)
+        if ctx:
+            ctx.annotate(games)
+        game = games.get(team)
         if not game:
             return None
         pos = str(position or "").upper()
@@ -124,6 +129,10 @@ class NflData:
         out: dict[str, Any] = {"week": week, "matchup": matchup_note(pos, game, rating), "gameday": game.get("gameday"), "kickoff_et": game.get("gametime"),
                                "vegas_implied_team_points": game.get("implied_points"), "weather": weather_text(game),
                                "lineup_effect": f"{(total_multiplier(pos, game, rating) - 1) * 100:+.0f}% to a typical week (defense matchup, Vegas total and weather combined)"}
+        if ctx:
+            opp = game["opponent"]
+            out["team_context"] = {k: v for k, v in {"offense": ctx.offense_text(team), "rest": ctx.rest_text(team), "opponent_defense": ctx.defense_text(opp),
+                                                     "opponent_offense": ctx.offense_text(opp), "opponent_rest": ctx.rest_text(opp)}.items() if v}
         if rating:
             out["defense_vs_position"] = {"rank_toughest_first": f"{rating['rank']} of {rating['teams']}", "ppr_allowed_per_game": rating["ppg_allowed"], "games": rating["games"], "label": matchup_label(rating)}
         return out
@@ -543,6 +552,10 @@ def tool_compare_players(data: NflData, names: list[str], seasons: list[int] | N
         by_season = stats.get("seasons", {})  # newest first
         prof["stats"] = {s: v["totals"] for s, v in (by_season.items() if seasons else list(by_season.items())[:2])}
         prof["recent"] = stats.get("recent")
+        outlook = tool_get_schedule_outlook(data, [p.get("full_name") or name]) if p.get("team") else {}
+        rest = outlook.get(p.get("full_name") or name) if isinstance(outlook, dict) else None
+        if isinstance(rest, dict) and "error" not in rest:
+            prof["rest_of_season_schedule"] = {k: rest.get(k) for k in ("avg_matchup_effect", "soft", "tough", "games", "fantasy_playoffs") if rest.get(k) is not None}
         out[p.get("full_name") or name] = prof
     return out
 
@@ -576,6 +589,32 @@ def tool_search_players(data: NflData, position: str | None = None, nfl_team: st
         if len(out) >= limit:
             break
     return {"players": out, "note": "search_rank is Sleeper's popularity rank (lower = more relevant)."}
+
+
+def tool_get_schedule_outlook(data: NflData, names: list[str], through_week: int | None = None, playoff_start_week: int | None = 15) -> dict[str, Any]:
+    """Rest-of-season matchup strength for up to 6 players, from this week on."""
+    season = data.schedule_season()
+    if not season:
+        return {"error": "No NFL schedule loaded."}
+    rows = season_games(data.client, season)
+    week = current_week_from_games(rows)
+    if not week:
+        return {"error": "The regular season is over."}
+    last = int(through_week or 17)
+    dvp = defense_vs_position(data.client, season)
+    ctx = team_context(data.client, season, week)
+    profiles = getattr(ctx, "defense_profiles", {}) if ctx else {}
+    out: dict[str, Any] = {"from_week": week, "through_week": last,
+                           "how_to_read": "avg_matchup_effect is the average lineup adjustment from opponents' defense vs the position (+ = easier schedule, each week capped at +/-15%); weather and Vegas lines for future weeks aren't known yet. Defense ranks are this season's and firm up as the season goes."}
+    for name in names[:6]:
+        matches = data.find_players(name, limit=1)
+        if not matches or not matches[0].get("team"):
+            out[name] = {"error": "not found or not on an NFL team"}
+            continue
+        p = matches[0]
+        out[p.get("full_name") or name] = {"position": p.get("position"), "nfl_team": p.get("team"),
+                                            **schedule_outlook(rows, p["team"], p.get("position"), week, last, dvp, profiles, playoff_start_week)}
+    return out
 
 
 def tool_simulate_trade(data: NflData, sides: list[dict[str, Any]]) -> dict[str, Any]:
@@ -682,6 +721,13 @@ def build_registry(client: Any, *, league_state: Mapping[str, Any], salary_cap: 
         "Cap and roster effect of a proposed trade for every team involved, using the app's cap math. Nothing is executed. sides: one entry per team with the players, picks and cap dollars it sends.",
         {"type": "object", "properties": {"sides": {"type": "array", "items": {"type": "object", "properties": {"team": {"type": "string", "description": "owner or team name"}, "sends_players": {"type": "array", "items": {"type": "string"}}, "sends_picks": {"type": "array", "items": {"type": "string"}}, "sends_cap": {"type": "number"}}, "required": ["team"]}}}, "required": ["sides"]},
         lambda sides: tool_simulate_trade(data, sides),
+    ))
+    reg.register(ToolSpec(
+        "get_schedule_outlook",
+        "Remaining-schedule strength for 1 to 6 players: each week's opponent graded against the player's position (defense vs position, plus pass or run defense rank), the average effect, soft/tough counts, bye week and the fantasy-playoff weeks on their own. Use for trades, playoff pushes and buy/sell calls.",
+        {"type": "object", "properties": {"names": {"type": "array", "items": {"type": "string"}}, "through_week": {"type": "integer", "description": "last week to include (default 17)"},
+                                          "playoff_start_week": {"type": "integer", "description": "first fantasy playoff week (see This week context; default 15)"}}, "required": ["names"]},
+        lambda names, through_week=None, playoff_start_week=15: tool_get_schedule_outlook(data, names, through_week, playoff_start_week),
     ))
     for spec in extra:
         reg.register(spec)

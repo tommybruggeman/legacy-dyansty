@@ -95,7 +95,7 @@ def season_games(client: Any, season: int) -> list[dict[str, Any]]:
 
     def load() -> list[dict[str, Any]]:
         try:
-            return client.table("nfl_games").select("week, gameday, gametime, home_team, away_team, home_score, away_score, spread_line, total_line, roof, stadium, temp, wind").eq("season", season).eq("game_type", "REG").limit(400).execute().data or []
+            return client.table("nfl_games").select("week, gameday, gametime, home_team, away_team, home_score, away_score, spread_line, total_line, roof, stadium, temp, wind, home_coach, away_coach").eq("season", season).eq("game_type", "REG").limit(400).execute().data or []
         except Exception:
             return []
 
@@ -257,26 +257,31 @@ def defense_vs_position_from_stats(rows: list[dict[str, Any]]) -> dict[tuple[str
     return out
 
 
-def defense_vs_position(client: Any, season: int) -> dict[tuple[str, str], dict[str, Any]]:
-    """Defense-vs-position ratings from this season's nfl_player_stats (paged read, cached)."""
+def season_stat_rows(client: Any, season: int) -> list[dict[str, Any]]:
+    """One season's REG weekly player rows, only the columns matchup and tendency math needs (paged read, cached)."""
     if client is None:
-        return {}
+        return []
 
-    def load() -> dict[tuple[str, str], dict[str, Any]]:
+    def load() -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         page = 1000
         try:
             for start in range(0, 20000, page):
-                chunk = (client.table("nfl_player_stats").select("week, position, opponent, fantasy_points_ppr").eq("season", season).eq("season_type", "REG")
+                chunk = (client.table("nfl_player_stats").select("week, position, team, opponent, attempts, carries, sacks, targets, passing_yards, passing_epa, rushing_yards, fantasy_points_ppr").eq("season", season).eq("season_type", "REG")
                          .order("gsis_id").order("week").range(start, start + page - 1).execute().data or [])
                 rows.extend(chunk)
                 if len(chunk) < page:
                     break
         except Exception:
-            return {}
-        return defense_vs_position_from_stats(rows)
+            return []
+        return rows
 
-    return _cached(("dvp", int(season)), load)
+    return _cached(("stats", int(season)), load)
+
+
+def defense_vs_position(client: Any, season: int) -> dict[tuple[str, str], dict[str, Any]]:
+    """Defense-vs-position ratings from this season's nfl_player_stats."""
+    return defense_vs_position_from_stats(season_stat_rows(client, season))
 
 
 LEAGUE_AVG_IMPLIED = 22.5
@@ -309,6 +314,11 @@ def game_multiplier(position: str, game: Mapping[str, Any] | None) -> float:
             mult *= 0.96 if passing else (1.02 if pos == "RB" else 0.95 if pos == "K" else 1.0)
         if temp is not None and float(temp) <= 20 and passing:
             mult *= 0.97
+    # rest: teams off a bye score a bit more on average; a short week against a rested opponent costs a little
+    if game.get("off_bye"):
+        mult *= 1.02
+    elif game.get("short_week") and not game.get("opp_short_week"):
+        mult *= 0.98
     return mult
 
 
@@ -366,6 +376,12 @@ def matchup_note(position: str, game: Mapping[str, Any] | None, rating: Mapping[
     wx = weather_text(game)
     if wx:
         parts.append(wx)
+    if game.get("off_bye"):
+        parts.append("off a bye")
+    elif game.get("short_week"):
+        parts.append(f"short week ({game.get('rest_days')} days rest)")
+    if game.get("opp_off_bye"):
+        parts.append(f"{game['opponent']} off a bye")
     return ", ".join(parts)
 
 

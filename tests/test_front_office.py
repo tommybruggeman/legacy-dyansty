@@ -409,3 +409,102 @@ class WeatherTests(unittest.TestCase):
         note = matchup_note("QB", windy, None)
         self.assertIn("outdoors, 35F, wind 22 mph (forecast)", note)
         self.assertIn("indoors", matchup_note("QB", dome, None))
+
+
+class TeamContextTests(unittest.TestCase):
+    GAMES = [
+        {"week": 1, "gameday": "2026-09-13", "home_team": "SEA", "away_team": "PHI", "home_score": 27, "away_score": 20, "home_coach": "Mike Macdonald", "away_coach": "Nick Sirianni"},
+        {"week": 2, "gameday": "2026-09-20", "home_team": "PHI", "away_team": "NYG", "home_score": 17, "away_score": 10, "home_coach": "Nick Sirianni", "away_coach": "Brian Daboll"},
+        {"week": 3, "gameday": "2026-09-27", "home_team": "SEA", "away_team": "NYG", "home_score": 20, "away_score": 30, "home_coach": "Mike Macdonald", "away_coach": "Brian Daboll"},
+        {"week": 4, "gameday": "2026-10-01", "home_team": "NYG", "away_team": "PHI", "home_score": None, "away_score": None, "home_coach": "Brian Daboll", "away_coach": "Nick Sirianni"},
+        {"week": 4, "gameday": "2026-10-04", "home_team": "SEA", "away_team": "LA", "home_score": None, "away_score": None, "home_coach": "Mike Macdonald", "away_coach": "Sean McVay"},
+    ]
+
+    def test_rest_bye_and_short_week(self):
+        from league_ai.team_context import rest_info
+
+        rest = rest_info(self.GAMES, 4)
+        self.assertEqual(rest["SEA"], {"rest_days": 7, "off_bye": False, "short_week": False})
+        self.assertTrue(rest["PHI"]["off_bye"])  # last played week 2
+        self.assertEqual(rest["NYG"], {"rest_days": 4, "off_bye": False, "short_week": True})
+
+    def test_defense_coaches_and_after_bye_history(self):
+        from league_ai.team_context import coach_after_bye, coaches, team_defense
+
+        d = team_defense(self.GAMES)
+        self.assertEqual(d["PHI"]["rank"], 1)  # 18.5 allowed per game
+        self.assertEqual(coaches(self.GAMES)["PHI"], "Nick Sirianni")
+        last = [{"week": w, "gameday": f"2025-09-{7 * w:02d}", "home_team": "PHI", "away_team": "DAL", "home_score": pts, "away_score": 20, "home_coach": "Nick Sirianni", "away_coach": "X"}
+                for w, pts in ((1, 20), (2, 20), (3, 20), (5, 30))]
+        hist = coach_after_bye({2025: last})
+        self.assertEqual(hist["Nick Sirianni"], {"games": 1, "wins": 1, "losses": 0, "pts_vs_avg": 7.5, "since": 2025})
+
+    def test_tendencies_and_coaching_change(self):
+        from league_ai.team_context import team_tendencies, tendency_text
+
+        rows = [{"week": 1, "team": "SEA", "position": "QB", "attempts": 40, "sacks": 2, "carries": 3},
+                {"week": 1, "team": "SEA", "position": "RB", "carries": 15, "targets": 4},
+                {"week": 1, "team": "SEA", "position": "WR", "targets": 30},
+                {"week": 1, "team": "SEA", "position": "TE", "targets": 6},
+                {"week": 1, "team": "NYG", "position": "QB", "attempts": 20, "carries": 2},
+                {"week": 1, "team": "NYG", "position": "RB", "carries": 30}]
+        t = team_tendencies(rows)
+        self.assertEqual(t["SEA"]["pass_rate"], 0.7)
+        self.assertEqual(t["SEA"]["plays_per_game"], 60.0)
+        self.assertEqual(t["SEA"]["target_share"]["WR"], 0.75)
+        self.assertIn("pass rate 70% (pass-heavy), 60.0 plays/g, targets WR 75%/TE 15%/RB 10%", tendency_text(t["SEA"]))
+        self.assertIn("(run-heavy)", tendency_text(t["NYG"]))
+
+    def test_team_lines_and_bye_boost(self):
+        from league_ai.nfl_data import game_multiplier, matchup_note
+        from league_ai.team_context import TeamContext
+
+        ctx = TeamContext.__new__(TeamContext)
+        ctx.season, ctx.week = 2026, 4
+        from league_ai.team_context import coaches, rest_info, team_defense
+        ctx.rest, ctx.defense, ctx.coaches = rest_info(self.GAMES, 4), team_defense(self.GAMES), coaches(self.GAMES)
+        ctx.last_coaches = {"PHI": "Nick Sirianni", "NYG": "Someone Else"}
+        ctx.tendencies = {"PHI": {"games": 2, "pass_rate": 0.52, "plays_per_game": 62.0, "target_share": {}, "league_pass_rate": 0.58},
+                          "NYG": {"games": 3, "pass_rate": 0.6, "plays_per_game": 64.0, "target_share": {}, "league_pass_rate": 0.58}}
+        ctx.last_tendencies = {"PHI": {"pass_rate": 0.5, "plays_per_game": 60.0}, "NYG": {"pass_rate": 0.55, "plays_per_game": 61.0}}
+        ctx.after_bye = {"Nick Sirianni": {"games": 4, "wins": 3, "losses": 1, "pts_vs_avg": 4.2, "since": 2023}}
+        games = ctx.annotate({"PHI": {"opponent": "NYG", "home": False, "implied_points": 24.0}, "NYG": {"opponent": "PHI", "home": True, "implied_points": 20.0}})
+        self.assertTrue(games["PHI"]["off_bye"] and games["NYG"]["opp_off_bye"])
+        self.assertAlmostEqual(game_multiplier("RB", games["PHI"]), (1 + 0.5 * (24 / 22.5 - 1)) * 1.02)
+        self.assertIn("off a bye", matchup_note("WR", games["PHI"], None))
+        self.assertIn("PHI off a bye", matchup_note("WR", games["NYG"], None))
+        lines = ctx.team_lines(["NYG"], games)
+        self.assertIn("NYG, HC Brian Daboll: pass rate 60% (balanced)", lines[0])
+        self.assertIn("under Someone Else (coaching change)", lines[0])
+        self.assertIn("short week (4 days rest)", lines[0])
+        self.assertIn("faces PHI D allows 18.5 pts/g (1st-fewest of 3)", lines[0])
+        self.assertIn("PHI off a bye (11 days rest); Nick Sirianni is 3-1 after byes since 2023, +4.2 pts", lines[0])
+
+
+class ScheduleOutlookTests(unittest.TestCase):
+    def test_defense_profile_ranks_pass_and_run(self):
+        from league_ai.team_context import defense_profile, defense_profile_text
+
+        rows = [{"week": 1, "position": "QB", "opponent": "SF", "passing_yards": 180, "passing_epa": -6, "attempts": 30, "sacks": 4, "rushing_yards": 10},
+                {"week": 1, "position": "RB", "opponent": "SF", "rushing_yards": 120},
+                {"week": 1, "position": "QB", "opponent": "NYG", "passing_yards": 320, "passing_epa": 9, "attempts": 38, "sacks": 1, "rushing_yards": 5},
+                {"week": 1, "position": "RB", "opponent": "NYG", "rushing_yards": 60}]
+        prof = defense_profile(rows)
+        self.assertEqual(prof["SF"]["pass_yds_pg_rank"], 1)
+        self.assertEqual(prof["SF"]["sacks_pg_rank"], 1)
+        self.assertEqual(prof["NYG"]["rush_yds_pg_rank"], 1)
+        self.assertAlmostEqual(prof["SF"]["epa_per_dropback"], -6 / 34, places=3)
+        self.assertIn("pass D 180 yds/g (1st of 2)", defense_profile_text(prof["SF"]))
+
+    def test_outlook_grades_weeks_and_playoffs(self):
+        from league_ai.team_context import schedule_outlook
+
+        rows = [{"week": 8, "home_team": "DAL", "away_team": "SF"}, {"week": 8, "home_team": "NYG", "away_team": "PHI"},
+                {"week": 9, "home_team": "NYG", "away_team": "DAL"}, {"week": 9, "home_team": "SF", "away_team": "PHI"},
+                {"week": 10, "home_team": "SF", "away_team": "NYG"}, {"week": 10, "home_team": "PHI", "away_team": "DAL"}]
+        dvp = {("SF", "WR"): {"factor": 0.8, "rank": 1, "teams": 4}, ("NYG", "WR"): {"factor": 1.2, "rank": 4, "teams": 4}, ("PHI", "WR"): {"factor": 1.0, "rank": 2, "teams": 4}}
+        out = schedule_outlook(rows, "DAL", "WR", 8, 10, dvp, {}, playoff_start=10)
+        self.assertEqual(out["weeks"], ["W8 vs SF tough", "W9 @ NYG soft", "W10 @ PHI neutral"])
+        self.assertEqual((out["soft"], out["tough"], out["games"]), (1, 1, 3))
+        self.assertEqual(out["avg_matchup_effect"], "+0.0%")
+        self.assertEqual(out["fantasy_playoffs"], {"weeks": "10-10", "avg_matchup_effect": "+0.0%", "games": 1})

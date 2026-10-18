@@ -19,6 +19,7 @@ from league_ai.routing import effort_for, topic as question_topic
 from league_ai.usage import record as record_usage, row_from_trace
 from league_ai.tools.nfl import NflData
 from services.team_roster_state import load_team_state
+from league_ai.team_context import team_context
 from league_ai.tools import ToolRegistry
 
 MODE_KEY = "gm_assistant_mode"
@@ -117,6 +118,7 @@ TOOL_STATUS = {
     "find_trade_targets": "Scanning every roster for trades that work for both sides",
     "get_owner_trade_profile": "Checking how that owner trades",
     "record_trade_response": "Noting how they answered",
+    "get_schedule_outlook": "Grading the rest of the schedule",
 }
 
 
@@ -332,6 +334,18 @@ def _cached_roster_positions(league_id: str, sleeper_league_id: str | None, user
 
 
 @st.cache_data(ttl=12 * 3600, show_spinner=False)
+def _cached_playoff_start(sleeper_league_id: str | None) -> int | None:
+    """First fantasy playoff week from Sleeper's league settings."""
+    if not sleeper_league_id:
+        return None
+    try:
+        value = (fetch_sleeper_scoring(sleeper_league_id).get("league_settings") or {}).get("playoff_week_start")
+        return int(value) if value else None
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=12 * 3600, show_spinner=False)
 def _cached_byes(season: int) -> dict[str, int]:
     """NFL team -> bye week for the season (the schedule is fixed, so one query per half day)."""
     return bye_weeks(auth_client(), season)
@@ -341,8 +355,11 @@ def _cached_byes(season: int) -> dict[str, int]:
 def _cached_power(league_id: str, season: int, user_id: str, epoch: int, positions: tuple[str, ...], actual_ppg: tuple[tuple[str, float], ...] = (), week: int = 0) -> list[dict]:
     client = auth_client()
     state = _cached_state(league_id, season, user_id, epoch)
-    rankings = power_rankings(client, state, season, list(positions), dict(actual_ppg), byes=_cached_byes(season), week=week,
-                              games=add_weather(week_matchups(season_games(client, season), week), season, week) if week else {}, dvp=defense_vs_position(client, season))
+    games = add_weather(week_matchups(season_games(client, season), week), season, week) if week else {}
+    ctx = team_context(client, season, week) if week else None
+    if ctx:
+        ctx.annotate(games)
+    rankings = power_rankings(client, state, season, list(positions), dict(actual_ppg), byes=_cached_byes(season), week=week, games=games, dvp=defense_vs_position(client, season))
     snapshot_power(client, league_id, rankings)
 
     def bye_label(p: Any) -> str:
@@ -355,6 +372,7 @@ def _cached_power(league_id: str, season: int, user_id: str, epoch: int, positio
              "weakest_slot": tp.weakest_slot, "weakest_note": tp.weakest_note, "strongest_slot": tp.strongest_slot,
              "starters": [f"{p.position} {p.name} ({p.now:.1f})" for p in tp.starters],
              "week_starters": [week_label(p) for p in tp.week_starters], "week_bench": [week_label(p) for p in tp.week_bench],
+             "team_notes": ctx.team_lines([p.nfl_team for p in tp.week_starters + tp.week_bench], games) if ctx else [],
              "on_bye": [bye_label(p) for p in tp.on_bye], "on_bye_names": [p.name for p in tp.on_bye], "bye_next": [bye_label(p) for p in tp.bye_next]} for tp in rankings]
 
 
@@ -402,7 +420,7 @@ def front_office_data(*, request_context: Any, team: dict) -> dict[str, Any]:
         items = instant["injuries"]["items"]
         instant["injuries"]["items"] = ([{"player": n, "status": f"Bye · week {week}"} for n in mine.get("on_bye_names") or []] + items)[:5]
     bye_teams = sorted(t for t, w in _cached_byes(season).items() if w == week)
-    return {"tiles": tiles, "data_brief": instant, "week": week, "bye_teams": bye_teams, "opponent": opponent, "h2h": h2h, "standings": standings, "owner_name": owner_name, "league_name": league.get("name") or "the league",
+    return {"tiles": tiles, "data_brief": instant, "week": week, "bye_teams": bye_teams, "playoff_start_week": _cached_playoff_start(sleeper_id), "opponent": opponent, "h2h": h2h, "standings": standings, "owner_name": owner_name, "league_name": league.get("name") or "the league",
             "season": season, "rankings": rankings_raw, "weakest_slot": mine["weakest_slot"] if mine else None, "salary_cap": float(rules.get("salary_cap", 225) or 225)}
 
 

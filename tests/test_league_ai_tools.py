@@ -155,7 +155,7 @@ class TradeSimTests(unittest.TestCase):
 class RegistryTests(unittest.TestCase):
     def test_registry_runs_tools_through_json(self):
         reg = build_registry(FakeClient(), league_state=fixture_state())
-        self.assertEqual(len(reg), 8)
+        self.assertEqual(len(reg), 9)
         out = json.loads(reg.call("get_player_profile", {"name": "Josh Allen"}))
         self.assertEqual(out["nfl_team"], "BUF")
         self.assertIn("error", json.loads(reg.call("get_player_stats", {})))  # bad args reported, not raised
@@ -197,7 +197,7 @@ class InjuryToolTests(unittest.TestCase):
     def test_registry_has_injury_tool(self):
         reg = build_registry(FakeClient(), league_state=fixture_state())
         self.assertIn("get_injury_report", reg.tools)
-        self.assertEqual(len(reg), 8)
+        self.assertEqual(len(reg), 9)
 
 
 PROSPECTS = [

@@ -501,6 +501,8 @@ def week_context(fo: Mapping[str, Any] | None, owner: str, today: date | None = 
         lines.append(f"- {owner}'s matchup this week: {mu.get('headline') or 'vs ' + str(fo['opponent'].get('owner_name'))}." + (" " + "; ".join(mu.get("lines") or []) + "." if mu.get("lines") else ""))
     else:
         lines.append(f"- {owner} has no matchup this week.")
+    if fo.get("playoff_start_week"):
+        lines.append(f"- Fantasy playoffs start in week {fo['playoff_start_week']} (pass it as playoff_start_week to get_schedule_outlook).")
     bye_teams = fo.get("bye_teams") or []
     if bye_teams:
         lines.append(f"- NFL teams on bye in week {fo.get('week')}: {', '.join(bye_teams)}. Their players do not play this week and score 0.")
@@ -518,6 +520,8 @@ def week_context(fo: Mapping[str, Any] | None, owner: str, today: date | None = 
                 lines.append(f"- {owner}'s best lineup this week by the app's strength model, bye and injured players already benched (position, player, strength score blending recent and season PPG with market tier, adjusted up to +/-20% for the defense matchup, Vegas implied points and weather; then this week's game: opponent, how that defense ranks against the position, Vegas implied team points, roof and kickoff weather): " + "; ".join(starters) + ".")
             if mine.get("week_bench"):
                 lines.append(f"- {owner}'s best bench options this week, same format: " + "; ".join(mine["week_bench"]) + ".")
+            if mine.get("team_notes"):
+                lines.append(f"- Team context for {owner}'s players' NFL teams this week (play-calling this season and last, head coach, rest/bye and coach's record after byes, the defense they face):\n" + "\n".join(f"  - {n}" for n in mine["team_notes"]))
             if mine.get("on_bye"):
                 lines.append(f"- {owner}'s players ON BYE this week (cannot score; never recommend starting them): " + ", ".join(mine["on_bye"]) + ".")
             elif bye_teams:
