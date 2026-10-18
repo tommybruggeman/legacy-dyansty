@@ -181,7 +181,8 @@ def run_league_ai(*, request_context: Any, team: dict, question: str, history: l
         season = int(request_context.current_season)
         finder = trade_finder_tools(
             lambda: load_league(client, state, season, _cached_roster_positions(league_id, league.get("sleeper_league_id"), request_context.user_id),
-                                rules.get("salary_cap", 225), request_context.league_team_id, build_player_strengths, league_id=league_id),
+                                rules.get("salary_cap", 225), request_context.league_team_id, build_player_strengths, league_id=league_id,
+                                playoff_start=_cached_playoff_start(league.get("sleeper_league_id")) or 15),
             LeagueHistory(client, league_id),
             outcomes=ledger.trade_outcomes, current_season=season,
         )

@@ -546,3 +546,22 @@ class SituationalTests(unittest.TestCase):
         self.assertIn("vs blitz -0.26 EPA/dropback, +0.07 not blitzed, sacked 10% when blitzed (72 blitzed dropbacks, this season)", note)
         self.assertIn("his QB T.Shough", situ.note("WR", "NO", None, "MIN"))
         self.assertIn("8+ in the box on 8% of runs", situ.note("RB", "MIN", None, "MIN"))
+
+
+class ScheduleInTradesTests(unittest.TestCase):
+    def test_schedule_factor_weights_playoffs(self):
+        from league_ai.team_context import schedule_factor
+
+        self.assertAlmostEqual(schedule_factor({"avg_matchup_effect": "+2.0%", "games": 8, "fantasy_playoffs": {"avg_matchup_effect": "+8.0%", "games": 3}}), 1 + (0.02 * 8 + 0.08 * 3) / 11)
+        self.assertEqual(schedule_factor({"avg_matchup_effect": None, "games": 0}), 1.0)
+
+    def test_valuer_now_uses_schedule(self):
+        from league_ai.power import PlayerStrength
+        from league_ai.trade_value import Valuer
+
+        a = PlayerStrength(sleeper_id="a", name="A", position="WR", team_id="t", owner="T", now=15, dynasty=15, available=True)
+        b = PlayerStrength(sleeper_id="b", name="B", position="WR", team_id="t", owner="T", now=15, dynasty=15, available=True)
+        a.market_value = b.market_value = 4000
+        base = Valuer([a, b], {"t": "contending"}).now(b)
+        b.schedule_mult = 1.06
+        self.assertAlmostEqual(Valuer([a, b], {"t": "contending"}).now(b), base * 1.06)

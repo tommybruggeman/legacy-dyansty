@@ -182,6 +182,7 @@ def find_trades(*, league: League, asker_team_id: str, cap_space: Mapping[str, f
                 "market_view": _market_view(league, [target], closing["sends"]),
                 "players": [v.explain(tid, target)] + [v.explain(tid, p) for p in closing["sends"]],
                 "why_they_say_yes": _why(league, tid, their_window, closing["sends"], ranks, target),
+                "schedule": {p.name: p.schedule_note for p in [target] + closing["sends"] if getattr(p, "schedule_note", None)},
                 "your_lineup_gain": closing["my_gain"],
                 "their_lineup_gain": closing["their_gain"],
                 "cap_after": {"you": round(closing["cap"][0], 2), "them": round(closing["cap"][1], 2)},
@@ -241,6 +242,9 @@ def evaluate_trade(league: League, asker_team_id: str, partner: str, you_get: li
         "your_lineup_gain": league.gain(asker, sends, gets, "dynasty" if league.window(asker) == "rebuilding" else "now"),
         "their_lineup_gain": league.gain(tid, gets, sends, league.mode(tid)),
     }
+    schedule = {p.name: p.schedule_note for p in gets + sends if getattr(p, "schedule_note", None)}
+    if schedule:
+        out["schedule"] = schedule  # already folded into this-season value; quote it when it separates close players
     motives = [m for m in (league.motivation(tid, p) for p in gets) if m]
     if motives:
         out["their_motivation"] = "; ".join(motives)
@@ -478,7 +482,8 @@ def _habits(history: Any, partners: set[str], position: str | None) -> dict[str,
 
 
 def load_league(client: Any, state: Mapping[str, Any], season: int, roster_positions: list[str], salary_cap: Any, asker_team_id: str,
-                build_strengths: Callable[[Any, Mapping[str, Any], int], list[PlayerStrength]], league_id: str | None = None) -> tuple[League, dict[str, float], str]:
+                build_strengths: Callable[[Any, Mapping[str, Any], int], list[PlayerStrength]], league_id: str | None = None,
+                playoff_start: int | None = 15) -> tuple[League, dict[str, float], str]:
     """Wire the finder to the live league: player strengths, contracts, cap space, this season's records and pick values."""
     from services.team_roster_state import calculate_team_financials, state_cap_adjustments, state_roster
 
@@ -487,6 +492,8 @@ def load_league(client: Any, state: Mapping[str, Any], season: int, roster_posit
     players = build_strengths(client, state, season)
     hits = {str(r.get("sleeper_player_id") or r.get("player_id") or ""): float(r.get("cap_hit") or r.get("salary") or 0) for r in roster}
     values = _market_values(client, [p.sleeper_id for p in players])
+    from league_ai.team_context import attach_schedules
+    attach_schedules(players, client, season, playoff_start=playoff_start)
     for p in players:
         p.cap_hit = hits.get(p.sleeper_id, 0.0)  # type: ignore[attr-defined]
         if p.sleeper_id in values:

@@ -57,7 +57,8 @@ class Valuer:
         self._fair_cap = {p.sleeper_id: hits[i] for i, p in enumerate(sorted(capped, key=lambda p: -self.base(p, "middle")))}
 
     def now(self, p: PlayerStrength) -> float:
-        return self._now.get(p.sleeper_id, market_value(p))
+        """This-season value, nudged by the rest-of-season schedule (playoff weeks weighted double) when it's known."""
+        return self._now.get(p.sleeper_id, market_value(p)) * float(getattr(p, "schedule_mult", 1.0) or 1.0)
 
     def base(self, p: PlayerStrength, window: str) -> float:
         w = NOW_WEIGHT.get(window, 0.5)

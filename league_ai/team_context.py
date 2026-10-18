@@ -501,3 +501,49 @@ def schedule_outlook(rows: list[Mapping[str, Any]], team: str, position: str, fr
     if playoff_start:
         out["fantasy_playoffs"] = {"weeks": f"{playoff_start}-{through_week}", "avg_matchup_effect": pct(playoff_mults), "games": len(playoff_mults)}
     return out
+
+
+def schedule_factor(outlook: Mapping[str, Any], playoff_weight: float = 2.0) -> float:
+    """One number for the rest of the season: average matchup multiplier, fantasy-playoff weeks counted double."""
+    def num(text: Any) -> float | None:
+        try:
+            return float(str(text).rstrip("%")) / 100
+        except Exception:
+            return None
+
+    rest, games = num(outlook.get("avg_matchup_effect")), int(outlook.get("games") or 0)
+    po = outlook.get("fantasy_playoffs") or {}
+    po_eff, po_games = num(po.get("avg_matchup_effect")), int(po.get("games") or 0)
+    if rest is None or not games:
+        return 1.0
+    total = rest * games + (playoff_weight - 1) * (po_eff or 0) * po_games
+    return 1 + total / (games + (playoff_weight - 1) * po_games)
+
+
+def attach_schedules(players: Iterable[Any], client: Any, season: int, playoff_start: int | None = 15, through_week: int = 17) -> None:
+    """Give each player schedule_mult (rest-of-season matchup strength, playoffs weighted double) and a short schedule_note.
+
+    One pass per NFL team and position over cached schedule and defense data; no-op when the schedule isn't loaded.
+    """
+    from league_ai.nfl_data import current_week_from_games, defense_vs_position
+
+    rows = season_games(client, season)
+    week = current_week_from_games(rows) if rows else None
+    if not week:
+        return
+    dvp = defense_vs_position(client, season)
+    ctx = team_context(client, season, week)
+    profiles = getattr(ctx, "defense_profiles", {}) if ctx else {}
+    memo: dict[tuple[str, str], tuple[float, str]] = {}
+    for p in players:
+        team, pos = getattr(p, "nfl_team", None), getattr(p, "position", None)
+        if not team or pos not in ("QB", "RB", "WR", "TE"):
+            continue
+        if (team, pos) not in memo:
+            o = schedule_outlook(rows, team, pos, week, through_week, dvp, profiles, playoff_start)
+            po = o.get("fantasy_playoffs") or {}
+            note = f"rest of season {o.get('avg_matchup_effect') or '+0.0%'} ({o['soft']} soft, {o['tough']} tough of {o['games']})"
+            if po.get("avg_matchup_effect"):
+                note += f", fantasy playoffs W{po['weeks']} {po['avg_matchup_effect']}"
+            memo[(team, pos)] = (schedule_factor(o), note)
+        p.schedule_mult, p.schedule_note = memo[(team, pos)]
