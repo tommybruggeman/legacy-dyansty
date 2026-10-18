@@ -130,6 +130,25 @@ class ClaudeClient:
                 return stream.get_final_message()
         return client.messages.create(**kwargs)
 
+    def _final_answer(self, client: Any, kwargs: dict[str, Any], history: list[dict[str, Any]], content: Any,
+                      on_event: Callable[[str, Any], None] | None) -> Any:
+        """One last round with tools disabled, so the model must answer in text."""
+        if history[-1].get("role") == "user" and isinstance(history[-1].get("content"), list) and \
+                any(_block_attr(b, "type") == "tool_result" for b in history[-1]["content"]):
+            last = dict(history[-1])
+            last["content"] = list(last["content"]) + [{"type": "text", "text": FINAL_ANSWER_NUDGE}]
+            history[-1] = last
+        else:
+            prior = _content_to_api(content)
+            if prior:
+                history.append({"role": "assistant", "content": prior})
+            history.append({"role": "user", "content": FINAL_ANSWER_NUDGE})
+        final = dict(kwargs, messages=history)
+        if "tools" in final:
+            final["tool_choice"] = {"type": "none"}
+        _emit(on_event, "round", "final")
+        return self._call(client, final, on_event)
+
     def run(
         self,
         *,
@@ -165,6 +184,7 @@ class ClaudeClient:
         tool_specs = tools.specs() if tools and len(tools) else []
         text_out = ""
         kept_text = ""
+        ended_on_tools = False
         best_text = ""  # the fullest answer any round wrote, in case the last round only says "Logged."
         try:
             while True:
@@ -206,10 +226,12 @@ class ClaudeClient:
                 tool_uses = [b for b in content if _block_attr(b, "type") == "tool_use"]
                 if trace.stop_reason != "tool_use" or not tool_uses:
                     break
-                if all(_block_attr(b, "name") in SILENT_TOOLS for b in tool_uses):
-                    kept_text = text_out  # the answer came with a bookkeeping call (log/remember): keep it
+                if all(_block_attr(b, "name") in SILENT_TOOLS for b in tool_uses) or len(round_text) >= KEEP_TEXT_CHARS:
+                    # the answer came with a bookkeeping call (log/remember), or the model reasoned before a
+                    # lookup: keep it, since the next round often builds on it ("with the caveats above")
+                    kept_text = text_out
                 else:
-                    kept_text = ""  # text before a lookup is a preamble; the next round's answer replaces it
+                    kept_text = ""  # a short "let me check" preamble; the next round's answer replaces it
                     _emit(on_event, "reset", None)
                 history.append({"role": "assistant", "content": _content_to_api(content)})
                 results = []
@@ -224,13 +246,29 @@ class ClaudeClient:
                     results.append({"type": "tool_result", "tool_use_id": _block_attr(block, "id"), "content": result_text})
                 history.append({"role": "user", "content": results})
                 if trace.rounds > limit + 2:
+                    ended_on_tools = True
                     break
+            if (ended_on_tools or not best_text) and len(best_text) < KEEP_TEXT_CHARS and trace.stop_reason != "max_tokens":
+                # the model stopped on a tool round or with no answer: one more call, tools off, to get the answer
+                response = self._final_answer(client, kwargs, history, content, on_event)
+                trace.rounds += 1
+                _usage(trace, response)
+                content = _block_attr(response, "content") or []
+                trace.stop_reason = _block_attr(response, "stop_reason")
+                trace.content_types = [str(_block_attr(b, "type")) for b in content]
+                round_text = "\n".join(_block_attr(b, "text", "") for b in content if _block_attr(b, "type") == "text").strip()
+                if round_text:
+                    text_out = "\n\n".join(x for x in [kept_text, round_text] if x)
+                if len(text_out) > len(best_text):
+                    best_text = text_out
         except Exception as exc:  # map SDK errors to safe codes
             trace.error_code = _classify(exc)
             trace.latency_ms = int((time.perf_counter() - start) * 1000)
             return ClientResult(False, "", trace, trace.error_code)
         trace.latency_ms = int((time.perf_counter() - start) * 1000)
-        if len(text_out) < SHORT_ANSWER_CHARS and len(best_text) >= 150:
+        if len(kept_text) >= KEEP_TEXT_CHARS and len(text_out) - len(kept_text) <= ACK_CHARS:
+            text_out = kept_text  # a full answer, then a closing "Logged.": drop the acknowledgement
+        if len(text_out) < SHORT_ANSWER_CHARS and len(best_text) >= KEEP_TEXT_CHARS:
             # the model wrote its answer, then made a bookkeeping or follow-up call and closed with a bare
             # acknowledgement ("Logged."): show the answer it wrote, not the acknowledgement
             text_out = best_text
@@ -244,8 +282,14 @@ class ClaudeClient:
 
 PER_MESSAGE_EFFORT_BETA = "mid-conversation-output-config-2026-07-01"
 SHORT_ANSWER_CHARS = 60
+ACK_CHARS = 25  # a closing line this short after a full answer is an acknowledgement ("Logged.")
+KEEP_TEXT_CHARS = 150  # text at least this long before a lookup is reasoning, not a "let me check" preamble
 # Tools that only record something; text written alongside them is part of the answer, not a preamble.
 SILENT_TOOLS = frozenset({"log_prediction", "remember", "forget"})
+
+
+FINAL_ANSWER_NUDGE = ("Write your complete answer to my question now, using what you already found. "
+                      "Don't refer to earlier messages or reasoning; I only see this reply.")
 
 
 def _emit(on_event: Callable[[str, Any], None] | None, kind: str, payload: Any) -> None:

@@ -247,6 +247,53 @@ class ServiceTests(unittest.TestCase):
         self.assertIn("read-only", blocks[0]["text"])
         self.assertEqual(blocks[1]["text"], "PACK")
 
+    def test_empty_final_round_gets_one_forced_answer_without_tools(self):
+        reg = ToolRegistry()
+        reg.register(ToolSpec("get_player_stats", "stats", {"type": "object", "properties": {}}, lambda **kw: {"ppg": 13.4}))
+        sdk = FakeSDK([
+            _resp([_tool_use("t1", "get_player_stats", {})], stop="tool_use"),
+            _resp([{"type": "thinking", "thinking": "...", "signature": "s"}]),
+            _resp([_text("Start Penix: 13.4 ppg.")]),
+        ])
+        result = ClaudeClient(CONFIG, sdk_client=sdk).run(system=[], messages=[{"role": "user", "content": "q"}], tools=reg)
+        self.assertTrue(result.ok)
+        self.assertEqual(result.text, "Start Penix: 13.4 ppg.")
+        self.assertEqual(len(sdk.calls), 3)
+        self.assertEqual(sdk.calls[2]["tool_choice"], {"type": "none"})
+        self.assertEqual(sdk.calls[2]["messages"][-1]["role"], "user")
+
+    def test_loop_that_stops_on_tool_round_still_answers(self):
+        reg = ToolRegistry()
+        reg.register(ToolSpec("t", "t", {"type": "object"}, lambda **_: "ok"))
+        tool_round = _resp([_tool_use("tu", "t", {})], stop="tool_use")
+        sdk = FakeSDK([tool_round] * 6 + [_resp([_text("Final answer.")])])
+        result = ClaudeClient(CONFIG, sdk_client=sdk).run(system=[], messages=[{"role": "user", "content": "q"}], tools=reg)
+        self.assertEqual(result.text, "Final answer.")
+        last = sdk.calls[-1]["messages"][-1]
+        self.assertEqual(last["content"][-1]["type"], "text")  # nudge rides on the tool_result turn
+        self.assertEqual(sdk.calls[-1]["tool_choice"], {"type": "none"})
+
+    def test_short_answer_makes_no_extra_call(self):
+        sdk = FakeSDK([_resp([_text("He's out.")])])
+        result = ClaudeClient(CONFIG, sdk_client=sdk).run(system=[], messages=[{"role": "user", "content": "q"}])
+        self.assertEqual(result.text, "He's out.")
+        self.assertEqual(len(sdk.calls), 1)
+
+    def test_reasoning_before_a_lookup_is_kept(self):
+        reg = ToolRegistry()
+        reg.register(ToolSpec("get_market_values", "mv", {"type": "object", "properties": {}}, lambda **kw: {"v": 1}))
+        reasoning = ("Your window is this year: you are 6-1 with $14 of cap space and Kelce's deal ends after the season, "
+                     "so a win-now move fits. The question is whether the price is right, so let me check the market.")
+        sdk = FakeSDK([
+            _resp([_text(reasoning), _tool_use("t1", "get_market_values", {})], stop="tool_use"),
+            _resp([_text("Accept it, with the caveats above.")]),
+        ])
+        events = []
+        result = ClaudeClient(CONFIG, sdk_client=sdk).run(system=[], messages=[{"role": "user", "content": "q"}], tools=reg,
+                                                          on_event=lambda kind, payload: events.append((kind, payload)))
+        self.assertEqual(result.text, reasoning + "\n\nAccept it, with the caveats above.")
+        self.assertNotIn(("reset", None), events)
+
 
 if __name__ == "__main__":
     unittest.main()
