@@ -15,12 +15,17 @@ from typing import Any
 from pipeline.nfl_data.common import fetch_json, fetch_text, log_run, now_iso, service_client, upsert_rows
 from pipeline.nfl_data.crosswalk import CROSSWALK_URL, Crosswalk
 from pipeline.nfl_data.games import GAMES_URL, read_csv as read_games_csv, transform_games
+from pipeline.nfl_data.injury_history import build_episodes, build_play_rates
 from pipeline.nfl_data.injuries import ESPN_INJURIES_URLS, NFLVERSE_INJURIES_URL, read_csv as read_injuries_csv, transform_espn, transform_nflverse
 from pipeline.nfl_data.market_values import PICKS_URL, VALUES_URL, read_csv as read_values_csv, transform_picks, transform_values
 from pipeline.nfl_data.nflverse_stats import SNAPS_URL, STATS_URL, read_csv as read_stats_csv, transform_stats
-from pipeline.nfl_data.sleeper_players import SLEEPER_PLAYERS_URL, transform_players
+from pipeline.nfl_data.sleeper_players import INJURY_DETAIL_COLUMNS, SLEEPER_PLAYERS_URL, transform_players
 from pipeline.nfl_data.prospects import build_prospects, fetch_season_inputs
 from pipeline.nfl_data.situational import FTN_URL, PARTICIPATION_URL, PBP_URL, read_ftn, read_participation, read_pbp, transform_splits
+
+
+# Rows the stats and injury loaders already downloaded, reused by the injury history loader in the same run.
+_RUN_ROWS: dict[str, list[dict[str, Any]]] = {}
 
 
 def current_nfl_season(today: date | None = None) -> int:
@@ -55,7 +60,13 @@ def load_crosswalk() -> Crosswalk:
 def sync_players(client: Any, crosswalk: Crosswalk) -> int:
     players = fetch_json(SLEEPER_PLAYERS_URL, timeout=180)
     rows = transform_players(players, crosswalk)
-    return upsert_rows(client, "nfl_players", rows, on_conflict="sleeper_id")
+    try:
+        return upsert_rows(client, "nfl_players", rows, on_conflict="sleeper_id")
+    except Exception as exc:
+        if not any(c in str(exc) for c in INJURY_DETAIL_COLUMNS):
+            raise
+        print("[nfl_data] players: injury detail columns missing (run migration 20261128); loading without them", flush=True)
+        return upsert_rows(client, "nfl_players", [{k: v for k, v in r.items() if k not in INJURY_DETAIL_COLUMNS} for r in rows], on_conflict="sleeper_id")
 
 
 def sync_stats(client: Any, crosswalk: Crosswalk, seasons: list[int]) -> int:
@@ -72,6 +83,7 @@ def sync_stats(client: Any, crosswalk: Crosswalk, seasons: list[int]) -> int:
             print(f"[nfl_data] snaps {season}: unavailable ({type(exc).__name__}); loading stats without snap share", flush=True)
             snaps = None
         rows = transform_stats(stats, snaps, crosswalk)
+        _RUN_ROWS.setdefault("stats", []).extend(rows)
         total += upsert_rows(client, "nfl_player_stats", rows, on_conflict="gsis_id,season,week,season_type")
         print(f"[nfl_data] stats {season}: {len(rows)} rows", flush=True)
     return total
@@ -113,9 +125,51 @@ def sync_injuries(client: Any, crosswalk: Crosswalk, seasons: list[int]) -> int:
         except Exception as exc:
             print(f"[nfl_data] practice reports {season}: unavailable ({type(exc).__name__})", flush=True)
             continue
+        _RUN_ROWS.setdefault("injuries", []).extend(frame.to_dict("records"))
         rows = transform_nflverse(frame, crosswalk)
         written += upsert_rows(client, "nfl_practice_reports", rows, on_conflict="gsis_id,season,week")
         print(f"[nfl_data] practice reports {season}: {len(rows)} rows", flush=True)
+    return written
+
+
+def sync_injury_history(client: Any, crosswalk: Crosswalk, seasons: list[int]) -> int:
+    """Past absences and return performance (nfl_injury_episodes) and chance to play by report status (nfl_injury_play_rates).
+
+    Reuses what the stats and injury loaders downloaded in this run; fetches them itself when run alone.
+    """
+    stats, injuries = _RUN_ROWS.get("stats"), _RUN_ROWS.get("injuries")
+    if not stats:
+        stats = []
+        for season in seasons:
+            try:
+                frame = read_stats_csv(fetch_text(STATS_URL.format(season=season), timeout=300))
+                try:
+                    snaps = read_stats_csv(fetch_text(SNAPS_URL.format(season=season), timeout=300))
+                except Exception:
+                    snaps = None
+                stats.extend(transform_stats(frame, snaps, crosswalk))
+            except Exception as exc:
+                print(f"[nfl_data] injury history: stats {season} unavailable ({type(exc).__name__})", flush=True)
+    if not injuries:
+        injuries = []
+        for season in seasons:
+            try:
+                injuries.extend(read_injuries_csv(fetch_text(NFLVERSE_INJURIES_URL.format(season=season), timeout=120)).to_dict("records"))
+            except Exception as exc:
+                print(f"[nfl_data] injury history: reports {season} unavailable ({type(exc).__name__})", flush=True)
+    if not stats or not injuries:
+        return 0
+    episodes = build_episodes(stats, injuries, current_season=max(seasons))
+    rates = build_play_rates(stats, injuries)
+    try:
+        written = upsert_rows(client, "nfl_injury_episodes", episodes, on_conflict="gsis_id,last_game_season,last_game_week")
+        written += upsert_rows(client, "nfl_injury_play_rates", rates, on_conflict="scope,game_status,practice")
+    except Exception as exc:
+        if "nfl_injury" in str(exc) and ("PGRST205" in str(exc) or "does not exist" in str(exc) or "schema cache" in str(exc)):
+            print("[nfl_data] injury history skipped: run migration 20261128_injury_returns_and_roles.sql first", flush=True)
+            return 0
+        raise
+    print(f"[nfl_data] injury history: {len(episodes)} absences, {len(rates)} play-rate rows", flush=True)
     return written
 
 
@@ -183,7 +237,7 @@ def sync_prospects(client: Any, crosswalk: Crosswalk, seasons: list[int]) -> int
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--only", choices=["players", "stats", "games", "values", "injuries", "prospects", "situational"], default=None)
+    parser.add_argument("--only", choices=["players", "stats", "games", "values", "injuries", "injury_history", "prospects", "situational"], default=None)
     parser.add_argument("--seasons", nargs="*", type=int, default=None)
     args = parser.parse_args(argv)
 
@@ -203,6 +257,8 @@ def main(argv: list[str] | None = None) -> int:
         ok &= _run(client, "dynastyprocess_values", lambda: sync_values(client, crosswalk))
     if args.only in (None, "injuries"):
         ok &= _run(client, "injuries", lambda: sync_injuries(client, crosswalk, seasons))
+    if args.only in (None, "injury_history"):
+        ok &= _run(client, "injury_history", lambda: sync_injury_history(client, crosswalk, seasons))
     if args.only in (None, "situational"):
         ok &= _run(client, "situational_splits", lambda: sync_situational(client, seasons, crosswalk))
     if args.only in (None, "prospects"):

@@ -28,7 +28,7 @@ import requests
 
 from league_ai.config import api_key, load_config
 from league_ai.learning import (
-    consolidate_request, diagnose_request, diagnostic_facts, grade, grade_weeks, is_due, league_points, parse_diagnosis, parse_playbook, scorecard,
+    consolidate_request, diagnose_request, diagnostic_facts, grade, grade_weeks, is_due, league_points, parse_diagnosis, parse_playbook, play_checks, scorecard,
 )
 from league_ai.settings_store import fetch_sleeper_scoring, load_settings
 from league_ai.usage import record as record_usage, response_usage, usage_row
@@ -85,6 +85,14 @@ class WeeklyStats:
         if key not in self._cache:
             self._cache[key] = self.get_json(SLEEPER_STATS.format(season=season, week=week)) or {}
         return self._cache[key]
+
+
+def played_in(week_stats: Mapping[str, Any], sleeper_id: str) -> bool | None:
+    """Whether he took the field that week by Sleeper's stats (None when the week's stats aren't in)."""
+    if not week_stats:
+        return None
+    st = week_stats.get(str(sleeper_id)) or {}
+    return bool(st.get("gp") or st.get("off_snp"))
 
 
 def league_scoring(client: Any, league_id: str) -> dict[str, Any]:
@@ -219,6 +227,10 @@ def run(client: Any, runner: Runner, *, season: int | None = None, web_search: b
             summary["waiting"] += 1
             continue  # Sleeper hasn't published that week's stats yet; try again tomorrow
         graded = grade(pred, lambda sid, w: league_points(stats.week(s, w).get(str(sid)), scoring)) if scoring else None
+        if graded is not None:
+            checks = play_checks(pred, lambda sid, w: played_in(stats.week(s, w), sid))
+            if checks:
+                graded["result"]["play_checks"] = checks
         if graded is None:
             summary["ungradeable"] += 1
             if not dry_run:

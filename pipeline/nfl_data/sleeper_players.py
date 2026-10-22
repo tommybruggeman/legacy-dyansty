@@ -8,6 +8,8 @@ from pipeline.nfl_data.crosswalk import Crosswalk
 
 SLEEPER_PLAYERS_URL = "https://api.sleeper.app/v1/players/nfl"
 KEEP_POSITIONS = {"QB", "RB", "WR", "TE", "K", "DEF"}
+# Columns added by migration 20261128; the loader drops them and retries if the table doesn't have them yet.
+INJURY_DETAIL_COLUMNS = ("injury_start_date", "practice_participation", "practice_description", "news_updated")
 
 
 def transform_players(players: dict[str, dict[str, Any]], crosswalk: Crosswalk | None = None) -> list[dict[str, Any]]:
@@ -47,6 +49,10 @@ def transform_players(players: dict[str, dict[str, Any]], crosswalk: Crosswalk |
             "injury_status": to_text(p.get("injury_status")),
             "injury_body_part": to_text(p.get("injury_body_part")),
             "injury_notes": to_text(p.get("injury_notes")),
+            "injury_start_date": to_text(p.get("injury_start_date")),
+            "practice_participation": to_text(p.get("practice_participation")),
+            "practice_description": to_text(p.get("practice_description")),
+            "news_updated": to_int(p.get("news_updated")),
             "status": status,
             "active": active,
             "college": to_text(p.get("college")) or to_text(rec.get("college")),
