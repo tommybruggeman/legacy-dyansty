@@ -23,7 +23,7 @@ def data_freshness(client: Any) -> dict[str, str]:
         )
     except Exception:
         return {"NFL data": "not loaded yet (nightly sync has not run)"}
-    labels = {"sleeper_players": "NFL players (Sleeper)", "nflverse_stats": "NFL stats (nflverse)", "dynastyprocess_values": "market values (DynastyProcess)", "injuries": "injuries (ESPN report + nflverse practice reports)", "cfbd_prospects": "rookie prospects (CFBD)", "league_history": "league history (Sleeper transactions, drafts, matchups)"}
+    labels = {"sleeper_players": "NFL players (Sleeper)", "nflverse_stats": "NFL stats (nflverse)", "dynastyprocess_values": "market values (DynastyProcess)", "injuries": "injuries (ESPN report + nflverse practice reports)", "injury_history": "injury history (past absences, return performance, play rates)", "cfbd_prospects": "rookie prospects (CFBD)", "league_history": "league history (Sleeper transactions, drafts, matchups)"}
     for row in rows:
         label = labels.get(row.get("loader"), row.get("loader"))
         if label not in out and row.get("finished_at"):

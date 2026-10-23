@@ -119,6 +119,8 @@ TOOL_STATUS = {
     "get_owner_trade_profile": "Checking how that owner trades",
     "record_trade_response": "Noting how they answered",
     "get_schedule_outlook": "Grading the rest of the schedule",
+    "get_return_outlook": "Comparing his return with past players who had the same injury",
+    "get_position_room": "Checking how his team splits the work",
 }
 
 

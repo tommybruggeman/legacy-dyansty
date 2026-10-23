@@ -19,7 +19,7 @@ from league_ai.tools import ToolSpec
 KINDS = ("start_sit", "pickup", "trade")
 FACTORS = (
     "recent_usage", "season_production", "matchup", "vegas_total", "game_script", "weather",
-    "injury", "scheme_coaching", "market_rank", "contract_value", "age_curve", "team_need",
+    "injury", "injury_return", "role_change", "scheme_coaching", "market_rank", "contract_value", "age_curve", "team_need",
 )
 WEIGHTS = ("major", "minor")
 CAUSES = (
@@ -75,7 +75,7 @@ class Ledger:
 
     def log_prediction(self, kind: str, pick: list[Any], over: list[Any] | None = None, rationale: str = "", factors: Mapping[str, str] | None = None,
                        confidence: float | None = None, week: int | None = None, horizon_weeks: int | None = None, verdict: str | None = None,
-                       question: str | None = None) -> dict[str, Any]:
+                       question: str | None = None, play_chances: Mapping[str, Any] | None = None) -> dict[str, Any]:
         kind = str(kind or "").strip().lower()
         if kind not in KINDS:
             return {"error": f"kind must be one of {', '.join(KINDS)}"}
@@ -87,6 +87,7 @@ class Ledger:
         if kind == "trade" and str(verdict or "").lower() not in ("accept", "decline"):
             return {"error": "trade calls need verdict 'accept' or 'decline'"}
         clean_factors = {str(k): str(v).lower() for k, v in (factors or {}).items() if str(k) in FACTORS and str(v).lower() in WEIGHTS}
+        _attach_play_chances(picks + overs, play_chances)
         unresolved = [p["name"] for p in picks + overs if not p["sleeper_id"]]
         row = {
             "league_id": self.league_id, "user_id": self.user_id, "league_team_id": self.league_team_id,
@@ -239,6 +240,8 @@ class Ledger:
                     "confidence": {"type": "number", "minimum": 0, "maximum": 1},
                     "week": {"type": "integer", "description": "NFL week the call is for; defaults to this week"},
                     "question": {"type": "string", "description": "the owner's question, briefly"},
+                    "play_chances": {"type": "object", "additionalProperties": {"type": "number", "minimum": 0, "maximum": 1},
+                                     "description": "for any player in the call who is injured or returning: player name -> the chance to play you used (0-1), so it can be checked"},
                 }, "required": ["kind", "pick", "rationale", "factors", "confidence"]},
                 lambda **kw: self.log_prediction(**kw),
             ),
@@ -263,6 +266,47 @@ class Ledger:
                 lambda limit=10: self.track_record(limit),
             ),
         ]
+
+
+def _attach_play_chances(players: list[dict[str, Any]], chances: Mapping[str, Any] | None) -> None:
+    """Store the chance to play the AI used on the player's entry (pick/over), matched by name, so grading can check it."""
+    if not chances:
+        return
+    by_name = {re.sub(r"[^a-z]", "", str(k).lower()): v for k, v in chances.items()}
+    for p in players:
+        key = re.sub(r"[^a-z]", "", str(p.get("name") or "").lower())
+        hit = by_name.get(key)
+        if hit is None:
+            hit = next((v for k, v in by_name.items() if k and (k in key or key in k)), None)
+        try:
+            if hit is not None:
+                p["play_prob"] = max(0.0, min(1.0, float(hit)))
+        except Exception:
+            pass
+
+
+def play_checks(pred: Mapping[str, Any], played: Callable[[str, int], bool | None]) -> list[dict[str, Any]]:
+    """Each player the call gave a chance to play, and whether he played in the call's week."""
+    out = []
+    for p in list(pred.get("pick") or []) + list(pred.get("over") or []):
+        if p.get("play_prob") is None or not p.get("sleeper_id"):
+            continue
+        did = played(str(p["sleeper_id"]), int(pred["week"]))
+        if did is not None:
+            out.append({"name": p.get("name"), "play_prob": float(p["play_prob"]), "played": bool(did)})
+    return out
+
+
+def play_calibration(graded: Iterable[Mapping[str, Any]]) -> dict[str, str]:
+    """How often players actually played, bucketed by the chance the AI gave them."""
+    buckets: dict[str, list[int]] = defaultdict(lambda: [0, 0])
+    for r in graded:
+        for c in ((r.get("result") or {}).get("play_checks") or []):
+            p = float(c.get("play_prob") or 0)
+            b = "under 30%" if p < 0.3 else "30-60%" if p < 0.6 else "60-85%" if p < 0.85 else "85%+"
+            buckets[b][0] += 1
+            buckets[b][1] += 1 if c.get("played") else 0
+    return {b: f"played {round(100 * h / n)}% of {n}" for b, (n, h) in sorted(buckets.items()) if n}
 
 
 def _call_text(r: Mapping[str, Any]) -> str:
@@ -304,6 +348,9 @@ def learning_pack_lines(client: Any, league_id: str, user_id: str, season: int) 
             lines.append("Why your misses happened: " + "; ".join(f"{k} {v}" for k, v in stats["by_cause"].items()) + ".")
         if stats.get("calibration"):
             lines.append("Calibration (your stated confidence vs how often you were right): " + "; ".join(f"{k} -> {v}" for k, v in stats["calibration"].items()) + ".")
+        if stats.get("play_calibration"):
+            lines.append("Your chance-to-play estimates vs what happened: " + "; ".join(f"you said {k} -> {v}" for k, v in stats["play_calibration"].items())
+                         + ". If players you rated unlikely keep playing (or likely ones keep sitting), shift your estimates that way.")
     try:
         lessons = (client.table("league_ai_lessons").select("lesson, kind, factor, evidence_count, hits, misses").eq("league_id", league_id).eq("active", True)
                    .order("evidence_count", desc=True).limit(MAX_LESSONS_IN_PACK).execute().data or [])
@@ -386,6 +433,7 @@ def scorecard(graded: list[Mapping[str, Any]]) -> dict[str, Any]:
         "by_factor": {f: f"{w}-{l} ({round(100 * w / (w + l))}%)" for f, (w, l) in sorted(by_factor.items()) if w + l >= 2},
         "by_cause": {k: f"{v} misses" for k, v in sorted(causes.items(), key=lambda x: -x[1])},
         "calibration": {b: f"right {round(100 * w / (w + l))}% of {w + l}" for b, (w, l) in sorted(buckets.items()) if w + l >= 3},
+        "play_calibration": play_calibration(graded),
         "graded_total": len(graded),
     }
 
@@ -397,7 +445,7 @@ DIAGNOSE_SYSTEM = """You are the quality reviewer for League AI, the co-GM in a 
 DIAGNOSE_PROMPT = """The AI made this call:
 {call}
 Its reasoning at the time: {rationale}
-Factors it weighted: {factors}. Stated confidence: {confidence}.
+Factors it weighted: {factors}. Stated confidence: {confidence}.{play_note}
 Result: the pick scored {pick_points} and the alternative scored {over_points} in this league's scoring, so the call was {verdict}.
 
 What happened (box scores, usage vs each player's prior 4-week average, game conditions, injury reports):
@@ -449,8 +497,16 @@ def diagnose_request(pred: Mapping[str, Any], graded: Mapping[str, Any], facts: 
         facts=facts or "(no box scores on file)",
         search_note=("You may search the web (at most 3 searches) for game recaps, coaching or scheme changes, weather or injury news from that week if the data above doesn't explain the result." if web_search else ""),
         causes=" | ".join(CAUSES),
+        play_note=_play_note(graded),
     )
     return DIAGNOSE_SYSTEM, prompt
+
+
+def _play_note(graded: Mapping[str, Any]) -> str:
+    checks = (graded.get("result") or {}).get("play_checks") or []
+    if not checks:
+        return ""
+    return "\nChance to play it gave: " + "; ".join(f"{c['name']} {round(100 * c['play_prob'])}% -> {'played' if c['played'] else 'did not play'}" for c in checks) + "."
 
 
 def parse_diagnosis(text: str) -> dict[str, Any] | None:

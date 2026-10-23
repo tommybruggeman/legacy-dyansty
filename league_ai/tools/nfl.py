@@ -12,7 +12,8 @@ from collections import defaultdict
 from decimal import Decimal
 from typing import Any, Iterable, Mapping
 
-from league_ai.nfl_data import add_weather, bye_weeks, current_week_from_games, defense_vs_position, matchup_label, matchup_note, season_games, team_code, total_multiplier, week_matchups, weather_text
+from league_ai import injury_outlook as io
+from league_ai.nfl_data import _cached, add_weather, bye_weeks, current_week_from_games, defense_vs_position, matchup_label, matchup_note, season_games, season_stat_rows, team_code, total_multiplier, week_matchups, weather_text
 from league_ai.team_context import schedule_outlook, team_context
 from league_ai.tools import ToolRegistry, ToolSpec
 
@@ -263,6 +264,117 @@ class NflData:
         out["this_season_weekly_season"] = latest
         return out
 
+    # ---- injury returns, chance to play, position rooms ----------------------
+    def current_game(self, nfl_team: Any) -> tuple[int | None, int | None, str | None]:
+        """(season, week, gameday) of this week's game for an NFL team; gameday None on a bye."""
+        season = self.schedule_season()
+        if not season:
+            return None, None, None
+        rows = season_games(self.client, season)
+        week = current_week_from_games(rows)
+        if not week:
+            return season, None, None
+        game = week_matchups(rows, week).get(team_code(nfl_team)) if nfl_team else None
+        return season, week, (game or {}).get("gameday")
+
+    def play_rates(self) -> dict[tuple[str, str, str], dict[str, Any]]:
+        def load() -> dict[tuple[str, str, str], dict[str, Any]]:
+            try:
+                rows = self.client.table("nfl_injury_play_rates").select("scope, game_status, practice, listings, rate").limit(2000).execute().data or []
+            except Exception:
+                return {}
+            return {(r["scope"], r.get("game_status") or "", r.get("practice") or ""): r for r in rows}
+
+        return _cached(("play_rates",), load)
+
+    def injury_episodes(self, injury: str | None) -> list[dict[str, Any]]:
+        """Every past absence with this injury (all positions), shared across users for the day."""
+        if not injury:
+            return []
+
+        def load() -> list[dict[str, Any]]:
+            try:
+                return self.client.table("nfl_injury_episodes").select("*").eq("injury", injury).limit(3000).execute().data or []
+            except Exception:
+                return []
+
+        return _cached(("injury_eps", injury), load)
+
+    def player_episodes(self, gsis_id: str | None) -> list[dict[str, Any]]:
+        if not gsis_id:
+            return []
+        try:
+            rows = self.client.table("nfl_injury_episodes").select("*").eq("gsis_id", gsis_id).limit(50).execute().data or []
+        except Exception:
+            return []
+        return sorted(rows, key=lambda r: (int(r.get("last_game_season") or 0), int(r.get("last_game_week") or 0)), reverse=True)
+
+    def open_absence(self, p: Mapping[str, Any]) -> dict[str, Any] | None:
+        """His current absence (no game since), when the nightly job has one on file."""
+        season = self.schedule_season() or 0
+        for e in self.player_episodes(p.get("gsis_id")):
+            if not e.get("returned") and int(e.get("last_game_season") or 0) >= season - 1:
+                return e
+        return None
+
+    def official_report(self, p: Mapping[str, Any], season: int | None, week: int | None) -> dict[str, Any] | None:
+        if not season or not week or not (p.get("gsis_id") or p.get("sleeper_id")):
+            return None
+        try:
+            q = self.client.table("nfl_practice_reports").select("report_status, practice_status, report_injury, practice_injury").eq("season", season).eq("week", week)
+            q = q.eq("gsis_id", p["gsis_id"]) if p.get("gsis_id") else q.eq("sleeper_id", str(p["sleeper_id"]))
+            rows = q.limit(1).execute().data or []
+        except Exception:
+            return None
+        return rows[0] if rows else None
+
+    def play_outlook(self, p: Mapping[str, Any], espn: Mapping[str, Any] | None = None, absence: dict[str, Any] | None = None) -> dict[str, Any] | None:
+        """Chance he plays this week (see injury_outlook.play_chance). None for a healthy player."""
+        raw = espn if espn is not None else self._espn_row(p)
+        report_injury = None
+        season, week, gameday = self.current_game(p.get("team"))
+        official = self.official_report(p, season, week)
+        if official:
+            report_injury = official.get("report_injury") or official.get("practice_injury")
+        injury = io.injury_key(report_injury or (raw or {}).get("injury_type") or p.get("injury_body_part"))
+        open_ep = absence if absence is not None else self.open_absence(p)
+        injury = injury or (open_ep or {}).get("injury")
+        if not (p.get("injury_status") or (raw or {}).get("status") or (official or {}).get("report_status") or open_ep):
+            return None
+        if season and week and not gameday:
+            return {"chance_to_play": "0%", "probability": 0.0, "verdict": "on bye", "factors": ["his team is on bye this week"]}
+        typical = io.typical_absence(self.injury_episodes(injury), p.get("position"), injury) if injury else None
+        out = io.play_chance(
+            position=p.get("position"), injury=injury, official_status=(official or {}).get("report_status"), official_practice=(official or {}).get("practice_status"),
+            sleeper_status=p.get("injury_status") or (p.get("status") if str(p.get("status") or "").lower() in ("injured reserve", "physically unable to perform") else None),
+            sleeper_practice=p.get("practice_participation"), espn_status=(raw or {}).get("status"), return_date=(raw or {}).get("return_date"), game_date=gameday,
+            comments=io.comment_signal((raw or {}).get("short_comment"), (raw or {}).get("long_comment"), p.get("practice_description")), rates=self.play_rates(),
+            absence=typical, games_missed_so_far=int(open_ep["games_missed"]) if open_ep else None)
+        if out:
+            out["week"] = week
+            if typical:
+                out["typical_time_missed"] = f"{typical['median_games_missed']:g} games median ({typical['middle_half']}) for a {injury} across {typical['absences']} {typical['scope']}"
+        return out
+
+    def _espn_row(self, p: Mapping[str, Any]) -> dict[str, Any] | None:
+        try:
+            rows = self.client.table("nfl_injuries").select("*").eq("sleeper_id", str(p.get("sleeper_id"))).limit(1).execute().data or []
+            if not rows and p.get("full_name"):
+                rows = self.client.table("nfl_injuries").select("*").eq("search_name", normalize_name(p.get("full_name"))).limit(1).execute().data or []
+        except Exception:
+            return None
+        return rows[0] if rows else None
+
+    def room_rows(self, nfl_team: Any, season: int, position: str) -> list[dict[str, Any]]:
+        """One team's weekly rows at one position for a season (nflverse spells LAR as LA)."""
+        team = team_code(nfl_team)
+        codes = [team] + [k for k, v in {"LA": "LAR", "WSH": "WAS", "JAC": "JAX"}.items() if v == team]
+        try:
+            return (self.client.table("nfl_player_stats").select("gsis_id, player_name, week, position, offense_snaps, offense_pct, carries, targets, attempts, fantasy_points_ppr")
+                    .in_("team", codes).eq("season", int(season)).eq("position", position.upper()).eq("season_type", "REG").limit(400).execute().data or [])
+        except Exception:
+            return []
+
     # ---- prospects ---------------------------------------------------------
     def prospects(self, draft_year: int | None, position: str | None, name: str | None, limit: int = 20) -> dict[str, Any]:
         """Draft class = college season before the draft (2027 class -> 2026 season)."""
@@ -496,6 +608,10 @@ def _profile_dict(data: NflData, p: dict[str, Any], include_market: bool = True)
         out["injury_report"] = injury
     elif p.get("injury_status"):
         out["injury_report"] = {"status": p.get("injury_status"), "injury": out["injury_note"], "estimated_return": None, "source": "Sleeper only (not on ESPN's current report)"}
+    if injury or p.get("injury_status"):
+        play = data.play_outlook(p)
+        if play:
+            out["chance_to_play_this_week"] = {k: play[k] for k in ("chance_to_play", "verdict", "factors") if play.get(k)}
     out["league_contract"] = data.league_contract(p.get("sleeper_id"), p.get("full_name")) or "not rostered in this league (free agent)"
     if include_market:
         out["market"] = data.market_value(p.get("sleeper_id"), p.get("full_name")) or "no market value on file"
@@ -524,8 +640,159 @@ def tool_get_injury_report(data: NflData, name: str, position: str | None = None
         "sleeper_status": {"status": p.get("injury_status"), "body_part": p.get("injury_body_part"), "note": p.get("injury_notes"), "nfl_status": p.get("status"), "as_of": str(p.get("refreshed_at") or "")[:16]},
         "current": current or "not on ESPN's current injury report",
         "history": data.practice_history(p.get("sleeper_id"), p.get("gsis_id")),
-        "how_to_read": "estimated_return is ESPN's projection and moves; practice trend (DNP -> Limited -> Full) across a week is the best short-term signal; weeks_out per season shows durability.",
+        "how_to_read": "estimated_return is ESPN's projection and moves; practice trend (DNP -> Limited -> Full) across a week is the best short-term signal; weeks_out per season shows durability. "
+                       "chance_to_play_this_week is built from how often players with the same tag and practice actually played, nudged by the news, ESPN's return date and the usual recovery time.",
     }
+    if p.get("injury_start_date") or p.get("practice_participation"):
+        out["sleeper_status"].update({"injury_since": p.get("injury_start_date"), "practice": p.get("practice_participation"), "practice_note": p.get("practice_description")})
+    play = data.play_outlook(p)
+    if play:
+        out["chance_to_play_this_week"] = {k: play[k] for k in ("chance_to_play", "verdict", "factors", "typical_time_missed") if play.get(k)}
+    return out
+
+
+def tool_get_return_outlook(data: NflData, name: str, position: str | None = None) -> dict[str, Any]:
+    """A player coming back from injury: time missed vs the usual for that injury, how comps produced on return, his old role,
+    the offense he returns to, who filled in and how they did, a first-game projection and his chance to play this week."""
+    matches = data.find_players(name, position, limit=3)
+    if not matches:
+        return {"error": f"No NFL player found matching '{name}'."}
+    p = matches[0]
+    pos = str(p.get("position") or "").upper()
+    season, week, _ = data.current_game(p.get("team"))
+    episodes = data.player_episodes(p.get("gsis_id"))
+    absence = next((e for e in episodes if not e.get("returned") and int(e.get("last_game_season") or 0) >= (season or 0) - 1), None)
+    recent_return = next((e for e in episodes if e.get("returned") and season and int(e.get("return_season") or 0) == season and week and int(e.get("return_week") or 0) >= week - 3), None)
+    ep = absence or recent_return
+    espn = data._espn_row(p)
+    injury = (ep or {}).get("injury") or io.injury_key((espn or {}).get("injury_type") or p.get("injury_body_part"))
+    out: dict[str, Any] = {"name": p.get("full_name"), "position": pos, "nfl_team": p.get("team"), "week": week,
+                           "injury_now": {k: v for k, v in {"sleeper_status": p.get("injury_status") or p.get("status"), "body_part": injury, "espn_status": (espn or {}).get("status"),
+                                                              "espn_detail": (espn or {}).get("detail"), "espn_estimated_return": (espn or {}).get("return_date"),
+                                                              "latest_news": (espn or {}).get("short_comment"), "practice": p.get("practice_participation")}.items() if v}}
+    if not ep:
+        out["note"] = "No absence on file for him (the nightly injury history may not have run yet, or he hasn't missed a game). Comps below use his listed injury."
+    else:
+        gm = int(ep.get("games_missed") or 0)
+        out["absence"] = {"last_game": f"{ep['last_game_season']} wk {ep['last_game_week']}", "games_missed": gm,
+                          "status": "still out" if not ep.get("returned") else f"returned {ep['return_season']} wk {ep['return_week']}"}
+    eps_all = data.injury_episodes(injury)
+    typical = io.typical_absence(eps_all, pos, injury)
+    if typical:
+        out["typical_time_missed"] = {k: typical[k] for k in ("scope", "absences", "median_games_missed", "middle_half", "missed_4_plus")}
+    comps = io.return_comps(eps_all, pos, injury, int(ep["games_missed"]) if ep else None, exclude_gsis=p.get("gsis_id"))
+    if comps:
+        out["how_comps_came_back"] = comps
+
+    then_season = int(ep["last_game_season"]) if ep else season
+    team_then = ep.get("team") if ep else p.get("team")
+    if ep:
+        out["role_before_injury"] = {"games": ep.get("pre_games"), "snap_pct": ep.get("pre_snap_pct"), "opps_pg": ep.get("pre_opps"), "ppr_pg": ep.get("pre_ppr"),
+                                     "when": f"his last {ep.get('pre_games')} games through {ep['last_game_season']} wk {ep['last_game_week']}"}
+        if then_season:
+            then_weeks = io.room_weeks(data.room_rows(team_then, then_season, pos))
+            mine = next((x for x in io.room_players(then_weeks) if x["key"] == p.get("gsis_id")), None)
+            if mine:
+                out["role_before_injury"]["that_season"] = {"season": then_season, "team": team_then, "usual_slot": f"{pos}{mine['usual_slot']}",
+                                                            "share_of_room_work": mine["share_of_work"], "snap_pct": mine["snap_pct"], "ppr_pg": mine["ppr_pg"], "games": mine["games"]}
+    team_now = team_then_line = None
+    if season:
+        now_all = io.team_backfield(season_stat_rows(data.client, season), pos)
+        team_now = now_all.get(team_code(p.get("team")))
+        if team_now:
+            out["his_offense_this_season"] = io.backfield_text(team_now, pos, len(now_all))
+        if ep and then_season and then_season != season:
+            then_all = io.team_backfield(season_stat_rows(data.client, then_season), pos)
+            team_then_line = then_all.get(team_code(team_then))
+            if team_then_line:
+                out["his_offense_when_he_last_played"] = f"{then_season}: " + (io.backfield_text(team_then_line, pos, len(then_all)) or "")
+        rows = data.room_rows(p.get("team"), season, pos)
+        if ep and then_season == season:
+            rows = [r for r in rows if int(r.get("week") or 0) > int(ep["last_game_week"])]
+        fill = [x for x in io.room_players(io.room_weeks(rows)) if x["key"] != p.get("gsis_id")][:4]
+        if fill:
+            out["who_filled_in"] = [{"name": x["name"], "games": x["games"], "share_of_room_work": x["share_of_work"], "snap_pct": x["snap_pct"], "opps_pg": x["opps_pg"],
+                                     "ppr_pg": x["ppr_pg"], "last_weeks": x["recent"]} for x in fill]
+    if ep and ep.get("pre_opps"):
+        proj = io.project_return(ep, comps, team_now, team_then_line)
+        if proj:
+            out["projection_ppr"] = proj
+    play = data.play_outlook(p, espn=espn, absence=absence)
+    if play:
+        out["chance_to_play_this_week"] = {k: play[k] for k in ("chance_to_play", "verdict", "factors") if play.get(k)}
+    out["how_to_read"] = ("Weigh the projection against who filled in: if a fill-in thrived, a returning player usually shares work at first. "
+                          "Comps are past players at his position with the same body part and a similar layoff (nflverse reports give the body part, not the exact diagnosis).")
+    return out
+
+
+def tool_get_position_room(data: NflData, name: str | None = None, nfl_team: str | None = None, position: str | None = None) -> dict[str, Any]:
+    """How a team splits the work at one position, how it has used each slot (its RB1, RB2 ...) this season and last,
+    the league norm for each slot, and for a named player whether his recent role is above, on par with or below that norm."""
+    p = None
+    if name:
+        matches = data.find_players(name, position, limit=3)
+        if not matches:
+            return {"error": f"No NFL player found matching '{name}'."}
+        p = matches[0]
+        nfl_team, position = nfl_team or p.get("team"), position or p.get("position")
+    if not nfl_team or not position:
+        return {"error": "give a player name, or an NFL team and a position"}
+    pos, team = position.upper(), team_code(nfl_team)
+    season = data.schedule_season()
+    if not season:
+        return {"error": "No NFL schedule loaded."}
+    weeks = io.room_weeks(data.room_rows(team, season, pos))
+    if not weeks:
+        return {"error": f"No {season} usage on file for {team} {pos}s."}
+    players = io.room_players(weeks)
+    statuses = {}
+    try:
+        for r in data.client.table("nfl_players").select("gsis_id, full_name, injury_status, depth_chart_order").eq("team", team).eq("position", pos).limit(30).execute().data or []:
+            statuses[str(r.get("gsis_id") or r.get("full_name"))] = r
+    except Exception:
+        pass
+    last_weeks = io.room_weeks(data.room_rows(team, season - 1, pos))
+    _, week, _ = data.current_game(team)
+    ctx = team_context(data.client, season, week or 1) if week else None
+    coach, last_coach = (ctx.coaches.get(team), ctx.last_coaches.get(team)) if ctx else (None, None)
+    norms = {"this_season": io.role_norms(weeks), "last_season": io.role_norms(last_weeks) if last_weeks else None,
+             "league_this_season": io.league_role_norms(season_stat_rows(data.client, season), pos)}
+    out: dict[str, Any] = {
+        "team": team, "position": pos, "season": season, "team_games": len(weeks), "head_coach": coach,
+        "last_season_staff": ("same head coach" if coach and coach == last_coach else f"{last_coach} (coaching change)" if last_coach else None),
+        "room": [{"name": x["name"], "status": (statuses.get(x["key"]) or {}).get("injury_status"), "depth_chart": (statuses.get(x["key"]) or {}).get("depth_chart_order"),
+                  "games": x["games"], "usual_slot": f"{pos}{x['usual_slot']}", "share_of_room_work": x["share_of_work"], "snap_pct": x["snap_pct"],
+                  "opps_pg": x["opps_pg"], "ppr_pg": x["ppr_pg"], "last_weeks": x["recent"]} for x in players[:6]],
+        "slot_norms": {k: {f"{pos}{slot}": v for slot, v in n.items()} for k, n in norms.items() if n},
+    }
+    if p:
+        me = next((x for x in players if x["key"] == p.get("gsis_id")), None)
+        if not me:
+            out["player"] = {"name": p.get("full_name"), "note": f"no {season} games for {team} on file"}
+        else:
+            recent = me["recent"]
+            slot = str(round(sum(recent["slots"]) / len(recent["slots"]))) if recent.get("slots") else str(me["usual_slot"])
+            verdict = {"recent_weeks": recent.get("weeks"), "recent_slot": f"{pos}{slot}", "recent_share_of_work": recent.get("share_of_work"), "recent_ppr_pg": recent.get("ppr_pg")}
+            for label, n in (("vs_this_team_this_season", norms["this_season"]), ("vs_this_team_last_season", norms["last_season"]), ("vs_league", norms["league_this_season"])):
+                text = io.compare_to_norm(recent.get("share_of_work"), (n or {}).get(slot))
+                if text:
+                    verdict[label] = f"{pos}{slot} usage {text}"
+            splits = {}
+            team_weeks = set(weeks)
+            for other in players:
+                if other["key"] == me["key"] or other["usual_slot"] > 2:
+                    continue
+                missed = sorted(team_weeks - set(other["weeks"]))
+                st = (statuses.get(other["key"]) or {}).get("injury_status")
+                if missed or st:
+                    ww = io.with_without(weeks, me["key"], other["key"])
+                    if ww:
+                        splits[other["name"]] = {**ww, "his_status": st, "weeks_he_missed": missed}
+            if splits:
+                verdict["with_and_without"] = splits
+            out["player"] = {"name": p.get("full_name"), "season_line": {k: me[k] for k in ("games", "share_of_work", "snap_pct", "opps_pg", "ppr_pg")}, **verdict}
+    out["how_to_read"] = ("Slots are ranked each game by snaps (league norms by opportunities = carries + targets). share_of_room_work is the share of the position's carries + targets. "
+                          "A backup's bump while a starter is out usually fades when the starter returns; with_and_without shows how much.")
     return out
 
 
@@ -693,6 +960,18 @@ def build_registry(client: Any, *, league_state: Mapping[str, Any], salary_cap: 
         "Injury detail for one player: current status with injury type, ESPN's estimated return date and latest update, this week's practice trend (DNP/limited/full), and injury history by season (weeks out, injuries reported). Use for any 'is he hurt / when is he back / is he injury-prone' question.",
         {"type": "object", "properties": {"name": {"type": "string"}, "position": {"type": "string"}}, "required": ["name"]},
         lambda name, position=None: tool_get_injury_report(data, name, position),
+    ))
+    reg.register(ToolSpec(
+        "get_return_outlook",
+        "For a player returning from (or about to return from) injury: games missed vs the usual for that injury, how past players at his position with the same injury and a similar layoff produced in their first games back (relative to their own pre-injury level), his role before the injury, how his offense runs the ball/uses the position now vs then, who filled in and how they did, a first-game and games 2-3 PPR projection with range, and his chance to play this week. One call covers it.",
+        {"type": "object", "properties": {"name": {"type": "string"}, "position": {"type": "string"}}, "required": ["name"]},
+        lambda name, position=None: tool_get_return_outlook(data, name, position),
+    ))
+    reg.register(ToolSpec(
+        "get_position_room",
+        "How an NFL team splits work at one position this season (each player's share of carries + targets, snap share, PPR, last 3 weeks, injury status), how it has used each slot (RB1, RB2 ...) this season and last season, the league norm per slot, and for a named player whether his recent role is more, on par or less than that norm, with his usage with vs without each injured or absent teammate. Use for backups getting work, committee backfields, and 'is his bump real' calls.",
+        {"type": "object", "properties": {"name": {"type": "string", "description": "player to judge (sets team and position)"}, "nfl_team": {"type": "string"}, "position": {"type": "string"}}},
+        lambda name=None, nfl_team=None, position=None: tool_get_position_room(data, name, nfl_team, position),
     ))
     reg.register(ToolSpec(
         "get_prospects",
