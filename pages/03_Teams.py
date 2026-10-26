@@ -616,10 +616,20 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stSidebar"] {
     padding:6px 11px;
   }
 
-  .st-key-teams_mobile_switch [data-testid="stButton"] {
-    position:absolute;
+  /* Lay the (invisible) button over the whole card. Position its element
+     container, not stButton: some Streamlit versions make the element
+     container position:relative, which would trap the overlay. */
+  .st-key-teams_mobile_switch [data-testid="stElementContainer"]:has([data-testid="stButton"]) {
+    position:absolute !important;
     inset:0;
+    width:auto !important;
     z-index:2;
+  }
+
+  .st-key-teams_mobile_switch [data-testid="stButton"] {
+    position:static !important;
+    width:100% !important;
+    height:100% !important;
   }
 
   .st-key-teams_mobile_switch [data-testid="stButton"] button {
@@ -1081,7 +1091,7 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stSidebar"] {
 @media (min-width:769px) {
   .block-container {
     max-width:1320px !important;
-    padding-top:2.2rem !important;
+    padding-top:3.2rem !important;
   }
 
   .teams-mobile-page-head {
@@ -1232,10 +1242,17 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stSidebar"] {
   margin-bottom:0 !important;
 }
 
-[class*="st-key-teams_sheet_row_"] [data-testid="stButton"] {
-  position:absolute;
+[class*="st-key-teams_sheet_row_"] [data-testid="stElementContainer"]:has([data-testid="stButton"]) {
+  position:absolute !important;
   inset:0;
+  width:auto !important;
   z-index:2;
+}
+
+[class*="st-key-teams_sheet_row_"] [data-testid="stButton"] {
+  position:static !important;
+  width:100% !important;
+  height:100% !important;
 }
 
 [class*="st-key-teams_sheet_row_"] [data-testid="stButton"] button {
