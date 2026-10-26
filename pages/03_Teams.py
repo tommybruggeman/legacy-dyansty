@@ -521,41 +521,11 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stSidebar"] {
 }
 
 /* =========================================================
-   TEAMS — IPHONE ONLY
-   Matches the compact rendered mobile concept.
-   Desktop / tablet styles above remain unchanged.
+   TEAMS DASHBOARD — one card layout for phone and desktop.
+   Base rules below are the phone design; the desktop block at the
+   end of this stylesheet widens it into three columns.
    ========================================================= */
 
-.teams-mobile-only,
-.teams-desktop-row1-marker,
-.teams-desktop-row2-marker,
-.st-key-teams_mobile_switch,
-.st-key-teams_mobile_trade_action {
-  display:none !important;
-}
-
-@media (max-width:768px) {
-  .block-container {
-    padding-top:10px !important;
-    padding-left:14px !important;
-    padding-right:14px !important;
-    padding-bottom:32px !important;
-    max-width:100% !important;
-  }
-
-  /* Desktop Teams UI is still rendered for desktop, but removed on phone. */
-  [data-testid="stHorizontalBlock"]:has(.teams-desktop-row1-marker),
-  [data-testid="stHorizontalBlock"]:has(.teams-desktop-row2-marker) {
-    display:none !important;
-  }
-
-  .teams-mobile-only,
-  .st-key-teams_mobile_switch,
-  .st-key-teams_mobile_trade_action {
-    display:block !important;
-  }
-
-  /* Tighten Streamlit's vertical spacing only for the phone version. */
   .st-key-teams_mobile_switch,
   .st-key-teams_mobile_trade_action {
     margin:0 !important;
@@ -566,22 +536,22 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stSidebar"] {
     gap:0 !important;
   }
 
-  /* Hidden desktop rows and style blocks still sit in the page's main
-     column; drop the column gap so they leave no blank space on phone. */
+  /* Style blocks and other empty elements sit in the page's main column;
+     drop the column gap so they leave no blank space. Spacing is set on
+     the rows themselves. */
   [data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] .teams-mobile-page-head) {
     gap:0 !important;
   }
 
-  [data-testid="stMarkdownContainer"]:has(> .teams-mobile-only),
+  [data-testid="stMarkdownContainer"]:has(> .teams-block),
   .st-key-teams_mobile_switch [data-testid="stMarkdownContainer"] {
     margin-bottom:0 !important;
   }
 
-  /* The title sits on the same top row as the floating menu button. */
-  .teams-mobile-page-head.teams-mobile-only {
+  .teams-mobile-page-head {
     position:relative;
     min-height:44px;
-    display:flex !important;
+    display:flex;
     align-items:center;
     justify-content:center;
     margin:0 0 12px 0;
@@ -599,7 +569,6 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stSidebar"] {
   /* Team switcher: the whole card is the tap target for the team sheet. */
   .st-key-teams_mobile_switch {
     position:relative;
-    margin-bottom:12px !important;
   }
 
   .teams-mobile-switch {
@@ -958,13 +927,6 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stSidebar"] {
     margin-bottom:10px !important;
   }
 
-  .st-key-teams_mobile_trade_action [data-testid="stVerticalBlockBorderWrapper"] {
-    border:1px solid rgba(226,188,91,.22) !important;
-    border-radius:15px !important;
-    background:rgba(8,21,19,.72) !important;
-    padding:9px !important;
-  }
-
   .st-key-teams_mobile_trade_action [data-testid="stButton"] button {
     width:100% !important;
     min-height:43px !important;
@@ -982,7 +944,7 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stSidebar"] {
   .teams-mobile-activity-row,
   .teams-mobile-dead-row {
     display:flex;
-    align-items:flex-start;
+    align-items:center;
     justify-content:space-between;
     gap:10px;
     padding:7px 0;
@@ -1008,6 +970,205 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stSidebar"] {
   }
 
   .teams-mobile-dead-amount { color:rgba(255,245,231,.82); }
+
+.st-key-teams_mobile_trade_action {
+  border:1px solid rgba(226,188,91,.22) !important;
+  border-radius:15px !important;
+  background:rgba(8,21,19,.72) !important;
+  padding:9px !important;
+}
+
+.st-key-teams_top,
+.st-key-teams_body {
+  margin-bottom:10px !important;
+}
+
+/* Draft pick rows: season, one tag per pick, count. */
+.teams-pick-season { font-weight:900; }
+
+.teams-pick-chips {
+  display:flex;
+  flex-wrap:wrap;
+  gap:4px;
+  flex:1;
+  min-width:0;
+}
+
+.teams-pick-chip {
+  font-size:.66rem;
+  font-weight:800;
+  border:1px solid rgba(255,245,231,.18);
+  border-radius:999px;
+  padding:2px 7px;
+  white-space:nowrap;
+}
+
+.teams-pick-chip.via {
+  color:var(--gold);
+  border-color:rgba(226,188,91,.6);
+}
+
+.teams-pick-chip em {
+  font-style:normal;
+  font-weight:600;
+  margin-left:4px;
+  color:rgba(255,245,231,.6);
+}
+
+/* Activity tags */
+.teams-activity-tag {
+  flex:0 0 46px;
+  text-align:center;
+  font-size:.6rem;
+  font-weight:900;
+  border-radius:6px;
+  padding:3px 0;
+  background:rgba(255,245,231,.08);
+  color:rgba(255,245,231,.75);
+}
+
+.teams-activity-tag.sign { background:rgba(110,200,140,.15); color:#8fdcaa; }
+.teams-activity-tag.drop { background:rgba(230,110,100,.15); color:#ee9a90; }
+.teams-activity-tag.trade { background:rgba(226,188,91,.15); color:var(--gold); }
+
+.teams-mobile-activity-main { flex:1; font-weight:700; }
+
+.teams-mobile-activity-main small {
+  display:block;
+  color:rgba(255,245,231,.55);
+  font-weight:500;
+  font-size:.66rem;
+  margin-top:2px;
+}
+
+.teams-mobile-dead-amount { font-weight:900; white-space:nowrap; }
+.teams-mobile-stat-label .long { display:none; }
+
+/* Phone: one column, title on the menu-button row. */
+@media (max-width:768px) {
+  .block-container {
+    padding-top:10px !important;
+    padding-left:14px !important;
+    padding-right:14px !important;
+    padding-bottom:32px !important;
+    max-width:100% !important;
+  }
+
+  .st-key-teams_top [data-testid="stHorizontalBlock"],
+  .st-key-teams_body [data-testid="stHorizontalBlock"] {
+    flex-direction:column !important;
+    gap:10px !important;
+  }
+
+  .st-key-teams_top [data-testid="stColumn"],
+  .st-key-teams_body [data-testid="stColumn"] {
+    width:100% !important;
+    flex:1 1 100% !important;
+    min-width:100% !important;
+  }
+
+  .st-key-teams_top [data-testid="stColumn"] [data-testid="stVerticalBlock"],
+  .st-key-teams_body [data-testid="stColumn"] [data-testid="stVerticalBlock"] {
+    gap:10px !important;
+  }
+
+  /* Half-width card: season and count on one line, the pick tags below. */
+  .teams-mobile-pick-year { flex-wrap:wrap; }
+  .teams-pick-chips { order:3; flex-basis:100%; }
+}
+
+/* Desktop: wider cards in three columns, the phone design scaled up. */
+@media (min-width:769px) {
+  .block-container {
+    max-width:1320px !important;
+    padding-top:2.2rem !important;
+  }
+
+  .teams-mobile-page-head {
+    justify-content:flex-start;
+    margin-bottom:16px;
+  }
+
+  .teams-mobile-page-title { font-size:1.75rem; }
+
+  .st-key-teams_top,
+  .st-key-teams_body {
+    margin-bottom:14px !important;
+  }
+
+  .st-key-teams_top [data-testid="stHorizontalBlock"],
+  .st-key-teams_body [data-testid="stHorizontalBlock"] {
+    gap:14px !important;
+  }
+
+  .st-key-teams_body [data-testid="stColumn"] [data-testid="stVerticalBlock"] {
+    gap:14px !important;
+  }
+
+  .teams-mobile-switch {
+    min-height:96px;
+    padding:14px 18px;
+    border-radius:18px;
+  }
+
+  .teams-mobile-switch .teams-mobile-avatar {
+    width:52px;
+    height:52px;
+    flex-basis:52px;
+    font-size:1.05rem;
+  }
+
+  .teams-mobile-switch-text strong { font-size:1.35rem; }
+
+  .teams-mobile-summary {
+    background:none !important;
+    border:0 !important;
+    box-shadow:none !important;
+    padding:0 !important;
+  }
+
+  .teams-mobile-stats { gap:14px; }
+
+  .teams-mobile-stat {
+    min-height:96px;
+    display:flex;
+    flex-direction:column;
+    justify-content:center;
+    border:1px solid rgba(226,188,91,.3);
+    border-radius:18px;
+    background:linear-gradient(145deg,#10201E 0%,#081513 100%);
+  }
+
+  .teams-mobile-stat-label { font-size:.7rem; }
+  .teams-mobile-stat-label .long { display:inline; }
+  .teams-mobile-stat-label .short { display:none; }
+  .teams-mobile-stat-value { font-size:1.6rem; }
+  .teams-mobile-stat-sub { font-size:.76rem; }
+
+  .teams-mobile-card { padding:16px 18px; }
+  .teams-mobile-title { font-size:1.08rem; }
+  .teams-mobile-count { font-size:.78rem; }
+
+  .teams-mobile-pair {
+    grid-template-columns:minmax(0,1fr) !important;
+    gap:14px !important;
+  }
+
+  .teams-mobile-pair .teams-mobile-card { min-height:0; }
+
+  .teams-mobile-flow { gap:14px; }
+
+  .teams-mobile-roster-name { font-size:.95rem; }
+  .teams-mobile-roster-money strong { font-size:.95rem; }
+
+  .teams-mobile-mini-row,
+  .teams-mobile-empty,
+  .teams-mobile-pick-year,
+  .teams-mobile-activity-main,
+  .teams-mobile-dead-main { font-size:.86rem; }
+
+  .teams-mobile-date { font-size:.74rem; }
+  .teams-pick-chip { font-size:.74rem; }
 }
 
 /* Team sheet (opened from the phone team switcher). */
@@ -1842,40 +2003,19 @@ if (
     and st.session_state.get("_teams_applied_param_team") != param_team
 ):
     st.session_state["team_name"] = param_team
-    st.session_state["owner_picker"] = param_team
     st.session_state["_teams_applied_param_team"] = param_team
 # Otherwise fall back to first team on first load
 elif "team_name" not in st.session_state:
     st.session_state["team_name"] = team_names[0]
 
 
-def _sync_desktop_team_picker():
-    selected = st.session_state.get("owner_picker")
-    if selected:
-        st.session_state["team_name"] = selected
-
-
-# ---------- ROW 1 ----------
-st.markdown('<div class="row1">', unsafe_allow_html=True)
-tc, c_record, c_pf, c_ppg, c_cap = st.columns([2.6, 1, 1, 1, 1])
-
-with tc:
-    st.markdown(
-        '<div class="teams-desktop-row1-marker"></div>',
-        unsafe_allow_html=True,
-    )
-
-    # Single real widget only (no extra HTML wrapper)
-    sel_name = st.selectbox(
-        "Team",
-        options=team_names,
-        index=team_names.index(st.session_state["team_name"]),
-        key="owner_picker",
-        on_change=_sync_desktop_team_picker,
-    )
-    st.session_state["team_name"] = sel_name
-    selected_team = owners_df[owners_df["name"].eq(sel_name)].iloc[0]
-    sel_handle = selected_team.get("handle")
+# ---------- selected team ----------
+# The team switcher (built below) writes team_name; there is no dropdown.
+if st.session_state["team_name"] not in team_names:
+    st.session_state["team_name"] = team_names[0]
+sel_name = st.session_state["team_name"]
+selected_team = owners_df[owners_df["name"].eq(sel_name)].iloc[0]
+sel_handle = selected_team.get("handle")
 
 # --- compute stats from standings (live) ---
 record_txt = "0 – 0"
@@ -1912,297 +2052,23 @@ cap_txt, cap_sub = resolve_cap_for_owner(
     active_season,
 )
 
-# Record
-with c_record:
-    st.markdown(
-        f"""
-        <div class="stat-card">
-          <div class="stat-title">Record</div>
-          <div class="stat-value">{record_txt}</div>
-          <div class="stat-sub">{standing_txt}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-# Standing Points (with rank)
-with c_pf:
-    st.markdown(
-        f"""
-        <div class="stat-card">
-          <div class="stat-title">Standing Points</div>
-          <div class="stat-value">{sp_val}</div>
-          <div class="stat-sub">{standing_txt}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-# PPG
-with c_ppg:
-    st.markdown(
-        f"""
-        <div class="stat-card">
-          <div class="stat-title">PPG</div>
-          <div class="stat-value">{ppg_val:.1f}</div>
-          <div class="stat-sub">Avg / game</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-# Cap
-with c_cap:
-    st.markdown(
-        f"""
-        <div class="stat-card">
-          <div class="stat-title">Cap</div>
-          <div class="stat-value">{cap_txt}</div>
-          <div class="stat-sub">{cap_sub}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-st.markdown('</div>', unsafe_allow_html=True)
-
-# ---------- ROW 2 ----------
-left_col, mid_col, right_col = st.columns([1.2, 0.6, 0.7])
-
-# 1) ROSTER
-with left_col:
-    st.markdown(
-        '<div class="teams-desktop-row2-marker"></div>',
-        unsafe_allow_html=True,
-    )
-
-    mine = pd.DataFrame()
-    if not roster_df.empty:
-        # use the rosters_enriched data already loaded
-        mine = get_roster_for_owner(roster_df, sel_handle, sel_name).copy()
-
-        # fallback by display name if needed
-        if mine.empty and "owner_team_name" in roster_df.columns:
-            mine = roster_df[
-                roster_df["owner_team_name"]
-                .astype(str)
-                .str.strip()
-                .eq(sel_name)
-            ].copy()
-
-        # 2) If that somehow fails and we have an owner_team_name column,
-        #    fall back to display-name match.
-        if mine.empty and "owner_team_name" in roster_df.columns:
-            mine = roster_df[
-                roster_df["owner_team_name"]
-                .astype(str)
-                .str.strip()
-                .eq(sel_name)
-            ].copy()
-
-    html = [
-        '<div class="roster-panel" style="max-height:460px; overflow-y:auto;">',
-        '<h3>Roster</h3>',
-        (
-            '<div style="display:flex;justify-content:space-between;gap:8px;'
-            'padding:4px 0 6px;border-bottom:1px solid rgba(202,167,74,.15);'
-            'font-size:.68rem;text-transform:uppercase;opacity:.65;">'
-            '<span style="width:42px;">Pos</span>'
-            '<span style="flex:1;">Player</span>'
-            '<span style="width:70px;text-align:right;">Years</span>'
-            '<span style="width:80px;text-align:right;">Salary</span>'
-            '</div>'
+# ---------- trade block + draft picks data ----------
+trade_rows = []
+if sb and sel_handle:
+    try:
+        trade_rows = (
+            sb.table("trade_block")
+            .select("*")
+            .eq("owner", sel_handle)
+            .execute()
+            .data
+            or []
         )
-    ]
+    except Exception:
+        trade_rows = []
 
-    if mine.empty:
-        html.append(
-            '<p style="font-size:.7rem; opacity:.6; margin-top:6px;">'
-            'No roster data for this team.</p>'
-        )
-    else:
-        mine = mine.sort_values(["pos", "player"])
-        for _, r in mine.iterrows():
-            pos = r.get("pos", "—")
-            name = r.get("player", "Unknown")
-            yrs = r.get("years", "") or "—"
-            sal = r.get("salary", "") or "—"
-            designation = roster_designation(r)
-            designation_badge = (
-                '<span class="pos-pill" title="Taxi Squad">T</span>'
-                if designation == "taxi" else
-                '<span class="pos-pill" title="Injured Reserve">IR</span>'
-                if designation == "ir" else ""
-            )
-            html.append(
-                (
-                    '<div class="roster-row" style="gap:0;">'
-                    f'<div style="width:42px;"><span class="pos-pill">{pos}</span></div>'
-                    f'<div style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><span class="player-name">{name}{designation_badge}</span></div>'
-                    f'<div style="width:70px;text-align:right;font-size:.7rem;">{yrs}</div>'
-                    f'<div style="width:80px;text-align:right;font-size:.7rem;">${sal}</div>'
-                    '</div>'
-                )
-            )
+picks_df = draft_picks_from_state(canonical_state)
 
-    html.append("</div>")
-    st.markdown("".join(html), unsafe_allow_html=True)
-
-    # ---------- Admin inline editor for this roster (NEW) ----------
-    if False and is_admin and not mine.empty:
-        st.markdown("#### Admin — Edit Roster")
-        if not ROSTER_PK_COL:
-            st.info(
-                "Cannot save changes yet: `rosters_enriched` has no obvious primary key "
-                "(tried id / row_id / roster_id). Add one or adjust ROSTER_PK_CANDIDATES."
-            )
-        else:
-            st.caption(
-                "Edit Pos / Player / Years / Salary, mark **Drop** to remove. "
-                "Add a new blank row at the bottom to add a player to this team."
-            )
-
-            # Build editable view: PK + editable fields
-            editable_cols: list[str] = []
-            for c in ["pos", "player", "years", "salary"]:
-                if c in mine.columns:
-                    editable_cols.append(c)
-
-            admin_df = mine[[ROSTER_PK_COL] + editable_cols].copy()
-            admin_df.rename(columns={ROSTER_PK_COL: "_pk"}, inplace=True)
-            admin_df["Drop"] = False  # admin-only flag
-
-            edited = st.data_editor(
-                admin_df,
-                num_rows="dynamic",
-                key=f"teams_admin_editor_{sel_name}",
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "_pk": st.column_config.Column("ID", disabled=True),
-                },
-            )
-
-            if st.button("💾 Save roster changes", key=f"save_roster_{sel_name}"):
-                errors: list[str] = []
-                updates = inserts = deletes = 0
-
-                for _, row in edited.iterrows():
-                    pk = row.get("_pk")
-                    # Normalise pk value
-                    if pd.isna(pk):
-                        pk = None
-
-                    drop_flag = bool(row.get("Drop") or False)
-
-                    # Build payload using DB column names
-                    payload: dict[str, object] = {}
-                    for col in editable_cols:
-                        db_col = ROSTER_WRITE_COL_MAP.get(col, col)
-                        val = row.get(col)
-                        payload[db_col] = val if val not in ("", None) else None
-
-                    try:
-                        if pk is None:
-                            # New row => INSERT, attach this team name
-                            if any(v is not None for v in payload.values()):
-                                payload["owner_name"] = sel_name
-                                payload.setdefault("team_name", sel_name)
-                                roster_insert(payload)
-                                inserts += 1
-                        else:
-                            if drop_flag:
-                                # Delete this row entirely
-                                roster_delete(pk)
-                                deletes += 1
-                            else:
-                                # Update existing row
-                                roster_update(pk, payload)
-                                updates += 1
-
-                    except Exception as e:
-                        errors.append(str(e))
-
-                if errors:
-                    st.error(
-                        "Some roster updates failed:\n\n"
-                        + "\n".join(f"- {msg}" for msg in errors)
-                    )
-                else:
-                    st.success(
-                        f"Roster saved "
-                        f"(updated: {updates}, added: {inserts}, dropped: {deletes}). "
-                        "Reloading…"
-                    )
-                    st.experimental_rerun()
-
-# 2) MIDDLE STACK (trade + picks)
-with mid_col:
-    st.markdown('<div class="middle-stack">', unsafe_allow_html=True)
-
-    # --- Trade Block ---
-    trade_rows = []
-    if sb and sel_handle:
-        try:
-            trade_rows = (
-                sb.table("trade_block")
-                .select("*")
-                .eq("owner", sel_handle)
-                .execute()
-                .data
-                or []
-            )
-        except Exception:
-            trade_rows = []
-
-    with st.container(border=True):
-        st.markdown("### Trade Block")
-
-        if st.button("🔁 Send Trade Offer", key="trade_cta"):
-            st.session_state["trade_from_team"] = sel_name
-            st.switch_page("pages/_82_Trades.py")
-
-        if trade_rows:
-            for tb in trade_rows:
-                pname = tb.get("player_name") or "Player"
-                st.markdown(f"• **{pname}**")
-        else:
-            st.caption("No players on the trade block.")
-
-    # --- Draft Picks panel ---
-    picks_df = draft_picks_from_state(canonical_state)
-    picks_html = ['<div class="panel"><h3>Draft Picks</h3>']
-    if picks_df.empty:
-        picks_html.append('<p style="font-size:.7rem;opacity:.65;">No draft picks data.</p>')
-    else:
-        minep = picks_df[picks_df["current_owner"] == sel_name].copy()
-        minep = minep[
-            minep["season"].isin(
-                [active_season, active_season + 1, active_season + 2]
-            )
-        ]
-        if minep.empty:
-            picks_html.append('<p style="font-size:.7rem;opacity:.65;">No draft picks data.</p>')
-        else:
-            minep = minep.sort_values(["season", "round"])
-            picks_html.append('<ul style="margin:4px 0 0 16px; padding:0; list-style:disc;">')
-            for _, row in minep.iterrows():
-                season = row.get("season", "—")
-                rnd    = row.get("round", "—")
-                orig   = row.get("original_team", "")
-                note   = row.get("note") or ""
-                if orig and orig != sel_name:
-                    line = f"{season} — Round {rnd} (via {orig})"
-                else:
-                    line = f"{season} — Round {rnd}"
-                if note:
-                    line += f" — {note}"
-                picks_html.append(f"<li style='margin-bottom:2px;font-size:.75rem;'>{line}</li>")
-            picks_html.append("</ul>")
-    picks_html.append("</div>")
-    st.markdown("".join(picks_html), unsafe_allow_html=True)
-
-    st.markdown("</div>", unsafe_allow_html=True)  # close .middle-stack
 
 def _sort_recent(df: pd.DataFrame) -> pd.DataFrame:
     for c in ["executed_at", "ts", "created_at"]:
@@ -2210,179 +2076,9 @@ def _sort_recent(df: pd.DataFrame) -> pd.DataFrame:
             return df.sort_values(c, ascending=False)
     return df
 
-# 3) ACTIVITY FEED
-with right_col:
-    def _norm_val(x) -> str:
-        return str(x or "").strip().lower()
-
-    def _col_eq_any(df: pd.DataFrame, col: str, values: list[str]) -> pd.Series:
-        if col not in df.columns:
-            return pd.Series(False, index=df.index)
-
-        clean_values = [_norm_val(v) for v in values if v]
-        return df[col].astype(str).str.strip().str.lower().isin(clean_values).fillna(False)
-
-    team_match_values = [sel_name]
-    if sel_handle:
-        team_match_values.append(sel_handle)
-
-    if tx_df.empty:
-        mine = pd.DataFrame()
-    else:
-        possible_cols = [
-            "owner_name",
-            "team_name",
-            "owner",
-            "owner_handle",
-            "from_owner_name",
-            "to_owner_name",
-            "from_team_name",
-            "to_team_name",
-            "from_owner",
-            "to_owner",
-            "from_owner_handle",
-            "to_owner_handle",
-            "added_to_owner_name",
-            "dropped_from_owner_name",
-            "added_to_owner",
-            "dropped_from_owner",
-            "source_owner_name",
-            "target_owner_name",
-            "source_owner",
-            "target_owner",
-        ]
-
-        mask = pd.Series(False, index=tx_df.index)
-        for c in possible_cols:
-            mask = mask | _col_eq_any(tx_df, c, team_match_values)
-
-        mine = tx_df[mask].copy()
-        mine = _sort_recent(mine)
-
-    parts = []
-    parts.append('<div class="panel"><h3>Activity Feed</h3><div class="activity-panel">')
-
-    if mine.empty:
-        parts.append('<div class="activity-empty">No activity for this team yet.</div>')
-    else:
-        for _, r in mine.iterrows():
-            ts_iso = r.get("created_at") or r.get("ts") or r.get("executed_at")
-            try:
-                ts = datetime.fromisoformat(str(ts_iso).replace("Z", "+00:00")).strftime("%Y-%m-%d")
-            except Exception:
-                ts = str(ts_iso or "")
-
-            raw_type = str(
-                r.get("action")
-                or r.get("tx_type")
-                or r.get("transaction_type")
-                or r.get("action_type")
-                or r.get("type")
-                or ""
-            ).strip().lower()
-
-            acq = str(r.get("acquisition") or "").strip().lower()
-
-            action_map = {
-                "taxi squad": "Taxi Squad",
-                "taxi": "Taxi Squad",
-                "taxi_removed": "Taxi Removed",
-                "taxi removed": "Taxi Removed",
-                "ir": "Injured Reserve",
-                "injured reserve": "Injured Reserve",
-                "ir_removed": "IR Removed",
-                "ir removed": "IR Removed",
-                "trade_block_add": "Trade Block Add",
-                "trade block add": "Trade Block Add",
-                "trade_block_remove": "Trade Block Remove",
-                "trade block remove": "Trade Block Remove",
-                "free_agent": "Sign",
-                "free agent": "Sign",
-                "waiver": "Sign",
-                "add": "Sign",
-                "drop": "Drop",
-                "dropped": "Drop",
-                "trade": "Trade",
-            }
-
-            action = action_map.get(raw_type)
-
-            if not action:
-                if acq in ("added", "add", "waiver", "free_agent", "free agent"):
-                    action = "Sign"
-                elif acq in ("dropped", "drop"):
-                    action = "Drop"
-                elif acq == "traded":
-                    action = "Trade"
-                else:
-                    action = "Transaction"
-
-            player = (
-                r.get("player_name")
-                or r.get("player")
-                or r.get("player_display_name")
-                or r.get("add_player_name")
-                or r.get("drop_player_name")
-                or ""
-            )
-
-            if not player or str(player).strip().isdigit():
-                continue
-
-            # The note carries the detail -- what a trade moved both ways, what
-            # a drop cost in dead cap. Hiding it was why a trade read as
-            # "2 player(s)".
-            note = str(r.get("note") or "").strip()
-            parts.append(
-                f'<div class="activity-item">'
-                f'<strong>{action}</strong> · {player}'
-                + (f'<small>{note}</small>' if note and note.lower() != "nan" else "")
-                + f'<small>{ts}</small>'
-                f'</div>'
-            )
-
-    parts.append("</div></div>")
-    st.markdown("".join(parts), unsafe_allow_html=True)
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    dead_cap = pd.DataFrame()
-
-    if not cap_adj_df.empty:
-        dead_cap = cap_adj_df[
-            (cap_adj_df["owner_name"].astype(str).str.strip() == sel_name)
-            & (
-                cap_adj_df["adjustment_type"]
-                .astype(str)
-                .str.strip()
-                .isin(["dropped_player_charge", "trade_carryover"])
-            )
-        ].copy()
-
-    dead_parts = []
-    dead_parts.append('<div class="panel"><h3>Dead Cap</h3><div class="activity-panel">')
-
-    if dead_cap.empty:
-        dead_parts.append('<div class="activity-empty">No dead cap charges.</div>')
-    else:
-        dead_cap = (
-            dead_cap
-            .sort_values(["season", "player_name"])
-            .drop_duplicates(subset=_dead_cap_identity(dead_cap))
-        )
-
-        for label, amount in cap_adjustment_display_rows(dead_cap.to_dict("records")):
-            dead_parts.append(
-                f'<div class="activity-item">'
-                f'<strong>{label}</strong>{f" · {amount}" if amount else ""}'
-                f'</div>'
-            )
-
-    dead_parts.append("</div></div>")
-    st.markdown("".join(dead_parts), unsafe_allow_html=True)
 
 # ============================================================
-# IPHONE-ONLY TEAM DASHBOARD
-# Desktop / tablet layout above is intentionally unchanged.
+# TEAM DASHBOARD (one layout for phone and desktop)
 # ============================================================
 
 def _mobile_escape(value) -> str:
@@ -2443,34 +2139,35 @@ for _, r in mobile_roster.iterrows():
         '</div>'
     )
 
-# Draft-pick summary.
-mobile_pick_counts: list[tuple[object, int]] = []
-mobile_pick_lines: list[str] = []
+# Draft-pick summary: one row per season, one tag per pick.
+mobile_pick_years: list[tuple[object, list[str]]] = []
+mobile_pick_total = 0
 
 if not picks_df.empty:
-    mobile_picks = picks_df[picks_df["current_owner"] == sel_name].copy()
+    mobile_picks = picks_df[
+        (picks_df["current_owner"] == sel_name)
+        & picks_df["season"].isin([active_season, active_season + 1, active_season + 2])
+    ].copy()
 
     if not mobile_picks.empty:
         mobile_picks = mobile_picks.sort_values(["season", "round"])
+        mobile_pick_total = len(mobile_picks)
 
         for season, season_rows in mobile_picks.groupby("season", sort=True):
-            mobile_pick_counts.append((season, len(season_rows)))
-
-        for _, row in mobile_picks.iterrows():
-            season = row.get("season", "—")
-            rnd = row.get("round", "—")
-            orig = row.get("original_team", "")
-            note = row.get("note") or ""
-
-            if orig and orig != sel_name:
-                line = f"{season} — Round {rnd} (via {orig})"
-            else:
-                line = f"{season} — Round {rnd}"
-
-            if note:
-                line += f" — {note}"
-
-            mobile_pick_lines.append(_mobile_escape(line))
+            chips: list[str] = []
+            for _, row in season_rows.iterrows():
+                rnd = _mobile_escape(row.get("round", "—"))
+                orig = str(row.get("original_team") or "").strip()
+                note = _mobile_escape(row.get("note") or "")
+                if orig and orig != sel_name:
+                    via = _mobile_escape(orig.split()[0])
+                    chips.append(
+                        f'<span class="teams-pick-chip via" title="{note}">'
+                        f'R{rnd}<em>via {via}</em></span>'
+                    )
+                else:
+                    chips.append(f'<span class="teams-pick-chip" title="{note}">R{rnd}</span>')
+            mobile_pick_years.append((season, chips))
 
 # Activity summary.
 def _mobile_norm_val(x) -> str:
@@ -2523,15 +2220,14 @@ else:
 
     mobile_activity = _sort_recent(tx_df[mobile_mask].copy())
 
-mobile_activity_lines: list[tuple[str, str, str]] = []
+mobile_activity_lines: list[tuple[str, str, str, str]] = []
 
-for _, r in mobile_activity.head(6).iterrows():
+for _, r in mobile_activity.head(20).iterrows():
     ts_iso = r.get("created_at") or r.get("ts") or r.get("executed_at")
 
     try:
-        ts = datetime.fromisoformat(
-            str(ts_iso).replace("Z", "+00:00")
-        ).strftime("%Y-%m-%d")
+        ts_dt = datetime.fromisoformat(str(ts_iso).replace("Z", "+00:00"))
+        ts = f"{ts_dt:%b} {ts_dt.day}"
     except Exception:
         ts = str(ts_iso or "")
 
@@ -2591,7 +2287,11 @@ for _, r in mobile_activity.head(6).iterrows():
     if not player or str(player).strip().isdigit():
         continue
 
-    mobile_activity_lines.append((action, str(player), ts))
+    # The note carries trade details (what moved both ways).
+    note = str(r.get("note") or "").strip()
+    if note.lower() == "nan":
+        note = ""
+    mobile_activity_lines.append((action, str(player), ts, note))
 
 # Dead cap summary.
 mobile_dead_cap = pd.DataFrame()
@@ -2619,16 +2319,15 @@ if not mobile_dead_cap.empty:
         .drop_duplicates(subset=_dead_cap_identity(mobile_dead_cap))
     )
 
-# Phone page title.
+# Page title.
 st.markdown(
-    '<div class="teams-mobile-only teams-mobile-page-head">'
+    '<div class="teams-block teams-mobile-page-head">'
     '<div class="teams-mobile-page-title">Teams</div>'
     '</div>',
     unsafe_allow_html=True,
 )
 
-# Phone team switcher: a full-width button that opens a sheet listing every
-# team in standings order. The desktop picker remains untouched.
+# Team switcher: a card that opens a sheet listing every team in standings order.
 mobile_identities = load_sleeper_team_identities(SLEEPER_LEAGUE_ID)
 mobile_team_options: list[dict] = []
 
@@ -2665,7 +2364,6 @@ mobile_team_options.sort(key=lambda t: (t["rank"] or 999, t["name"]))
 
 def _pick_mobile_team(name: str):
     st.session_state["team_name"] = name
-    st.session_state["owner_picker"] = name
     st.session_state["teams_mobile_team_search"] = ""
     st.session_state["_teams_mobile_picked"] = True
 
@@ -2716,91 +2414,98 @@ def _mobile_team_sheet():
             )
 
 
-with st.container(key="teams_mobile_switch"):
-    st.markdown(
-        '<div class="teams-mobile-switch">'
-        f'<div class="teams-mobile-avatar">{_mobile_escape(_mobile_initials(sel_name))}</div>'
-        '<div class="teams-mobile-switch-text">'
-        '<small>Viewing</small>'
-        f'<strong>{_mobile_escape(sel_name)}</strong>'
-        '</div>'
-        '<div class="teams-mobile-switch-pill">Switch ▾</div>'
-        '</div>',
-        unsafe_allow_html=True,
-    )
-    if st.button("Switch team", key="teams_mobile_switch_btn", use_container_width=True):
-        _mobile_team_sheet()
 
-# Build the compact top portion in ONE markdown block so Streamlit cannot
-# insert large gaps between the summary, roster, and side-by-side cards.
-mobile_top_html: list[str] = ['<div class="teams-mobile-only teams-mobile-flow">']
-
-# Summary card.
 mobile_record = record_txt.replace(" – ", "-")
 
-mobile_top_html.extend([
-    '<section class="teams-mobile-card teams-mobile-summary">',
-    '<div class="teams-mobile-stats">',
-    '<div class="teams-mobile-stat">',
-    '<div class="teams-mobile-stat-label">Record</div>',
-    f'<div class="teams-mobile-stat-value gold">{_mobile_escape(mobile_record)}</div>',
-    f'<div class="teams-mobile-stat-sub">{_mobile_escape(standing_txt)}</div>',
-    '</div>',
-    '<div class="teams-mobile-stat">',
-    '<div class="teams-mobile-stat-label">SP</div>',
-    f'<div class="teams-mobile-stat-value">{sp_val}</div>',
-    f'<div class="teams-mobile-stat-sub">{_mobile_escape(standing_txt)}</div>',
-    '</div>',
-    '<div class="teams-mobile-stat">',
-    '<div class="teams-mobile-stat-label">PPG</div>',
-    f'<div class="teams-mobile-stat-value">{ppg_val:.1f}</div>',
-    '<div class="teams-mobile-stat-sub">Avg/game</div>',
-    '</div>',
-    '<div class="teams-mobile-stat">',
-    '<div class="teams-mobile-stat-label">Cap</div>',
-    f'<div class="teams-mobile-stat-value gold">{_mobile_escape(cap_txt)}</div>',
-    f'<div class="teams-mobile-stat-sub">{_mobile_escape(cap_sub)}</div>',
-    '</div>',
-    '</div>',
-    '</section>',
-])
+# Top row: team switcher + four stat boxes. On phone the columns stack.
+with st.container(key="teams_top"):
+    top_switch, top_stats = st.columns([1, 2.1], gap="small")
+
+with top_switch:
+    with st.container(key="teams_mobile_switch"):
+        st.markdown(
+            '<div class="teams-mobile-switch">'
+            f'<div class="teams-mobile-avatar">{_mobile_escape(_mobile_initials(sel_name))}</div>'
+            '<div class="teams-mobile-switch-text">'
+            '<small>Viewing</small>'
+            f'<strong>{_mobile_escape(sel_name)}</strong>'
+            '</div>'
+            '<div class="teams-mobile-switch-pill">Switch ▾</div>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        if st.button("Switch team", key="teams_mobile_switch_btn", use_container_width=True):
+            _mobile_team_sheet()
+
+with top_stats:
+    st.markdown(
+        ''.join([
+            '<section class="teams-block teams-mobile-card teams-mobile-summary">',
+            '<div class="teams-mobile-stats">',
+            '<div class="teams-mobile-stat">',
+            '<div class="teams-mobile-stat-label">Record</div>',
+            f'<div class="teams-mobile-stat-value gold">{_mobile_escape(mobile_record)}</div>',
+            f'<div class="teams-mobile-stat-sub">{_mobile_escape(standing_txt)}</div>',
+            '</div>',
+            '<div class="teams-mobile-stat">',
+            '<div class="teams-mobile-stat-label"><span class="long">Standing Points</span><span class="short">SP</span></div>',
+            f'<div class="teams-mobile-stat-value">{sp_val}</div>',
+            f'<div class="teams-mobile-stat-sub">{_mobile_escape(standing_txt)}</div>',
+            '</div>',
+            '<div class="teams-mobile-stat">',
+            '<div class="teams-mobile-stat-label">PPG</div>',
+            f'<div class="teams-mobile-stat-value">{ppg_val:.1f}</div>',
+            '<div class="teams-mobile-stat-sub">Avg/game</div>',
+            '</div>',
+            '<div class="teams-mobile-stat">',
+            '<div class="teams-mobile-stat-label">Cap</div>',
+            f'<div class="teams-mobile-stat-value gold">{_mobile_escape(cap_txt)}</div>',
+            f'<div class="teams-mobile-stat-sub">{_mobile_escape(cap_sub)}</div>',
+            '</div>',
+            '</div>',
+            '</section>',
+        ]),
+        unsafe_allow_html=True,
+    )
+
+
+def _mobile_section_head(title: str, icon: str = "", right: str = "") -> str:
+    icon_html = f'<span class="teams-mobile-section-icon">{icon}</span>' if icon else ""
+    right_html = f'<div class="teams-mobile-count">{right}</div>' if right else ""
+    return (
+        '<div class="teams-mobile-section-head">'
+        '<div class="teams-mobile-heading-left">'
+        f'{icon_html}<div class="teams-mobile-title">{title}</div>'
+        '</div>'
+        f'{right_html}'
+        '</div>'
+    )
+
 
 # Roster card.
-mobile_top_html.extend([
-    '<section class="teams-mobile-card">',
-    '<div class="teams-mobile-section-head">',
-    '<div class="teams-mobile-heading-left">',
-    '<span class="teams-mobile-section-icon">♟</span>',
-    '<div class="teams-mobile-title">Roster</div>',
-    '</div>',
-    f'<div class="teams-mobile-count">{len(mobile_roster)} Players</div>',
-    '</div>',
-])
-
+roster_html: list[str] = [
+    '<section class="teams-block teams-mobile-card">',
+    _mobile_section_head("Roster", "♟", f"{len(mobile_roster)} Players"),
+]
 if not mobile_roster_rows:
-    mobile_top_html.append(
-        '<div class="teams-mobile-empty" style="padding-top:8px;">'
-        'No roster data for this team.</div>'
-    )
+    roster_html.append('<div class="teams-mobile-empty">No roster data for this team.</div>')
 else:
-    mobile_top_html.extend(mobile_roster_rows[:5])
-
-    if len(mobile_roster_rows) > 5:
-        mobile_top_html.extend([
+    roster_html.extend(mobile_roster_rows[:8])
+    if len(mobile_roster_rows) > 8:
+        roster_html.extend([
             '<details class="teams-mobile-roster-details">',
             '<summary>',
             '<span class="open-label">View Full Roster ›</span>',
             '<span class="close-label">Close Full Roster ↑</span>',
             '</summary>',
             '<div class="expanded-roster">',
-            ''.join(mobile_roster_rows[5:]),
+            ''.join(mobile_roster_rows[8:]),
             '</div>',
             '</details>',
         ])
+roster_html.append('</section>')
 
-mobile_top_html.append('</section>')
-
-# Trade block and draft picks — intentionally SIDE BY SIDE.
+# Trade block + draft picks: side by side on phone, stacked on desktop.
 trade_body: list[str] = []
 if trade_rows:
     for tb in trade_rows:
@@ -2810,135 +2515,113 @@ if trade_rows:
             + '</div>'
         )
 else:
-    trade_body.append(
-        '<div class="teams-mobile-empty">No players on the trade block.</div>'
-    )
+    trade_body.append('<div class="teams-mobile-empty">No players on the trade block.</div>')
 
 pick_body: list[str] = []
-if mobile_pick_counts:
-    for season, count in mobile_pick_counts[:3]:
-        label = "Pick" if count == 1 else "Picks"
+if mobile_pick_years:
+    for season, chips in mobile_pick_years:
+        count = len(chips)
         pick_body.append(
             '<div class="teams-mobile-pick-year">'
-            f'<span>{_mobile_escape(season)}</span>'
-            f'<span class="teams-mobile-pick-count">{count} {label}</span>'
+            f'<span class="teams-pick-season">{_mobile_escape(season)}</span>'
+            f'<span class="teams-pick-chips">{"".join(chips)}</span>'
+            f'<span class="teams-mobile-pick-count">{count} {"Pick" if count == 1 else "Picks"}</span>'
             '</div>'
         )
 else:
     pick_body.append('<div class="teams-mobile-empty">No draft picks data.</div>')
 
-if mobile_pick_lines:
-    pick_body.extend([
-        '<details class="teams-mobile-picks-details">',
-        '<summary>View all ›</summary>',
-        '<div class="teams-mobile-picks-full">',
-        ''.join(
-            f'<div class="teams-mobile-pick-line">{line}</div>'
-            for line in mobile_pick_lines
-        ),
-        '</div>',
-        '</details>',
-    ])
-
-mobile_top_html.extend([
-    '<div class="teams-mobile-pair">',
+pair_html = ''.join([
+    '<div class="teams-block teams-mobile-pair">',
     '<section class="teams-mobile-card">',
-    '<div class="teams-mobile-section-head">',
-    '<div class="teams-mobile-heading-left">',
-    '<span class="teams-mobile-section-icon">⇄</span>',
-    '<div class="teams-mobile-title">Trade Block</div>',
-    '</div>',
-    '</div>',
+    _mobile_section_head("Trade Block", "⇄"),
     ''.join(trade_body),
     '</section>',
     '<section class="teams-mobile-card">',
-    '<div class="teams-mobile-section-head">',
-    '<div class="teams-mobile-heading-left">',
-    '<span class="teams-mobile-section-icon">▣</span>',
-    '<div class="teams-mobile-title">Draft Picks</div>',
-    '</div>',
-    '</div>',
+    _mobile_section_head(
+        "Draft Picks",
+        "▣",
+        f"{mobile_pick_total} {'Pick' if mobile_pick_total == 1 else 'Picks'}" if mobile_pick_total else "",
+    ),
     ''.join(pick_body),
     '</section>',
     '</div>',
-    '</div>',
 ])
 
-st.markdown(
-    ''.join(mobile_top_html),
-    unsafe_allow_html=True,
-)
+# Activity feed: six rows, the rest behind "View all".
+def _activity_row(action: str, player: str, ts: str, note: str) -> str:
+    tag = action.lower() if action in ("Sign", "Drop", "Trade") else "other"
+    note_html = f'<small>{_mobile_escape(note)}</small>' if note else ""
+    return (
+        '<div class="teams-mobile-activity-row">'
+        f'<span class="teams-activity-tag {tag}">{_mobile_escape(action)}</span>'
+        f'<div class="teams-mobile-activity-main">{_mobile_escape(player)}{note_html}</div>'
+        f'<div class="teams-mobile-date">{_mobile_escape(ts)}</div>'
+        '</div>'
+    )
 
-# Functional trade button, immediately below the side-by-side cards.
-with st.container(border=True, key="teams_mobile_trade_action"):
-    if st.button(
-        "🔁 Send Trade Offer",
-        key="mobile_trade_cta",
-        use_container_width=True,
-    ):
-        st.session_state["trade_from_team"] = sel_name
-        st.switch_page("pages/_82_Trades.py")
-
-# Activity + Dead Cap in one tight second block.
-mobile_bottom_html: list[str] = ['<div class="teams-mobile-only teams-mobile-flow">']
 
 activity_rows_html: list[str] = []
 if mobile_activity_lines:
-    for action, player, ts in mobile_activity_lines[:2]:
-        activity_rows_html.append(
-            '<div class="teams-mobile-activity-row">'
-            '<div class="teams-mobile-activity-main">'
-            f'<strong>{_mobile_escape(action)}</strong> · {_mobile_escape(player)}'
-            '</div>'
-            f'<div class="teams-mobile-date">{_mobile_escape(ts)}</div>'
-            '</div>'
-        )
+    activity_rows_html.extend(_activity_row(*line) for line in mobile_activity_lines[:6])
+    if len(mobile_activity_lines) > 6:
+        activity_rows_html.extend([
+            '<details class="teams-mobile-roster-details">',
+            '<summary><span class="open-label">View All ›</span>'
+            '<span class="close-label">Show Less ↑</span></summary>',
+            '<div class="expanded-roster">',
+            ''.join(_activity_row(*line) for line in mobile_activity_lines[6:]),
+            '</div>',
+            '</details>',
+        ])
 else:
-    activity_rows_html.append(
-        '<div class="teams-mobile-empty">No activity for this team yet.</div>'
-    )
-
-mobile_bottom_html.extend([
-    '<section class="teams-mobile-card">',
-    '<div class="teams-mobile-section-head">',
-    '<div class="teams-mobile-heading-left">',
-    '<span class="teams-mobile-section-icon">●</span>',
-    '<div class="teams-mobile-title">Activity Feed</div>',
-    '</div>',
-    '</div>',
-    ''.join(activity_rows_html),
-    '</section>',
-])
+    activity_rows_html.append('<div class="teams-mobile-empty">No activity for this team yet.</div>')
 
 dead_rows_html: list[str] = []
+dead_total = 0.0
 if mobile_dead_cap.empty:
     dead_rows_html.append('<div class="teams-mobile-empty">No dead cap charges.</div>')
 else:
     for raw_label, amount in cap_adjustment_display_rows(mobile_dead_cap.to_dict("records")):
-        label = _mobile_escape(raw_label)
-        amount_html = f' · <span class="teams-mobile-dead-amount">{amount}</span>' if amount else ""
+        if amount:
+            dead_total += float(amount.lstrip("$"))
         dead_rows_html.append(
             '<div class="teams-mobile-dead-row">'
-            '<div class="teams-mobile-dead-main">'
-            f'<strong>{label}</strong>'
-            f'{amount_html}'
-            '</div>'
+            f'<div class="teams-mobile-dead-main">{_mobile_escape(raw_label)}</div>'
+            f'<div class="teams-mobile-dead-amount">{_mobile_escape(amount or "")}</div>'
             '</div>'
         )
 
-mobile_bottom_html.extend([
+side_html = ''.join([
+    '<div class="teams-block teams-mobile-flow">',
     '<section class="teams-mobile-card">',
-    '<div class="teams-mobile-section-head">',
-    '<div class="teams-mobile-heading-left">',
-    '<div class="teams-mobile-title">Dead Cap</div>',
-    '</div>',
-    '</div>',
+    _mobile_section_head("Activity Feed", "●"),
+    ''.join(activity_rows_html),
+    '</section>',
+    '<section class="teams-mobile-card">',
+    _mobile_section_head("Dead Cap", "", f"${dead_total:.2f} total" if dead_total else ""),
     ''.join(dead_rows_html),
     '</section>',
     '</div>',
 ])
 
-st.markdown(
-    ''.join(mobile_bottom_html),
-    unsafe_allow_html=True,
-)
+# Body: roster | trade block, picks and the trade button | activity and dead cap.
+with st.container(key="teams_body"):
+    body_roster, body_mid, body_side = st.columns([1.25, 1, 1], gap="small")
+
+with body_roster:
+    st.markdown(''.join(roster_html), unsafe_allow_html=True)
+
+with body_mid:
+    st.markdown(pair_html, unsafe_allow_html=True)
+    with st.container(border=True, key="teams_mobile_trade_action"):
+        if st.button(
+            "🔁 Send Trade Offer",
+            key="mobile_trade_cta",
+            use_container_width=True,
+        ):
+            st.session_state["trade_from_team"] = sel_name
+            st.switch_page("pages/_82_Trades.py")
+
+with body_side:
+    st.markdown(side_html, unsafe_allow_html=True)
