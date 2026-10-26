@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import time
+import html
 import os
 import sys
 import re
@@ -389,7 +390,8 @@ html, body, [data-testid="stAppViewContainer"]{
 }
 
 .roster-panel{
-  max-height:570px;
+  /* Tall enough for 12 players before the roster scrolls. */
+  max-height:636px;
   overflow-y:auto;
 }
 
@@ -564,7 +566,8 @@ html, body, [data-testid="stAppViewContainer"]{
 
 .st-key-my_team_trade_block,
 .st-key-my_team_taxi,
-.st-key-my_team_ir {
+.st-key-my_team_ir,
+.st-key-my_team_activity {
   border:1px solid var(--goldSoft) !important;
   border-radius:18px !important;
   background:radial-gradient(120% 140% at 20% 0%, var(--panel) 0%, var(--panel2) 100%) !important;
@@ -581,7 +584,8 @@ html, body, [data-testid="stAppViewContainer"]{
 
 .st-key-my_team_trade_block h3,
 .st-key-my_team_taxi h3,
-.st-key-my_team_ir h3 {
+.st-key-my_team_ir h3,
+.st-key-my_team_activity h3 {
   font-size:.98rem !important;
   font-weight:900 !important;
   line-height:1.2 !important;
@@ -627,6 +631,68 @@ html, body, [data-testid="stAppViewContainer"]{
 .st-key-my_team_designations {
   margin-top:4px;
 }
+
+/* Recent Team Activity: same tag colors as the Teams page. */
+.activity-row {
+  display:flex;
+  align-items:center;
+  gap:10px;
+  padding:8px 0;
+  border-bottom:1px solid rgba(226,188,91,.075);
+}
+
+.activity-tag {
+  flex:0 0 auto;
+  min-width:46px;
+  box-sizing:border-box;
+  text-align:center;
+  white-space:nowrap;
+  font-size:.6rem;
+  font-weight:900;
+  border-radius:6px;
+  padding:3px 7px;
+  background:rgba(255,245,231,.08);
+  color:rgba(255,245,231,.75);
+}
+
+.activity-tag.sign { background:rgba(110,200,140,.15); color:#8fdcaa; }
+.activity-tag.drop { background:rgba(230,110,100,.15); color:#ee9a90; }
+.activity-tag.trade { background:rgba(226,188,91,.15); color:var(--gold); }
+
+.activity-player {
+  flex:1;
+  min-width:0;
+  font-size:.8rem;
+  font-weight:700;
+  color:var(--text);
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+.activity-date {
+  flex:0 0 auto;
+  font-size:.66rem;
+  color:rgba(255,245,231,.44);
+  white-space:nowrap;
+}
+
+.activity-more summary {
+  list-style:none;
+  cursor:pointer;
+  color:var(--gold);
+  font-size:.8rem;
+  font-weight:900;
+  text-align:center;
+  padding:10px 0 2px;
+}
+
+.activity-more summary::-webkit-details-marker { display:none; }
+.activity-more .close-label { display:none; }
+.activity-more[open] .open-label { display:none; }
+.activity-more[open] .close-label { display:inline; }
+.activity-more[open] { display:flex; flex-direction:column; }
+.activity-more[open] summary { order:2; }
 
 .st-key-my_team_designations [data-testid="stHorizontalBlock"] {
   display:grid !important;
@@ -839,10 +905,7 @@ html, body, [data-testid="stAppViewContainer"]{
   }
 
   .st-key-my_team_activity {
-    border:1px solid rgba(226,188,91,.40) !important;
-    border-radius:18px !important;
-    background:linear-gradient(145deg,#10201E 0%,#081513 100%) !important;
-    box-shadow:0 8px 26px rgba(0,0,0,.28) !important;
+    margin-top:14px !important;
   }
 
   /* Mobile controls: larger touch targets without changing desktop controls. */
@@ -1725,6 +1788,7 @@ with right:
     action_trade_col = st.container()
     with st.container(key="my_team_designations"):
         taxi_col, ir_col = st.columns(2)
+    activity_area = st.container()
 
 with action_trade_col:
     with st.container(border=True, key="my_team_trade_block"):
@@ -2031,98 +2095,132 @@ with ir_col:
                 st.caption("Open")
                 render_designation_form("Injured Reserve", ir_options, "ir")
 # ---------- activity ----------
-with st.container(border=True, key="my_team_activity"):
-    st.markdown("### Recent Team Activity")
+# Desktop: below Taxi Squad / IR in the right column. Phone: below them too.
+# Tags match the Teams page (Sign green, Drop red, Trade gold).
+ACTIVITY_VISIBLE_ROWS = 6
+ACTIVITY_MAX_ROWS = 20
 
-    activity_parts = []
 
-    if not tx_df.empty:
-        mask = pd.Series(False, index=tx_df.index)
-
-        for c in [
-            "owner_name", "team_name", "from_owner_name", "to_owner_name",
-            "from_team_name", "to_team_name",
-        ]:
-            if c in tx_df.columns:
-                mask = mask | tx_df[c].astype(str).str.strip().str.lower().eq(str(owner_name).strip().lower())
-                mask = mask | tx_df[c].astype(str).str.strip().str.lower().eq(str(team_name).strip().lower())
-
-        tx_activity = tx_df[mask].copy()
-        activity_parts.append(tx_activity)
-
-    if not team_activity_df.empty:
-        app_mask = (
-            team_activity_df["owner_name"].astype(str).str.strip().str.lower().eq(str(owner_name).strip().lower())
-            | team_activity_df["team_name"].astype(str).str.strip().str.lower().eq(str(team_name).strip().lower())
-        )
-
-        app_activity = team_activity_df[app_mask].copy()
-        app_activity["tx_type"] = app_activity["action"]
-        app_activity["acquisition"] = app_activity["action"]
-        app_activity["ts"] = app_activity["created_at"]
-
-        activity_parts.append(app_activity)
-
-    activity = (
-        pd.concat(activity_parts, ignore_index=True)
-        if activity_parts
-        else pd.DataFrame()
+def activity_row_html(action: str, player: str, ts: str) -> str:
+    tag = action.lower() if action in ("Sign", "Drop", "Trade") else "other"
+    return (
+        '<div class="activity-row">'
+        f'<span class="activity-tag {tag}">{html.escape(action)}</span>'
+        f'<div class="activity-player">{html.escape(player)}</div>'
+        f'<div class="activity-date">{html.escape(ts)}</div>'
+        "</div>"
     )
 
-    if not activity.empty:
-        activity["_sort_ts"] = pd.to_datetime(
-            activity.get("ts"),
-            errors="coerce",
-            utc=True,
+
+with activity_area:
+    with st.container(border=True, key="my_team_activity"):
+        st.markdown("### Recent Team Activity")
+
+        activity_parts = []
+
+        if not tx_df.empty:
+            mask = pd.Series(False, index=tx_df.index)
+
+            for c in [
+                "owner_name", "team_name", "from_owner_name", "to_owner_name",
+                "from_team_name", "to_team_name",
+            ]:
+                if c in tx_df.columns:
+                    mask = mask | tx_df[c].astype(str).str.strip().str.lower().eq(str(owner_name).strip().lower())
+                    mask = mask | tx_df[c].astype(str).str.strip().str.lower().eq(str(team_name).strip().lower())
+
+            tx_activity = tx_df[mask].copy()
+            activity_parts.append(tx_activity)
+
+        if not team_activity_df.empty:
+            app_mask = (
+                team_activity_df["owner_name"].astype(str).str.strip().str.lower().eq(str(owner_name).strip().lower())
+                | team_activity_df["team_name"].astype(str).str.strip().str.lower().eq(str(team_name).strip().lower())
+            )
+
+            app_activity = team_activity_df[app_mask].copy()
+            app_activity["tx_type"] = app_activity["action"]
+            app_activity["acquisition"] = app_activity["action"]
+            app_activity["ts"] = app_activity["created_at"]
+
+            activity_parts.append(app_activity)
+
+        activity = (
+            pd.concat(activity_parts, ignore_index=True)
+            if activity_parts
+            else pd.DataFrame()
         )
-        activity = activity.sort_values("_sort_ts", ascending=False)
 
-    if activity.empty:
-        st.markdown('<div class="empty">No activity for your team yet.</div>', unsafe_allow_html=True)
-    else:
-        for _, r in activity.head(12).iterrows():
-            ts_raw = r.get("ts") or r.get("created_at") or ""
-            try:
-                ts = datetime.fromisoformat(str(ts_raw).replace("Z", "+00:00")).strftime("%Y-%m-%d")
-            except Exception:
-                ts = str(ts_raw)
+        if not activity.empty:
+            activity["_sort_ts"] = pd.to_datetime(
+                activity.get("ts"),
+                errors="coerce",
+                utc=True,
+            )
+            activity = activity.sort_values("_sort_ts", ascending=False)
 
-            acq = str(r.get("acquisition") or "").lower()
-            tx_type = str(r.get("tx_type") or "").lower()
+        if activity.empty:
+            st.markdown('<div class="empty">No activity for your team yet.</div>', unsafe_allow_html=True)
+        else:
+            activity_rows = []
 
-            if acq in ["added", "add", "waiver"]:
-                action = "Sign"
+            for _, r in activity.head(ACTIVITY_MAX_ROWS).iterrows():
+                ts_raw = r.get("ts") or r.get("created_at") or ""
+                try:
+                    ts_dt = datetime.fromisoformat(str(ts_raw).replace("Z", "+00:00"))
+                    ts = f"{ts_dt:%b} {ts_dt.day}"
+                except Exception:
+                    ts = str(ts_raw)
 
-            elif acq in ["dropped", "drop"]:
-                action = "Drop"
+                acq = str(r.get("acquisition") or "").lower()
+                tx_type = str(r.get("tx_type") or "").lower()
 
-            elif acq == "traded" or tx_type == "trade":
-                action = "Trade"
+                if acq in ["added", "add", "waiver"]:
+                    action = "Sign"
 
-            elif tx_type == "trade_block_add":
-                action = "Trade Block Add"
+                elif acq in ["dropped", "drop"]:
+                    action = "Drop"
 
-            elif tx_type == "trade_block_remove":
-                action = "Trade Block Remove"
+                elif acq == "traded" or tx_type == "trade":
+                    action = "Trade"
 
-            elif tx_type == "taxi squad":
-                action = "Taxi Squad"
+                elif tx_type == "trade_block_add":
+                    action = "Trade Block Add"
 
-            elif tx_type == "injured reserve":
-                action = "Injured Reserve"
+                elif tx_type == "trade_block_remove":
+                    action = "Trade Block Remove"
 
-            elif tx_type == "taxi_removed":
-                action = "Taxi Removed"
+                elif tx_type == "taxi squad":
+                    action = "Taxi Squad"
 
-            elif tx_type == "ir_removed":
-                action = "IR Removed"
+                elif tx_type == "injured reserve":
+                    action = "Injured Reserve"
 
-            else:
-                action = "Transaction"
+                elif tx_type == "taxi_removed":
+                    action = "Taxi Removed"
 
-            player = r.get("player_name") or "Player"
+                elif tx_type == "ir_removed":
+                    action = "IR Removed"
+
+                else:
+                    action = "Transaction"
+
+                player = r.get("player_name") or "Player"
+                activity_rows.append(activity_row_html(action, str(player), ts))
+
+            # First rows show in the card; the rest open with Load More
+            # (a plain <details>, so no rerun and no extra queries).
+            feed = activity_rows[:ACTIVITY_VISIBLE_ROWS]
+            if len(activity_rows) > ACTIVITY_VISIBLE_ROWS:
+                feed.append(
+                    '<details class="activity-more">'
+                    '<summary><span class="open-label">Load More ›</span>'
+                    '<span class="close-label">Show Less ↑</span></summary>'
+                    + "".join(activity_rows[ACTIVITY_VISIBLE_ROWS:])
+                    + "</details>"
+                )
 
             st.markdown(
-                f"<div class='activity-item'><strong>{action}</strong> · {player}<small>{ts}</small></div>",
+                f'<div class="activity-feed">{"".join(feed)}</div>',
                 unsafe_allow_html=True,
             )
