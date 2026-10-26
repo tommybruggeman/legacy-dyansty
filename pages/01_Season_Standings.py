@@ -26,7 +26,7 @@ import urllib.parse as urlparse
 import pandas as pd
 import streamlit as st
 
-from auth import require_login
+from auth import auth_client, require_login
 from components.sidebar_nav import render_nav
 from services.app_context import get_app_context
 
@@ -639,6 +639,19 @@ Very subtle so it feels premium rather than flashy.
 }
 
 
+.mobile-leader-link,
+.mobile-leader-link:hover,
+.mobile-leader-link:visited {
+    color: inherit !important;
+}
+
+
+.mobile-leader-link,
+.mobile-leader-link * {
+    text-decoration: none !important;
+}
+
+
 .mobile-leader-icon {
     display: flex;
 
@@ -922,87 +935,307 @@ div[data-testid="stDataFrame"]
     display: grid;
 
     grid-template-columns:
-        24px
-        minmax(0, 1.65fr)
-        40px
-        46px
-        34px
-        34px;
+        26px
+        minmax(0, 1fr)
+        38px
+        44px
+        30px
+        30px;
 
     align-items: center;
 
-    column-gap: 3px;
+    column-gap: 6px;
 
     width: 100%;
+
+    padding:
+        0 14px 0 10px;
 
     box-sizing: border-box;
 }
 
 
-.mobile-standings-header {
-    min-height: 38px;
+/* Every stat column is centered, header and value alike,
+   so the labels sit directly over their numbers. */
+.mobile-standings-header > div,
+.mobile-standing-number,
+.mobile-standing-rank {
+    text-align: center;
+}
 
-    padding:
-        0 7px;
+
+.mobile-standings-header > div:nth-child(2) {
+    text-align: left;
+
+    padding-left: 4px;
+}
+
+
+.mobile-standings-header {
+    min-height: 36px;
 
     background:
-        rgba(255,255,255,.02);
+        rgba(255,255,255,.03);
 
     color: var(--muted);
 
-    font-size: .55rem;
+    font-size: .62rem;
 
-    font-weight: 900;
+    font-weight: 800;
 
-    letter-spacing: .045em;
+    letter-spacing: .08em;
 
     text-transform: uppercase;
 
     border-bottom:
-        1px solid rgba(226,188,91,.16);
+        1px solid rgba(226,188,91,.18);
+}
+
+
+.mobile-standings-header > div:nth-child(3) {
+    color: var(--gold);
+}
+
+
+/* Each team is a <details>: the row is its summary,
+   tapping it opens a small stats panel underneath. */
+.ms-team {
+    border-bottom:
+        1px solid rgba(226,188,91,.09);
+}
+
+
+.ms-team:last-of-type {
+    border-bottom:
+        0;
 }
 
 
 .mobile-standings-row {
-    min-height: 44px;
-
-    padding:
-        0 7px;
+    min-height: 46px;
 
     color: var(--text);
 
-    border-bottom:
-        1px solid rgba(226,188,91,.10);
+    cursor: pointer;
+
+    list-style: none;
 }
 
 
-.mobile-standings-row:last-child {
-    border-bottom:
-        0;
+.mobile-standings-row::-webkit-details-marker {
+    display: none;
+}
+
+
+.ms-team[open] > .mobile-standings-row,
+.mobile-standings-row:active {
+    background:
+        rgba(226,188,91,.07);
+}
+
+
+/* Your own team: gold edge and a small tag. */
+.ms-team.is-me {
+    background:
+        rgba(226,188,91,.06);
+
+    box-shadow:
+        inset 3px 0 0 var(--gold);
+}
+
+
+.ms-move {
+    flex-shrink: 0;
+
+    margin-left: 6px;
+
+    font-size: .62rem;
+
+    font-weight: 800;
+
+    vertical-align: 1px;
+}
+
+
+.ms-move.up {
+    color: #4ADE80;
+}
+
+
+.ms-move.down {
+    color: #F87171;
+}
+
+
+.ms-detail {
+    padding:
+        4px 14px 12px 42px;
+}
+
+
+.ms-stats {
+    display: grid;
+
+    grid-template-columns:
+        repeat(4, minmax(0, 1fr));
+
+    gap: 6px;
+}
+
+
+.ms-stat {
+    padding: 7px 4px;
+
+    border-radius: 10px;
+
+    background: rgba(255,255,255,.04);
+
+    text-align: center;
+}
+
+
+.ms-stat span {
+    display: block;
+
+    color: var(--muted);
+
+    font-size: .56rem;
+
+    font-weight: 700;
+
+    letter-spacing: .04em;
+
+    text-transform: uppercase;
+}
+
+
+.ms-stat b {
+    color: var(--text);
+
+    font-size: .82rem;
+
+    font-weight: 800;
+}
+
+
+a.ms-view,
+a.ms-view:visited,
+a.ms-view:hover {
+    display: inline-block;
+
+    margin-top: 9px;
+
+    color: var(--gold) !important;
+
+    font-size: .74rem;
+
+    font-weight: 800;
+
+    text-decoration: none !important;
+}
+
+
+/* Dashed cut line under the last playoff spot. */
+.ms-playoff-line {
+    position: relative;
+
+    height: 0;
+
+    border-top:
+        2px dashed rgba(226,188,91,.55);
+}
+
+
+.ms-playoff-line span {
+    position: absolute;
+
+    top: -9px;
+
+    right: 12px;
+
+    padding: 1px 7px;
+
+    border-radius: 999px;
+
+    background: #0C1917;
+
+    color: var(--gold);
+
+    font-size: .56rem;
+
+    font-weight: 800;
+
+    letter-spacing: .06em;
+
+    text-transform: uppercase;
+}
+
+
+.ms-hint {
+    margin-top: 7px;
+
+    color: var(--muted);
+
+    font-size: .68rem;
+
+    text-align: center;
 }
 
 
 .mobile-standing-rank {
     color: var(--muted);
 
-    font-size: .64rem;
+    font-size: .72rem;
 
     font-weight: 800;
+}
 
-    text-align: center;
+
+/* Gold / silver / bronze rank chips for the top three. */
+.rank-1 .mobile-standing-rank,
+.rank-2 .mobile-standing-rank,
+.rank-3 .mobile-standing-rank {
+    width: 22px;
+
+    height: 22px;
+
+    line-height: 22px;
+
+    margin: 0 auto;
+
+    border-radius: 50%;
+
+    color: #0C1917;
+
+    font-weight: 900;
+}
+
+
+.rank-1 .mobile-standing-rank {
+    background: var(--gold);
+}
+
+
+.rank-2 .mobile-standing-rank {
+    background: #C9CED6;
+}
+
+
+.rank-3 .mobile-standing-rank {
+    background: #C98A55;
 }
 
 
 .mobile-standing-team {
-    min-width: 0;
+    display: flex;
 
-    overflow: hidden;
+    align-items: center;
+
+    min-width: 0;
 
     white-space: nowrap;
 
-    text-overflow: ellipsis;
-
-    font-size: .69rem;
+    font-size: .86rem;
 
     font-weight: 700;
 
@@ -1010,19 +1243,33 @@ div[data-testid="stDataFrame"]
 }
 
 
-.mobile-standing-number {
-    font-size: .65rem;
+.ms-name {
+    min-width: 0;
 
-    font-weight: 700;
+    overflow: hidden;
 
-    text-align: right;
+    text-overflow: ellipsis;
 }
 
 
-.mobile-standings-row:first-of-type
-.mobile-standing-rank,
-.mobile-standings-row:first-of-type
-.mobile-standing-team {
+.rank-1 .ms-name {
+    color: var(--gold);
+}
+
+
+.mobile-standing-number {
+    font-size: .82rem;
+
+    font-weight: 600;
+
+    font-variant-numeric: tabular-nums;
+
+    color: var(--text);
+}
+
+
+/* Standing Points decide the table, so they stand out. */
+.mobile-standing-number.sp {
     color: var(--gold);
 
     font-weight: 900;
@@ -1100,6 +1347,15 @@ div[data-testid="stDataFrame"]
 
 @media (max-width: 700px) {
 
+    /* Stop the whole page from sliding sideways on a swipe. */
+    html,
+    body,
+    [data-testid="stAppViewContainer"],
+    [data-testid="stMain"] {
+        overflow-x: hidden !important;
+    }
+
+
     .block-container {
         padding-top:
             1rem !important;
@@ -1170,6 +1426,18 @@ The dedicated 2x2 mobile leader grid is shown instead.
     */
 
     .st-key-main_standings_table {
+        display:
+            none !important;
+    }
+
+
+    /*
+    Top 5 / Bottom 5 tables run off a phone screen and repeat the
+    standings; their extra stats live in the expandable rows instead.
+    */
+
+    .st-key-top_bottom_five,
+    .divider {
         display:
             none !important;
     }
@@ -1481,6 +1749,8 @@ def add_meta_metrics(
         "PA Per Game",
         "% of Total Standings Points",
         "% of Total Points Scored",
+        "Ties",
+        "Prev Rank",
     ]
 
 
@@ -1616,6 +1886,16 @@ LEADER_ICONS = {
 # MOBILE HTML HELPERS
 # ============================================================
 
+# Owner name shown on this page -> the name the Teams page picker uses.
+TEAM_LINK_NAMES: dict[str, str] = {}
+
+
+def _team_href(team: str) -> str:
+    """Link to that team on the Teams page (it reads ?team=)."""
+    target = TEAM_LINK_NAMES.get(team, team)
+    return f"/Teams?team={urlparse.quote(target)}"
+
+
 def _mobile_leaders_html(
     leaders: list[dict],
 ) -> str:
@@ -1651,7 +1931,7 @@ def _mobile_leaders_html(
         cards.append(
             (
                 '<div class="mobile-leader-card">'
-                f'<a class="mobile-leader-link" href="{href}">'
+                f'<a class="mobile-leader-link" href="{href}" target="_self">'
                 f'<div class="mobile-leader-icon">{icon}</div>'
                 '<div class="mobile-leader-copy">'
                 f'<div class="mobile-leader-label">{label}</div>'
@@ -1673,8 +1953,28 @@ def _mobile_leaders_html(
     )
 
 
+PLAYOFF_TEAMS = 4
+
+
+def _movement_html(rank: int, prev_rank) -> str:
+    """Small up/down badge for places moved since last week."""
+    try:
+        moved = int(prev_rank) - rank
+    except (TypeError, ValueError):
+        return ""
+
+    if moved > 0:
+        return f'<span class="ms-move up">&#9650;{moved}</span>'
+
+    if moved < 0:
+        return f'<span class="ms-move down">&#9660;{-moved}</span>'
+
+    return ""
+
+
 def _mobile_standings_html(
     standings_df: pd.DataFrame,
+    my_team: str | None = None,
 ) -> str:
 
     rows = []
@@ -1682,8 +1982,15 @@ def _mobile_standings_html(
 
     for index, row in standings_df.iterrows():
 
-        team = html.escape(
-            str(row.get("Team", ""))
+        rank = index + 1
+
+        team_name = str(row.get("Team", ""))
+
+        team = html.escape(team_name)
+
+        href = html.escape(
+            _team_href(team_name),
+            quote=True,
         )
 
         standing_points = as_int(
@@ -1698,23 +2005,64 @@ def _mobile_standings_html(
             row.get("Wins", 0)
         )
 
+        losses = as_int(
+            row.get("Losses", 0)
+        )
+
+        ties = as_int(
+            row.get("Ties", 0)
+        )
+
         top5 = as_int(
             row.get("Top 5", 0)
+        )
+
+        record = f"{wins}-{losses}" + (f"-{ties}" if ties else "")
+
+        is_me = bool(my_team) and team_name == my_team
+
+        classes = f"ms-team rank-{rank}" + (" is-me" if is_me else "")
+
+        move = _movement_html(rank, row.get("Prev Rank"))
+
+        detail_stats = [
+            ("Record", record),
+            ("PF / game", f'{as_float(row.get("PF Per Game", 0)):.1f}'),
+            ("PA", f'{as_int(row.get("PA", 0))}'),
+            ("PA / game", f'{as_float(row.get("PA Per Game", 0)):.1f}'),
+        ]
+
+        detail_html = "".join(
+            f'<div class="ms-stat"><span>{label}</span><b>{value}</b></div>'
+            for label, value in detail_stats
         )
 
 
         rows.append(
             (
-                '<div class="mobile-standings-row">'
-                f'<div class="mobile-standing-rank">{index + 1}</div>'
-                f'<div class="mobile-standing-team">{team}</div>'
-                f'<div class="mobile-standing-number">{standing_points}</div>'
+                f'<details class="{classes}">'
+                '<summary class="mobile-standings-row">'
+                f'<div class="mobile-standing-rank">{rank}</div>'
+                '<div class="mobile-standing-team">'
+                f'<span class="ms-name">{team}</span>{move}'
+                '</div>'
+                f'<div class="mobile-standing-number sp">{standing_points}</div>'
                 f'<div class="mobile-standing-number">{pf}</div>'
                 f'<div class="mobile-standing-number">{wins}</div>'
                 f'<div class="mobile-standing-number">{top5}</div>'
+                '</summary>'
+                '<div class="ms-detail">'
+                f'<div class="ms-stats">{detail_html}</div>'
+                f'<a class="ms-view" href="{href}" target="_self">View team &rsaquo;</a>'
                 '</div>'
+                '</details>'
             )
         )
+
+        if rank == PLAYOFF_TEAMS and len(standings_df) > PLAYOFF_TEAMS:
+            rows.append(
+                '<div class="ms-playoff-line"><span>Playoff line</span></div>'
+            )
 
 
     return (
@@ -1722,7 +2070,7 @@ def _mobile_standings_html(
         '<div class="mobile-standings-card">'
         '<div class="mobile-standings-header">'
         '<div>#</div>'
-        '<div>TEAM</div>'
+        '<div>Owner</div>'
         '<div>SP</div>'
         '<div>PF</div>'
         '<div>W</div>'
@@ -1730,8 +2078,86 @@ def _mobile_standings_html(
         '</div>'
         f'{"".join(rows)}'
         '</div>'
+        '<div class="ms-hint">Tap a row for more stats</div>'
         '</div>'
     )
+
+
+@st.cache_data(
+    ttl=600,
+    show_spinner=False,
+)
+def load_league_owners(
+    league_id: str | None,
+) -> list[dict]:
+
+    if not league_id:
+        return []
+
+    try:
+        return (
+            auth_client()
+            .table("league_teams")
+            .select("id,owner_name,team_name,sleeper_roster_id")
+            .eq("league_id", league_id)
+            .execute()
+            .data
+            or []
+        )
+
+    except Exception as exc:
+        print(f"[STANDINGS] owner names unavailable: {exc}", flush=True)
+        return []
+
+
+def apply_owner_names(
+    df: pd.DataFrame,
+    owners: list[dict],
+    my_team_id: str | None,
+) -> tuple[pd.DataFrame, str | None]:
+    """Show each team as its owner's name, matched by Sleeper roster id.
+
+    Returns the relabeled frame and the signed-in owner's display name.
+    Rows without a roster match keep their Sleeper name.
+    """
+
+    by_roster = {}
+
+    for owner in owners:
+        try:
+            by_roster[int(owner.get("sleeper_roster_id"))] = owner
+        except (TypeError, ValueError):
+            continue
+
+    if not by_roster or "sleeper_roster_id" not in df.columns:
+        return df, None
+
+    result = df.copy()
+    my_name = None
+    labels = []
+
+    for _, row in result.iterrows():
+        try:
+            owner = by_roster.get(int(row["sleeper_roster_id"]))
+        except (TypeError, ValueError):
+            owner = None
+
+        label = str(row["Team"])
+
+        if owner:
+            label = str(owner.get("owner_name") or owner.get("team_name") or label).strip()
+            TEAM_LINK_NAMES[label] = str(
+                owner.get("team_name") or owner.get("owner_name") or label
+            ).strip()
+
+            if my_team_id and str(owner.get("id")) == str(my_team_id):
+                my_name = label
+
+        labels.append(label)
+
+    result["Team"] = labels
+
+    return result, my_name
 
 
 # ============================================================
@@ -1810,6 +2236,21 @@ if live_df.empty:
 # ============================================================
 # PREP DATA
 # ============================================================
+
+my_team_ctx = get_app_context().get("my_team")
+
+if not isinstance(my_team_ctx, dict):
+    my_team_ctx = {}
+
+live_df, my_owner_name = apply_owner_names(
+    live_df,
+    load_league_owners(league_id),
+    my_team_ctx.get("team_id"),
+)
+
+if "Prev Rank" in live_df.columns:
+    live_df["Prev Rank"] = live_df["Prev Rank"].fillna(0)
+
 
 base_df = (
     live_df
@@ -1941,10 +2382,7 @@ for label, column, ascending in leader_specs:
 
     else:
 
-        target_href = (
-            "/?page=teams&team="
-            f"{urlparse.quote(team)}"
-        )
+        target_href = _team_href(team)
 
 
     leader_results.append(
@@ -2142,9 +2580,24 @@ st.markdown(
 # MOBILE STANDINGS
 # ------------------------------------------------------------
 
+mobile_standings_df = (
+    meta_full
+    .sort_values(
+        [
+            "Standing Points",
+            "PF",
+            "Wins",
+            "Top 5",
+        ],
+        ascending=False,
+    )
+    .reset_index(drop=True)
+)
+
 st.markdown(
     _mobile_standings_html(
-        standings_df
+        mobile_standings_df,
+        my_owner_name,
     ),
     unsafe_allow_html=True,
 )
@@ -2198,7 +2651,13 @@ def _condense_columns(
     )
 
 
-left, right = st.columns(
+# On phone the standings rows expand to show these stats instead,
+# so this block is hidden there (see .st-key-top_bottom_five).
+top_bottom_five = st.container(
+    key="top_bottom_five",
+)
+
+left, right = top_bottom_five.columns(
     2,
     gap="large",
 )

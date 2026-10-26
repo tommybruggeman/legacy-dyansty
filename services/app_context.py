@@ -612,30 +612,54 @@ def build_standings_from_sleeper(sleeper_league_id: str) -> pd.DataFrame:
         if all(score == 0 and opp == 0 for _, score, opp in results):
             continue
 
-        frames.append(pd.DataFrame(score_week(results)))
+        week_frame = pd.DataFrame(score_week(results))
+        week_frame["week"] = week
+        frames.append(week_frame)
 
     if not frames:
         return pd.DataFrame()
 
     big = pd.concat(frames, ignore_index=True)
 
-    out = big.groupby("team", as_index=False).agg(
+    out = _aggregate_standings(big)
+
+    out["PF Per Game"] = (out["PF"] / out["Games"]).round(1)
+    out["PA Per Game"] = (out["PA"] / out["Games"]).round(1)
+    out["sleeper_roster_id"] = out["Team"].map(team_roster_ids)
+
+    # Rank as of the week before the latest one, so pages can show who
+    # moved up or down. Uses the weeks already fetched; no extra API calls.
+    last_week = big["week"].max()
+    previous = big[big["week"] < last_week]
+    if not previous.empty:
+        prev_rank = _standings_rank(_aggregate_standings(previous))
+        out["Prev Rank"] = out["Team"].map(prev_rank)
+
+    return out
+
+
+STANDINGS_SORT = ["Standing Points", "PF", "Wins", "Top 5"]
+
+
+def _aggregate_standings(weeks: pd.DataFrame) -> pd.DataFrame:
+    return weeks.groupby("team", as_index=False).agg(
         **{
             "Standing Points": ("standing_points", "sum"),
             "PF": ("score", "sum"),
             "PA": ("opp_score", "sum"),
             "Wins": ("win", "sum"),
             "Losses": ("loss", "sum"),
+            "Ties": ("tie", "sum"),
             "Top 5": ("top5", "sum"),
             "Games": ("score", "count"),
         }
     ).rename(columns={"team": "Team"})
 
-    out["PF Per Game"] = (out["PF"] / out["Games"]).round(1)
-    out["PA Per Game"] = (out["PA"] / out["Games"]).round(1)
-    out["sleeper_roster_id"] = out["Team"].map(team_roster_ids)
 
-    return out
+def _standings_rank(table: pd.DataFrame) -> dict:
+    """Team -> 1-based rank, in the same order the standings page uses."""
+    ordered = table.sort_values(STANDINGS_SORT, ascending=False)
+    return {team: rank for rank, team in enumerate(ordered["Team"], start=1)}
 
 
 def preseason_standings() -> pd.DataFrame:
