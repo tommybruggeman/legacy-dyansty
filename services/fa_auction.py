@@ -51,11 +51,10 @@ def equivalent_bid(rules: Mapping[str, Any], bid: float, years: int, target_year
     """The same bid expressed at another contract length, rounded up.
 
     Each extra year is worth the league's per-year discount. Returns None
-    when the current bid has not reached that length's minimum.
+    when the converted bid is below that length's minimum (not a valid bid).
     """
-    if float(bid) < minimum_for(rules, target_years):
-        return None
     factor = 1 + float(rules["discount_pct"]) / 100
     value = float(bid) * factor ** (int(years) - int(target_years))
     # Round away float noise before rounding up: 14 * 1.1 / 1.1 is 14, not 15.
-    return int(math.ceil(round(value, 6)))
+    value = int(math.ceil(round(value, 6)))
+    return value if value >= minimum_for(rules, target_years) else None
