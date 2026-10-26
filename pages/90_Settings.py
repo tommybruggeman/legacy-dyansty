@@ -52,6 +52,11 @@ from services.invitations import (
 from services.season_rollover_ui import render_season_rollover_control
 from services.season_rollover_owner_ui import render_owner_rollover_decisions
 from services.commissioner_draft_ui import render_draft, render_fa_auction
+from services.league_tools_ui import (
+    render_contract_lookup,
+    render_league_rules,
+    render_tool_picker,
+)
 from services.free_agents import (
     build_free_agent_results,
     load_league_free_agent_state,
@@ -381,6 +386,12 @@ hr {
 }
 
 /* Draft year chips. */
+.st-key-draft_room_year_pick [role="radiogroup"] {
+    border: 0 !important;
+    background: transparent !important;
+    padding: 0 !important;
+    gap: 6px !important;
+}
 .st-key-draft_room_year_pick button {
     border-radius: 999px !important;
     border-color: rgba(200,155,74,.35) !important;
@@ -600,23 +611,6 @@ def safe_table(table_name: str, order_col: str | None = None) -> list[dict]:
         st.error(f"Could not load {table_name}: {e}")
         return []
 
-def log_commish_action(action_type: str, details: dict):
-    if not active_league_id:
-        return
-
-    payload = {
-        "league_id": active_league_id,
-        "action_type": action_type,
-        "details": details,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-
-    try:
-        sb.table("commissioner_action_log").insert(payload)
-    except Exception:
-        pass
-
-
 def fetch_active_league() -> dict | None:
     try:
         client = sb_client if sb_client else sb
@@ -713,22 +707,6 @@ def section_header(title: str, subtitle: str):
         unsafe_allow_html=True,
     )
 
-
-def render_action_cards(cards: list[tuple[str, str, str]]):
-    html = ['<div class="action-grid">']
-
-    for kicker, title, copy in cards:
-        html.append(
-            f'<div class="action-card">'
-            f'<div class="kicker">{kicker}</div>'
-            f'<div class="title">{title}</div>'
-            f'<div class="copy">{copy}</div>'
-            f'</div>'
-        )
-
-    html.append("</div>")
-
-    st.markdown("".join(html), unsafe_allow_html=True)
 
 def show_commissioner_gate():
     st.markdown(
@@ -911,13 +889,81 @@ section = st.segmented_control(
 # OWNERS
 # ============================================================
 if section == "Owners":
-    section_header(
-        "Owners & Team Mapping",
-        "Connect imported contract owners to Sleeper teams, then assign app users and co-owners.",
+    st.markdown(
+        """
+<style>
+.ow-linked {
+    display: flex; align-items: center; gap: 10px;
+    background: rgba(19,148,94,.12); border: 1px solid rgba(95,211,156,.4);
+    border-radius: 14px; padding: 10px 14px; font-size: .92rem; color: #d6f3e3;
+}
+.ow-linked b { flex: 1; font-weight: 600; }
+.ow-setup-k { color: #E2BC5B; font-size: .72rem; font-weight: 700; letter-spacing: .12em; }
+.ow-setup-t { font-size: 1.15rem; font-weight: 700; color: #F5EBD7; margin: .1rem 0 .2rem 0; }
+[class*="st-key-owner_card_"], .st-key-owner_setup {
+    background: #0C1917;
+    border: 1px solid rgba(245,235,215,.08);
+    border-radius: 16px;
+    padding: 12px 14px 4px 14px;
+}
+.st-key-owner_setup { background: linear-gradient(160deg,#16301f,#0C1917); border-color: rgba(200,155,74,.28); padding-bottom: 12px; }
+.ow-top { display: flex; align-items: center; gap: 10px; }
+.ow-av {
+    width: 36px; height: 36px; border-radius: 50%; flex: none;
+    background: #1d3524; color: #E2BC5B; font-weight: 700; font-size: .8rem;
+    display: flex; align-items: center; justify-content: center;
+}
+.ow-nm { flex: 1; min-width: 0; font-weight: 600; font-size: .98rem; color: #F5EBD7; }
+.ow-nm small { display: block; color: #9DA89C; font-weight: 400; font-size: .78rem; }
+.ow-pill { font-size: .7rem; font-weight: 600; border-radius: 999px; padding: 3px 10px; white-space: nowrap; }
+.ow-pill.g { background: rgba(19,148,94,.18); color: #5fd39c; }
+.ow-pill.y { background: rgba(226,188,91,.15); color: #E2BC5B; }
+.ow-pill.r { background: rgba(169,74,74,.25); color: #f08a86; }
+.ow-mem { display: flex; gap: 6px; flex-wrap: wrap; margin: .55rem 0 .35rem 0; }
+.ow-mem span {
+    font-size: .76rem; border: 1px solid rgba(245,235,215,.1); border-radius: 999px;
+    padding: 3px 10px; color: #d9cfbb;
+}
+/* Small outline pills in one row, on phones too. */
+[class*="st-key-owner_card_"] [data-testid="stHorizontalBlock"],
+.st-key-owner_links_row [data-testid="stHorizontalBlock"],
+.st-key-owner_setup [data-testid="stHorizontalBlock"] {
+    flex-wrap: nowrap !important;
+    gap: .5rem !important;
+}
+[class*="st-key-owner_card_"] [data-testid="stColumn"],
+.st-key-owner_links_row [data-testid="stColumn"],
+.st-key-owner_setup [data-testid="stColumn"] {
+    min-width: 0 !important;
+    width: auto !important;
+    flex: 1 1 0 !important;
+}
+.st-key-owner_links_row [data-testid="stColumn"]:last-child { flex: 0 0 auto !important; }
+[class*="st-key-owner_card_"] [data-testid="stHorizontalBlock"] [data-testid="stColumn"]:empty { display: none; }
+[class*="st-key-owner_card_"] .stButton button,
+.st-key-owner_links_row .stButton button {
+    background: transparent !important;
+    border: 1px solid rgba(200,155,74,.45) !important;
+    color: #E2BC5B !important;
+    border-radius: 999px !important;
+    min-height: 32px !important;
+    padding: 0 12px !important;
+    box-shadow: none !important;
+}
+[class*="st-key-owner_card_"] .stButton button p,
+.st-key-owner_links_row .stButton button p {
+    color: #E2BC5B !important;
+    font-size: .8rem !important;
+    font-weight: 600 !important;
+    white-space: nowrap;
+}
+</style>
+""",
+        unsafe_allow_html=True,
     )
 
     if not sleeper_league_id:
-        st.warning("No Sleeper league is currently connected.")
+        st.warning("No Sleeper league is connected yet.")
 
         col1, col2 = st.columns([2, 1])
 
@@ -948,98 +994,123 @@ if section == "Owners":
                     st.error(f"Could not connect league: {e}")
 
         st.stop()
-    try:
-        with st.spinner("Loading Sleeper teams..."):
-            sleeper_users, sleeper_rosters = fetch_sleeper_league_payload(sleeper_league_id)
-            sleeper_options, sleeper_option_map = build_sleeper_options(sleeper_users, sleeper_rosters)
-    except Exception as e:
-        st.error(f"Could not load Sleeper teams: {e}")
-        st.stop()
 
     if not league_teams:
         st.warning("No imported teams found yet. Finalize contract import first.")
         st.stop()
 
-        st.markdown("### Owner Mapping")
+    # --------------------------------------------------------
+    # Sleeper links: a setup step only while something is unlinked
+    # --------------------------------------------------------
+    all_linked = team_count > 0 and mapped_count == team_count
+    editing_links = st.session_state.get("owner_links_editing", False)
 
-    progress_pct = (mapped_count / team_count) if team_count else 0
-    st.progress(progress_pct)
-    st.caption(f"{mapped_count}/{team_count} teams connected")
+    if (all_linked and not editing_links) or not is_commissioner:
+        links_row = st.container(key="owner_links_row")
+        link_col, edit_col = links_row.columns([4, 1], vertical_alignment="center")
+        with link_col:
+            st.markdown(
+                f'<div class="ow-linked">{"✓" if all_linked else "•"} '
+                f'<b>{mapped_count}/{team_count} teams linked to Sleeper</b></div>',
+                unsafe_allow_html=True,
+            )
+        with edit_col:
+            if is_commissioner and st.button("Edit links", use_container_width=True, key="owner_links_edit"):
+                st.session_state["owner_links_editing"] = True
+                st.rerun()
+    else:
+        try:
+            with st.spinner("Loading Sleeper teams..."):
+                sleeper_users, sleeper_rosters = fetch_sleeper_league_payload(sleeper_league_id)
+                sleeper_options, sleeper_option_map = build_sleeper_options(sleeper_users, sleeper_rosters)
+        except Exception as e:
+            st.error(f"Could not load Sleeper teams: {e}")
+            st.stop()
 
-    with st.form("owner_mapping_form"):
-        selected_map = {}
+        def guess_sleeper_label(owner_name: str) -> str | None:
+            """Suggest the Sleeper team whose handle contains the owner's name."""
+            words = [w.casefold() for w in str(owner_name or "").split() if len(w) > 2]
+            hits = [
+                label for label in sleeper_options[1:]
+                if any(w in label.casefold().replace(" ", "") for w in words)
+            ]
+            return hits[0] if len(hits) == 1 else None
 
-        header_col1, header_col2 = st.columns([1, 2])
-        with header_col1:
-            st.markdown("**Contract Owner**")
-        with header_col2:
-            st.markdown("**Sleeper Team**")
+        with st.container(key="owner_setup"):
+            st.markdown(
+                f'<div class="ow-setup-k">{"EDIT SLEEPER LINKS" if all_linked else "LEAGUE SETUP"}</div>'
+                '<div class="ow-setup-t">Link owners to Sleeper teams</div>',
+                unsafe_allow_html=True,
+            )
+            st.caption(
+                "This only shows when a league is new or a team changes hands. "
+                "Unlinked owners get a suggested match when one is obvious."
+            )
+            with st.form("owner_mapping_form", border=False):
+                selected_map = {}
 
-        st.divider()
+                for team in league_teams:
+                    row_id = team.get("id")
+                    owner_name = team.get("owner_name") or team.get("team_name") or "Unknown Owner"
+                    current_roster_id = team.get("sleeper_roster_id")
+                    current_label = None
 
-        for team in league_teams:
-            row_id = team.get("id")
-            owner_name = team.get("owner_name") or team.get("team_name") or "Unknown Owner"
-            current_roster_id = team.get("sleeper_roster_id")
-            current_label = "-- choose Sleeper team --"
+                    if current_roster_id:
+                        for label, payload in sleeper_option_map.items():
+                            if str(payload.get("sleeper_roster_id")) == str(current_roster_id):
+                                current_label = label
+                                break
+                    current_label = current_label or guess_sleeper_label(owner_name) or sleeper_options[0]
 
-            if current_roster_id:
-                for label, payload in sleeper_option_map.items():
-                    if str(payload.get("sleeper_roster_id")) == str(current_roster_id):
-                        current_label = label
-                        break
+                    name_col, pick_col = st.columns([1, 1.3], vertical_alignment="center")
+                    with name_col:
+                        st.markdown(f"**{html.escape(owner_name)}**")
+                    with pick_col:
+                        selected_map[row_id] = st.selectbox(
+                            f"Sleeper team for {owner_name}",
+                            sleeper_options,
+                            index=sleeper_options.index(current_label) if current_label in sleeper_options else 0,
+                            key=f"map_{row_id}",
+                            label_visibility="collapsed",
+                        )
 
-            default_index = sleeper_options.index(current_label) if current_label in sleeper_options else 0
+                submitted = st.form_submit_button("Save links", use_container_width=True, type="primary")
+                cancelled = all_linked and st.form_submit_button("Cancel", use_container_width=True)
 
-            col1, col2 = st.columns([1, 2])
+        if cancelled:
+            st.session_state["owner_links_editing"] = False
+            st.rerun()
 
-            with col1:
-                st.markdown(f"**{owner_name}**")
+        if submitted:
+            updates = 0
 
-            with col2:
-                selected = st.selectbox(
-                    f"Sleeper team for {owner_name}",
-                    sleeper_options,
-                    index=default_index,
-                    key=f"map_{row_id}",
-                    label_visibility="collapsed",
-                )
+            for team in league_teams:
+                row_id = team.get("id")
+                selected = selected_map.get(row_id)
 
-            selected_map[row_id] = selected
+                if not row_id or not selected or selected == "-- choose Sleeper team --":
+                    continue
 
-        submitted = st.form_submit_button("Save Owner Mapping", use_container_width=True)
+                payload = sleeper_option_map[selected]
 
-    if submitted:
-        updates = 0
+                sb_client.table("league_teams").update(
+                    {
+                        "sleeper_roster_id": payload["sleeper_roster_id"],
+                        "sleeper_user_id": payload["sleeper_user_id"],
+                        "sleeper_team_name": payload["sleeper_team_name"],
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                ).eq("id", row_id).execute()
 
-        for team in league_teams:
-            row_id = team.get("id")
-            selected = selected_map.get(row_id)
+                updates += 1
 
-            if not row_id or not selected or selected == "-- choose Sleeper team --":
-                continue
+            st.session_state["owner_links_editing"] = False
+            st.success(f"Saved {updates} Sleeper link(s).")
+            st.rerun()
 
-            payload = sleeper_option_map[selected]
-
-            sb_client.table("league_teams").update(
-                {
-                    "sleeper_roster_id": payload["sleeper_roster_id"],
-                    "sleeper_user_id": payload["sleeper_user_id"],
-                    "sleeper_team_name": payload["sleeper_team_name"],
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                }
-            ).eq("id", row_id).execute()
-
-            updates += 1
-
-        log_commish_action("save_owner_mapping", {"updated_rows": updates})
-        st.success(f"Saved {updates} owner mapping row(s).")
-        st.rerun()
-
-    st.divider()
-
-    st.markdown("### Owner Invitations")
-
+    # --------------------------------------------------------
+    # One card per owner: who joined, invites, + co-owner
+    # --------------------------------------------------------
     if not is_commissioner:
         st.info("Only commissioners can manage owner invitations.")
         st.stop()
@@ -1047,13 +1118,24 @@ if section == "Owners":
     connected_by_team = load_connected_memberships(active_league_id)
     invites_by_team = load_invites_by_team(active_league_id)
 
-    for team in league_teams:
+    def initials(name: str) -> str:
+        parts = [p for p in str(name or "").split() if p]
+        return "".join(p[0] for p in parts[:2]).upper() or "?"
+
+    def short_date(value) -> str:
+        try:
+            return datetime.fromisoformat(str(value).replace("Z", "+00:00")).strftime("%b %-d")
+        except (TypeError, ValueError):
+            return ""
+
+    for team in sorted(league_teams, key=lambda t: str(t.get("owner_name") or t.get("team_name") or "")):
         team_id = team.get("id")
         owner_name = team.get("owner_name") or team.get("team_name") or "Unknown Owner"
-        team_name = team.get("team_name") or owner_name
-        sleeper_name = team.get("sleeper_team_name") or "Unmapped"
+        sleeper_name = team.get("sleeper_team_name") or team.get("team_name") or "Not linked"
+        first_name = owner_name.split()[0] if owner_name.split() else owner_name
         connected_members = connected_by_team.get(team_id, [])
         team_invites = invites_by_team.get(team_id, [])
+
         classified_invites = [
             {**invite, "_classified_status": classify_invite_status(invite)}
             for invite in team_invites
@@ -1063,9 +1145,15 @@ if section == "Owners":
             for invite in classified_invites
             if invite.get("_classified_status") == "pending_active"
         ]
+        accepted_emails = {
+            str(invite.get("role") or ""): invite.get("email")
+            for invite in classified_invites
+            if invite.get("_classified_status") == "accepted"
+        }
         latest_invite_status = (
             classified_invites[0].get("_classified_status") if classified_invites else None
         )
+
         if connected_members:
             clear_invite_links(
                 st.session_state,
@@ -1073,7 +1161,6 @@ if section == "Owners":
                 league_team_id=team_id,
                 invited_role="owner",
             )
-
             for member in connected_members:
                 member_role = str(member.get("role") or "").replace("-", "_")
                 if member_role in {"owner", "co_owner"}:
@@ -1094,99 +1181,112 @@ if section == "Owners":
                     invitation_id=invite.get("id"),
                 )
 
-        with st.container(border=True):
-            top_col, status_col = st.columns([2, 1])
+        if connected_members:
+            pill = '<span class="ow-pill g">Joined</span>'
+        elif pending_invites:
+            pill = '<span class="ow-pill y">Invite sent</span>'
+        elif latest_invite_status == "expired":
+            pill = '<span class="ow-pill r">Invite expired</span>'
+        else:
+            pill = '<span class="ow-pill r">Not invited</span>'
 
-            with top_col:
-                st.markdown(f"**{team_name}**")
-                st.caption(f"Contract owner: {owner_name} | Sleeper: {sleeper_name}")
+        chips = []
+        for member in connected_members:
+            role = str(member.get("role") or "member").replace("-", "_")
+            who = accepted_emails.get(role) or (first_name if role == "owner" else "")
+            label = {"owner": "owner", "co_owner": "co-owner", "commissioner": "commissioner"}.get(role, role)
+            chips.append(f"<span>{'👥' if role == 'co_owner' else '👤'} {html.escape(str(who or ''))}{' · ' if who else ''}{label}</span>")
+        for invite in pending_invites:
+            role = str(invite.get("role") or "owner").replace("_", "-")
+            expires = short_date(invite.get("expires_at"))
+            chips.append(
+                f"<span>✉️ {html.escape(str(invite.get('email') or ''))} · {role}"
+                f"{' · expires ' + expires if expires else ''}</span>"
+            )
 
-            with status_col:
-                if connected_members:
-                    st.success(f"Connected ({len(connected_members)})")
-                elif pending_invites:
-                    st.warning("Pending")
-                elif latest_invite_status == "expired":
-                    st.warning("Invite expired")
-                elif latest_invite_status == "revoked":
-                    st.info("Invite revoked")
-                elif latest_invite_status == "accepted":
-                    st.success("Accepted")
-                else:
-                    st.info("Not invited")
-
-            if connected_members:
-                connected_rows = [
-                    {
-                        "User ID": member.get("user_id"),
-                        "Role": member.get("role") or "member",
-                    }
-                    for member in connected_members
-                ]
-                st.dataframe(
-                    pd.DataFrame(connected_rows),
-                    use_container_width=True,
-                    hide_index=True,
-                )
-
-            if classified_invites:
-                invite_rows = [
-                    {
-                        "Email": invite.get("email"),
-                        "Access": str(invite.get("role") or "").replace("_", "-"),
-                        "Status": str(invite.get("_classified_status") or invite.get("status") or "").replace("_", " "),
-                        "Expires": invite.get("expires_at"),
-                        "Sent": invite.get("send_count") or 0,
-                    }
-                    for invite in classified_invites
-                ]
-                st.dataframe(
-                    pd.DataFrame(invite_rows),
-                    use_container_width=True,
-                    hide_index=True,
-                )
-
-            action_cols = st.columns(3)
-            create_role = None
+        with st.container(key=f"owner_card_{team_id}"):
+            st.markdown(
+                f'<div class="ow-top"><div class="ow-av">{initials(owner_name)}</div>'
+                f'<div class="ow-nm">{html.escape(owner_name)}<small>{html.escape(sleeper_name)}</small></div>{pill}</div>'
+                + (f'<div class="ow-mem">{"".join(chips)}</div>' if chips else ""),
+                unsafe_allow_html=True,
+            )
 
             if connected_members:
-                st.info("Owner invite is disabled because this team already has connected app access.")
-
-                if not can_offer_invite_role(
-                    connected_members=connected_members,
-                    active_invites=pending_invites,
-                    invite_role="co_owner",
-                ):
-                    st.caption("A co-owner invitation is already pending for this team.")
-                else:
-                    create_role = "co_owner"
-                    invite_email = st.text_input(
-                        "Co-owner email",
-                        value="",
-                        placeholder="co-owner@email.com",
-                        key=f"invite_email_{team_id}_co_owner",
+                invite_role = (
+                    "co_owner"
+                    if can_offer_invite_role(
+                        connected_members=connected_members,
+                        active_invites=pending_invites,
+                        invite_role="co_owner",
                     )
+                    else None
+                )
             else:
-                invite_email = st.text_input(
-                    "Email",
-                    value="",
-                    placeholder="owner@email.com",
-                    key=f"invite_email_{team_id}_owner_or_co_owner",
-                )
-                invite_role_label = st.radio(
-                    "Access type",
-                    ["Owner", "Co-owner"],
-                    horizontal=True,
-                    key=f"invite_role_{team_id}",
-                )
-                create_role = "co_owner" if invite_role_label == "Co-owner" else "owner"
+                invite_role = "owner"
 
-            with action_cols[0]:
-                if create_role and st.button(
-                    "Send New Invite" if latest_invite_status == "expired" else "Send Invite",
-                    key=f"send_invite_{team_id}_{create_role}",
-                    use_container_width=True,
-                ):
+            form_key = f"owner_invite_open_{team_id}"
+            buttons = st.columns(3)
+            if invite_role and not pending_invites:
+                with buttons[0]:
+                    label = "+ Co-owner" if connected_members else "+ Invite"
+                    if st.button(label, key=f"open_invite_{team_id}", use_container_width=True):
+                        st.session_state[form_key] = not st.session_state.get(form_key, False)
+                        st.rerun()
+
+            if pending_invites:
+                selected_invite = pending_invites[0]
+                selected_invite_id = selected_invite.get("id")
+                with buttons[0]:
+                    if st.button("Resend", key=f"resend_invite_{team_id}", use_container_width=True):
+                        result = resend_invitation(selected_invite_id, sb=sb_client)
+                        clear_invite_links(
+                            st.session_state,
+                            league_id=active_league_id,
+                            league_team_id=team_id,
+                            invited_role=selected_invite.get("role"),
+                            invitation_id=selected_invite_id,
+                        )
+                        store_invitation_link(result, selected_invite.get("role"))
+                        render_invitation_result(result)
+                with buttons[1]:
+                    if st.button("Cancel invite", key=f"revoke_invite_{team_id}", use_container_width=True):
+                        result = revoke_invitation(selected_invite_id, sb=sb_client)
+                        clear_invite_links(
+                            st.session_state,
+                            league_id=active_league_id,
+                            league_team_id=team_id,
+                            invited_role=selected_invite.get("role"),
+                            invitation_id=selected_invite_id,
+                        )
+                        render_invitation_result(result)
+                        if result.get("ok"):
+                            st.rerun()
+
+            if invite_role and not pending_invites and st.session_state.get(form_key):
+                with st.form(f"invite_form_{team_id}", border=False):
+                    invite_email = st.text_input(
+                        "Email",
+                        placeholder="name@email.com",
+                        key=f"invite_email_{team_id}",
+                    )
+                    if connected_members:
+                        create_role = "co_owner"
+                        st.caption("Co-owners can set lineups and make moves for this team.")
+                    else:
+                        role_label = st.segmented_control(
+                            "Access",
+                            ["Owner", "Co-owner"],
+                            default="Owner",
+                            key=f"invite_role_{team_id}",
+                        )
+                        create_role = "co_owner" if role_label == "Co-owner" else "owner"
+                    send = st.form_submit_button(
+                        "Send new invite" if latest_invite_status == "expired" else "Send invite",
+                        use_container_width=True,
+                        type="primary",
+                    )
+                if send:
                     if not validate_email(invite_email):
                         st.error("Enter a valid email address.")
                     else:
@@ -1199,75 +1299,8 @@ if section == "Owners":
                         )
                         store_invitation_link(result, create_role)
                         render_invitation_result(result)
-
                         if result.get("ok"):
-                            log_commish_action(
-                                "create_owner_invitation",
-                                {
-                                    "league_team_id": team_id,
-                                    "email": result.get("email"),
-                                    "role": create_role,
-                                },
-                            )
-
-            pending_options = {
-                f"{invite.get('email')} ({str(invite.get('role') or '').replace('_', '-')}) [{invite.get('id')}]": invite.get("id")
-                for invite in pending_invites
-            }
-
-            if pending_options:
-                selected_pending = st.selectbox(
-                    "Pending invitation",
-                    list(pending_options.keys()),
-                    key=f"pending_invite_{team_id}",
-                )
-                selected_invite_id = pending_options[selected_pending]
-
-                with action_cols[1]:
-                    if st.button("Resend", key=f"resend_invite_{team_id}", use_container_width=True):
-                        result = resend_invitation(selected_invite_id, sb=sb_client)
-                        selected_invite = next(
-                            (invite for invite in pending_invites if invite.get("id") == selected_invite_id),
-                            {},
-                        )
-                        clear_invite_links(
-                            st.session_state,
-                            league_id=active_league_id,
-                            league_team_id=team_id,
-                            invited_role=selected_invite.get("role"),
-                            invitation_id=selected_invite_id,
-                        )
-                        store_invitation_link(result, selected_invite.get("role"))
-                        render_invitation_result(result)
-
-                        if result.get("ok"):
-                            log_commish_action(
-                                "resend_owner_invitation",
-                                {"invitation_id": selected_invite_id, "league_team_id": team_id},
-                            )
-
-                with action_cols[2]:
-                    if st.button("Revoke", key=f"revoke_invite_{team_id}", use_container_width=True):
-                        result = revoke_invitation(selected_invite_id, sb=sb_client)
-                        selected_invite = next(
-                            (invite for invite in pending_invites if invite.get("id") == selected_invite_id),
-                            {},
-                        )
-                        clear_invite_links(
-                            st.session_state,
-                            league_id=active_league_id,
-                            league_team_id=team_id,
-                            invited_role=selected_invite.get("role"),
-                            invitation_id=selected_invite_id,
-                        )
-                        render_invitation_result(result)
-
-                        if result.get("ok"):
-                            log_commish_action(
-                                "revoke_owner_invitation",
-                                {"invitation_id": selected_invite_id, "league_team_id": team_id},
-                            )
-                            st.rerun()
+                            st.session_state[form_key] = False
 
             render_retained_invite_links(
                 league_id=active_league_id,
@@ -1296,260 +1329,31 @@ elif section == "League Tools":
         show_commissioner_gate()
         st.stop()
 
-    st.markdown("## League Manager Tools")
-    st.caption("Commissioner-only controls for contracts, transactions, and league rules.")
-
-    tools = [
-        "League Rules",
-        "League AI",
-        "Contract Editor",
-        "Manual Add",
-        "Manual Drop",
-        "Trade Tools",
-        "Sleeper Sync",
-        "Season Rollover",
-    ]
-
-    if "lm_tool" not in st.session_state:
-        st.session_state["lm_tool"] = "League Rules"
-
-    cols = st.columns(len(tools))
-
-    for tool_name, col in zip(tools, cols):
-        with col:
-            is_active = st.session_state["lm_tool"] == tool_name
-            button_label = f"✓ {tool_name}" if is_active else tool_name
-
-            if st.button(
-                button_label,
-                key=f"lm_tool_{tool_name}",
-                use_container_width=True,
-            ):
-                st.session_state["lm_tool"] = tool_name
-                st.rerun()
-
-    tool = st.session_state["lm_tool"]
-
-    with st.expander("Deployment diagnostics", expanded=False):
-        st.caption(
-            "What code this process is actually running. If a fix looks like it "
-            "did not deploy, check here before re-pushing."
-        )
-        try:
-            import services.offseason_transactions as _svc
-
-            diag_pid = os.getpid()
-            diag_module = getattr(_svc, "__file__", "unknown")
-            diag_commit = "unknown"
-            try:
-                head = Path(ROOT_DIR_STR) / ".git" / "HEAD"
-                if head.exists():
-                    ref = head.read_text().strip()
-                    if ref.startswith("ref: "):
-                        ref_path = Path(ROOT_DIR_STR) / ".git" / ref[5:]
-                        if ref_path.exists():
-                            diag_commit = ref_path.read_text().strip()[:12]
-                    else:
-                        diag_commit = ref[:12]
-            except Exception:
-                pass
-
-            # Symbols added at known points in history: a missing one means this
-            # process is running an older copy of the module than the checkout.
-            markers = {
-                "assign_injured_reserve": "76b19e6",
-                "list_manual_drop_candidates": "bbc14ae",
-            }
-            st.code(
-                f"pid           {diag_pid}\n"
-                f"commit        {diag_commit}\n"
-                f"module        {diag_module}",
-                language="text",
-            )
-            for symbol, since in markers.items():
-                present = hasattr(_svc.OffseasonTransactionService, symbol)
-                st.markdown(
-                    f"{'✅' if present else '❌'} `{symbol}` "
-                    f"— expected since `{since}`"
-                )
-            if not all(
-                hasattr(_svc.OffseasonTransactionService, s) for s in markers
-            ):
-                st.error(
-                    "This process is running an older copy of "
-                    "services/offseason_transactions.py than the deployed "
-                    "checkout. Reboot the app and wait for the logs to restart "
-                    "from the beginning — a browser refresh or Rerun is not a "
-                    "reboot."
-                )
-        except Exception as exc:
-            st.warning(f"Diagnostics unavailable: {exc}")
-
-
-
-    st.divider()
+    picked = render_tool_picker()
+    legacy_names = {
+        "rules": "League Rules",
+        "ai": "League AI",
+        "contracts": "Contract Editor",
+        "trades": "Trade Tools",
+        "sync": "Sleeper Sync",
+        "rollover": "Season Rollover",
+    }
+    tool = legacy_names.get(picked)
+    if picked == "add_drop":
+        add_or_drop = st.segmented_control(
+            "Add or drop",
+            ["Add player", "Drop player"],
+            default="Add player",
+            key="lm_add_drop",
+            label_visibility="collapsed",
+        ) or "Add player"
+        tool = "Manual Add" if add_or_drop == "Add player" else "Manual Drop"
 
     if tool == "Season Rollover":
         render_season_rollover_control(sb_client, active_league_id, league_name)
 
     elif tool == "League Rules":
-        st.markdown("### League Rules")
-        st.caption("Commissioner settings for this league only.")
-
-        st.markdown("#### Salary + Contract Defaults")
-
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            salary_cap = st.number_input(
-                "Salary cap",
-                min_value=0,
-                value=int(float(league_rules.get("salary_cap", 225))),
-            )
-        with c2:
-            max_contract_years = st.number_input(
-                "Max contract years",
-                min_value=1,
-                max_value=10,
-                value=int(float(league_rules.get("max_contract_years", 4))),
-            )
-        with c3:
-            default_dead_cap_pct = st.number_input(
-                "Default dead cap %",
-                min_value=0.0,
-                max_value=100.0,
-                value=float(league_rules.get("default_dead_cap_pct", 50)),
-            )
-
-        c4, c5, c6 = st.columns(3)
-        with c4:
-            default_fa_years = st.number_input(
-                "Default free agent years",
-                min_value=1,
-                max_value=5,
-                value=int(float(league_rules.get("default_fa_years", 1))),
-            )
-        with c5:
-            default_fa_salary = st.number_input(
-                "Default free agent salary",
-                min_value=0.0,
-                value=float(league_rules.get("default_fa_salary", 1.0)),
-            )
-        with c6:
-            default_waiver_salary = st.number_input(
-                "Default waiver salary",
-                min_value=0.0,
-                value=float(league_rules.get("default_waiver_salary", 1.0)),
-            )
-
-        st.divider()
-        st.markdown("#### Rookie Draft Defaults")
-
-        r1, r2, r3 = st.columns(3)
-        with r1:
-            rookie_contract_years = st.number_input(
-                "Default rookie years",
-                min_value=1,
-                max_value=5,
-                value=int(float(league_rules.get("rookie_contract_years", 3))),
-            )
-        with r2:
-            rookie_option_years = st.number_input(
-                "Rookie option years",
-                min_value=0,
-                max_value=3,
-                value=int(float(league_rules.get("rookie_option_years", 1))),
-            )
-        with r3:
-            rookie_scale_enabled = st.checkbox(
-                "Use rookie salary scale",
-                value=bool(league_rules.get("rookie_scale_enabled", True)),
-            )
-            scale_rookie_salaries_with_cap = st.checkbox(
-                "Scale rookie salaries with salary cap",
-                value=bool(league_rules.get("scale_rookie_salaries_with_cap", False)),
-            )
-
-        st.divider()
-        st.markdown("#### Auction Settings")
-
-        a1, a2, a3 = st.columns(3)
-        with a1:
-            min_2_year_bid = st.number_input(
-                "2-year minimum bid",
-                min_value=0.0,
-                value=float(league_rules.get("min_2_year_bid", 4.0)),
-            )
-        with a2:
-            min_3_year_bid = st.number_input(
-                "3-year minimum bid",
-                min_value=0.0,
-                value=float(league_rules.get("min_3_year_bid", 12.0)),
-            )
-        with a3:
-            min_4_year_bid = st.number_input(
-                "4-year minimum bid",
-                min_value=0.0,
-                value=float(league_rules.get("min_4_year_bid", 20.0)),
-            )
-
-        a4, a5 = st.columns(2)
-        with a4:
-            year_discount_pct = st.number_input(
-                "Year discount %",
-                min_value=0.0,
-                max_value=100.0,
-                value=float(league_rules.get("year_discount_pct", 10.0)),
-            )
-        with a5:
-            auction_reset_allowed = st.checkbox(
-                "Allow auction reset",
-                value=bool(league_rules.get("auction_reset_allowed", True)),
-            )
-
-        if st.button("Save League Rules", use_container_width=True):
-            sb_client.table("league_rules").upsert(
-                {
-                    "league_id": active_league_id,
-                    "salary_cap": salary_cap,
-                    "max_contract_years": max_contract_years,
-                    "default_dead_cap_pct": default_dead_cap_pct,
-                    "default_fa_years": default_fa_years,
-                    "default_fa_salary": default_fa_salary,
-                    "default_waiver_salary": default_waiver_salary,
-                    "rookie_contract_years": rookie_contract_years,
-                    "rookie_option_years": rookie_option_years,
-                    "rookie_scale_enabled": rookie_scale_enabled,
-                    "scale_rookie_salaries_with_cap": scale_rookie_salaries_with_cap,
-                    "min_2_year_bid": min_2_year_bid,
-                    "min_3_year_bid": min_3_year_bid,
-                    "min_4_year_bid": min_4_year_bid,
-                    "year_discount_pct": year_discount_pct,
-                    "auction_reset_allowed": auction_reset_allowed,
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                },
-                on_conflict="league_id",
-            ).execute()
-            log_commish_action(
-                "save_league_rules",
-                {
-                    "salary_cap": salary_cap,
-                    "max_contract_years": max_contract_years,
-                    "default_dead_cap_pct": default_dead_cap_pct,
-                    "default_fa_years": default_fa_years,
-                    "default_fa_salary": default_fa_salary,
-                    "default_waiver_salary": default_waiver_salary,
-                    "rookie_contract_years": rookie_contract_years,
-                    "rookie_option_years": rookie_option_years,
-                    "rookie_scale_enabled": rookie_scale_enabled,
-                    "scale_rookie_salaries_with_cap": scale_rookie_salaries_with_cap,
-                    "min_2_year_bid": min_2_year_bid,
-                    "min_3_year_bid": min_3_year_bid,
-                    "min_4_year_bid": min_4_year_bid,
-                    "year_discount_pct": year_discount_pct,
-                    "auction_reset_allowed": auction_reset_allowed,
-                },
-            )
-            st.success("League rules saved.")
+        render_league_rules(sb_client, active_league_id, league_rules)
 
     elif tool == "League AI":
         from league_ai.settings_ui import render_league_ai_settings
@@ -1557,80 +1361,7 @@ elif section == "League Tools":
         render_league_ai_settings(sb_client, active_league_id, sleeper_league_id)
 
     elif tool == "Contract Editor":
-        st.markdown("### Contract Editor")
-        st.caption("Select an existing player contract and edit it safely.")
-
-        players = (
-            sb_client.table("contracts")
-            .select("player_name,sleeper_player_id")
-            .eq("league_id", active_league_id)
-            .order("player_name")
-            .execute()
-            .data
-            or []
-        )
-
-        player_options = [
-            f"{p.get('player_name')} ({p.get('sleeper_player_id')})"
-            for p in players
-            if p.get("player_name")
-        ]
-
-        contract_tag_map = {
-            "Standard": "standard",
-            "Rookie Contract": "rookie_contract",
-            "FA Auction Contract": "fa_auction_contract",
-            "Restricted FA": "restricted_fa",
-            "Franchise Tag": "franchise_tag",
-            "Manual Adjustment": "manual_adjustment",
-        }
-
-        c1, c2 = st.columns(2)
-
-        with c1:
-            player_search = st.selectbox(
-                "Player",
-                options=player_options,
-                index=None,
-                placeholder="Search or choose player...",
-                key="contract_editor_player_select",
-            )
-
-            new_salary = st.number_input(
-                "New salary",
-                min_value=0.0,
-                value=1.0,
-            )
-
-        with c2:
-            new_years_left = st.number_input(
-                "New years left",
-                min_value=0,
-                max_value=10,
-                value=1,
-            )
-
-            contract_tag_display = st.selectbox(
-                "Contract Tag",
-                options=list(contract_tag_map.keys()),
-            )
-
-            contract_tag = contract_tag_map[contract_tag_display]
-
-        notes = st.text_area("Reason / notes")
-
-        if st.button("Log Contract Edit", use_container_width=True):
-            log_commish_action(
-                "edit_contract",
-                {
-                    "player_search": player_search,
-                    "new_salary": new_salary,
-                    "new_years_left": new_years_left,
-                    "contract_tag": contract_tag,
-                    "notes": notes,
-                },
-            )
-            st.success("Contract edit logged.")
+        render_contract_lookup(sb_client, active_league_id, canonical_season)
 
     elif tool == "Manual Add":
         st.markdown("### Manual Player Add")
@@ -1683,16 +1414,6 @@ elif section == "League Tools":
                 idempotency_key=f"manual-add:{active_league_id}:{canonical_season}:{player_id}", notes=notes,
             )
             invalidate_team_state_session_cache(st.session_state)
-            log_commish_action(
-                "manual_player_add",
-                {
-                    "player_search": player_search,
-                    "target_team": target_team,
-                    "salary": salary,
-                    "years": years,
-                    "notes": notes,
-                },
-            )
             st.success("Manual add completed.")
 
     elif tool == "Sleeper Sync":
@@ -1755,7 +1476,6 @@ elif section == "League Tools":
                         "pause_reason": pause_reason,
                         "paused_at": "now()",
                     }).eq("league_id", active_league_id).execute()
-                    log_commish_action("sleeper_sync_paused", {"reason": pause_reason})
                     st.success("Sync paused.")
                     st.rerun()
             else:
@@ -1775,9 +1495,6 @@ elif section == "League Tools":
                         "paused_at": None,
                         "watermark_created_ms": resume_ms,
                     }).eq("league_id", active_league_id).execute()
-                    log_commish_action(
-                        "sleeper_sync_resumed", {"watermark_created_ms": resume_ms},
-                    )
                     st.success("Sync resumed.")
                     st.rerun()
 
@@ -1913,19 +1630,6 @@ elif section == "League Tools":
         if st.button("Log Manual Drop", use_container_width=True, disabled=drop_resolution is None):
             transaction_service.release_manual_drop(player_id=drop_resolution.player_id, notes=notes)
             invalidate_team_state_session_cache(st.session_state)
-            log_commish_action(
-                "manual_player_drop",
-                {
-                    "player_search": player_search,
-                    "league_team_id": drop_resolution.league_team_id,
-                    "team_name": drop_resolution.team_name,
-                    "active_season": drop_resolution.active_season,
-                    "salary_basis": str(drop_resolution.salary_basis),
-                    "dead_cap_percentage": str(drop_resolution.dead_cap_percentage),
-                    "dead_cap": str(drop_resolution.dead_cap),
-                    "notes": notes,
-                },
-            )
             st.success("Manual drop completed.")
     elif tool == "Trade Tools":
         st.markdown("### Trade Tools")
@@ -2175,6 +1879,60 @@ elif section == "Platform Admin":
         st.write("Supabase Key loaded:", bool(SUPABASE_KEY))
 
     elif admin_tool == "Environment Check":
+        with st.expander("Deployment diagnostics", expanded=False):
+            st.caption(
+                "What code this process is actually running. If a fix looks like it "
+                "did not deploy, check here before re-pushing."
+            )
+            try:
+                import services.offseason_transactions as _svc
+
+                diag_pid = os.getpid()
+                diag_module = getattr(_svc, "__file__", "unknown")
+                diag_commit = "unknown"
+                try:
+                    head = Path(ROOT_DIR_STR) / ".git" / "HEAD"
+                    if head.exists():
+                        ref = head.read_text().strip()
+                        if ref.startswith("ref: "):
+                            ref_path = Path(ROOT_DIR_STR) / ".git" / ref[5:]
+                            if ref_path.exists():
+                                diag_commit = ref_path.read_text().strip()[:12]
+                        else:
+                            diag_commit = ref[:12]
+                except Exception:
+                    pass
+
+                # Symbols added at known points in history: a missing one means this
+                # process is running an older copy of the module than the checkout.
+                markers = {
+                    "assign_injured_reserve": "76b19e6",
+                    "list_manual_drop_candidates": "bbc14ae",
+                }
+                st.code(
+                    f"pid           {diag_pid}\n"
+                    f"commit        {diag_commit}\n"
+                    f"module        {diag_module}",
+                    language="text",
+                )
+                for symbol, since in markers.items():
+                    present = hasattr(_svc.OffseasonTransactionService, symbol)
+                    st.markdown(
+                        f"{'✅' if present else '❌'} `{symbol}` "
+                        f"— expected since `{since}`"
+                    )
+                if not all(
+                    hasattr(_svc.OffseasonTransactionService, s) for s in markers
+                ):
+                    st.error(
+                        "This process is running an older copy of "
+                        "services/offseason_transactions.py than the deployed "
+                        "checkout. Reboot the app and wait for the logs to restart "
+                        "from the beginning — a browser refresh or Rerun is not a "
+                        "reboot."
+                    )
+            except Exception as exc:
+                st.warning(f"Diagnostics unavailable: {exc}")
         st.subheader("Environment")
         st.json(
             {
