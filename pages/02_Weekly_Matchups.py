@@ -1,9 +1,9 @@
 # pages/02_Weekly_Matchups.py
 # ------------------------------------------------------------
 # Weekly Matchups
-# Desktop keeps the existing dataframe presentation.
-# Phones get one card per game (services/matchups_view.py),
-# with owner names, weekly rank and the signed-in owner's game first.
+# One card per game (services/matchups_view.py) on phone and
+# desktop, with owner names, weekly rank and the signed-in
+# owner's game first.
 # ------------------------------------------------------------
 
 import html
@@ -12,7 +12,6 @@ import sys
 from pathlib import Path
 from typing import Dict
 
-import pandas as pd
 import requests
 import streamlit as st
 
@@ -239,39 +238,6 @@ def load_weekly_games_cached(
     return build_games(rows, names)
 
 
-def _games_to_frame(
-    games: list,
-) -> pd.DataFrame:
-    """Desktop table: one row per game, leader on the left."""
-
-    columns = [
-        "Weekly Rank (A)",
-        "Team A",
-        "Score A",
-        "Team B",
-        "Score B",
-        "Weekly Rank (B)",
-    ]
-
-    rows = []
-
-    for game in games:
-        team_a, team_b = game["teams"]
-
-        rows.append(
-            {
-                "Weekly Rank (A)": team_a["rank"],
-                "Team A": team_a["name"],
-                "Score A": team_a["score"],
-                "Team B": team_b["name"],
-                "Score B": team_b["score"],
-                "Weekly Rank (B)": team_b["rank"],
-            }
-        )
-
-    return pd.DataFrame(rows, columns=columns)
-
-
 def _my_roster_id():
     """The signed-in owner's Sleeper roster id, or None.
     Looked up once per session."""
@@ -448,93 +414,42 @@ div[data-testid="stSelectbox"] > div > div {
 
 
 /* =========================================================
-   Desktop dataframe
-========================================================= */
-
-div[data-testid="stDataFrame"] {
-    background:
-        radial-gradient(
-            120% 140% at 20% 0%,
-            var(--panel) 0%,
-            var(--panel-2) 100%
-        );
-
-    border: 1px solid var(--gold-soft);
-
-    border-radius: 16px;
-
-    box-shadow: var(--shadow-amb);
-
-    padding: 8px 8px 2px 8px;
-
-    position: relative;
-}
-
-
-div[data-testid="stDataFrame"]::before {
-    content: "";
-
-    position: absolute;
-
-    left: 6px;
-    right: 6px;
-    top: 6px;
-
-    height: 2px;
-
-    border-radius: 2px;
-
-    background:
-        linear-gradient(
-            90deg,
-            rgba(226,188,91,0) 0%,
-            rgba(226,188,91,.35) 22%,
-            rgba(226,188,91,.6) 50%,
-            rgba(226,188,91,.35) 78%,
-            rgba(226,188,91,0) 100%
-        );
-
-    pointer-events: none;
-}
-
-
-div[data-testid="stDataFrame"]
-table thead tr th {
-    position: sticky;
-
-    top: 0;
-
-    z-index: 2;
-
-    background: var(--panel-2);
-
-    border-bottom:
-        1px solid var(--gold-soft);
-}
-
-
-div[data-testid="stDataFrame"]
-table tbody tr:nth-child(even) td {
-    background:
-        rgba(255,255,255,.02);
-}
-
-
-div[data-testid="stDataFrame"]
-table tbody tr:hover td {
-    background:
-        rgba(226,188,91,.08);
-}
-
-
-/* =========================================================
-   Phone matchup cards
+   Matchup cards
    One card per game: two even rows (rank, owner, score) and a
-   status line. Shown only under 700px; desktop keeps the table.
+   status line. Desktop lays the cards out in a grid; phones
+   stack them in one column.
 ========================================================= */
 
-.mobile-matchups-wrapper {
-    display: none;
+.mm-wrapper {
+    width: 100%;
+
+    margin-top: .7rem;
+}
+
+
+/* Three even columns on desktop, two on tablets, one on phones.
+   Cards stretch to the same height, status line pinned to the bottom. */
+.mm-games {
+    display: grid;
+
+    grid-template-columns:
+        repeat(3, minmax(0, 1fr));
+
+    gap: 14px;
+}
+
+
+.mm-games .mm-card {
+    display: flex;
+
+    flex-direction: column;
+
+    margin-bottom: 0;
+}
+
+
+.mm-games .mm-status {
+    margin-top: auto;
 }
 
 
@@ -544,9 +459,9 @@ table tbody tr:hover td {
     grid-template-columns:
         repeat(3, minmax(0, 1fr));
 
-    gap: 8px;
+    gap: 14px;
 
-    margin-bottom: 12px;
+    margin-bottom: 16px;
 }
 
 
@@ -861,13 +776,52 @@ table tbody tr:hover td {
 
 
 .mm-hint {
-    margin-top: 2px;
+    margin-top: 12px;
 
     color: var(--muted);
 
     font-size: .68rem;
 
     text-align: center;
+}
+
+
+@media (min-width: 701px) {
+
+    .mm-box {
+        padding: 14px 10px 12px;
+    }
+
+
+    .mm-box span {
+        font-size: .66rem;
+    }
+
+
+    .mm-box b {
+        font-size: 1.35rem;
+    }
+
+
+    .mm-box em {
+        font-size: .8rem;
+    }
+
+
+    /* The gold border and "You" tag mark your game here; the label
+       would make that card taller than the rest of its row. */
+    .mm-label {
+        display: none;
+    }
+}
+
+
+@media (min-width: 701px) and (max-width: 1100px) {
+
+    .mm-games {
+        grid-template-columns:
+            repeat(2, minmax(0, 1fr));
+    }
 }
 
 
@@ -1081,30 +1035,22 @@ table tbody tr:hover td {
     }
 
 
-    /*
-       Hide the normal Streamlit desktop dataframe.
-       This page has only one dataframe.
-    */
+    .mm-games {
+        grid-template-columns: minmax(0, 1fr);
 
-    div[data-testid="stDataFrame"] {
-        display: none !important;
+        gap: 10px;
     }
 
 
-    /*
-       Show compact matchup table.
-    */
+    .mm-summary {
+        gap: 8px;
 
-    .mobile-matchups-wrapper {
-        display: block !important;
+        margin-bottom: 12px;
+    }
 
-        width: 100% !important;
 
-        max-width: 100% !important;
-
-        margin-top: .7rem;
-
-        overflow: hidden;
+    .mm-hint {
+        margin-top: 8px;
     }
 
 
@@ -1149,18 +1095,6 @@ table tbody tr:hover td {
     }
 }
 
-
-/* =========================================================
-   DESKTOP
-========================================================= */
-
-@media (min-width: 701px) {
-
-    .mobile-matchups-wrapper {
-        display: none !important;
-    }
-
-}
 
 </style>
 """,
@@ -1280,7 +1214,6 @@ try:
         selected_week,
     )
 
-    df = _games_to_frame(games)
 
 
     loading_box.empty()
@@ -1290,7 +1223,7 @@ try:
     # Empty week
     # ========================================================
 
-    if df.empty:
+    if not games:
 
         st.markdown(
             (
@@ -1315,22 +1248,8 @@ try:
 
     else:
 
-        df["Score A"] = (
-            df["Score A"]
-            .astype(float)
-            .round(2)
-        )
-
-
-        df["Score B"] = (
-            df["Score B"]
-            .astype(float)
-            .round(2)
-        )
-
-
         # ----------------------------------------------------
-        # MOBILE TABLE
+        # Matchup cards (phone and desktop)
         # ----------------------------------------------------
 
         try:
@@ -1341,7 +1260,7 @@ try:
             week_is_final = False
 
 
-        mobile_grid = matchup_cards_html(
+        cards = matchup_cards_html(
             games,
             my_roster_id=_my_roster_id(),
             is_final=week_is_final,
@@ -1349,220 +1268,8 @@ try:
 
 
         st.markdown(
-            mobile_grid,
+            cards,
             unsafe_allow_html=True,
-        )
-
-
-        # ----------------------------------------------------
-        # DESKTOP TABLE
-        # ----------------------------------------------------
-
-        GOLD = "#E2BC5B"
-
-        GOLD_SOFT = (
-            "rgba(226,188,91,.35)"
-        )
-
-        PANEL = "#101E1D"
-
-        PANEL_2 = "#0C1917"
-
-
-        SCORE_BADGE = (
-            "background: radial-gradient("
-            "120% 140% at 20% 0%, "
-            "{p1} 0%, {p2} 100%);"
-            "border: 1px solid {border};"
-            "border-radius: 10px;"
-            "padding: 2px 8px;"
-            "display: inline-block;"
-            "box-shadow: 0 2px 10px rgba(0,0,0,.20);"
-            "text-align: right;"
-            "font-weight: 600;"
-        ).format(
-            p1=PANEL,
-            p2=PANEL_2,
-            border=GOLD_SOFT,
-        )
-
-
-        WINNER_BADGE = (
-            "background: radial-gradient("
-            "120% 140% at 20% 0%, "
-            "{p1} 0%, {p2} 100%);"
-            "border: 1px solid {border};"
-            "border-radius: 10px;"
-            "padding: 2px 8px;"
-            "display: inline-block;"
-            "box-shadow: 0 2px 14px rgba(226,188,91,.25);"
-            "text-align: right;"
-            "font-weight: 800;"
-            "color: {gold};"
-        ).format(
-            p1=PANEL,
-            p2=PANEL_2,
-            border=GOLD,
-            gold=GOLD,
-        )
-
-
-        base_styles = pd.DataFrame(
-            "",
-            index=df.index,
-            columns=df.columns,
-        )
-
-
-        base_styles.loc[
-            :,
-            "Score A",
-        ] = SCORE_BADGE
-
-
-        base_styles.loc[
-            :,
-            "Score B",
-        ] = SCORE_BADGE
-
-
-        for index, row in df.iterrows():
-
-            try:
-
-                score_a = float(
-                    row["Score A"]
-                )
-
-                score_b = float(
-                    row["Score B"]
-                )
-
-
-                if score_a > score_b:
-
-                    base_styles.at[
-                        index,
-                        "Score A",
-                    ] = WINNER_BADGE
-
-
-                elif score_b > score_a:
-
-                    base_styles.at[
-                        index,
-                        "Score B",
-                    ] = WINNER_BADGE
-
-
-            except Exception:
-                pass
-
-
-        styler = (
-            df.style
-
-            .set_table_styles(
-                [
-                    {
-                        "selector": "tbody td",
-                        "props": [
-                            (
-                                "padding",
-                                "6px 10px",
-                            )
-                        ],
-                    },
-
-                    {
-                        "selector": "thead th",
-                        "props": [
-                            (
-                                "padding",
-                                "8px 10px",
-                            )
-                        ],
-                    },
-                ]
-            )
-
-            .format(
-                {
-                    "Score A": "{:.2f}",
-                    "Score B": "{:.2f}",
-                }
-            )
-
-            .set_properties(
-                subset=[
-                    "Team A",
-                    "Team B",
-                ],
-                **{
-                    "text-align": "left"
-                },
-            )
-
-            .set_properties(
-                subset=[
-                    "Weekly Rank (A)",
-                    "Weekly Rank (B)",
-                ],
-                **{
-                    "text-align": "right"
-                },
-            )
-
-            .apply(
-                lambda _: base_styles,
-                axis=None,
-            )
-        )
-
-
-        st.dataframe(
-            styler,
-            use_container_width=True,
-            hide_index=True,
-
-            column_config={
-
-                "Weekly Rank (A)":
-                    st.column_config.NumberColumn(
-                        "Weekly Rank",
-                        width="small",
-                    ),
-
-                "Team A":
-                    st.column_config.TextColumn(
-                        "",
-                        width="medium",
-                    ),
-
-                "Score A":
-                    st.column_config.NumberColumn(
-                        "Score",
-                        format="%.2f",
-                    ),
-
-                "Team B":
-                    st.column_config.TextColumn(
-                        "",
-                        width="medium",
-                    ),
-
-                "Score B":
-                    st.column_config.NumberColumn(
-                        "Score",
-                        format="%.2f",
-                    ),
-
-                "Weekly Rank (B)":
-                    st.column_config.NumberColumn(
-                        "Weekly Rank",
-                        width="small",
-                    ),
-            },
         )
 
 
