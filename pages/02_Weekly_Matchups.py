@@ -786,41 +786,317 @@ div[data-testid="stSelectbox"] > div > div {
 }
 
 
+/* Your matchup, wide, above the grid. Desktop only: phones show
+   it as the first normal card instead. */
+.mm-hero {
+    display: none;
+}
+
+
 @media (min-width: 701px) {
 
+    .phone-only {
+        display: none !important;
+    }
+
+
+    .mm-games.cols-2 {
+        grid-template-columns:
+            repeat(2, minmax(0, 1fr));
+    }
+
+
+    .mm-games.cols-3 {
+        grid-template-columns:
+            repeat(3, minmax(0, 1fr));
+    }
+
+
     .mm-box {
-        padding: 14px 10px 12px;
+        padding: 16px 12px 14px;
     }
 
 
     .mm-box span {
-        font-size: .66rem;
+        font-size: .7rem;
     }
 
 
     .mm-box b {
-        font-size: 1.35rem;
+        margin-top: 4px;
+
+        font-size: 1.6rem;
     }
 
 
     .mm-box em {
-        font-size: .8rem;
+        font-size: .86rem;
     }
 
 
-    /* The gold border and "You" tag mark your game here; the label
-       would make that card taller than the rest of its row. */
-    .mm-label {
-        display: none;
+    .mm-team {
+        grid-template-columns:
+            30px
+            minmax(0, 1fr)
+            90px;
+
+        min-height: 56px;
+
+        padding: 0 18px 0 16px;
+    }
+
+
+    .mm-rank {
+        width: 28px;
+
+        height: 28px;
+
+        line-height: 28px;
+
+        font-size: .78rem;
+    }
+
+
+    .mm-name {
+        font-size: 1.02rem;
+    }
+
+
+    .mm-score {
+        font-size: 1.12rem;
+    }
+
+
+    .mm-status {
+        min-height: 38px;
+
+        padding: 0 18px;
+
+        font-size: .78rem;
+    }
+
+
+    .mm-badge {
+        font-size: .62rem;
+    }
+
+
+    .mm-hint {
+        font-size: .76rem;
+    }
+
+
+    .mm-hero {
+        display: block;
+
+        margin-bottom: 16px;
+
+        overflow: hidden;
+
+        border:
+            1px solid var(--gold);
+
+        border-radius: 16px;
+
+        background:
+            radial-gradient(
+                120% 160% at 20% 0%,
+                #14272A 0%,
+                var(--panel-2) 100%
+            );
+
+        box-shadow:
+            0 0 0 1px rgba(226,188,91,.25),
+            var(--shadow-lift);
+    }
+
+
+    .mm-hero-top {
+        display: flex;
+
+        align-items: center;
+
+        justify-content: space-between;
+
+        padding: 14px 22px 0;
+    }
+
+
+    .mm-hero-label {
+        color: var(--gold);
+
+        font-size: .7rem;
+
+        font-weight: 900;
+
+        letter-spacing: .12em;
+
+        text-transform: uppercase;
+    }
+
+
+    .mm-hero-body {
+        display: grid;
+
+        grid-template-columns:
+            minmax(0, 1fr)
+            60px
+            minmax(0, 1fr);
+
+        align-items: center;
+
+        padding: 14px 22px 16px;
+    }
+
+
+    .mm-hero-side {
+        min-width: 0;
+    }
+
+
+    .mm-hero-side.right {
+        text-align: right;
+    }
+
+
+    .mm-hero-who {
+        display: flex;
+
+        align-items: center;
+
+        gap: 10px;
+
+        min-width: 0;
+
+        color: var(--text);
+
+        font-size: 1.2rem;
+
+        font-weight: 800;
+    }
+
+
+    .mm-hero-side.right .mm-hero-who {
+        flex-direction: row-reverse;
+    }
+
+
+    .mm-hero-who .mm-rank {
+        flex-shrink: 0;
+
+        margin: 0;
+    }
+
+
+    .mm-hero-who .mm-you {
+        margin-left: 0;
+    }
+
+
+    .mm-hero-score {
+        margin-top: 6px;
+
+        color: var(--text);
+
+        font-size: 2.6rem;
+
+        font-weight: 900;
+
+        line-height: 1;
+
+        letter-spacing: -.02em;
+
+        font-variant-numeric: tabular-nums;
+    }
+
+
+    .mm-hero-side.is-winner .mm-hero-score,
+    .mm-hero-side.is-winner .mm-name-text {
+        color: var(--gold);
+    }
+
+
+    .mm-hero-side:not(.is-winner) .mm-hero-score {
+        opacity: .85;
+    }
+
+
+    .mm-hero-vs {
+        color: var(--muted);
+
+        font-size: .8rem;
+
+        font-weight: 900;
+
+        letter-spacing: .1em;
+
+        text-align: center;
+
+        text-transform: uppercase;
+    }
+
+
+    /* Share of the combined score: your side fills from the left. */
+    .mm-hero-bar {
+        height: 6px;
+
+        margin: 0 22px;
+
+        border-radius: 999px;
+
+        background: rgba(255,255,255,.08);
+
+        overflow: hidden;
+    }
+
+
+    .mm-hero-bar-fill {
+        height: 100%;
+
+        border-radius: 999px;
+
+        background:
+            linear-gradient(90deg, #B8923C, var(--gold));
+    }
+
+
+    .mm-hero-foot {
+        display: flex;
+
+        align-items: center;
+
+        justify-content: space-between;
+
+        gap: 12px;
+
+        padding: 12px 22px 14px;
+
+        color: var(--muted);
+
+        font-size: .82rem;
+
+        font-weight: 700;
+    }
+
+
+    .mm-hero-note {
+        color: var(--text);
+
+        opacity: .85;
     }
 }
 
 
 @media (min-width: 701px) and (max-width: 1100px) {
 
-    .mm-games {
+    .mm-games.cols-3 {
         grid-template-columns:
             repeat(2, minmax(0, 1fr));
+    }
+
+
+    .mm-hero-score {
+        font-size: 2.1rem;
     }
 }
 
