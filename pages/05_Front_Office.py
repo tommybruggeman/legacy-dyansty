@@ -167,9 +167,20 @@ try:
 except Exception as exc:  # the report card is optional; never block the chat
     print(f"FRONT_OFFICE_REPORT_CARD_ERROR {type(exc).__name__}: {exc}", flush=True)
 
-_clicked = render_fo_prompts(fo["week"] if fo else None)
-if _clicked:
-    st.session_state.gm_pending_prompt = _clicked
+# ----------------------------
+# CHAT INPUT + STARTER TOPICS
+# ----------------------------
+# chat_input pins to the bottom wherever it's called; reading it first lets the
+# starter topics step aside the moment a question is on its way.
+typed_prompt = st.chat_input("Ask your assistant GM...")
+prompt = st.session_state.pop("gm_pending_prompt", None) or typed_prompt
+
+# Starter topics only on a fresh conversation (CSS also hides them while the chat box is focused)
+if len(gm_messages) <= 1 and not prompt:
+    _clicked = render_fo_prompts(fo["week"] if fo else None)
+    if _clicked:
+        st.session_state.gm_pending_prompt = _clicked
+        st.rerun()  # fast rerun (no model call) so the topics are gone before the answer streams
 
 
 _me_avatar = owner_avatar(owner_team_name)
@@ -183,12 +194,6 @@ def _render_chat_markdown(text: str) -> None:
 for msg in gm_messages:
     with st.chat_message(msg["role"], avatar=(GM_AVATAR if msg["role"] == "assistant" else _me_avatar)):
         _render_chat_markdown(msg["content"])
-
-# ----------------------------
-# CHAT INPUT
-# ----------------------------
-typed_prompt = st.chat_input("Ask your assistant GM...")
-prompt = st.session_state.pop("gm_pending_prompt", None) or typed_prompt
 
 if prompt:
     prompt_hash = sha256(f"{history_key}:{prompt}".encode("utf-8")).hexdigest()
