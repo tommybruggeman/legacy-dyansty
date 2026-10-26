@@ -512,6 +512,9 @@ FRONT_OFFICE_CSS = """
              background:rgba(255,255,255,.03) !important; font-size:.85rem !important; padding:.3rem .8rem !important; white-space:nowrap; }
 [data-testid="stHorizontalBlock"]:has(.fo-chips-marker) button:hover { border-color:#E2BC5B !important; background:rgba(226,188,91,.12) !important; }
 [data-testid="stElementContainer"]:has(.fo-chips-marker), [data-testid="stElementContainer"]:has(.fo-footer-marker) { display:none !important; }
+/* Starter topics step aside once you tap into the chat box (or have typed something) */
+body:has([data-testid="stChatInput"]:focus-within) .st-key-lai_prompts,
+body:has([data-testid="stChatInput"] textarea:not(:placeholder-shown)) .st-key-lai_prompts { display:none !important; }
 /* ☰ popover: plain glyph, no box, no caret */
 [data-testid="stHorizontalBlock"]:has(.fo-hdr) [data-testid="stPopover"] button { border:none !important; background:transparent !important; font-size:1.5rem !important; padding:0 .2rem !important; color:#F5EBD7 !important; min-height:0 !important; }
 [data-testid="stHorizontalBlock"]:has(.fo-hdr) [data-testid="stPopover"] button svg { display:none !important; }
@@ -525,6 +528,8 @@ FRONT_OFFICE_CSS = """
 /* ---- Phone layout: Option A, nothing but the conversation ---- */
 @media (max-width: 640px) {
   .block-container { padding-top:1.2rem !important; padding-bottom:9.5rem !important; }
+  body:has([data-testid="stChatInput"]:focus-within) .block-container,
+  .block-container:not(:has(.fo-chips-marker)) { padding-bottom:6rem !important; }
   .fo-tiles, .fo-sec, .fo-brief, .fo-card, .fo-who { display:none !important; }
   .fo-hdr { padding:0; gap:10px; align-items:center; }
   .fo-hdr h1 { font-size:1.75rem; }
