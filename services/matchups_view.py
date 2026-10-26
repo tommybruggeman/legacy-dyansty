@@ -1,5 +1,5 @@
 """Weekly matchups: turn one Sleeper matchups week into games, and
-render the phone layout for the Weekly Matchups page.
+render the matchup cards for the Weekly Matchups page.
 
 Kept free of Streamlit and network calls so it can be tested directly.
 
@@ -167,7 +167,7 @@ def matchup_cards_html(
     my_roster_id=None,
     is_final: bool = False,
 ) -> str:
-    """Phone layout: the week's summary boxes, then one card per game.
+    """The week's summary boxes, then one card per game.
     The signed-in owner's game comes first."""
 
     def is_mine(game):
@@ -177,7 +177,7 @@ def matchup_cards_html(
 
     ordered = sorted(games, key=lambda g: not is_mine(g))
     summary = week_summary(games)
-    parts = ['<div class="mobile-matchups-wrapper">']
+    parts = ['<div class="mm-wrapper">']
 
     if summary:
         high = summary["high"]
@@ -201,6 +201,8 @@ def matchup_cards_html(
             )
 
         parts.append("</div>")
+
+    parts.append('<div class="mm-games">')
 
     for game in ordered:
         mine = is_mine(game)
@@ -238,6 +240,8 @@ def matchup_cards_html(
             "</div>"
         )
         parts.append("</div>")
+
+    parts.append("</div>")
 
     if summary:
         parts.append(
