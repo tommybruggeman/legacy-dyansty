@@ -48,12 +48,16 @@ class DropClient(Client):
 
 class OffseasonReadAuthorityTests(unittest.TestCase):
     def test_settings_splits_server_reads_from_authenticated_writes(self):
-        source = Path("pages/90_Settings.py").read_text()
+        settings = Path("pages/90_Settings.py").read_text()
+        # The live draft room and FA auction moved to their own module.
+        draft_ui = Path("services/commissioner_draft_ui.py").read_text()
+        source = settings + draft_ui
         self.assertGreaterEqual(source.count("load_player_universe(service_client())"), 2)
-        self.assertIn("load_commissioner_auction_universe(service_client())", source)
-        self.assertIn("read_client=service_client()", source)
-        self.assertIn('sb_client.rpc("persist_rookie_draft_board_authenticated"', source)
-        self.assertGreaterEqual(source.count("OffseasonTransactionService(sb_client, active_league_id).acquire("), 2)
+        self.assertIn("load_commissioner_auction_universe(service_client())", draft_ui)
+        self.assertIn("read_client=service_client()", settings)
+        self.assertIn('sb_client.rpc("persist_rookie_draft_board_authenticated"', draft_ui)
+        self.assertIn("OffseasonTransactionService(sb_client, active_league_id).acquire(", settings)
+        self.assertIn("OffseasonTransactionService(sb_client, league_id).acquire(", draft_ui)
         self.assertNotIn("service_client().rpc(", source)
 
     def test_rookie_board_uses_exact_free_agent_rookie_rows(self):

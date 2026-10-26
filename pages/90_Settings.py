@@ -13,7 +13,7 @@ from components.sidebar_nav import render_nav
 from auth import auth_client, require_login, service_client
 from services.config import configured_value
 from services.team_roster_state import invalidate_team_state_session_cache
-import math
+import html
 
 # ============================================================
 # Page setup
@@ -51,19 +51,13 @@ from services.invitations import (
 )
 from services.season_rollover_ui import render_season_rollover_control
 from services.season_rollover_owner_ui import render_owner_rollover_decisions
+from services.commissioner_draft_ui import render_draft, render_fa_auction
 from services.free_agents import (
-    build_commissioner_auction_players,
     build_free_agent_results,
-    canonical_live_owners,
-    load_commissioner_auction_universe,
     load_league_free_agent_state,
     load_player_universe,
 )
-from services.offseason_transactions import (
-    OffseasonTransactionService,
-    resolve_rookie_contract_terms,
-    rookie_draft_player_options,
-)
+from services.offseason_transactions import OffseasonTransactionService
 from services.canonical_trades import (
     DraftPickMovement,
     PlayerMovement,
@@ -330,89 +324,86 @@ hr {
     }
 }
 
-.auction-card-grid {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: .9rem;
-    margin: 1rem 0 1.35rem 0;
-}
-
-.auction-option-card {
-    position: relative;
-    background: linear-gradient(145deg, rgba(9,35,24,.92), rgba(5,22,15,.96));
-    border: 1px solid rgba(200,155,74,.16);
-    border-radius: 14px;
-    min-height: 118px;
-    padding: 1.25rem 1rem 1rem 1rem;
-}
-
-.auction-option-card.selected {
-    background: linear-gradient(145deg, rgba(22,82,55,.92), rgba(7,31,21,.96));
-    border: 1px solid #D6A544;
-    box-shadow: 0 0 0 1px rgba(214,165,68,.18);
-}
-
-.auction-option-card.locked {
-    opacity: .58;
-}
-
-.auction-card-kicker {
-    color: var(--gold);
-    font-size: .72rem;
-    font-weight: 900;
-    letter-spacing: .06em;
+.ld-kicker {
+    color: #E2BC5B;
+    font-size: .7rem;
+    font-weight: 700;
+    letter-spacing: .16em;
     text-transform: uppercase;
 }
 
-.auction-card-value {
+.ld-title {
+    margin: .1rem 0 .2rem 0;
+    font-size: 2.1rem;
+    font-weight: 800;
+    letter-spacing: -.02em;
     color: var(--cream);
-    font-size: 1.75rem;
-    font-weight: 950;
-    margin-top: .65rem;
+    line-height: 1.1;
 }
 
-.auction-card-copy {
-    color: var(--muted);
-    font-size: .85rem;
-    margin-top: .55rem;
+/* Section pills: one rounded bar, the open section filled gold. */
+.st-key-control_section [data-testid="stButtonGroup"],
+[data-testid="stElementContainer"]:has(> .st-key-control_section),
+.st-key-control_section {
+    width: 100% !important;
 }
-
-.best-badge {
-    position: absolute;
-    top: .45rem;
-    left: .55rem;
-    background: #D6A544;
-    color: #03140D;
-    border-radius: 5px;
-    padding: .15rem .42rem;
-    font-size: .62rem;
-    font-weight: 950;
-}
-
-.check-badge {
-    position: absolute;
-    top: .55rem;
-    right: .65rem;
-    background: rgba(79,186,115,.28);
-    color: #CFF6D8;
+.st-key-control_section [role="radiogroup"] {
+    display: flex !important;
+    width: 100% !important;
+    max-width: 640px !important;
+    gap: 4px !important;
+    background: #0C1917;
+    border: 1px solid rgba(245,235,215,.08);
     border-radius: 999px;
-    width: 22px;
-    height: 22px;
-    text-align: center;
-    font-weight: 900;
+    padding: 4px;
+}
+.st-key-control_section button {
+    flex: 1 1 0 !important;
+    border: 0 !important;
+    border-radius: 999px !important;
+    background: transparent !important;
+    color: #9DA89C !important;
+    min-height: 38px !important;
+    padding: 0 .4rem !important;
+    box-shadow: none !important;
+}
+.st-key-control_section button p {
+    font-size: .88rem !important;
+    white-space: nowrap;
+}
+.st-key-control_section button[aria-checked="true"] {
+    background: #E2BC5B !important;
+    color: #1a1405 !important;
+}
+.st-key-control_section button[aria-checked="true"] p {
+    color: #1a1405 !important;
+    font-weight: 600 !important;
 }
 
-.lock-icon {
-    position: absolute;
-    top: .75rem;
-    right: .75rem;
-    color: var(--muted);
+/* Draft year chips. */
+.st-key-draft_room_year_pick button {
+    border-radius: 999px !important;
+    border-color: rgba(200,155,74,.35) !important;
+    background: transparent !important;
+    min-height: 34px !important;
+}
+.st-key-draft_room_year_pick button[aria-checked="true"] {
+    background: #E2BC5B !important;
+    border-color: #E2BC5B !important;
+}
+.st-key-draft_room_year_pick button[aria-checked="true"] p {
+    color: #1a1405 !important;
+    font-weight: 600 !important;
 }
 
-@media (max-width: 900px) {
-    .auction-card-grid {
-        grid-template-columns: 1fr;
+@media (max-width: 768px) {
+    .block-container {
+        padding-left: 1rem !important;
+        padding-right: 1rem !important;
+        padding-top: 1rem !important;
     }
+    .ld-title { font-size: 1.75rem; }
+    .st-key-control_section button p { font-size: .8rem !important; }
 }
 </style>
 """,
@@ -578,7 +569,6 @@ role = st.session_state.get("role")
 active_league_id = st.session_state.get("active_league_id")
 from season_engine import SeasonResolver
 from services.strict_pagination import complete_rows
-from services.season_rollover_ui import bounded_stable_page
 canonical_season = SeasonResolver(sb_client).get_active_season(active_league_id).season if active_league_id else None
 
 is_platform_admin = role in ["admin"]
@@ -889,61 +879,33 @@ team_count = len(league_teams)
 
 
 # ============================================================
-# Hero
+# Header + section pills
 # ============================================================
 st.markdown(
     f"""
-<div class="app-hero">
-    <h1>League Control Center</h1>
-    <p>Manage ownership, commissioner tools, draft setup, and league activity for <b>{league_name}</b>.</p>
-</div>
+<div class="ld-kicker">{"Commissioner" if is_commissioner else html.escape(str(league_name))}</div>
+<div class="ld-title">League Control</div>
 """,
     unsafe_allow_html=True,
 )
 
-st.markdown(
-    f"""
-<div class="status-row">
-    <div class="status-card">
-        <div class="status-label">Your Role</div>
-        <div class="status-value">{role or "Unknown"}</div>
-    </div>
-    <div class="status-card">
-        <div class="status-label">Owner Mapping</div>
-        <div class="status-value">{mapped_count}/{team_count or 0} connected</div>
-    </div>
-    <div class="status-card">
-        <div class="status-label">Sleeper</div>
-        <div class="status-value">{"Connected" if sleeper_league_id else "Missing"}</div>
-    </div>
-    <div class="status-card">
-        <div class="status-label">Mode</div>
-        <div class="status-value">Hybrid Sleeper/App</div>
-    </div>
-</div>
-""",
-    unsafe_allow_html=True,
-)
-
-# ============================================================
-# Navigation
-# ============================================================
 nav_options = ["Owners"]
 
 if is_commissioner:
-    nav_options += ["League Manager Tools", "Draft Center", "Audit Log"]
+    nav_options += ["League Tools", "Draft", "FA Auction"]
 else:
     nav_options += ["My Access"]
 
 if is_platform_admin:
     nav_options.append("Platform Admin")
 
-section = st.radio(
+section = st.segmented_control(
     "Control Center",
     nav_options,
-    horizontal=True,
+    default=nav_options[0],
+    key="control_section",
     label_visibility="collapsed",
-)
+) or nav_options[0]
 
 # ============================================================
 # OWNERS
@@ -1329,7 +1291,7 @@ elif section == "My Access":
 # ============================================================
 # LEAGUE MANAGER TOOLS
 # ============================================================
-elif section == "League Manager Tools":
+elif section == "League Tools":
     if not is_commissioner:
         show_commissioner_gate()
         st.stop()
@@ -2108,39 +2070,27 @@ elif section == "League Manager Tools":
 # ============================================================
 # DRAFT CENTER
 # ============================================================
-elif section == "Draft Center":
+elif section == "Draft":
     if not is_commissioner:
         show_commissioner_gate()
         st.stop()
 
-    section_header(
-        "Draft Center",
-        "Commissioner-only offseason tools for rookie draft, draft results, and FA auction settings.",
-    )
-
-    draft_tab, auction_tab = st.tabs(["Rookie Draft", "FA Auction"])
-
-    with draft_tab:
-        st.markdown("### Upcoming Rookie Draft Board")
-        st.caption("Enter rookie draft results by owner and pick.")
-
-        top_col1, top_col2 = st.columns([2, 1])
-
-        with top_col1:
-            draft_year = st.selectbox(
-                "Draft year",
-                list(draft_season_window(canonical_season)),
-                index=0,
-                key="rookie_draft_year",
-            )
-
-        with top_col2:
+    def draft_lifecycle_controls(draft_year: int) -> None:
+        st.caption(
+            "Open the draft before it starts, and lock it when the last pick is in. "
+            "Locking turns the remaining picks into used picks."
+        )
+        status_col, save_col, lock_col = st.columns([1.2, 1, 1])
+        with status_col:
             lifecycle_action = st.selectbox(
-                "Draft lifecycle",
+                "Draft status",
                 ["scheduled", "in_progress"],
                 key="rookie_draft_lifecycle_status",
+                format_func=lambda value: value.replace("_", " ").capitalize(),
             )
-            if st.button("Save Draft Lifecycle", use_container_width=True):
+        with save_col:
+            st.write("")
+            if st.button("Save status", use_container_width=True):
                 configured = configure_draft_lifecycle(
                     sb_client,
                     league_id=active_league_id,
@@ -2148,8 +2098,10 @@ elif section == "Draft Center":
                     status=lifecycle_action,
                     expected_pick_count=len(league_teams) * 3,
                 )
-                st.success(f"{draft_year} draft is {configured['status']}.")
-            if st.button("Complete and Lock Draft", use_container_width=True):
+                st.success(f"{draft_year} draft is {configured['status'].replace('_', ' ')}.")
+        with lock_col:
+            st.write("")
+            if st.button("Complete and lock draft", use_container_width=True):
                 completed_draft = complete_rookie_draft(
                     sb_client,
                     league_id=active_league_id,
@@ -2160,401 +2112,28 @@ elif section == "Draft Center":
                     f"{completed_draft['locked_asset_count']} assets locked."
                 )
 
-        default_rookie_template = pd.DataFrame(
-            [
-                [1, 1, 15, 2, 25, 1], [1, 2, 12, 2, 25, 1], [1, 3, 9, 2, 25, 1],
-                [1, 4, 8, 2, 25, 1], [1, 5, 6, 2, 25, 1], [1, 6, 5, 2, 25, 1],
-                [1, 7, 4, 2, 25, 1], [1, 8, 4, 2, 25, 1], [1, 9, 4, 2, 25, 1],
-                [1, 10, 4, 2, 25, 1],
-                [2, 1, 3, 2, 15, 1], [2, 2, 3, 2, 15, 1], [2, 3, 3, 2, 15, 1],
-                [2, 4, 3, 2, 15, 1], [2, 5, 3, 2, 15, 1], [2, 6, 3, 2, 15, 1],
-                [2, 7, 3, 2, 15, 1], [2, 8, 3, 2, 15, 1], [2, 9, 3, 2, 15, 1],
-                [2, 10, 3, 2, 15, 1],
-                [3, 1, 1, 1, 7, 1], [3, 2, 1, 1, 7, 1], [3, 3, 1, 1, 7, 1],
-                [3, 4, 1, 1, 7, 1], [3, 5, 1, 1, 7, 1], [3, 6, 1, 1, 7, 1],
-                [3, 7, 1, 1, 7, 1], [3, 8, 1, 1, 7, 1], [3, 9, 1, 1, 7, 1],
-                [3, 10, 1, 1, 7, 1],
-            ],
-            columns=["Round", "Pick", "Base Salary", "Base Years", "Option Salary", "Option Year"],
-        )
-        for template_index, template_row in default_rookie_template.iterrows():
-            template_terms = resolve_rookie_contract_terms(
-                league_rules, int(template_row["Round"]), int(template_row["Pick"]),
-            )
-            default_rookie_template.at[template_index, "Base Salary"] = float(template_terms.salary)
-            default_rookie_template.at[template_index, "Base Years"] = template_terms.years
-            default_rookie_template.at[template_index, "Option Salary"] = float(template_terms.option_salary)
+    render_draft(
+        sb_client=sb_client,
+        league_id=active_league_id,
+        league_teams=league_teams,
+        league_rules=league_rules,
+        active_season=canonical_season,
+        draft_years=draft_season_window(canonical_season),
+        lifecycle_controls=draft_lifecycle_controls,
+    )
 
-        with top_col2:
-            st.write("")
-            with st.popover("Adjust Rookie Salaries"):
-                edited_template = st.data_editor(
-                    default_rookie_template,
-                    use_container_width=True,
-                    hide_index=True,
-                    num_rows="dynamic",
-                )
-
-                if st.button("Save Rookie Salary Defaults", use_container_width=True):
-                    log_commish_action(
-                        "save_rookie_salary_defaults",
-                        {"rows": edited_template.to_dict(orient="records")},
-                    )
-                    st.success("Rookie salary defaults saved.")
-
-        team_names = [
-            t.get("owner_name") or t.get("team_name")
-            for t in league_teams
-            if t.get("owner_name") or t.get("team_name")
-        ]
-
-        default_order = team_names[:10]
-
-        rookie_results = build_free_agent_results(
-            load_player_universe(service_client()),
-            load_league_free_agent_state(service_client(), active_league_id),
-            active_season=draft_year,
-        )
-        rookie_options = list(rookie_draft_player_options(rookie_results.rookies))
-
-        st.divider()
-
-        st.markdown(
-            """
-<div class="draft-board-header">
-    <h3>Draft Board</h3>
-    <p class="small-muted">Select the owner and rookie for each individual pick.</p>
-</div>
-""",
-            unsafe_allow_html=True,
-        )
-
-        draft_rows = []
-
-        owner_options = team_names
-
-        header_cols = st.columns([0.45, 1.55, 2, 1.55, 2, 1.55, 2])
-        headers = [
-            "",
-            "",
-            "Round 1",
-            "",
-            "Round 2",
-            "",
-            "Round 3",
-        ]
-
-        for col, header in zip(header_cols, headers):
-            with col:
-                st.markdown(f"**{header}**")
-
-        st.markdown(
-            "<hr style='margin:.25rem 0 .65rem 0;border-color:rgba(200,155,74,.25);'>",
-            unsafe_allow_html=True,
-        )
-
-        for pick_idx in range(1, 11):
-            row_cols = st.columns([0.45, 1.55, 2, 1.55, 2, 1.55, 2])
-
-            with row_cols[0]:
-                st.markdown(f"<div class='pick-number'>{pick_idx}</div>", unsafe_allow_html=True)
-
-            for round_num, owner_col, player_col in [
-                (1, row_cols[1], row_cols[2]),
-                (2, row_cols[3], row_cols[4]),
-                (3, row_cols[5], row_cols[6]),
-            ]:
-                default_owner_index = 0
-                if len(default_order) >= pick_idx:
-                    default_owner = default_order[pick_idx - 1]
-                    if default_owner in owner_options:
-                        default_owner_index = owner_options.index(default_owner)
-
-                with owner_col:
-                    selected_owner = st.selectbox(
-                        f"Round {round_num}, Pick {pick_idx} Owner",
-                        options=owner_options,
-                        index=default_owner_index,
-                        key=f"rookie_owner_{draft_year}_{round_num}_{pick_idx}",
-                        label_visibility="collapsed",
-                    )
-
-                with player_col:
-                    selected_player = st.selectbox(
-                        f"Round {round_num}, Pick {pick_idx} Player",
-                        options=rookie_options,
-                        index=None,
-                        placeholder="Search rookies...",
-                        key=f"rookie_pick_{draft_year}_{round_num}_{pick_idx}",
-                        label_visibility="collapsed",
-                    )
-
-                salary_row = default_rookie_template[
-                    (default_rookie_template["Round"] == round_num)
-                    & (default_rookie_template["Pick"] == pick_idx)
-                ]
-
-                rookie_terms = resolve_rookie_contract_terms(league_rules, round_num, pick_idx)
-                salary = float(rookie_terms.salary)
-                years = rookie_terms.years
-                option_salary = float(rookie_terms.option_salary)
-
-                draft_rows.append(
-                    {
-                        "draft_year": draft_year,
-                        "round": round_num,
-                        "pick": pick_idx,
-                        "owner": selected_owner,
-                        "player": selected_player,
-                        "salary": salary,
-                        "years": years,
-                        "contract_tag": "rookie_contract",
-                        "option_salary": option_salary,
-                    }
-                )
-
-            st.markdown(
-                "<hr style='margin:.25rem 0;border-color:rgba(200,155,74,.10);'>",
-                unsafe_allow_html=True,
-            )
-
-        if st.button("Submit Rookie Draft Board", use_container_width=True):
-            completed = [r for r in draft_rows if r["player"]]
-
-            if not completed:
-                st.warning("Add at least one rookie before submitting.")
-                st.stop()
-
-            team_id_by_owner = {
-                (t.get("owner_name") or t.get("team_name")): t.get("id") for t in league_teams
-            }
-            canonical_picks = []
-            for row in completed:
-                player_id = row["player"].rsplit("(", 1)[-1].rstrip(")")
-                canonical_picks.append({
-                    "draft_round": row["round"], "round_pick": row["pick"],
-                    "player_id": player_id, "league_team_id": team_id_by_owner[row["owner"]],
-                    "original_salary": row["salary"], "original_contract_term": row["years"],
-                    "one_time_option_salary": row["option_salary"],
-                })
-            sb_client.rpc("persist_rookie_draft_board_authenticated", {
-                "p_request": {"league_id": active_league_id, "draft_year": draft_year,
-                              "idempotency_key": f"rookie-board:{active_league_id}:{draft_year}:v1",
-                              "picks": canonical_picks}
-            }).execute()
-
-            st.success(f"Submitted {len(completed)} rookie draft pick(s).")
-    with auction_tab:
-        st.markdown(
-            """
-<div class="auction-shell">
-    <div class="auction-title-row">
-        <h2>FA AUCTION CALCULATOR <span class="info-dot">i</span></h2>
-        <p>Locked years show as — until the bid reaches this league's minimum threshold.</p>
-    </div>
-</div>
-""",
-            unsafe_allow_html=True,
-        )
-
-        def select_auction_option(new_bid: int, new_years: int):
-            st.session_state["auction_current_bid"] = float(new_bid)
-            st.session_state["auction_current_years"] = new_years
-
-        auction_state = load_league_free_agent_state(service_client(), active_league_id)
-        auction_players = build_commissioner_auction_players(
-            load_commissioner_auction_universe(service_client())
-        )
-        player_options = [
-            f"{p.player} — {p.position} ({p.sleeper_player_id})"
-            for p in auction_players
-        ]
-        contracted_ids = canonical_live_owners(
-            auction_state,
-            active_season=canonical_season,
-        )
-
-        with st.container():
-            st.markdown('<div class="auction-panel">', unsafe_allow_html=True)
-
-            top_cols = st.columns([1.25, 1.05, .95, 1.05])
-
-            with top_cols[0]:
-                selected_player = st.selectbox(
-                    "PLAYER SEARCH",
-                    options=player_options,
-                    index=None,
-                    placeholder="Search any player...",
-                    key="auction_player_select",
-                )
-
-            player_name = ""
-            selected_sleeper_id = None
-
-            if selected_player:
-                player_name = selected_player.split(" — ")[0]
-                selected_sleeper_id = selected_player.split("(")[-1].replace(")", "").strip()
-
-            if selected_sleeper_id and selected_sleeper_id in contracted_ids:
-                current_owner = contracted_ids[selected_sleeper_id]
-
-                st.warning(f"{player_name} is already under contract with {current_owner}.")
-
-            with top_cols[1]:
-                current_bid = st.number_input(
-                    "CURRENT BID",
-                    min_value=0.0,
-                    value=8.0,
-                    step=1.0,
-                    format="%.0f",
-                    key="auction_current_bid",
-                )
-
-            with top_cols[2]:
-                current_years = st.selectbox(
-                    "CURRENT BID YEARS",
-                    [1, 2, 3, 4],
-                    index=1,
-                    key="auction_current_years",
-                )
-
-            with top_cols[3]:
-                auction_winner = st.selectbox(
-                    "CURRENT WINNER",
-                    [""] + [t.get("owner_name") or t.get("team_name") for t in league_teams],
-                    format_func=lambda x: "—" if x == "" else x,
-                    key="auction_winner",
-                )
-
-            st.markdown('<div class="auction-divider"></div>', unsafe_allow_html=True)
-            st.markdown('<div class="league-minimum-label">LEAGUE MINIMUMS</div>', unsafe_allow_html=True)
-
-            min_cols = st.columns(3)
-
-            with min_cols[0]:
-                min_2_year = st.number_input("2-YEAR MINIMUM", min_value=0.0, value=4.0, step=1.0, format="%.0f", key="auction_min_2_year")
-
-            with min_cols[1]:
-                min_3_year = st.number_input("3-YEAR MINIMUM", min_value=0.0, value=12.0, step=1.0, format="%.0f", key="auction_min_3_year")
-
-            with min_cols[2]:
-                min_4_year = st.number_input("4-YEAR MINIMUM", min_value=0.0, value=20.0, step=1.0, format="%.0f", key="auction_min_4_year")
-
-            def calc_required_bid(target_years: int) -> float | None:
-                thresholds = {1: 0, 2: min_2_year, 3: min_3_year, 4: min_4_year}
-
-                if current_bid < thresholds[target_years]:
-                    return None
-
-                diff = target_years - current_years
-
-                if diff == 0:
-                    return current_bid
-
-                if diff > 0:
-                    return current_bid / (1.1 ** diff)
-
-                return current_bid * (1.1 ** abs(diff))
-
-            thresholds = {1: 0, 2: min_2_year, 3: min_3_year, 4: min_4_year}
-            valid_values = {years: calc_required_bid(years) for years in [1, 2, 3, 4]}
-
-            card_cols = st.columns(4)
-
-            for idx, years in enumerate([1, 2, 3, 4]):
-                val = valid_values[years]
-                label = f"{years} YEAR" if years == 1 else f"{years} YEARS"
-
-                with card_cols[idx]:
-                    if val is None:
-                        st.markdown(
-                            f"""
-<div class="auction-option-card locked">
-    <div class="auction-card-kicker">{label}</div>
-    <div class="lock-icon">🔒</div>
-    <div class="auction-card-value">—</div>
-    <div class="auction-card-copy">Unlocks at ${thresholds[years]:.0f}</div>
-</div>
-""",
-                            unsafe_allow_html=True,
-                        )
-                    else:
-                        rounded_val = math.ceil(val)
-
-                        st.markdown(
-                            f"""
-<div class="auction-option-card">
-    <div class="auction-card-kicker">{label}</div>
-    <div class="auction-card-value">${rounded_val}</div>
-    <div class="auction-card-copy">Valid contract option</div>
-</div>
-""",
-                            unsafe_allow_html=True,
-                        )
-
-                        st.button(
-                            f"Select {years} Year{'s' if years > 1 else ''}",
-                            key=f"select_auction_option_{years}",
-                            use_container_width=True,
-                            on_click=select_auction_option,
-                            args=(rounded_val, years),
-                        )
-
-            if st.button("▣  Log Auction Finish", use_container_width=True, key="auction_finish_btn"):
-                if not player_name or not auction_winner:
-                    st.warning("Enter a player and auction winner first.")
-                elif selected_sleeper_id and selected_sleeper_id in contracted_ids:
-                    st.error("This player is already under contract. Confirm before logging this as a free agent auction.")
-                else:
-                    team_id = next(t.get("id") for t in league_teams if (t.get("owner_name") or t.get("team_name")) == auction_winner)
-                    OffseasonTransactionService(sb_client, active_league_id).acquire(
-                        player_id=selected_sleeper_id, league_team_id=team_id,
-                        season=canonical_season, salary=current_bid, years=current_years,
-                        acquisition_type="fa_auction",
-                        idempotency_key=f"fa-auction:{active_league_id}:{canonical_season}:{selected_sleeper_id}",
-                    )
-                    invalidate_team_state_session_cache(st.session_state)
-                    log_commish_action(
-                        "finish_fa_auction",
-                        {
-                            "player_name": player_name,
-                            "sleeper_player_id": selected_sleeper_id,
-                            "winner": auction_winner,
-                            "current_bid": current_bid,
-                            "current_years": current_years,
-                        },
-                    )
-                    st.success("Auction finish logged and contract created.")
-
-            st.markdown("</div>", unsafe_allow_html=True)
-
-# ============================================================
-# AUDIT LOG
-# ============================================================
-elif section == "Audit Log":
+elif section == "FA Auction":
     if not is_commissioner:
         show_commissioner_gate()
         st.stop()
 
-    section_header(
-        "Audit Log",
-        "Review commissioner actions for this league.",
+    render_fa_auction(
+        sb_client=sb_client,
+        league_id=active_league_id,
+        league_teams=league_teams,
+        league_rules=league_rules,
+        active_season=canonical_season,
     )
-
-    rows = safe_table("commissioner_action_log", "created_at")
-
-    if rows:
-        audit_size = st.selectbox("Audit rows per page", [25, 50], key="audit-log-size")
-        audit_pages = max(1, (len(rows) + audit_size - 1) // audit_size)
-        audit_page = st.number_input("Audit page", min_value=1, max_value=audit_pages, value=1, step=1,
-                                     key="audit-log-page")
-        audit_view = bounded_stable_page(rows, page=int(audit_page), page_size=audit_size)
-        displayed = audit_view["rows"]
-        st.caption(f"Total {len(rows)} · Displayed {audit_view['displayed']} · Page {audit_view['page']}/{audit_view['pages']}")
-        df = pd.DataFrame(displayed)
-        st.dataframe(df, use_container_width=True, hide_index=True)
-    else:
-        st.info("No commissioner action log entries found yet.")
 
 
 # ============================================================
