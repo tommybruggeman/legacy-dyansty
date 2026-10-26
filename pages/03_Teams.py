@@ -536,7 +536,7 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stSidebar"] {
 
 @media (max-width:768px) {
   .block-container {
-    padding-top:22px !important;
+    padding-top:10px !important;
     padding-left:14px !important;
     padding-right:14px !important;
     padding-bottom:32px !important;
@@ -566,13 +566,25 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stSidebar"] {
     gap:0 !important;
   }
 
-  .teams-mobile-page-head {
+  /* Hidden desktop rows and style blocks still sit in the page's main
+     column; drop the column gap so they leave no blank space on phone. */
+  [data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] .teams-mobile-page-head) {
+    gap:0 !important;
+  }
+
+  [data-testid="stMarkdownContainer"]:has(> .teams-mobile-only),
+  .st-key-teams_mobile_switch [data-testid="stMarkdownContainer"] {
+    margin-bottom:0 !important;
+  }
+
+  /* The title sits on the same top row as the floating menu button. */
+  .teams-mobile-page-head.teams-mobile-only {
     position:relative;
-    min-height:42px;
-    display:flex;
+    min-height:44px;
+    display:flex !important;
     align-items:center;
     justify-content:center;
-    margin:0 0 10px 0;
+    margin:0 0 12px 0;
   }
 
   .teams-mobile-page-title {
@@ -942,8 +954,8 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stSidebar"] {
 
   /* Trade button sits directly under the half-width cards. */
   .st-key-teams_mobile_trade_action {
-    margin-top:0 !important;
-    margin-bottom:0 !important;
+    margin-top:10px !important;
+    margin-bottom:10px !important;
   }
 
   .st-key-teams_mobile_trade_action [data-testid="stVerticalBlockBorderWrapper"] {
