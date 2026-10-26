@@ -74,7 +74,7 @@ class TilesTests(unittest.TestCase):
         self.assertEqual(tiles[0]["value"], "2-1")
         self.assertIn("2nd of 3", tiles[0]["label"])
         self.assertIn("Weakest spot", tiles[1]["label"])
-        self.assertEqual(tiles[2]["value"], "vs Seyforth")
+        self.assertEqual(tiles[2]["value"], "vs Chase Seyforth")
         self.assertIn("Head to head 3-1", tiles[2]["label"])
         self.assertEqual(tiles[3]["value"], "$91.5")
         self.assertEqual(tiles[4]["value"], "$104")

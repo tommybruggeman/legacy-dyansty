@@ -245,7 +245,7 @@ def build_tiles(*, state: Mapping[str, Any], team_id: str, owner: str, salary_ca
     if opponent:
         h = h2h or {}
         sub = f"Head to head {h.get('wins', 0)}-{h.get('losses', 0)}" if h.get("games") else "First meeting on record"
-        tiles.append({"value": f"vs {opponent['owner_name'].split(' ')[-1]}", "label": f"Week {opponent['week']} · {sub}", "tone": None})
+        tiles.append({"value": f"vs {opponent['owner_name']}", "label": f"Opponent · {sub}", "tone": None})
     else:
         tiles.append({"value": "—", "label": "No matchup this week", "tone": None})
     space = float(fin.cap_space) if fin else 0.0
@@ -483,7 +483,7 @@ def merge_brief(data: dict[str, Any], model: dict[str, Any] | None) -> dict[str,
 
 
 def mobile_status(week: int, tiles: list[dict[str, Any]] | None) -> str:
-    """One grey line for phones: 'Week 4 · 3-0, 2nd of 10 · $7 cap · vs Burruel'."""
+    """One grey line for phones: 'Week 4 · 3-0, 2nd of 10 · $7 cap · vs Dylan Burruel'."""
     record = cap = opp = ""
     for t in tiles or []:
         label, value = str(t.get("label") or ""), str(t.get("value") or "")

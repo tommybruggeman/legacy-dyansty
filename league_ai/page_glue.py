@@ -475,24 +475,26 @@ def _brief_older_than(sections: dict, hours: int) -> bool:
 
 FRONT_OFFICE_CSS = """
 <style>
-.fo-hdr { display:flex; align-items:flex-end; gap:14px; flex-wrap:wrap; padding: .6rem 0 .2rem; }
+.fo-hdr { display:flex; align-items:center; gap:14px; flex-wrap:wrap; padding: .6rem 0 .2rem; }
 .fo-hdr h1 { margin:0; font-size:2.2rem; }
 .fo-badge { display:inline-block; padding:.2rem .6rem; border-radius:999px; border:1px solid rgba(226,188,91,.55); background:rgba(226,188,91,.10);
-            color:#E2BC5B; font-size:.72rem; font-weight:800; letter-spacing:.08em; text-transform:uppercase; margin-bottom:.45rem; }
+            color:#E2BC5B; font-size:.72rem; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }
 .fo-who { margin-left:auto; text-align:right; }
 .fo-who .n { font-weight:800; }
 .fo-who .m { opacity:.55; font-size:.8rem; }
 .fo-tiles { display:grid; grid-template-columns:repeat(6,1fr); gap:12px; margin:14px 0 18px; }
 @media (max-width: 900px) { .fo-tiles { grid-template-columns:repeat(3,1fr);} .fo-brief { grid-template-columns:1fr !important; } }
-.fo-tile { border:1px solid rgba(226,188,91,.22); border-radius:14px; background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.015)); padding:13px 15px; }
-.fo-tile .v { font-size:1.5rem; font-weight:800; color:#F5EBD7; line-height:1.1; }
-.fo-tile .l { font-size:.68rem; letter-spacing:.1em; text-transform:uppercase; opacity:.6; margin-top:4px; }
+.fo-tile { border:1px solid rgba(226,188,91,.22); border-radius:14px; background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.015));
+           padding:14px 10px; text-align:center; min-width:0; }
+.fo-tile .v { font-size:1.5rem; font-weight:800; color:#F5EBD7; line-height:1.15; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.fo-tile .l { font-size:.68rem; letter-spacing:.1em; text-transform:uppercase; opacity:.6; margin-top:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.fo-tile .d { font-size:.78rem; opacity:.5; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+/* only warnings get color, so they stand out */
 .fo-tile.warn { border-color:rgba(201,69,59,.55);} .fo-tile.warn .v { color:#F3A79F; }
-.fo-tile.good .v { color:#9BE0AC; }
 .fo-sec { display:flex; align-items:baseline; gap:10px; margin:4px 0 8px; }
 .fo-label { font-size:.72rem; letter-spacing:.12em; text-transform:uppercase; color:#E2BC5B; font-weight:800; }
 .fo-note { opacity:.5; font-size:.78rem; }
-.fo-brief { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.fo-brief { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:18px; }
 .fo-card { border:1px solid rgba(226,188,91,.3); border-radius:14px; background:rgba(255,255,255,.025); padding:14px 16px; min-height: 150px; }
 .fo-card .fo-label { display:block; margin-bottom:8px; }
 .fo-row { display:flex; justify-content:space-between; align-items:center; gap:10px; margin:5px 0; font-size:.95rem; }
@@ -501,6 +503,9 @@ FRONT_OFFICE_CSS = """
 .fo-tag.ok { background:rgba(94,170,110,.2); color:#9BE0AC; }
 .fo-call { margin-top:9px; padding-top:8px; border-top:1px solid rgba(255,255,255,.07); font-size:.9rem; opacity:.92; }
 .fo-call b { color:#E2BC5B; }
+.fo-bye { font-size:.9rem; opacity:.8; margin:2px 0 8px; } .fo-bye b { color:#E2BC5B; font-weight:700; }
+.fo-headline { font-size:1.2rem; font-weight:800; margin:2px 0 4px; }
+[data-testid="stHorizontalBlock"]:has(.fo-footer-marker) { margin-top:10px; }
 .fo-contracts { opacity:.75; font-size:.88rem; margin:8px 0 4px; }
 [data-testid="stChatMessageContent"] { font-size:1.03rem; line-height:1.58; }
 [data-testid="stChatMessageContent"] th { color:#E2BC5B; }
@@ -512,9 +517,9 @@ FRONT_OFFICE_CSS = """
              background:rgba(255,255,255,.03) !important; font-size:.85rem !important; padding:.3rem .8rem !important; white-space:nowrap; }
 [data-testid="stHorizontalBlock"]:has(.fo-chips-marker) button:hover { border-color:#E2BC5B !important; background:rgba(226,188,91,.12) !important; }
 [data-testid="stElementContainer"]:has(.fo-chips-marker), [data-testid="stElementContainer"]:has(.fo-footer-marker) { display:none !important; }
-/* Starter topics step aside once you tap into the chat box (or have typed something) */
-body:has([data-testid="stChatInput"]:focus-within) .st-key-lai_prompts,
-body:has([data-testid="stChatInput"] textarea:not(:placeholder-shown)) .st-key-lai_prompts { display:none !important; }
+/* Weekly brief, report card and starter topics step aside once you tap into the chat box (or have typed something) */
+body:has([data-testid="stChatInput"]:focus-within) :is(.st-key-lai_prompts, .st-key-fo_week),
+body:has([data-testid="stChatInput"] textarea:not(:placeholder-shown)) :is(.st-key-lai_prompts, .st-key-fo_week) { display:none !important; }
 /* ☰ popover: plain glyph, no box, no caret */
 [data-testid="stHorizontalBlock"]:has(.fo-hdr) [data-testid="stPopover"] button { border:none !important; background:transparent !important; font-size:1.5rem !important; padding:0 .2rem !important; color:#F5EBD7 !important; min-height:0 !important; }
 [data-testid="stHorizontalBlock"]:has(.fo-hdr) [data-testid="stPopover"] button svg { display:none !important; }
@@ -573,10 +578,11 @@ def _esc(text: Any) -> str:
 
 
 def render_front_office_header(owner_name: str, week: int, freshness: str) -> None:
+    """Title + badge, owner and week on the right. `freshness` (model status) stays off the page; problems show as a warning."""
     st.markdown(FRONT_OFFICE_CSS, unsafe_allow_html=True)
     st.markdown(
         f'<div class="fo-hdr"><h1>Front Office</h1><span class="fo-badge">Assistant GM</span>'
-        f'<div class="fo-who"><div class="n">{_esc(owner_name)}</div><div class="m">Week {week} · {_esc(freshness)}</div></div></div>',
+        f'<div class="fo-who"><div class="n">{_esc(owner_name)}</div><div class="m">Week {week}</div></div></div>',
         unsafe_allow_html=True,
     )
 
@@ -605,8 +611,25 @@ def render_mobile_status(week: int, tiles: list[dict[str, Any]] | None) -> None:
 
 
 def render_tiles(tiles: list[dict[str, Any]]) -> None:
-    cells = "".join(f'<div class="fo-tile {t.get("tone") or ""}"><div class="v">{_esc(t["value"])}</div><div class="l">{_esc(t["label"])}</div></div>' for t in tiles)
+    def cell(t: dict[str, Any]) -> str:
+        label, _, detail = str(t.get("label") or "").partition("·")
+        return (f'<div class="fo-tile {t.get("tone") or ""}"><div class="v">{_esc(t["value"])}</div><div class="l">{_esc(label.strip())}</div>'
+                f'<div class="d">{_esc(detail.strip()) or "&nbsp;"}</div></div>')
+
+    cells = "".join(cell(t) for t in tiles)
     st.markdown(f'<div class="fo-tiles">{cells}</div>', unsafe_allow_html=True)
+
+
+def short_status(status: Any) -> str:
+    """'Injured Reserve · not specified toe · est. Nov 25' -> 'IR · toe · Nov 25'."""
+    parts = []
+    for bit in str(status or "").split("·"):
+        bit = bit.strip().replace("not specified", "").replace("est. ", "").strip()
+        if bit.lower() == "injured reserve":
+            bit = "IR"
+        if bit:
+            parts.append(bit)
+    return " · ".join(parts)
 
 
 def _tag_class(status: str) -> str:
@@ -622,11 +645,17 @@ def render_brief(brief: dict[str, Any] | None, *, generating: bool = False) -> N
         return
     inj = brief.get("injuries") or {}
     mu = brief.get("matchup") or {}
-    inj_rows = "".join(f'<div class="fo-row"><span class="nm">{_esc(i.get("player"))}</span><span class="fo-tag {_tag_class(i.get("status"))}">{_esc(i.get("status"))}</span></div>' for i in (inj.get("items") or [])[:5]) or '<div class="fo-row"><span class="fo-note">No injuries on your roster.</span></div>'
+    items = (inj.get("items") or [])[:5]
+    on_bye = [i.get("player") for i in items if str(i.get("status") or "").lower().startswith("bye")]
+    hurt = [i for i in items if not str(i.get("status") or "").lower().startswith("bye")]
+    bye_row = f'<div class="fo-bye"><b>On bye:</b> {_esc(", ".join(on_bye))}</div>' if on_bye else ""
+    inj_rows = bye_row + ("".join(f'<div class="fo-row"><span class="nm">{_esc(i.get("player"))}</span><span class="fo-tag {_tag_class(i.get("status"))}">{_esc(short_status(i.get("status")))}</span></div>' for i in hurt)
+                          or ("" if on_bye else '<div class="fo-row"><span class="fo-note">No injuries on your roster.</span></div>'))
     mu_rows = "".join(f'<div class="fo-row"><span>{_esc(l)}</span></div>' for l in (mu.get("lines") or [])[:4])
     call = f'<div class="fo-call"><b>Call:</b> {_esc(inj.get("call"))}</div>' if inj.get("call") else ""
     stakes = f'<div class="fo-call"><b>Stakes:</b> {_esc(mu.get("stakes"))}</div>' if mu.get("stakes") else ""
-    headline = f'<div style="font-size:1.2rem;font-weight:800;margin:2px 0 4px">{_esc(mu.get("headline"))}</div>'
+    # the opponent's name is on the tile above, so the card skips the "vs ..." headline unless there's no game
+    headline = "" if (mu.get("headline") or "").startswith("vs ") else f'<div class="fo-headline">{_esc(mu.get("headline"))}</div>'
     html_out = (
         '<div class="fo-brief">'
         f'<div class="fo-card"><span class="fo-label">✚ Injuries &amp; lineup</span>{inj_rows}{call}</div>'
