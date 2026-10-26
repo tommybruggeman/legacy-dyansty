@@ -2,8 +2,8 @@
 # ------------------------------------------------------------
 # Weekly Matchups
 # Desktop keeps the existing dataframe presentation.
-# Mobile uses a purpose-built compact matchup grid.
-# Data fetching / ranking logic unchanged.
+# Phones get one card per game (services/matchups_view.py),
+# with owner names, weekly rank and the signed-in owner's game first.
 # ------------------------------------------------------------
 
 import html
@@ -19,6 +19,13 @@ import streamlit as st
 from auth import require_login, current_user, _sb
 from components.sidebar_nav import render_nav
 from season_engine import SeasonResolver
+from services.app_context import (
+    current_nfl_week,
+    get_user_id,
+    last_scored_week,
+    resolve_my_team,
+)
+from services.matchups_view import build_games, matchup_cards_html
 
 
 ICON = Path(__file__).resolve().parents[1] / "assets" / "page_icon.png"
@@ -113,65 +120,68 @@ def _get(url: str):
     return response.json()
 
 
-def _as_number(value):
-    try:
-        if value is None:
-            return 0.0
-
-        if isinstance(value, (int, float)):
-            return float(value)
-
-        return float(str(value))
-
-    except Exception:
-        return 0.0
-
-
 # ============================================================
 # Name mapping
 # ============================================================
 
-def _roster_id_to_appname(league_id: str) -> Dict[int, str]:
+@st.cache_data(
+    ttl=600,
+    show_spinner=False,
+)
+def _roster_id_to_owner_name(
+    app_league_id: str,
+    sleeper_league_id: str,
+) -> Dict[int, str]:
     """
-    roster_id -> Team name from our app database.
+    roster_id -> owner name, matched by Sleeper roster id.
 
-    Fallback to Sleeper display name if the roster is not in
-    our teams table yet.
+    Prefers the owner name from league_teams, then the app team
+    name, then the Sleeper display name.
     """
 
     app_map: Dict[int, str] = {}
 
-    try:
-        rows = (
-            sb.table("teams")
-            .select("sleeper_roster_id,team_name")
-            .eq("league_id", league_id)
-            .execute()
-            .data
-            or []
-        )
+    for table, columns in (
+        ("teams", "sleeper_roster_id,team_name"),
+        ("league_teams", "sleeper_roster_id,owner_name,team_name"),
+    ):
+        try:
+            rows = (
+                sb.table(table)
+                .select(columns)
+                .eq("league_id", app_league_id)
+                .execute()
+                .data
+                or []
+            )
+
+        except Exception:
+            rows = []
 
         for row in rows:
-            roster_id = row.get("sleeper_roster_id")
-            team_name = str(
-                row.get("team_name") or ""
+            name = str(
+                row.get("owner_name")
+                or row.get("team_name")
+                or ""
             ).strip()
 
-            if roster_id is not None and team_name:
-                app_map[int(roster_id)] = team_name
+            try:
+                roster_id = int(row.get("sleeper_roster_id"))
+            except (TypeError, ValueError):
+                continue
 
-    except Exception:
-        app_map = {}
+            if name:
+                app_map[roster_id] = name
 
 
     users = _get(
         f"https://api.sleeper.app/v1/league/"
-        f"{SLEEPER_LEAGUE_ID}/users"
+        f"{sleeper_league_id}/users"
     )
 
     rosters = _get(
         f"https://api.sleeper.app/v1/league/"
-        f"{SLEEPER_LEAGUE_ID}/rosters"
+        f"{sleeper_league_id}/rosters"
     )
 
 
@@ -191,14 +201,13 @@ def _roster_id_to_appname(league_id: str) -> Dict[int, str]:
         roster_id = roster.get("roster_id")
         owner_id = roster.get("owner_id")
 
-        if roster_id in app_map:
-            roster_to_name[roster_id] = app_map[roster_id]
-
-        else:
-            roster_to_name[roster_id] = uid_to_display_name.get(
+        roster_to_name[roster_id] = app_map.get(
+            roster_id,
+            uid_to_display_name.get(
                 owner_id,
                 f"Roster {roster_id}",
-            )
+            ),
+        )
 
     return roster_to_name
 
@@ -207,10 +216,33 @@ def _roster_id_to_appname(league_id: str) -> Dict[int, str]:
 # Data fetch + ranking
 # ============================================================
 
-def _fetch_week(
-    league_id: str,
+@st.cache_data(
+    ttl=60,
+    show_spinner=False,
+)
+def load_weekly_games_cached(
+    app_league_id: str,
+    sleeper_league_id: str,
     week: int,
+) -> list:
+
+    names = _roster_id_to_owner_name(
+        app_league_id,
+        sleeper_league_id,
+    )
+
+    rows = _get(
+        f"https://api.sleeper.app/v1/league/"
+        f"{sleeper_league_id}/matchups/{week}"
+    ) or []
+
+    return build_games(rows, names)
+
+
+def _games_to_frame(
+    games: list,
 ) -> pd.DataFrame:
+    """Desktop table: one row per game, leader on the left."""
 
     columns = [
         "Weekly Rank (A)",
@@ -221,296 +253,69 @@ def _fetch_week(
         "Weekly Rank (B)",
     ]
 
+    rows = []
 
-    roster_to_name = _roster_id_to_appname(
-        league_id
-    )
+    for game in games:
+        team_a, team_b = game["teams"]
 
-    rows = _get(
-        f"https://api.sleeper.app/v1/league/"
-        f"{league_id}/matchups/{week}"
-    ) or []
-
-
-    by_matchup = {}
-
-    for row in rows:
-        matchup_id = row.get("matchup_id")
-
-        if matchup_id is None:
-            continue
-
-        by_matchup.setdefault(
-            matchup_id,
-            [],
-        ).append(row)
-
-
-    output = []
-    all_scores = []
-
-
-    for matchup_id, games in by_matchup.items():
-
-        if len(games) < 2:
-            continue
-
-
-        team_a_raw, team_b_raw = (
-            games[0],
-            games[1],
-        )
-
-
-        roster_a = team_a_raw.get("roster_id")
-        roster_b = team_b_raw.get("roster_id")
-
-
-        name_a = roster_to_name.get(
-            roster_a,
-            f"Roster {roster_a}",
-        )
-
-        name_b = roster_to_name.get(
-            roster_b,
-            f"Roster {roster_b}",
-        )
-
-
-        points_a = _as_number(
-            team_a_raw.get("points", 0.0)
-        )
-
-        points_b = _as_number(
-            team_b_raw.get("points", 0.0)
-        )
-
-
-        starters_a = _as_number(
-            team_a_raw.get(
-                "starters_points",
-                0.0,
-            )
-        )
-
-        starters_b = _as_number(
-            team_b_raw.get(
-                "starters_points",
-                0.0,
-            )
-        )
-
-
-        if points_a < 10.0 <= starters_a:
-            points_a = starters_a
-
-        if points_b < 10.0 <= starters_b:
-            points_b = starters_b
-
-
-        all_scores.append(
-            (name_a, points_a)
-        )
-
-        all_scores.append(
-            (name_b, points_b)
-        )
-
-
-        output.append(
+        rows.append(
             {
-                "Team A": name_a,
-                "Score A": round(points_a, 2),
-                "Team B": name_b,
-                "Score B": round(points_b, 2),
+                "Weekly Rank (A)": team_a["rank"],
+                "Team A": team_a["name"],
+                "Score A": team_a["score"],
+                "Team B": team_b["name"],
+                "Score B": team_b["score"],
+                "Weekly Rank (B)": team_b["rank"],
             }
         )
 
-
-    if not output:
-        return pd.DataFrame(
-            columns=columns
-        )
+    return pd.DataFrame(rows, columns=columns)
 
 
-    rank_map = {}
+def _my_roster_id():
+    """The signed-in owner's Sleeper roster id, or None.
+    Looked up once per session."""
 
-    if all_scores:
+    cache_key = f"matchups_my_roster_id:{league_id}"
 
-        score_frame = pd.DataFrame(
-            all_scores,
-            columns=[
-                "Team",
-                "Score",
-            ],
-        )
+    if cache_key not in st.session_state:
+        st.session_state[cache_key] = _lookup_my_roster_id()
 
-        score_frame["Rank"] = (
-            score_frame["Score"]
-            .rank(
-                method="min",
-                ascending=False,
-            )
-            .astype(int)
-        )
-
-        rank_map = dict(
-            zip(
-                score_frame["Team"],
-                score_frame["Rank"],
-            )
-        )
+    return st.session_state[cache_key]
 
 
-    for row in output:
+def _lookup_my_roster_id():
+    ctx = st.session_state.get("app_context") or {}
+    my_team = ctx.get("my_team") if isinstance(ctx, dict) else None
 
-        row["Weekly Rank (A)"] = (
-            rank_map.get(row["Team A"])
-        )
-
-        row["Weekly Rank (B)"] = (
-            rank_map.get(row["Team B"])
-        )
-
-
-    df = pd.DataFrame(output)
-
-    df = df[columns]
-
-    df = (
-        df.sort_values(
-            [
-                "Weekly Rank (A)",
-                "Weekly Rank (B)",
-            ],
-            na_position="last",
-        )
-        .reset_index(drop=True)
-    )
-
-    return df
-
-
-@st.cache_data(
-    ttl=60,
-    show_spinner=False,
-)
-def load_weekly_matchups_cached(
-    league_id: str,
-    week: int,
-) -> pd.DataFrame:
-
-    return _fetch_week(
-        league_id,
-        week,
-    )
-
-
-def _find_latest_week_with_data(
-    league_id: str,
-    max_week: int = 25,
-) -> int:
-
-    for week in range(
-        max_week,
-        0,
-        -1,
-    ):
+    if not isinstance(my_team, dict):
         try:
-            data = _get(
-                f"https://api.sleeper.app/v1/league/"
-                f"{league_id}/matchups/{week}"
-            ) or []
-
-            if data:
-                return week
-
+            my_team = resolve_my_team(
+                get_user_id(),
+                league_id,
+            ) or {}
         except Exception:
-            continue
+            my_team = {}
 
-    return 1
+    team_id = my_team.get("team_id")
 
+    if not team_id:
+        return None
 
-# ============================================================
-# Mobile matchup renderer
-# ============================================================
-
-def _mobile_matchup_grid(
-    df: pd.DataFrame,
-) -> str:
-
-    rows = []
-
-
-    for _, row in df.iterrows():
-
-        team_a = html.escape(
-            str(row["Team A"])
+    try:
+        rows = (
+            sb.table("league_teams")
+            .select("sleeper_roster_id")
+            .eq("id", team_id)
+            .limit(1)
+            .execute()
+            .data
+            or []
         )
+    except Exception:
+        return None
 
-        team_b = html.escape(
-            str(row["Team B"])
-        )
-
-
-        score_a = float(
-            row["Score A"]
-        )
-
-        score_b = float(
-            row["Score B"]
-        )
-
-
-        rank_a = html.escape(
-            str(row["Weekly Rank (A)"])
-        )
-
-        rank_b = html.escape(
-            str(row["Weekly Rank (B)"])
-        )
-
-
-        score_a_class = "mobile-score"
-        score_b_class = "mobile-score"
-
-
-        if score_a > score_b:
-            score_a_class += " mobile-score-winner"
-
-        elif score_b > score_a:
-            score_b_class += " mobile-score-winner"
-
-
-        rows.append(
-            (
-                '<div class="mobile-match-row">'
-                f'<div class="mobile-rank">{rank_a}</div>'
-                f'<div class="mobile-team mobile-team-left" title="{team_a}">{team_a}</div>'
-                f'<div class="{score_a_class}">{score_a:.2f}</div>'
-                f'<div class="{score_b_class}">{score_b:.2f}</div>'
-                f'<div class="mobile-team mobile-team-right" title="{team_b}">{team_b}</div>'
-                f'<div class="mobile-rank">{rank_b}</div>'
-                '</div>'
-            )
-        )
-
-
-    return (
-        '<div class="mobile-matchups-wrapper">'
-        '<div class="mobile-matchups-card">'
-        '<div class="mobile-match-header">'
-        '<div>RK</div>'
-        '<div class="header-team-left">TEAM</div>'
-        '<div>PTS</div>'
-        '<div>PTS</div>'
-        '<div class="header-team-right">TEAM</div>'
-        '<div>RK</div>'
-        '</div>'
-        f'{"".join(rows)}'
-        '</div>'
-        '</div>'
-    )
+    return rows[0].get("sleeper_roster_id") if rows else None
 
 
 # ============================================================
@@ -723,7 +528,9 @@ table tbody tr:hover td {
 
 
 /* =========================================================
-   Mobile matchup card
+   Phone matchup cards
+   One card per game: two even rows (rank, owner, score) and a
+   status line. Shown only under 700px; desktop keeps the table.
 ========================================================= */
 
 .mobile-matchups-wrapper {
@@ -731,14 +538,27 @@ table tbody tr:hover td {
 }
 
 
-.mobile-matchups-card {
-    width: 100%;
+.mm-summary {
+    display: grid;
 
-    max-width: 100%;
+    grid-template-columns:
+        repeat(3, minmax(0, 1fr));
 
-    box-sizing: border-box;
+    gap: 8px;
 
-    overflow: hidden;
+    margin-bottom: 12px;
+}
+
+
+.mm-box {
+    min-width: 0;
+
+    padding: 9px 6px 8px;
+
+    border:
+        1px solid rgba(226,188,91,.22);
+
+    border-radius: 12px;
 
     background:
         radial-gradient(
@@ -747,90 +567,147 @@ table tbody tr:hover td {
             var(--panel-2) 100%
         );
 
+    text-align: center;
+}
+
+
+.mm-box span,
+.mm-box b,
+.mm-box em {
+    display: block;
+
+    overflow: hidden;
+
+    white-space: nowrap;
+
+    text-overflow: ellipsis;
+}
+
+
+.mm-box span {
+    color: var(--muted);
+
+    font-size: .56rem;
+
+    font-weight: 800;
+
+    letter-spacing: .07em;
+
+    text-transform: uppercase;
+}
+
+
+.mm-box b {
+    margin-top: 3px;
+
+    color: var(--gold);
+
+    font-size: .98rem;
+
+    font-weight: 900;
+
+    font-variant-numeric: tabular-nums;
+}
+
+
+.mm-box em {
+    margin-top: 1px;
+
+    color: var(--text);
+
+    font-size: .66rem;
+
+    font-style: normal;
+
+    font-weight: 600;
+
+    opacity: .85;
+}
+
+
+.mm-card {
+    margin-bottom: 10px;
+
+    overflow: hidden;
+
     border:
         1px solid var(--gold-soft);
 
     border-radius: 14px;
+
+    background:
+        radial-gradient(
+            120% 140% at 20% 0%,
+            var(--panel) 0%,
+            var(--panel-2) 100%
+        );
 
     box-shadow:
         var(--shadow-amb);
 }
 
 
-.mobile-match-header,
-.mobile-match-row {
-    display: grid;
+.mm-card.is-mine {
+    border-color: var(--gold);
 
-    grid-template-columns:
-        24px
-        minmax(0, 1fr)
-        47px
-        47px
-        minmax(0, 1fr)
-        24px;
-
-    align-items: center;
-
-    width: 100%;
-
-    box-sizing: border-box;
+    box-shadow:
+        0 0 0 1px rgba(226,188,91,.25),
+        var(--shadow-amb);
 }
 
 
-.mobile-match-header {
-    min-height: 32px;
+.mm-label {
+    padding: 7px 14px 0;
 
-    padding:
-        0 4px;
+    color: var(--gold);
 
-    background:
-        rgba(255,255,255,.025);
-
-    color: var(--muted);
-
-    font-size: .56rem;
+    font-size: .58rem;
 
     font-weight: 900;
 
-    letter-spacing: .05em;
+    letter-spacing: .1em;
 
-    text-align: center;
+    text-transform: uppercase;
+}
+
+
+.mm-team {
+    display: grid;
+
+    grid-template-columns:
+        26px
+        minmax(0, 1fr)
+        72px;
+
+    align-items: center;
+
+    column-gap: 10px;
+
+    min-height: 46px;
+
+    padding: 0 14px 0 12px;
 
     border-bottom:
-        1px solid rgba(226,188,91,.18);
+        1px solid rgba(226,188,91,.09);
 }
 
 
-.header-team-left {
-    text-align: left;
-}
+.mm-rank {
+    width: 24px;
 
+    height: 24px;
 
-.header-team-right {
-    text-align: right;
-}
+    line-height: 24px;
 
+    margin: 0 auto;
 
-.mobile-match-row {
-    min-height: 50px;
+    border-radius: 50%;
 
-    padding:
-        0 4px;
+    background: rgba(255,255,255,.06);
 
-    border-bottom:
-        1px solid rgba(226,188,91,.12);
-}
-
-
-.mobile-match-row:last-child {
-    border-bottom: 0;
-}
-
-
-.mobile-rank {
     color: var(--muted);
 
-    font-size: .67rem;
+    font-size: .7rem;
 
     font-weight: 800;
 
@@ -838,7 +715,31 @@ table tbody tr:hover td {
 }
 
 
-.mobile-team {
+.mm-rank.top5 {
+    background: var(--gold);
+
+    color: #0C1917;
+
+    font-weight: 900;
+}
+
+
+.mm-name {
+    display: flex;
+
+    align-items: center;
+
+    min-width: 0;
+
+    color: var(--text);
+
+    font-size: .9rem;
+
+    font-weight: 700;
+}
+
+
+.mm-name-text {
     min-width: 0;
 
     overflow: hidden;
@@ -846,50 +747,127 @@ table tbody tr:hover td {
     white-space: nowrap;
 
     text-overflow: ellipsis;
+}
 
+
+.mm-you {
+    flex-shrink: 0;
+
+    margin-left: 7px;
+
+    padding: 1px 6px;
+
+    border-radius: 999px;
+
+    background: rgba(226,188,91,.16);
+
+    color: var(--gold);
+
+    font-size: .56rem;
+
+    font-weight: 900;
+
+    letter-spacing: .06em;
+
+    text-transform: uppercase;
+}
+
+
+.mm-score {
     color: var(--text);
 
-    font-size: .72rem;
+    font-size: .95rem;
 
     font-weight: 700;
-}
 
-
-.mobile-team-left {
-    padding-left: 3px;
-
-    padding-right: 4px;
-
-    text-align: left;
-}
-
-
-.mobile-team-right {
-    padding-left: 4px;
-
-    padding-right: 3px;
+    font-variant-numeric: tabular-nums;
 
     text-align: right;
 }
 
 
-.mobile-score {
-    color: var(--text);
-
-    font-size: .69rem;
-
-    font-weight: 700;
-
-    text-align: center;
-
-    white-space: nowrap;
-}
-
-
-.mobile-score-winner {
+.mm-team.is-winner .mm-name-text,
+.mm-team.is-winner .mm-score {
     color: var(--gold);
 
     font-weight: 900;
+}
+
+
+.mm-team:not(.is-winner) .mm-score {
+    opacity: .8;
+}
+
+
+.mm-status {
+    display: flex;
+
+    align-items: center;
+
+    justify-content: space-between;
+
+    gap: 8px;
+
+    min-height: 32px;
+
+    padding: 0 14px;
+
+    background: rgba(255,255,255,.03);
+
+    color: var(--muted);
+
+    font-size: .7rem;
+
+    font-weight: 700;
+}
+
+
+.mm-badge {
+    flex-shrink: 0;
+
+    padding: 2px 8px;
+
+    border-radius: 999px;
+
+    font-size: .56rem;
+
+    font-weight: 900;
+
+    letter-spacing: .08em;
+
+    text-transform: uppercase;
+}
+
+
+.mm-badge.final {
+    background: rgba(255,255,255,.07);
+
+    color: var(--muted);
+}
+
+
+.mm-badge.live {
+    background: rgba(74,222,128,.14);
+
+    color: #4ADE80;
+}
+
+
+.mm-badge.upcoming {
+    background: rgba(226,188,91,.12);
+
+    color: var(--gold);
+}
+
+
+.mm-hint {
+    margin-top: 2px;
+
+    color: var(--muted);
+
+    font-size: .68rem;
+
+    text-align: center;
 }
 
 
@@ -1130,15 +1108,6 @@ table tbody tr:hover td {
     }
 
 
-    .mobile-matchups-card {
-        width: 100% !important;
-
-        max-width: 100% !important;
-
-        border-radius: 13px;
-    }
-
-
     .legacy-loader-wrap {
         height: 55vh;
     }
@@ -1224,7 +1193,8 @@ def show_loading_screen(
 # ============================================================
 
 if "weekly_wk" not in st.session_state:
-    st.session_state["weekly_wk"] = 1
+    # Open on the week being played now, not week 1.
+    st.session_state["weekly_wk"] = current_nfl_week()
     st.session_state["weekly_wk_origin"] = "auto"
 
 
@@ -1302,10 +1272,15 @@ try:
     )
 
 
-    df = load_weekly_matchups_cached(
+    selected_week = int(st.session_state["weekly_wk"])
+
+    games = load_weekly_games_cached(
+        str(league_id),
         SLEEPER_LEAGUE_ID,
-        int(st.session_state["weekly_wk"]),
+        selected_week,
     )
+
+    df = _games_to_frame(games)
 
 
     loading_box.empty()
@@ -1358,8 +1333,18 @@ try:
         # MOBILE TABLE
         # ----------------------------------------------------
 
-        mobile_grid = _mobile_matchup_grid(
-            df
+        try:
+            week_is_final = selected_week <= int(
+                last_scored_week(SLEEPER_LEAGUE_ID)
+            )
+        except Exception:
+            week_is_final = False
+
+
+        mobile_grid = matchup_cards_html(
+            games,
+            my_roster_id=_my_roster_id(),
+            is_final=week_is_final,
         )
 
 
