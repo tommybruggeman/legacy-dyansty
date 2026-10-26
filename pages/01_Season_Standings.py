@@ -903,6 +903,15 @@ div[data-testid="stDataFrame"]
 ========================================================= */
 
 .mobile-standings-wrapper {
+    display: block;
+
+    margin-bottom: 1.5rem;
+}
+
+
+/* Record / PA / per-game columns only fit on desktop;
+   W only shows on phone, where Record is in the tap-open panel. */
+.ms-wide {
     display: none;
 }
 
@@ -1243,17 +1252,32 @@ a.ms-view:hover {
 }
 
 
-.ms-name {
+.ms-name,
+a.ms-name,
+a.ms-name:visited {
     min-width: 0;
 
     overflow: hidden;
 
     text-overflow: ellipsis;
+
+    color: inherit !important;
+
+    text-decoration: none !important;
 }
 
 
-.rank-1 .ms-name {
-    color: var(--gold);
+/* On phone a tap opens the stats panel; the name is a link on desktop. */
+@media (max-width: 700px) {
+    a.ms-name {
+        pointer-events: none;
+    }
+}
+
+
+.rank-1 .ms-name,
+.rank-1 a.ms-name {
+    color: var(--gold) !important;
 }
 
 
@@ -1425,22 +1449,6 @@ The dedicated 2x2 mobile leader grid is shown instead.
     Main Streamlit standings dataframe only.
     */
 
-    .st-key-main_standings_table {
-        display:
-            none !important;
-    }
-
-
-    /*
-    Top 5 / Bottom 5 tables run off a phone screen and repeat the
-    standings; their extra stats live in the expandable rows instead.
-    */
-
-    .st-key-top_bottom_five,
-    .divider {
-        display:
-            none !important;
-    }
 
 
     .mobile-standings-wrapper {
@@ -1528,9 +1536,101 @@ The dedicated 2x2 mobile leader grid is shown instead.
     }
 
 
-    .mobile-standings-wrapper {
-        display:
-            none !important;
+    /* Desktop standings: same card, roomier, with every column. */
+    .mobile-standings-card {
+        max-width: 1100px;
+    }
+
+    .ms-wide {
+        display: block;
+    }
+
+    .ms-narrow,
+    .ms-detail,
+    .ms-hint {
+        display: none !important;
+    }
+
+    .mobile-standings-header,
+    .mobile-standings-row {
+        grid-template-columns:
+            40px
+            minmax(180px, 1fr)
+            56px
+            68px
+            68px
+            68px
+            68px
+            68px
+            48px;
+
+        column-gap: 10px;
+
+        padding:
+            0 24px 0 16px;
+    }
+
+    .mobile-standings-header {
+        min-height: 44px;
+
+        font-size: .7rem;
+    }
+
+    .mobile-standings-row {
+        min-height: 54px;
+
+        cursor: default;
+    }
+
+    .mobile-standings-row:hover {
+        background:
+            rgba(226,188,91,.06);
+    }
+
+    .mobile-standing-team {
+        font-size: 1rem;
+    }
+
+    a.ms-name:hover {
+        color: var(--gold) !important;
+    }
+
+    .mobile-standing-number {
+        font-size: .95rem;
+    }
+
+    .mobile-standing-rank {
+        font-size: .82rem;
+    }
+
+    .rank-1 .mobile-standing-rank,
+    .rank-2 .mobile-standing-rank,
+    .rank-3 .mobile-standing-rank {
+        width: 26px;
+
+        height: 26px;
+
+        line-height: 26px;
+    }
+
+    .ms-move {
+        font-size: .7rem;
+    }
+
+    .ms-playoff-line span {
+        font-size: .62rem;
+    }
+
+    /* Streamlit's link styling otherwise paints these blue. */
+    a.desktop-leader-team,
+    a.desktop-leader-team:visited {
+        color: var(--text) !important;
+
+        text-decoration: none !important;
+    }
+
+    a.desktop-leader-team:hover {
+        color: var(--gold) !important;
     }
 
 }
@@ -1764,54 +1864,6 @@ def add_meta_metrics(
 
 
 # ============================================================
-# BADGE STYLES
-# ============================================================
-
-def standings_badge_style(
-    df: pd.DataFrame,
-) -> pd.DataFrame:
-
-    styles = pd.DataFrame(
-        "",
-        index=df.index,
-        columns=df.columns,
-    )
-
-
-    if "Wins" in df.columns:
-
-        styles["Wins"] = (
-            "background: rgba(34,197,94,.16); "
-            "border-radius: 999px; "
-            "padding: 2px 10px; "
-            "text-align: center;"
-        )
-
-
-    if "Losses" in df.columns:
-
-        styles["Losses"] = (
-            "background: rgba(239,68,68,.14); "
-            "border-radius: 999px; "
-            "padding: 2px 10px; "
-            "text-align: center;"
-        )
-
-
-    if "Top 5" in df.columns:
-
-        styles["Top 5"] = (
-            "background: rgba(226,188,91,.20); "
-            "border-radius: 999px; "
-            "padding: 2px 10px; "
-            "text-align: center;"
-        )
-
-
-    return styles
-
-
-# ============================================================
 # DATA
 # ============================================================
 
@@ -1972,7 +2024,7 @@ def _movement_html(rank: int, prev_rank) -> str:
     return ""
 
 
-def _mobile_standings_html(
+def _standings_html(
     standings_df: pd.DataFrame,
     my_team: str | None = None,
 ) -> str:
@@ -2025,11 +2077,17 @@ def _mobile_standings_html(
 
         move = _movement_html(rank, row.get("Prev Rank"))
 
+        pa = as_int(row.get("PA", 0))
+
+        pf_per_game = f'{as_float(row.get("PF Per Game", 0)):.1f}'
+
+        pa_per_game = f'{as_float(row.get("PA Per Game", 0)):.1f}'
+
         detail_stats = [
             ("Record", record),
-            ("PF / game", f'{as_float(row.get("PF Per Game", 0)):.1f}'),
-            ("PA", f'{as_int(row.get("PA", 0))}'),
-            ("PA / game", f'{as_float(row.get("PA Per Game", 0)):.1f}'),
+            ("PF / game", pf_per_game),
+            ("PA", pa),
+            ("PA / game", pa_per_game),
         ]
 
         detail_html = "".join(
@@ -2044,11 +2102,15 @@ def _mobile_standings_html(
                 '<summary class="mobile-standings-row">'
                 f'<div class="mobile-standing-rank">{rank}</div>'
                 '<div class="mobile-standing-team">'
-                f'<span class="ms-name">{team}</span>{move}'
+                f'<a class="ms-name" href="{href}" target="_self">{team}</a>{move}'
                 '</div>'
                 f'<div class="mobile-standing-number sp">{standing_points}</div>'
+                f'<div class="mobile-standing-number ms-wide">{record}</div>'
                 f'<div class="mobile-standing-number">{pf}</div>'
-                f'<div class="mobile-standing-number">{wins}</div>'
+                f'<div class="mobile-standing-number ms-wide">{pa}</div>'
+                f'<div class="mobile-standing-number ms-wide">{pf_per_game}</div>'
+                f'<div class="mobile-standing-number ms-wide">{pa_per_game}</div>'
+                f'<div class="mobile-standing-number ms-narrow">{wins}</div>'
                 f'<div class="mobile-standing-number">{top5}</div>'
                 '</summary>'
                 '<div class="ms-detail">'
@@ -2072,8 +2134,12 @@ def _mobile_standings_html(
         '<div>#</div>'
         '<div>Owner</div>'
         '<div>SP</div>'
+        '<div class="ms-wide">Record</div>'
         '<div>PF</div>'
-        '<div>W</div>'
+        '<div class="ms-wide">PA</div>'
+        '<div class="ms-wide">PF / G</div>'
+        '<div class="ms-wide">PA / G</div>'
+        '<div class="ms-narrow">W</div>'
         '<div>T5</div>'
         '</div>'
         f'{"".join(rows)}'
@@ -2468,108 +2534,6 @@ st.markdown(
 # MAIN STANDINGS
 # ============================================================
 
-stand_columns = [
-    "Team",
-    "Standing Points",
-    "PF",
-    "Wins",
-    "Top 5",
-]
-
-
-available = [
-    column
-    for column in stand_columns
-    if column in meta_full.columns
-]
-
-
-standings_df = (
-    meta_full[available]
-    .sort_values(
-        [
-            "Standing Points",
-            "PF",
-            "Wins",
-            "Top 5",
-        ],
-        ascending=[
-            False,
-            False,
-            False,
-            False,
-        ],
-    )
-    .reset_index(drop=True)
-)
-
-
-standings_styler = (
-    standings_df
-    .style
-    .apply(
-        standings_badge_style,
-        axis=None,
-    )
-)
-
-
-column_config = {}
-
-
-try:
-
-    from streamlit import column_config as cc
-
-
-    if "Standing Points" in standings_df.columns:
-
-        column_config[
-            "Standing Points"
-        ] = cc.NumberColumn(
-            "Standing Points",
-            format="%d",
-            width="small",
-        )
-
-
-    if "PF" in standings_df.columns:
-
-        column_config[
-            "PF"
-        ] = cc.NumberColumn(
-            "PF",
-            format="%.0f",
-            width="small",
-        )
-
-
-    if "Wins" in standings_df.columns:
-
-        column_config[
-            "Wins"
-        ] = cc.NumberColumn(
-            "Wins",
-            format="%d",
-            width="small",
-        )
-
-
-    if "Top 5" in standings_df.columns:
-
-        column_config[
-            "Top 5"
-        ] = cc.NumberColumn(
-            "Top 5",
-            format="%d",
-            width="small",
-        )
-
-
-except Exception:
-    pass
-
-
 st.markdown(
     '<div class="section-title">Standings</div>',
     unsafe_allow_html=True,
@@ -2577,10 +2541,10 @@ st.markdown(
 
 
 # ------------------------------------------------------------
-# MOBILE STANDINGS
+# STANDINGS CARD (phone and desktop)
 # ------------------------------------------------------------
 
-mobile_standings_df = (
+standings_df = (
     meta_full
     .sort_values(
         [
@@ -2595,211 +2559,9 @@ mobile_standings_df = (
 )
 
 st.markdown(
-    _mobile_standings_html(
-        mobile_standings_df,
+    _standings_html(
+        standings_df,
         my_owner_name,
     ),
     unsafe_allow_html=True,
 )
-
-
-# ------------------------------------------------------------
-# DESKTOP STANDINGS
-# ------------------------------------------------------------
-
-with st.container(
-    key="main_standings_table",
-):
-
-    st.dataframe(
-        standings_styler,
-        hide_index=True,
-        use_container_width=True,
-        column_config=column_config,
-    )
-
-
-st.markdown(
-    '<div class="divider"></div>',
-    unsafe_allow_html=True,
-)
-
-
-# ============================================================
-# TOP / BOTTOM 5
-# ============================================================
-
-RANK_BY = "Standing Points"
-
-
-def _condense_columns(
-    df: pd.DataFrame,
-) -> pd.DataFrame:
-
-    return df.rename(
-        columns={
-            "Standing Points": "SP",
-            "Wins": "Win",
-            "Losses": "Loss",
-            "PF Per Game": "PF / Game",
-            "PA Per Game": "PA / Game",
-            "% of Total Standings Points":
-                "% of Total SP",
-            "% of Total Points Scored":
-                "% of Total Points",
-        }
-    )
-
-
-# On phone the standings rows expand to show these stats instead,
-# so this block is hidden there (see .st-key-top_bottom_five).
-top_bottom_five = st.container(
-    key="top_bottom_five",
-)
-
-left, right = top_bottom_five.columns(
-    2,
-    gap="large",
-)
-
-
-# ------------------------------------------------------------
-# TOP 5
-# ------------------------------------------------------------
-
-with left:
-
-    top5 = (
-        meta_full
-        .sort_values(
-            RANK_BY,
-            ascending=False,
-        )
-        .head(5)
-        .reset_index(drop=True)
-    )
-
-
-    columns_out = [
-        column
-        for column in [
-            "Team",
-            "Standing Points",
-            "Wins",
-            "Losses",
-            "Top 5",
-            "PF",
-            "PF Per Game",
-            "PA",
-            "PA Per Game",
-            "% of Total Standings Points",
-            "% of Total Points Scored",
-        ]
-        if column in top5.columns
-    ]
-
-
-    top5_df = top5[
-        columns_out
-    ]
-
-
-    top5_df = _condense_columns(
-        top5_df
-    )
-
-
-    top5_styler = (
-        top5_df
-        .style
-        .apply(
-            standings_badge_style,
-            axis=None,
-        )
-    )
-
-
-    st.markdown(
-        f'<div class="section-title">'
-        f'Top 5 ({RANK_BY})'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
-
-
-    st.dataframe(
-        top5_styler,
-        use_container_width=True,
-        hide_index=True,
-    )
-
-
-# ------------------------------------------------------------
-# BOTTOM 5
-# ------------------------------------------------------------
-
-with right:
-
-    bottom5 = (
-        meta_full
-        .sort_values(
-            RANK_BY,
-            ascending=True,
-        )
-        .head(5)
-        .reset_index(drop=True)
-    )
-
-
-    columns_out = [
-        column
-        for column in [
-            "Team",
-            "Standing Points",
-            "Wins",
-            "Losses",
-            "Top 5",
-            "PF",
-            "PF Per Game",
-            "PA",
-            "PA Per Game",
-            "% of Total Standings Points",
-            "% of Total Points Scored",
-        ]
-        if column in bottom5.columns
-    ]
-
-
-    bottom5_df = bottom5[
-        columns_out
-    ]
-
-
-    bottom5_df = _condense_columns(
-        bottom5_df
-    )
-
-
-    bottom5_styler = (
-        bottom5_df
-        .style
-        .apply(
-            standings_badge_style,
-            axis=None,
-        )
-    )
-
-
-    st.markdown(
-        f'<div class="section-title">'
-        f'Bottom 5 ({RANK_BY})'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
-
-
-    st.dataframe(
-        bottom5_styler,
-        use_container_width=True,
-        hide_index=True,
-    )
