@@ -105,16 +105,18 @@ gm_messages = st.session_state[history_key]
 
 
 def _conversation_controls(suffix: str) -> None:
-    """New conversation + past conversations (footer on both desktop and phone)."""
+    """New conversation + past conversations (row above the chat on desktop, ☰ menu on phone)."""
     show_key = f"fo_show_past_{suffix}"
     if suffix == "menu":
         c_new = c_past = st.container()
     else:
-        c_new, c_past, _ = st.columns([1.2, 1.5, 6])
+        _label, c_new, c_past = st.columns([3, 1.6, 1.8], vertical_alignment="center")
+        with _label:
+            st.markdown('<span class="fo-label">Ask your Assistant GM</span>', unsafe_allow_html=True)
     with c_new:
         if suffix == "footer":
             st.markdown('<span class="fo-footer-marker"></span>', unsafe_allow_html=True)
-        if st.button("New conversation", key=f"fo_new_conversation_{suffix}"):
+        if st.button("New conversation", key=f"fo_new_conversation_{suffix}", use_container_width=suffix == "footer"):
             start_new_conversation()
             st.session_state[history_key] = [{"role": "assistant", "content": front_office_opening(owner_team_name, _ai_ok)}]
             st.session_state.pop(show_key, None)
@@ -122,7 +124,7 @@ def _conversation_controls(suffix: str) -> None:
     with c_past:
         if suffix == "menu":
             st.session_state[show_key] = True
-        elif st.button("Past conversations", key=f"fo_past_conversations_{suffix}"):
+        elif st.button("Past conversations", key=f"fo_past_conversations_{suffix}", use_container_width=True):
             st.session_state[show_key] = not st.session_state.get(show_key, False)
     if st.session_state.get(show_key):
         past = list_conversations(request_context)  # titles only; one small query
@@ -150,33 +152,42 @@ with _h_right:
 if fo:
     render_mobile_status(fo["week"], fo["tiles"])
 
-# Tiles + weekly brief (desktop only; the phone CSS hides them)
-brief_slot = None
+# chat_input pins to the bottom wherever it's called; reading it up here lets the
+# brief and starter topics step aside the moment a question is on its way.
+typed_prompt = st.chat_input("Ask your assistant GM...")
+prompt = st.session_state.pop("gm_pending_prompt", None) or typed_prompt
+fresh_conversation = len(gm_messages) <= 1 and not prompt
+
+# Tiles (desktop only; the phone CSS hides them)
 if fo:
     render_tiles(fo["tiles"])
-    brief_slot = st.empty()
-    with brief_slot.container():
-        render_brief(fo["data_brief"])  # instant, from data; verdict lines fill in below
 else:
     st.warning("Couldn't load the Front Office header right now; the Assistant GM still works below.")
 if not _ai_ok:
     st.warning(_ai_status)
 
-try:
-    render_report_card(request_context)
-except Exception as exc:  # the report card is optional; never block the chat
-    print(f"FRONT_OFFICE_REPORT_CARD_ERROR {type(exc).__name__}: {exc}", flush=True)
+# Weekly brief + report card: only on a fresh conversation, and CSS hides them
+# while the chat box is focused, so the conversation gets the room.
+brief_slot = None
+if fresh_conversation:
+    with st.container(key="fo_week"):
+        if fo:
+            brief_slot = st.empty()
+            with brief_slot.container():
+                render_brief(fo["data_brief"])  # instant, from data; verdict lines fill in below
+        try:
+            render_report_card(request_context)
+        except Exception as exc:  # the report card is optional; never block the chat
+            print(f"FRONT_OFFICE_REPORT_CARD_ERROR {type(exc).__name__}: {exc}", flush=True)
+
+# Desktop: chat section label + new / past conversations (phone uses ☰)
+_conversation_controls("footer")
 
 # ----------------------------
-# CHAT INPUT + STARTER TOPICS
+# STARTER TOPICS
 # ----------------------------
-# chat_input pins to the bottom wherever it's called; reading it first lets the
-# starter topics step aside the moment a question is on its way.
-typed_prompt = st.chat_input("Ask your assistant GM...")
-prompt = st.session_state.pop("gm_pending_prompt", None) or typed_prompt
-
-# Starter topics only on a fresh conversation (CSS also hides them while the chat box is focused)
-if len(gm_messages) <= 1 and not prompt:
+# Only on a fresh conversation (CSS also hides them while the chat box is focused)
+if fresh_conversation:
     _clicked = render_fo_prompts(fo["week"] if fo else None)
     if _clicked:
         st.session_state.gm_pending_prompt = _clicked
@@ -216,11 +227,6 @@ if prompt:
             st.error(response)
         st.session_state.pop(pending_hash_key, None)
     gm_messages.append({"role": "assistant", "content": response})
-
-# ----------------------------
-# FOOTER (desktop): new / past conversations
-# ----------------------------
-_conversation_controls("footer")
 
 # ----------------------------
 # WEEKLY BRIEF (filled last so the page is usable immediately; cached per week)
