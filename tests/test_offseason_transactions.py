@@ -104,7 +104,8 @@ class OffseasonReadAuthorityTests(unittest.TestCase):
         source = Path("pages/02_My_Team.py").read_text()
         self.assertIn("load_taxi_eligibility_provenance(\n    auth_client(), league_id", source)
         self.assertNotIn('sb.table("rookie_draft_board_assignments")', source)
-        self.assertIn('["Taxi Squad", "Injured Reserve"]', source)
+        self.assertIn('render_designation_form("Taxi Squad", taxi_options, "taxi")', source)
+        self.assertIn('render_designation_form("Injured Reserve", ir_options, "ir")', source)
 
 
 class OffseasonWriteBoundaryTests(unittest.TestCase):

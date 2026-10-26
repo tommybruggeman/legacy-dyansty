@@ -24,8 +24,10 @@ class MyTeamIrDesignationTests(unittest.TestCase):
         self.assertIn("str(r.get(\"player\")) not in designated_names", UI)
 
     def test_selected_designation_shows_current_holder(self):
+        # Taxi and IR each have their own card that names the current holder.
         self.assertIn('roster_designation(r) == held_designation', UI)
-        self.assertIn('st.info(f"Current {designation}:', UI)
+        self.assertIn('designation_holders("Taxi Squad")', UI)
+        self.assertIn('designation_holders("Injured Reserve")', UI)
 
     def test_epoch_bump_changes_state_cache_key(self):
         state = {}
