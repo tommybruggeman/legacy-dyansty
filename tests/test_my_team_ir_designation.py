@@ -16,7 +16,7 @@ class MyTeamIrDesignationTests(unittest.TestCase):
 
     def test_ir_removal_runs_as_signed_in_manager_and_checks_rows(self):
         self.assertNotIn('"DELETE",\n                            "cap_adjustments"', UI)
-        self.assertIn('.table("cap_adjustments")\n                                .delete()', UI)
+        self.assertIn('.table("cap_adjustments")\n            .delete()', UI)
         self.assertIn("if not deleted:", UI)
 
     def test_ir_dropdown_excludes_taxi_and_designated_players(self):

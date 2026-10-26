@@ -75,6 +75,16 @@ class StandingsLookupTest(unittest.TestCase):
         self.assertEqual(normalized.iloc[0]["ppg"], 71.4)
         self.assertEqual(normalized.iloc[0]["standing_points"], 11)
 
+    def test_cards_rank_teams_in_standings_page_order_and_keep_top5(self):
+        normalized = standings_for_team_cards(pd.DataFrame([
+            {"Team": "a", "Standing Points": 14, "PF": 900.0, "Wins": 5, "Top 5": 4},
+            {"Team": "b", "Standing Points": 18, "PF": 950.0, "Wins": 7, "Top 5": 4},
+            {"Team": "c", "Standing Points": 14, "PF": 980.0, "Wins": 5, "Top 5": 4},
+        ]))
+        ranks = dict(zip(normalized["Team"], normalized["rank"]))
+        self.assertEqual(ranks, {"b": 1, "c": 2, "a": 3})
+        self.assertEqual(normalized.iloc[0]["top5"], 4)
+
 
 if __name__ == "__main__":
     unittest.main()

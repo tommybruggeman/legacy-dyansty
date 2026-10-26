@@ -102,7 +102,7 @@ class OffseasonReadAuthorityTests(unittest.TestCase):
 
     def test_my_team_uses_authenticated_taxi_path_without_changing_ir_branch(self):
         source = Path("pages/02_My_Team.py").read_text()
-        self.assertIn("load_taxi_eligibility_provenance(\n                auth_client(), league_id", source)
+        self.assertIn("load_taxi_eligibility_provenance(\n    auth_client(), league_id", source)
         self.assertNotIn('sb.table("rookie_draft_board_assignments")', source)
         self.assertIn('["Taxi Squad", "Injured Reserve"]', source)
 

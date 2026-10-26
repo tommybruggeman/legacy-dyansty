@@ -556,6 +556,12 @@ html, body, [data-testid="stAppViewContainer"]{
   display: none;
 }
 
+@media (min-width: 769px) {
+  .st-key-my_team_phone_designations {
+    display: none !important;
+  }
+}
+
 @media (max-width: 768px) {
   html { font-size: calc(16px * var(--my-team-phone-font-scale)); }
 
@@ -702,113 +708,96 @@ html, body, [data-testid="stAppViewContainer"]{
 
   /* ======================================================
      MY TEAM PHONE LAYOUT
-     Roster gets its own full-width row.
-     Trade Block + Taxi Squad / IR sit side-by-side below it.
+     Roster runs full width. The desktop action column
+     (Trade Block + combined Taxi / IR) is hidden, and Taxi Squad
+     and IR show as two cards side by side below the roster.
      Desktop remains unchanged.
+     Streamlit 1.4x+ names columns stColumn; older builds used column.
      ====================================================== */
 
-  /* Stack the main roster/actions layout vertically on phone. */
   .st-key-my_team_main_layout [data-testid="stHorizontalBlock"] {
-    display:flex !important;
-    flex-direction:column !important;
-    gap:0 !important;
-    align-items:stretch !important;
+    display:block !important;
   }
 
+  .st-key-my_team_main_layout [data-testid="stHorizontalBlock"] > [data-testid="stColumn"],
   .st-key-my_team_main_layout [data-testid="stHorizontalBlock"] > [data-testid="column"] {
     width:100% !important;
     min-width:0 !important;
-    flex:0 0 100% !important;
+    max-width:100% !important;
   }
 
-  /* Re-enable ONLY the two action cards as a two-column row.
-     Keep them completely below the roster and align their
-     outside edges exactly with the roster card. */
-.st-key-my_team_mobile_actions {
-    box-sizing: border-box !important;
-    width: calc(100vw - 28px) !important;
-    max-width: calc(100vw - 28px) !important;
+  .st-key-my_team_main_layout [data-testid="stColumn"]:has(.st-key-my_team_mobile_actions),
+  .st-key-my_team_main_layout [data-testid="column"]:has(.st-key-my_team_mobile_actions) {
+    display:none !important;
+  }
 
-    /* Space between My Team and the two action boxes */
-    margin-top: 28px !important;
+  .st-key-my_team_phone_designations {
+    margin-top:14px !important;
+  }
 
-    /* Don't add extra spacing below */
-    margin-bottom: 0 !important;
-
-    /* Prevent padding from interfering with the gap */
-    padding-top: 0 !important;
-    padding-left: 0 !important;
-    padding-right: 0 !important;
-}
-
-  .st-key-my_team_mobile_actions [data-testid="stHorizontalBlock"] {
+  .st-key-my_team_phone_designations > [data-testid="stHorizontalBlock"],
+  .st-key-my_team_phone_designations [data-testid="stHorizontalBlock"] {
     display:grid !important;
     grid-template-columns:minmax(0,1fr) minmax(0,1fr) !important;
-    column-gap:10px !important;
-    row-gap:0 !important;
-    align-items:start !important;
-    width:100% !important;
-    max-width:100% !important;
-    margin:0 !important;
-    padding:0 !important;
+    gap:10px !important;
+    align-items:stretch !important;
   }
 
-  .st-key-my_team_mobile_actions [data-testid="stHorizontalBlock"] > [data-testid="column"] {
-    box-sizing:border-box !important;
+  .st-key-my_team_phone_designations [data-testid="stHorizontalBlock"] > [data-testid="stColumn"],
+  .st-key-my_team_phone_designations [data-testid="stHorizontalBlock"] > [data-testid="column"] {
     width:100% !important;
     min-width:0 !important;
     max-width:100% !important;
-    flex:none !important;
-    margin:0 !important;
-    padding:0 !important;
-    align-self:start !important;
   }
 
-  .st-key-my_team_mobile_actions [data-testid="stHorizontalBlock"] > [data-testid="column"]:first-child {
-    grid-column:1 !important;
-  }
-
-  .st-key-my_team_mobile_actions [data-testid="stHorizontalBlock"] > [data-testid="column"]:last-child {
-    grid-column:2 !important;
-  }
-
-  .st-key-my_team_mobile_actions [data-testid="stHorizontalBlock"] > [data-testid="column"]
-  > [data-testid="stVerticalBlock"] {
-    margin:0 !important;
-    padding:0 !important;
-  }
-
-  .st-key-my_team_mobile_actions [data-testid="stVerticalBlockBorderWrapper"] {
+  .st-key-my_team_phone_taxi,
+  .st-key-my_team_phone_ir,
+  .st-key-my_team_activity {
     border:1px solid rgba(226,188,91,.40) !important;
-    border-radius:20px !important;
+    border-radius:18px !important;
     background:linear-gradient(145deg,#10201E 0%,#081513 100%) !important;
     box-shadow:0 8px 26px rgba(0,0,0,.28) !important;
+  }
+
+  .st-key-my_team_phone_taxi,
+  .st-key-my_team_phone_ir {
+    height:100% !important;
+    padding:14px 12px !important;
+    gap:.6rem !important;
+  }
+
+  .st-key-my_team_phone_taxi h3,
+  .st-key-my_team_phone_ir h3,
+  .st-key-my_team_activity h3 {
+    font-size:1.05rem !important;
+    line-height:1.2 !important;
+    margin:0 !important;
+    padding:0 !important;
+  }
+
+  .st-key-my_team_phone_taxi p,
+  .st-key-my_team_phone_ir p {
+    font-size:.86rem !important;
     overflow:hidden;
+    text-overflow:ellipsis;
   }
 
-  .st-key-my_team_mobile_actions h3 {
-    font-size:.94rem !important;
-    margin-bottom:.35rem !important;
+  .st-key-my_team_phone_taxi [data-testid="stSelectbox"] label,
+  .st-key-my_team_phone_ir [data-testid="stSelectbox"] label {
+    font-size:.74rem !important;
   }
 
-  .st-key-my_team_mobile_actions h4 {
-    font-size:.78rem !important;
+  .st-key-my_team_phone_taxi [data-testid="stCaptionContainer"],
+  .st-key-my_team_phone_ir [data-testid="stCaptionContainer"] {
+    margin:0 !important;
+    font-size:.72rem !important;
   }
 
-  .st-key-my_team_mobile_actions [data-testid="stSelectbox"] label {
-    font-size:.70rem !important;
-  }
-
-  .st-key-my_team_mobile_actions [data-baseweb="select"] {
-    min-height:40px !important;
-    font-size:14px !important;
-  }
-
-  .st-key-my_team_mobile_actions [data-testid="stButton"] button {
-    min-height:40px !important;
-    font-size:.70rem !important;
-    padding-left:8px !important;
-    padding-right:8px !important;
+  /* Full-width buttons are easier to hit with a thumb. */
+  .st-key-my_team_phone_designations [data-testid="stElementContainer"]:has(> [data-testid="stButton"]),
+  .st-key-my_team_phone_designations [data-testid="stButton"],
+  .st-key-my_team_phone_designations [data-testid="stButton"] button {
+    width:100% !important;
   }
 
   /* Mobile controls: larger touch targets without changing desktop controls. */
@@ -816,100 +805,72 @@ html, body, [data-testid="stAppViewContainer"]{
     min-height: 44px;
   }
 
+  /* 16px or larger stops iPhone Safari from zooming in when a field is tapped. */
   [data-testid="stTextInput"] input,
   [data-testid="stTextArea"] textarea,
-  [data-testid="stSelectbox"] [data-baseweb="select"] {
+  [data-testid="stSelectbox"] [data-baseweb="select"],
+  [data-testid="stSelectbox"] input {
     min-height: 46px;
     font-size: 16px !important;
   }
 
-  /* Hover-only cap tooltip is not useful on touch screens. */
+  /* Hover-only cap tooltip is not useful on touch screens.
+     The phone Cap Used card opens a tap-to-show breakdown instead. */
   .cap-tooltip {
     display: none !important;
   }
 
-
-  /* ======================================================
-     COMPACT TAXI SQUAD / IR — PHONE ONLY
-     ====================================================== */
-
-  .taxi-ir-marker {
-    display: none;
+  .mobile-cap-details summary {
+    list-style:none;
+    cursor:pointer;
   }
 
-  /* Tighten only the bordered container containing Taxi / IR */
-  [data-testid="stVerticalBlockBorderWrapper"]:has(.taxi-ir-marker)
-  [data-testid="stVerticalBlock"] {
-    gap: .45rem !important;
+  .mobile-cap-details summary::-webkit-details-marker { display:none; }
+
+  .mobile-cap-details .cap-tap-hint {
+    color:var(--gold);
+    font-size:.64rem;
+    font-weight:800;
+    margin-top:4px;
   }
 
-  /* Smaller Taxi / IR heading */
-  [data-testid="stVerticalBlockBorderWrapper"]:has(.taxi-ir-marker) h3 {
-    font-size: 1.45rem !important;
-    line-height: 1.15 !important;
-    margin-top: 0 !important;
-    margin-bottom: .2rem !important;
+  .mobile-cap-details[open] .cap-tap-hint { display:none; }
+  .mobile-cap-details[open] { grid-column:1 / -1; }
+
+  .mobile-cap-breakdown {
+    margin-top:8px;
+    padding-top:6px;
+    border-top:1px solid rgba(226,188,91,.25);
   }
 
-  /* Current Designations heading, if one exists */
-  [data-testid="stVerticalBlockBorderWrapper"]:has(.taxi-ir-marker) h4 {
-    font-size: .95rem !important;
-    line-height: 1.2 !important;
-    margin-top: .25rem !important;
-    margin-bottom: .15rem !important;
+  .mobile-cap-breakdown div {
+    display:flex;
+    justify-content:space-between;
+    gap:8px;
+    font-size:.68rem;
+    padding:2px 0;
+    color:#FFF5E7;
   }
 
-  /* Reduce space around the Player + Designation selects */
-  [data-testid="stVerticalBlockBorderWrapper"]:has(.taxi-ir-marker)
-  [data-testid="stSelectbox"] {
-    margin-top: 0 !important;
-    margin-bottom: 0 !important;
+  .mobile-cap-breakdown hr {
+    border:0;
+    border-top:1px solid rgba(226,188,91,.25);
+    margin:4px 0;
   }
 
-  /* Smaller field labels */
-  [data-testid="stVerticalBlockBorderWrapper"]:has(.taxi-ir-marker)
-  [data-testid="stSelectbox"] label {
-    font-size: .78rem !important;
-    margin-bottom: 2px !important;
+  .activity-item {
+    font-size:.82rem;
+    padding:10px 0;
   }
 
-  /* Shorter select boxes */
-  [data-testid="stVerticalBlockBorderWrapper"]:has(.taxi-ir-marker)
-  [data-baseweb="select"] {
-    min-height: 42px !important;
-  }
-
-  /* Compact cap-adjustment line */
-  [data-testid="stVerticalBlockBorderWrapper"]:has(.taxi-ir-marker)
-  [data-testid="stCaptionContainer"] {
-    margin-top: 0 !important;
-    margin-bottom: 0 !important;
-    font-size: .72rem !important;
-  }
-
-  /* Compact Apply / Remove buttons */
-  [data-testid="stVerticalBlockBorderWrapper"]:has(.taxi-ir-marker)
-  [data-testid="stButton"] button {
-    min-height: 40px !important;
-    padding-top: 5px !important;
-    padding-bottom: 5px !important;
-  }
-
-  /* Reduce separator spacing inside Taxi / IR */
-  [data-testid="stVerticalBlockBorderWrapper"]:has(.taxi-ir-marker) hr {
-    margin-top: .35rem !important;
-    margin-bottom: .35rem !important;
+  .activity-item small {
+    font-size:.68rem;
   }
 }
 @media (max-width: 390px) {
   .block-container {
     padding-left: 10px !important;
     padding-right: 10px !important;
-  }
-
-  .st-key-my_team_mobile_actions {
-    width:calc(100vw - 20px) !important;
-    max-width:calc(100vw - 20px) !important;
   }
 
   .hero {
@@ -937,7 +898,6 @@ html, body, [data-testid="stAppViewContainer"]{
     grid-template-columns: 42px minmax(0, 1fr) 40px 60px;
   }
 }
-
 </style>
 """,
     unsafe_allow_html=True,
@@ -1398,6 +1358,7 @@ record_txt = "0 – 0"
 standing_txt = "—"
 standing_points = 0
 ppg = 0.0
+top5_count = 0
 
 row = resolve_team_standings_row(
     stand_df,
@@ -1411,6 +1372,11 @@ if not row.empty:
     standing_points = int(r.get("standing_points", 0) or 0)
     ppg = float(r.get("ppg", 0) or 0)
     standing_txt = ordinal(int(r.get("rank", 0) or 0))
+    top5_count = int(r.get("top5", 0) or 0)
+
+place_txt = f"{standing_txt} place" if standing_txt != "—" else "—"
+top5_txt = f"{top5_count} Top 5" + ("" if top5_count == 1 else "s")
+top5_short_txt = f"{top5_count} T5" + ("" if top5_count == 1 else "s")
 
 
 active_salary = 0.0
@@ -1489,8 +1455,8 @@ st.markdown(
 m1, m2, m3, m4 = st.columns([1, 1, 1, 1])
 
 metrics = [
-    ("Record", record_txt, standing_txt),
-    ("Standing Points", standing_points, standing_txt),
+    ("Record", record_txt, place_txt),
+    ("Standing Points", standing_points, top5_txt),
     ("PPG", f"{ppg:.1f}", "Avg / game"),
     ("Cap Used", cap_txt, f"${cap_space:.1f} space"),
 ]
@@ -1537,20 +1503,21 @@ for col, (title, value, sub) in zip([m1, m2, m3, m4], metrics):
                 unsafe_allow_html=True,
             )
 
-# Phone only: compact 2 x 2 + full-width roster metric.
+# Phone only: compact 2 x 2 grid. Cap Used opens a tap-to-show breakdown,
+# since the desktop hover tooltip can't be reached on a touch screen.
 st.markdown(
     f"""
 <div class="mobile-metrics-grid">
   <div class="card">
     <div class="metric-title">Record</div>
     <div class="metric-value">{record_txt}</div>
-    <div class="metric-sub">{standing_txt}</div>
+    <div class="metric-sub">{place_txt}</div>
   </div>
 
   <div class="card">
     <div class="metric-title">Standing Points</div>
     <div class="metric-value">{standing_points}</div>
-    <div class="metric-sub">{standing_txt}</div>
+    <div class="metric-sub">{top5_short_txt}</div>
   </div>
 
   <div class="card">
@@ -1559,11 +1526,25 @@ st.markdown(
     <div class="metric-sub">Avg / game</div>
   </div>
 
-  <div class="card">
-    <div class="metric-title">Cap Used</div>
-    <div class="metric-value">{cap_txt}</div>
-    <div class="metric-sub">${cap_space:.1f} space</div>
-  </div>
+  <details class="card mobile-cap-details">
+    <summary>
+      <div class="metric-title">Cap Used</div>
+      <div class="metric-value">{cap_txt}</div>
+      <div class="metric-sub">${cap_space:.1f} space</div>
+      <div class="cap-tap-hint">Tap for breakdown</div>
+    </summary>
+    <div class="mobile-cap-breakdown">
+      <div><strong>Active</strong><span>${active_salary:.2f}</span></div>
+      <div><strong>Trades</strong><span>${trade_carryover:.2f}</span></div>
+      {dead_cap_tooltip_html}
+      <div><strong>Taxi</strong><span>${taxi_adjustment:.2f}</span></div>
+      <div><strong>IR</strong><span>${ir_adjustment:.2f}</span></div>
+      <hr>
+      <div><strong>Limit</strong><span>${salary_cap:.2f}</span></div>
+      <div><strong>Total</strong><span>${cap_used:.2f}</span></div>
+      <div><strong>Space</strong><span>${cap_space:.2f}</span></div>
+    </div>
+  </details>
 
 </div>
 """,
@@ -1683,14 +1664,14 @@ with left:
 
 # ---------- right actions ----------
 # Desktop: remains in the existing right column.
-# Phone: the entire action area moves below the roster, while
-# Trade Block and Taxi Squad / IR remain side-by-side.
+# Phone: the action area moves below the roster, and Trade Block
+# and Taxi Squad / IR stack full width.
 with right:
     with st.container(key="my_team_mobile_actions"):
         action_trade_col, action_designation_col = st.columns(2)
 
 with action_trade_col:
-    with st.container(border=True):
+    with st.container(border=True, key="my_team_trade_block"):
         st.markdown("### Trade Block")
 
         if trade_df.empty:
@@ -1743,21 +1724,217 @@ with action_trade_col:
             st.toast(f"{selected_trade_block_player} added to trade block")
             st.rerun()
 
-with action_designation_col:
-    with st.container(border=True):
-        st.markdown(
-            '<div class="taxi-ir-marker"></div>',
-            unsafe_allow_html=True,
-        )
-        st.markdown("### Taxi Squad / IR")
-        current_designations = pd.DataFrame()
+# ---------- taxi / IR helpers ----------
+# Shared by the desktop Taxi Squad / IR card and the phone-only Taxi and IR
+# cards, so both layouts follow the same league rules.
+DESIGNATION_ADJUSTMENT_TYPES = {
+    "Taxi Squad": "taxi_adjustment",
+    "Injured Reserve": "ir_adjustment",
+}
 
-        if not cap_adj_df.empty:
-            current_designations = cap_adj_df[
-                cap_adj_df["adjustment_type"]
-                .astype(str)
-                .isin(["taxi_adjustment", "ir_adjustment"])
-            ]
+current_designations = pd.DataFrame()
+
+if not cap_adj_df.empty:
+    current_designations = cap_adj_df[
+        cap_adj_df["adjustment_type"]
+        .astype(str)
+        .isin(["taxi_adjustment", "ir_adjustment"])
+    ]
+
+# Taxi candidates come from rookie draft provenance; load it once per run.
+draft_assignments, taxi_provenance_error = load_taxi_eligibility_provenance(
+    auth_client(), league_id,
+)
+taxi_roster = my_roster.rename(columns={"sleeper_id": "sleeper_player_id"}).to_dict(orient="records")
+taxi_options = list(taxi_eligible_player_names(
+    taxi_roster,
+    draft_assignments,
+    league_team_id=my_team["team_id"],
+    draft_year=active_season,
+)) if not my_roster.empty else []
+
+# IR candidates: Taxi is locked for the season, so a Taxi player
+# can never move to IR, and the current IR player is already there.
+designated_names = set()
+if not current_designations.empty:
+    designated_names = set(
+        current_designations["player_name"].dropna().astype(str)
+    )
+ir_options = sorted(
+    str(r.get("player"))
+    for r in my_roster.to_dict(orient="records")
+    if r.get("player")
+    and roster_designation(r) is None
+    and str(r.get("player")) not in designated_names
+) if not my_roster.empty else []
+
+
+def designation_holders(designation: str) -> list[str]:
+    # Read from the canonical roster so Taxi (which has no removable
+    # designation row) shows too.
+    held_designation = "taxi" if designation == "Taxi Squad" else "ir"
+    return sorted(
+        str(r.get("player"))
+        for r in my_roster.to_dict(orient="records")
+        if r.get("player") and roster_designation(r) == held_designation
+    ) if not my_roster.empty else []
+
+
+def designation_cap_adjustment(designation: str, salary: float) -> float:
+    if designation == "Taxi Squad":
+        # Canonical Taxi rule:
+        # player carries 50% of the normal annual charge while on Taxi.
+        taxi_charge = round(salary * 0.50, 2)
+        adjustment_amount = round(taxi_charge - salary, 2)
+    else:
+        adjustment_amount = round(-(salary / 2), 2)
+    return adjustment_amount
+
+
+def remove_ir_designation(designation_id, label: str, player_name: str, remove_action: str):
+    # Delete as the signed-in manager so cap_adjustments
+    # RLS checks team authority. An RLS miss deletes zero
+    # rows without raising, so confirm a row came back.
+    try:
+        deleted = (
+            auth_client()
+            .table("cap_adjustments")
+            .delete()
+            .eq("id", designation_id)
+            .eq("adjustment_type", "ir_adjustment")
+            .execute()
+            .data
+            or []
+        )
+    except Exception as exc:
+        deleted = []
+        st.error(f"{label} removal failed: {exc}")
+    else:
+        if not deleted:
+            st.error(
+                f"{player_name} was not removed from {label}. "
+                "You can only change your own team's designations."
+            )
+
+    if deleted:
+        invalidate_team_state_session_cache(st.session_state)
+
+        log_team_activity(
+            remove_action,
+            player_name,
+        )
+
+        st.toast(f"{player_name} removed from {label}")
+        st.rerun()
+
+
+def apply_designation(designation: str, player_name: str, player_row, salary: float):
+    adjustment_type = DESIGNATION_ADJUSTMENT_TYPES[designation]
+    existing_designation = pd.DataFrame()
+
+    if not cap_adj_df.empty:
+        existing_designation = cap_adj_df[
+            cap_adj_df["adjustment_type"]
+            .astype(str)
+            .eq(adjustment_type)
+        ]
+
+    if not existing_designation.empty:
+        # One player per designation per team (the IR RPC also
+        # rejects a second IR row). Swapping is remove, then add.
+        current_name = (
+            existing_designation["player_name"].dropna().astype(str).iloc[0]
+            if "player_name" in existing_designation.columns
+            and existing_designation["player_name"].notna().any()
+            else "the current player"
+        )
+        st.warning(
+            f"{team_name} already has {current_name} on {designation}. "
+            f"Remove {current_name} above, then designate a new player."
+        )
+        return
+
+    sleeper_player_id = str(
+        player_row.get("sleeper_id")
+        or player_row.get("sleeper_player_id")
+        or player_row.get("player_id")
+        or ""
+    ).strip()
+
+    short_label = "Taxi" if designation == "Taxi Squad" else "IR"
+
+    if not sleeper_player_id:
+        st.error(
+            f"Canonical player ID is missing. {short_label} assignment was not written."
+        )
+        return
+
+    try:
+        service = OffseasonTransactionService(
+            auth_client(),
+            league_id,
+        )
+        assignment = dict(
+            player_id=sleeper_player_id,
+            league_team_id=str(my_team["team_id"]),
+            league_season_id=active_league_season_id,
+            normal_annual_charge=salary,
+        )
+        if designation == "Taxi Squad":
+            service.assign_rookie_taxi(**assignment)
+        else:
+            service.assign_injured_reserve(**assignment)
+
+        invalidate_team_state_session_cache(st.session_state)
+
+        log_team_activity(
+            designation.lower(),
+            player_name,
+        )
+
+        st.success(
+            f"{player_name} added to {designation}"
+        )
+
+        st.rerun()
+
+    except Exception as exc:
+        st.error(
+            f"{short_label} assignment failed: {exc}"
+        )
+
+
+def render_designation_form(designation: str, player_options: list[str], key_prefix: str):
+    selected_player = st.selectbox(
+        "Player",
+        player_options,
+        key=f"{key_prefix}_player",
+    )
+
+    if not selected_player:
+        return
+
+    player_row = my_roster[
+        my_roster["player"] == selected_player
+    ].iloc[0]
+
+    salary = float(player_row.get("salary") or 0)
+    adjustment_amount = designation_cap_adjustment(designation, salary)
+
+    st.caption(
+        f"Cap Adjustment: ${adjustment_amount:.2f}"
+    )
+
+    if st.button(
+        "Apply",
+        key=f"{key_prefix}_apply_designation",
+    ):
+        apply_designation(designation, selected_player, player_row, salary)
+
+
+with action_designation_col:
+    with st.container(border=True, key="my_team_taxi_ir"):
+        st.markdown("### Taxi Squad / IR")
 
         if not current_designations.empty:
             st.markdown("#### Current Designations")
@@ -1800,78 +1977,17 @@ with action_designation_col:
                         "Remove",
                         key=f"remove_designation_{designation_id}"
                     ):
-                        # Delete as the signed-in manager so cap_adjustments
-                        # RLS checks team authority. An RLS miss deletes zero
-                        # rows without raising, so confirm a row came back.
-                        try:
-                            deleted = (
-                                auth_client()
-                                .table("cap_adjustments")
-                                .delete()
-                                .eq("id", designation_id)
-                                .eq("adjustment_type", "ir_adjustment")
-                                .execute()
-                                .data
-                                or []
-                            )
-                        except Exception as exc:
-                            deleted = []
-                            st.error(f"{label} removal failed: {exc}")
-                        else:
-                            if not deleted:
-                                st.error(
-                                    f"{player_name} was not removed from {label}. "
-                                    "You can only change your own team's designations."
-                                )
-
-                        if deleted:
-                            invalidate_team_state_session_cache(st.session_state)
-
-                            log_team_activity(
-                                remove_action,
-                                player_name,
-                            )
-
-                            st.toast(f"{player_name} removed from {label}")
-                            st.rerun()
+                        remove_ir_designation(designation_id, label, player_name, remove_action)
 
             st.markdown("---")
 
-        roster_options = sorted(
-            my_roster["player"].dropna().astype(str).unique().tolist()
-        ) if not my_roster.empty else []
-        if st.session_state.get("designation_type", "Taxi Squad") == "Taxi Squad":
-            draft_assignments, taxi_provenance_error = load_taxi_eligibility_provenance(
-                auth_client(), league_id,
-            )
-            if taxi_provenance_error:
-                st.warning(taxi_provenance_error)
-            taxi_roster = my_roster.rename(columns={"sleeper_id": "sleeper_player_id"}).to_dict(orient="records")
-            roster_options = list(taxi_eligible_player_names(
-                taxi_roster,
-                draft_assignments,
-                league_team_id=my_team["team_id"],
-                draft_year=active_season,
-            ))
-        else:
-            # IR candidates: Taxi is locked for the season, so a Taxi player
-            # can never move to IR, and the current IR player is already there.
-            designated_names = set()
-            if not current_designations.empty:
-                designated_names = set(
-                    current_designations["player_name"].dropna().astype(str)
-                )
-            roster_options = sorted(
-                str(r.get("player"))
-                for r in my_roster.to_dict(orient="records")
-                if r.get("player")
-                and roster_designation(r) is None
-                and str(r.get("player")) not in designated_names
-            ) if not my_roster.empty else []
+        designation = st.session_state.get("designation_type", "Taxi Squad")
+        if designation == "Taxi Squad" and taxi_provenance_error:
+            st.warning(taxi_provenance_error)
 
         selected_designation_player = st.selectbox(
             "Player",
-            roster_options,
+            taxi_options if designation == "Taxi Squad" else ir_options,
             key="designation_player",
         )
 
@@ -1881,14 +1997,7 @@ with action_designation_col:
             key="designation_type",
         )
 
-        # Show who already holds the selected spot, read from the canonical
-        # roster so Taxi (which has no removable designation row) shows too.
-        held_designation = "taxi" if designation == "Taxi Squad" else "ir"
-        current_holders = sorted(
-            str(r.get("player"))
-            for r in my_roster.to_dict(orient="records")
-            if r.get("player") and roster_designation(r) == held_designation
-        ) if not my_roster.empty else []
+        current_holders = designation_holders(designation)
         if current_holders:
             st.info(f"Current {designation}: {', '.join(current_holders)}")
         else:
@@ -1900,16 +2009,7 @@ with action_designation_col:
             ].iloc[0]
 
             salary = float(player_row.get("salary") or 0)
-
-            if designation == "Taxi Squad":
-                # Canonical Taxi rule:
-                # player carries 50% of the normal annual charge while on Taxi.
-                adjustment_type = "taxi_adjustment"
-                taxi_charge = round(salary * 0.50, 2)
-                adjustment_amount = round(taxi_charge - salary, 2)
-            else:
-                adjustment_type = "ir_adjustment"
-                adjustment_amount = round(-(salary / 2), 2)
+            adjustment_amount = designation_cap_adjustment(designation, salary)
 
             st.caption(
                 f"Cap Adjustment: ${adjustment_amount:.2f}"
@@ -1919,114 +2019,59 @@ with action_designation_col:
                 "Apply Designation",
                 key="apply_designation"
             ):
-                existing_designation = pd.DataFrame()
+                apply_designation(designation, selected_designation_player, player_row, salary)
 
-                if not cap_adj_df.empty:
-                    existing_designation = cap_adj_df[
-                        cap_adj_df["adjustment_type"]
-                        .astype(str)
-                        .eq(adjustment_type)
-                    ]
 
-                if not existing_designation.empty:
-                    # One player per designation per team (the IR RPC also
-                    # rejects a second IR row). Swapping is remove, then add.
-                    current_name = (
-                        existing_designation["player_name"].dropna().astype(str).iloc[0]
-                        if "player_name" in existing_designation.columns
-                        and existing_designation["player_name"].notna().any()
-                        else "the current player"
-                    )
-                    st.warning(
-                        f"{team_name} already has {current_name} on {designation}. "
-                        f"Remove {current_name} above, then designate a new player."
-                    )
+# ---------- phone taxi / IR ----------
+# Phone only: Trade Block is hidden, and Taxi Squad and IR get their own
+# side-by-side cards. Same rules as the desktop card above.
+with st.container(key="my_team_phone_designations"):
+    phone_taxi_col, phone_ir_col = st.columns(2)
 
-                elif designation == "Taxi Squad":
-                    sleeper_player_id = str(
-                        player_row.get("sleeper_id")
-                        or player_row.get("sleeper_player_id")
-                        or player_row.get("player_id")
-                        or ""
-                    ).strip()
+with phone_taxi_col:
+    with st.container(border=True, key="my_team_phone_taxi"):
+        st.markdown("### Taxi Squad")
+        if taxi_provenance_error:
+            st.warning(taxi_provenance_error)
 
-                    if not sleeper_player_id:
-                        st.error(
-                            "Canonical player ID is missing. Taxi assignment was not written."
-                        )
-                    else:
-                        try:
-                            OffseasonTransactionService(
-                                auth_client(),
-                                league_id,
-                            ).assign_rookie_taxi(
-                                player_id=sleeper_player_id,
-                                league_team_id=str(my_team["team_id"]),
-                                league_season_id=active_league_season_id,
-                                normal_annual_charge=salary,
-                            )
+        taxi_holders = designation_holders("Taxi Squad")
+        if taxi_holders:
+            for holder in taxi_holders:
+                st.markdown(f"**{holder}**")
+            st.caption("Locked for the season")
+        else:
+            st.caption("Open")
+            render_designation_form("Taxi Squad", taxi_options, "phone_taxi")
 
-                            invalidate_team_state_session_cache(st.session_state)
+with phone_ir_col:
+    with st.container(border=True, key="my_team_phone_ir"):
+        st.markdown("### IR")
 
-                            log_team_activity(
-                                designation.lower(),
-                                selected_designation_player,
-                            )
+        ir_rows = current_designations
+        if not ir_rows.empty:
+            ir_rows = ir_rows[ir_rows["adjustment_type"].astype(str).eq("ir_adjustment")]
 
-                            st.success(
-                                f"{selected_designation_player} added to {designation}"
-                            )
-
-                            st.rerun()
-
-                        except Exception as exc:
-                            st.error(
-                                f"Taxi assignment failed: {exc}"
-                            )
-
-                else:
-                    sleeper_player_id = str(
-                        player_row.get("sleeper_id")
-                        or player_row.get("sleeper_player_id")
-                        or player_row.get("player_id")
-                        or ""
-                    ).strip()
-
-                    if not sleeper_player_id:
-                        st.error(
-                            "Canonical player ID is missing. IR assignment was not written."
-                        )
-                    else:
-                        try:
-                            OffseasonTransactionService(
-                                auth_client(),
-                                league_id,
-                            ).assign_injured_reserve(
-                                player_id=sleeper_player_id,
-                                league_team_id=str(my_team["team_id"]),
-                                league_season_id=active_league_season_id,
-                                normal_annual_charge=salary,
-                            )
-
-                            invalidate_team_state_session_cache(st.session_state)
-
-                            log_team_activity(
-                                designation.lower(),
-                                selected_designation_player,
-                            )
-
-                            st.success(
-                                f"{selected_designation_player} added to {designation}"
-                            )
-
-                            st.rerun()
-
-                        except Exception as exc:
-                            st.error(
-                                f"IR assignment failed: {exc}"
-                            )
+        if not ir_rows.empty:
+            for _, d in ir_rows.iterrows():
+                designation_id = d.get("id")
+                player_name = d.get("player_name") or "Player"
+                st.markdown(f"**{player_name}**")
+                if designation_id and st.button(
+                    "Remove",
+                    key=f"phone_remove_designation_{designation_id}",
+                ):
+                    remove_ir_designation(designation_id, "Injured Reserve", player_name, "ir_removed")
+            st.caption("Remove to swap in someone else")
+        else:
+            ir_holders = designation_holders("Injured Reserve")
+            if ir_holders:
+                for holder in ir_holders:
+                    st.markdown(f"**{holder}**")
+            else:
+                st.caption("Open")
+                render_designation_form("Injured Reserve", ir_options, "phone_ir")
 # ---------- activity ----------
-with st.container(border=True):
+with st.container(border=True, key="my_team_activity"):
     st.markdown("### Recent Team Activity")
 
     activity_parts = []
