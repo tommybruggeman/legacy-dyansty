@@ -226,6 +226,7 @@ _AUCTION_CSS = _SHARED_CSS + """
 .y .v{font-weight:700;font-size:22px;margin-top:2px}.y .c{font-size:10.5px;color:var(--muted)}
 .y.on{border:1.5px solid var(--gold);background:linear-gradient(160deg,#1d3524,#0f201b)}.y.on .k{color:var(--gold)}
 .y.badon{border:1.5px solid var(--red);background:var(--redbg)}.y.badon .k,.y.badon .c{color:var(--red)}
+.y.bad{border-color:rgba(229,83,75,.55);background:var(--redbg);cursor:default}.y.bad .k,.y.bad .c{color:var(--red)}.y.bad .v{color:var(--red);text-decoration:line-through;text-decoration-thickness:2px}
 .y.lock{cursor:default}.y.lock .v{color:#55605a;font-size:17px}
 .owners{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px}
 .ow{border:1px solid var(--line2);background:transparent;border-radius:12px;padding:8px 2px;text-align:center;font-size:12.5px;font-weight:600;color:var(--text);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -251,8 +252,8 @@ export default function(component) {
   }
   const minFor = (y) => Number(R.minimums[String(y)] || 0);
   const valid = (b, y) => y >= 1 && y <= R.max_years && b >= 1 && b >= minFor(y);
+  // Same bid at another length; below that length's minimum it is not a valid bid.
   const equiv = (b, y, t) => {
-    if (b < minFor(t)) return null;
     const v = b * Math.pow(1 + R.discount_pct / 100, y - t);
     return Math.ceil(Math.round(v * 1e6) / 1e6);
   };
@@ -314,7 +315,7 @@ export default function(component) {
       const label = `${y} YR${y > 1 ? 'S' : ''}`;
       if (!allowed) tiles += `<div class="y lock"><div class="k">${label}</div><div class="v">—</div><div class="c">not allowed</div></div>`;
       else if (cur && !ok) tiles += `<button class="y badon" data-y="${y}"><div class="k">${label}</div><div class="v">${money(st.bid)}</div><div class="c">needs ${money(minFor(y))}+</div></button>`;
-      else if (v === null) tiles += `<div class="y lock"><div class="k">${label}</div><div class="v">🔒</div><div class="c">at ${money(minFor(y))}</div></div>`;
+      else if (v < minFor(y)) tiles += `<div class="y bad"><div class="k">${label}</div><div class="v">${money(v)}</div><div class="c">needs ${money(minFor(y))}+</div></div>`;
       else tiles += `<button class="y ${cur ? 'on' : ''}" data-y="${y}" data-v="${v}"><div class="k">${label}</div><div class="v">${money(cur ? st.bid : v)}</div><div class="c">${cur ? 'current' : 'same value'}</div></button>`;
     }
     bidCard.className = 'card' + (ok ? '' : ' bad');
