@@ -108,16 +108,28 @@ def resolve_team_standings_row(
 
 
 def standings_for_team_cards(standings: pd.DataFrame) -> pd.DataFrame:
-    """Normalize the Standings-page snapshot for Team/My Team metric cards."""
+    """Normalize the Standings-page snapshot for Team/My Team metric cards.
+
+    The live snapshot has no Rank column, so rank is filled in using the
+    Standings page's own order: Standing Points, then PF, Wins, Top 5.
+    """
     if standings.empty:
         return pd.DataFrame()
-    return standings.rename(
+    cards = standings.rename(
         columns={
             "Wins": "wins",
             "Losses": "losses",
             "PF": "pf",
             "PF Per Game": "ppg",
             "Standing Points": "standing_points",
+            "Top 5": "top5",
             "Rank": "rank",
         }
     ).copy()
+    if "rank" not in cards.columns:
+        order = [c for c in ("standing_points", "pf", "wins", "top5") if c in cards.columns]
+        if order:
+            ranked = cards.sort_values(order, ascending=False, kind="mergesort")
+            cards.loc[ranked.index, "rank"] = range(1, len(ranked) + 1)
+            cards["rank"] = cards["rank"].astype(int)
+    return cards
