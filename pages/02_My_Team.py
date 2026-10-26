@@ -1343,6 +1343,18 @@ cap_adj_df = pd.DataFrame(state_cap_adjustments(canonical_state))
 tick("after load_cap_adjustments")
 
 stand_df = standings_for_team_cards(build_standings_from_sleeper(SLEEPER_LEAGUE_ID))
+# Streamlit Cloud keeps imported services modules loaded across redeploys,
+# so an older standings_for_team_cards can still be running. Fill Top 5 and
+# rank here too (Standings page order) so the cards never fall back to "—".
+if not stand_df.empty:
+    if "top5" not in stand_df.columns and "Top 5" in stand_df.columns:
+        stand_df = stand_df.rename(columns={"Top 5": "top5"})
+    if "rank" not in stand_df.columns:
+        rank_order = [c for c in ("standing_points", "pf", "wins", "top5") if c in stand_df.columns]
+        if rank_order:
+            ranked = stand_df.sort_values(rank_order, ascending=False, kind="mergesort")
+            stand_df.loc[ranked.index, "rank"] = range(1, len(ranked) + 1)
+            stand_df["rank"] = stand_df["rank"].astype(int)
 tick("after load_live_standings")
 
 spinner_placeholder.empty()
@@ -1376,7 +1388,6 @@ if not row.empty:
 
 place_txt = f"{standing_txt} place" if standing_txt != "—" else "—"
 top5_txt = f"{top5_count} Top 5" + ("" if top5_count == 1 else "s")
-top5_short_txt = f"{top5_count} T5" + ("" if top5_count == 1 else "s")
 
 
 active_salary = 0.0
@@ -1517,7 +1528,7 @@ st.markdown(
   <div class="card">
     <div class="metric-title">Standing Points</div>
     <div class="metric-value">{standing_points}</div>
-    <div class="metric-sub">{top5_short_txt}</div>
+    <div class="metric-sub">{top5_txt}</div>
   </div>
 
   <div class="card">
@@ -2061,7 +2072,6 @@ with phone_ir_col:
                     key=f"phone_remove_designation_{designation_id}",
                 ):
                     remove_ir_designation(designation_id, "Injured Reserve", player_name, "ir_removed")
-            st.caption("Remove to swap in someone else")
         else:
             ir_holders = designation_holders("Injured Reserve")
             if ir_holders:
