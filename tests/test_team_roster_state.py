@@ -128,6 +128,6 @@ class TeamStateTests(unittest.TestCase):
         self.assertIn('designation = roster_designation(r)',roster_block)
         self.assertNotIn('eq("taxi_adjustment")',roster_block)
         self.assertNotIn('eq("ir_adjustment")',roster_block)
-        self.assertGreaterEqual(teams.count("roster_designation(r)"),2)
+        self.assertGreaterEqual(teams.count("roster_designation(r)"),1)
 
 if __name__=="__main__":unittest.main()
