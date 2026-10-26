@@ -529,7 +529,7 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stSidebar"] {
 .teams-mobile-only,
 .teams-desktop-row1-marker,
 .teams-desktop-row2-marker,
-.st-key-teams_mobile_picker,
+.st-key-teams_mobile_switch,
 .st-key-teams_mobile_trade_action {
   display:none !important;
 }
@@ -550,18 +550,18 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stSidebar"] {
   }
 
   .teams-mobile-only,
-  .st-key-teams_mobile_picker,
+  .st-key-teams_mobile_switch,
   .st-key-teams_mobile_trade_action {
     display:block !important;
   }
 
   /* Tighten Streamlit's vertical spacing only for the phone version. */
-  .st-key-teams_mobile_picker,
+  .st-key-teams_mobile_switch,
   .st-key-teams_mobile_trade_action {
     margin:0 !important;
   }
 
-  .st-key-teams_mobile_picker [data-testid="stVerticalBlock"],
+  .st-key-teams_mobile_switch [data-testid="stVerticalBlock"],
   .st-key-teams_mobile_trade_action [data-testid="stVerticalBlock"] {
     gap:0 !important;
   }
@@ -584,31 +584,67 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stSidebar"] {
     margin:0;
   }
 
-  /* Team picker: same compact field as the mockup. */
-  .st-key-teams_mobile_picker {
+  /* Team switcher: the whole card is the tap target for the team sheet. */
+  .st-key-teams_mobile_switch {
+    position:relative;
     margin-bottom:12px !important;
   }
 
-  .st-key-teams_mobile_picker [data-testid="stSelectbox"] > label {
-    color:rgba(255,245,231,.68) !important;
-    font-size:.78rem !important;
-    margin:0 0 5px 0 !important;
+  .teams-mobile-switch {
+    display:flex;
+    align-items:center;
+    gap:12px;
+    min-height:66px;
+    padding:10px 14px;
+    border:1px solid rgba(226,188,91,.55);
+    border-radius:16px;
+    background:linear-gradient(135deg,rgba(24,54,45,.96),rgba(16,39,34,.96));
+    box-shadow:0 7px 22px rgba(0,0,0,.27), inset 0 1px 0 rgba(255,255,255,.025);
   }
 
-  .st-key-teams_mobile_picker [data-baseweb="select"] > div {
-    min-height:50px !important;
-    background:linear-gradient(135deg,rgba(24,54,45,.96),rgba(16,39,34,.96)) !important;
-    border:1px solid rgba(226,188,91,.38) !important;
-    border-radius:14px !important;
-    color:var(--text) !important;
-    box-shadow:inset 0 1px 0 rgba(255,255,255,.025) !important;
+  .teams-mobile-switch-text {
+    flex:1;
+    min-width:0;
   }
 
-  .st-key-teams_mobile_picker [data-baseweb="select"] div[role="combobox"],
-  .st-key-teams_mobile_picker [data-baseweb="select"] div[aria-haspopup="listbox"] {
-    color:var(--text) !important;
-    font-size:.95rem !important;
-    font-weight:700 !important;
+  .teams-mobile-switch-text small {
+    display:block;
+    color:rgba(255,245,231,.58);
+    font-size:.62rem;
+    letter-spacing:.1em;
+    text-transform:uppercase;
+  }
+
+  .teams-mobile-switch-text strong {
+    display:block;
+    color:var(--text);
+    font-size:1.05rem;
+    font-weight:900;
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
+  }
+
+  .teams-mobile-switch-pill {
+    flex:0 0 auto;
+    color:var(--gold);
+    font-size:.78rem;
+    font-weight:900;
+    border:1px solid rgba(226,188,91,.42);
+    border-radius:999px;
+    padding:6px 11px;
+  }
+
+  .st-key-teams_mobile_switch [data-testid="stButton"] {
+    position:absolute;
+    inset:0;
+    z-index:2;
+  }
+
+  .st-key-teams_mobile_switch [data-testid="stButton"] button {
+    width:100% !important;
+    height:100% !important;
+    opacity:0 !important;
   }
 
   .teams-mobile-flow {
@@ -646,13 +682,6 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stSidebar"] {
   }
 
   /* Team summary */
-  .teams-mobile-teamline {
-    display:flex;
-    align-items:center;
-    gap:11px;
-    padding:3px 0 11px;
-  }
-
   .teams-mobile-avatar {
     width:44px;
     height:44px;
@@ -669,48 +698,39 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stSidebar"] {
     box-shadow:0 0 16px rgba(226,188,91,.10);
   }
 
-  .teams-mobile-team-name {
-    color:var(--text);
-    font-size:1.12rem;
-    font-weight:900;
-    line-height:1.1;
-  }
 
-  .teams-mobile-team-sub {
-    color:rgba(255,245,231,.58);
-    font-size:.69rem;
-    margin-top:3px;
-  }
 
   .teams-mobile-stats {
     display:grid !important;
-    grid-template-columns:repeat(5,minmax(0,1fr));
+    grid-template-columns:repeat(4,minmax(0,1fr));
+    gap:8px;
     width:100%;
-    border-top:1px solid rgba(226,188,91,.09);
-    background:rgba(3,13,12,.17);
-    border-radius:0 0 12px 12px;
   }
+
+  .teams-mobile-summary { padding:12px; }
+  .teams-mobile-summary::before { display:none; }
 
   .teams-mobile-stat {
     min-width:0;
     text-align:center;
-    padding:10px 3px 8px;
-    border-right:1px solid rgba(226,188,91,.09);
+    padding:10px 4px 9px;
+    background:rgba(3,13,12,.35);
+    border:1px solid rgba(226,188,91,.14);
+    border-radius:12px;
   }
 
-  .teams-mobile-stat:last-child { border-right:0; }
 
   .teams-mobile-stat-label {
     color:rgba(255,245,231,.57);
     text-transform:uppercase;
-    font-size:.52rem;
-    letter-spacing:.015em;
+    font-size:.58rem;
+    letter-spacing:.06em;
     white-space:nowrap;
   }
 
   .teams-mobile-stat-value {
     color:var(--text);
-    font-size:.90rem;
+    font-size:1.02rem;
     font-weight:900;
     line-height:1.1;
     margin-top:4px;
@@ -721,7 +741,7 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stSidebar"] {
 
   .teams-mobile-stat-sub {
     color:rgba(255,245,231,.48);
-    font-size:.55rem;
+    font-size:.6rem;
     line-height:1.05;
     margin-top:3px;
     white-space:nowrap;
@@ -774,29 +794,33 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stSidebar"] {
   }
 
   /* Roster */
-  .teams-mobile-roster-header,
   .teams-mobile-roster-row {
     display:grid;
-    grid-template-columns:42px minmax(0,1fr) 42px 58px;
-    gap:5px;
+    grid-template-columns:42px minmax(0,1fr) auto;
+    gap:8px;
     align-items:center;
+    min-height:48px;
+    padding:6px 0;
+    border-top:1px solid rgba(226,188,91,.09);
   }
 
-  .teams-mobile-roster-header {
-    color:rgba(255,245,231,.52);
-    text-transform:uppercase;
-    font-size:.54rem;
-    padding:1px 0 6px;
-    border-bottom:1px solid rgba(226,188,91,.10);
+  .teams-mobile-roster-money {
+    text-align:right;
+    line-height:1.15;
+    white-space:nowrap;
   }
 
-  .teams-mobile-roster-row {
-    min-height:39px;
-    padding:5px 0;
-    border-bottom:1px solid rgba(226,188,91,.075);
+  .teams-mobile-roster-money strong {
+    display:block;
+    color:var(--text);
+    font-size:.86rem;
+    font-weight:900;
   }
 
-  .teams-mobile-roster-row:last-child { border-bottom:0; }
+  .teams-mobile-roster-money span {
+    color:rgba(255,245,231,.55);
+    font-size:.66rem;
+  }
 
   .teams-mobile-pos {
     display:inline-flex;
@@ -816,19 +840,13 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stSidebar"] {
   .teams-mobile-roster-name {
     min-width:0;
     color:var(--text);
-    font-size:.78rem;
+    font-size:.88rem;
     font-weight:800;
     white-space:nowrap;
     overflow:hidden;
     text-overflow:ellipsis;
   }
 
-  .teams-mobile-roster-cell {
-    color:rgba(255,245,231,.78);
-    font-size:.68rem;
-    text-align:right;
-    white-space:nowrap;
-  }
 
   .teams-mobile-roster-details {
     display:flex;
@@ -980,6 +998,181 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stSidebar"] {
   .teams-mobile-dead-amount { color:rgba(255,245,231,.82); }
 }
 
+/* Team sheet (opened from the phone team switcher). */
+[data-testid="stDialog"]:has(.teams-sheet-note) {
+  background:rgba(0,0,0,.62) !important;
+}
+
+[data-testid="stDialog"]:has(.teams-sheet-note) > div {
+  background:#0c1c1a !important;
+  border:1px solid rgba(226,188,91,.45) !important;
+  color:var(--text) !important;
+  box-shadow:0 -12px 30px rgba(0,0,0,.5) !important;
+}
+
+[data-testid="stDialog"]:has(.teams-sheet-note) h2 {
+  padding:20px 18px 6px !important;
+}
+
+[data-testid="stDialog"]:has(.teams-sheet-note) h2 p {
+  color:var(--text) !important;
+  font-size:1.05rem !important;
+  font-weight:900 !important;
+}
+
+[data-testid="stDialog"]:has(.teams-sheet-note) section > div {
+  padding:6px 14px 22px !important;
+}
+
+[data-testid="stDialog"] [data-testid="stVerticalBlock"]:has(> [data-testid="stLayoutWrapper"] .teams-sheet-row) {
+  gap:7px !important;
+}
+
+[data-testid="stDialog"] .st-key-teams_mobile_team_search input {
+  background:rgba(255,245,231,.05) !important;
+  border-radius:12px !important;
+  color:var(--text) !important;
+  min-height:42px;
+}
+
+[data-testid="stDialog"] .st-key-teams_mobile_team_search [data-testid="stTextInputRootElement"] {
+  border:1px solid rgba(255,245,231,.16) !important;
+  border-radius:12px !important;
+  background:transparent !important;
+}
+
+.teams-sheet-note {
+  color:var(--gold);
+  font-size:.74rem;
+  font-weight:800;
+  text-align:right;
+  margin:-2px 2px 0;
+}
+
+[class*="st-key-teams_sheet_row_"] {
+  position:relative;
+  gap:0 !important;
+}
+
+[data-testid="stDialog"] [data-testid="stMarkdownContainer"]:has(.teams-sheet-row),
+[data-testid="stDialog"] [data-testid="stMarkdownContainer"]:has(.teams-sheet-note) {
+  margin-bottom:0 !important;
+}
+
+[class*="st-key-teams_sheet_row_"] [data-testid="stButton"] {
+  position:absolute;
+  inset:0;
+  z-index:2;
+}
+
+[class*="st-key-teams_sheet_row_"] [data-testid="stButton"] button {
+  width:100% !important;
+  height:100% !important;
+  opacity:0 !important;
+}
+
+.teams-sheet-row {
+  display:flex;
+  align-items:center;
+  gap:11px;
+  min-height:56px;
+  padding:8px 10px;
+  border:1px solid rgba(226,188,91,.12);
+  border-radius:13px;
+  background:rgba(16,32,30,.65);
+}
+
+.teams-sheet-row.current {
+  background:rgba(226,188,91,.11);
+  border-color:rgba(226,188,91,.55);
+}
+
+.teams-sheet-rank {
+  width:30px;
+  flex:0 0 30px;
+  text-align:center;
+  color:rgba(255,245,231,.55);
+  font-size:.74rem;
+  font-weight:900;
+}
+
+.teams-sheet-row.current .teams-sheet-rank { color:var(--gold); }
+
+.teams-sheet-avatar {
+  width:36px;
+  height:36px;
+  flex:0 0 36px;
+  border-radius:50%;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  color:var(--gold);
+  font-size:.76rem;
+  font-weight:900;
+  background:radial-gradient(circle at 35% 25%,rgba(226,188,91,.18),rgba(8,21,19,.82));
+  border:1px solid rgba(226,188,91,.62);
+}
+
+.teams-sheet-name {
+  flex:1;
+  min-width:0;
+  color:var(--text);
+  font-size:.94rem;
+  font-weight:800;
+  line-height:1.2;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+
+.teams-sheet-name small {
+  display:block;
+  color:rgba(255,245,231,.55);
+  font-size:.7rem;
+  font-weight:600;
+}
+
+.teams-sheet-record {
+  color:var(--text);
+  font-size:.9rem;
+  font-weight:900;
+}
+
+.teams-sheet-check {
+  color:var(--gold);
+  font-weight:900;
+}
+
+@media (max-width:768px) {
+  /* Slide the team sheet up from the bottom of the screen. */
+  [data-testid="stDialog"]:has(.teams-sheet-note) {
+    align-items:flex-end !important;
+    padding:0 !important;
+  }
+
+  [data-testid="stDialog"]:has(.teams-sheet-note) > div {
+    width:100% !important;
+    max-width:100% !important;
+    margin:0 !important;
+    max-height:84vh;
+    overflow-y:auto !important;
+    border-radius:22px 22px 0 0 !important;
+    border-bottom:0 !important;
+  }
+
+  [data-testid="stDialog"]:has(.teams-sheet-note) > div::before {
+    content:"";
+    position:absolute;
+    top:9px;
+    left:50%;
+    width:42px;
+    height:5px;
+    margin-left:-21px;
+    border-radius:99px;
+    background:rgba(255,245,231,.25);
+  }
+}
+
 @media (max-width:390px) {
   .block-container {
     padding-left:10px !important;
@@ -988,10 +1181,9 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stSidebar"] {
 
   .teams-mobile-card { padding:13px; border-radius:17px; }
   .teams-mobile-pair { gap:7px !important; }
-  .teams-mobile-stat-label { font-size:.49rem; }
-  .teams-mobile-stat-value { font-size:.83rem; }
-  .teams-mobile-stat-sub { font-size:.51rem; }
-  .teams-mobile-roster-name { font-size:.74rem; }
+  .teams-mobile-stats { gap:6px; }
+  .teams-mobile-stat-value { font-size:.94rem; }
+  .teams-mobile-roster-name { font-size:.84rem; }
 }
 
 </style>
@@ -1639,7 +1831,6 @@ if (
 ):
     st.session_state["team_name"] = param_team
     st.session_state["owner_picker"] = param_team
-    st.session_state["mobile_owner_picker"] = param_team
     st.session_state["_teams_applied_param_team"] = param_team
 # Otherwise fall back to first team on first load
 elif "team_name" not in st.session_state:
@@ -1650,14 +1841,6 @@ def _sync_desktop_team_picker():
     selected = st.session_state.get("owner_picker")
     if selected:
         st.session_state["team_name"] = selected
-        st.session_state["mobile_owner_picker"] = selected
-
-
-def _sync_mobile_team_picker():
-    selected = st.session_state.get("mobile_owner_picker")
-    if selected:
-        st.session_state["team_name"] = selected
-        st.session_state["owner_picker"] = selected
 
 
 # ---------- ROW 1 ----------
@@ -2227,6 +2410,7 @@ for _, r in mobile_roster.iterrows():
     mobile_pos = _mobile_escape(r.get("pos") or "—")
     mobile_name = _mobile_escape(r.get("player") or "Unknown")
     mobile_years = _mobile_escape(r.get("years") or "—")
+    mobile_years_label = "yr" if str(r.get("years")).strip() == "1" else "yrs"
     mobile_salary = _mobile_escape(r.get("salary") or "—")
     mobile_designation = roster_designation(r)
     mobile_badge = (
@@ -2240,8 +2424,10 @@ for _, r in mobile_roster.iterrows():
         '<div class="teams-mobile-roster-row">'
         f'<div><span class="teams-mobile-pos">{mobile_pos}</span></div>'
         f'<div class="teams-mobile-roster-name">{mobile_name}{mobile_badge}</div>'
-        f'<div class="teams-mobile-roster-cell">{mobile_years}</div>'
-        f'<div class="teams-mobile-roster-cell">${mobile_salary}</div>'
+        '<div class="teams-mobile-roster-money">'
+        f'<strong>${mobile_salary}</strong>'
+        f'<span>{mobile_years} {mobile_years_label}</span>'
+        '</div>'
         '</div>'
     )
 
@@ -2429,37 +2615,123 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Phone team picker. The desktop picker remains untouched and hidden only on phone.
-with st.container(key="teams_mobile_picker"):
-    mobile_selected_team = st.selectbox(
-        "Team",
-        options=team_names,
-        index=team_names.index(sel_name),
-        key="mobile_owner_picker",
-        on_change=_sync_mobile_team_picker,
+# Phone team switcher: a full-width button that opens a sheet listing every
+# team in standings order. The desktop picker remains untouched.
+mobile_identities = load_sleeper_team_identities(SLEEPER_LEAGUE_ID)
+mobile_team_options: list[dict] = []
+
+for _, owner in owners_df.iterrows():
+    owner_name = str(owner.get("name") or "").strip()
+    if not owner_name:
+        continue
+
+    option = {"name": owner_name, "rank": 0, "record": "—"}
+    if not stand_df.empty:
+        owner_row = resolve_team_standings_row(
+            stand_df,
+            sleeper_roster_id=owner.get("sleeper_roster_id"),
+            sleeper_owner_id=owner.get("sleeper_owner_id"),
+            identities_by_roster_id=mobile_identities,
+        )
+        if not owner_row.empty:
+            o = owner_row.iloc[0]
+            option["rank"] = int(o.get("rank", 0) or 0)
+            option["record"] = f"{int(o.get('wins', 0) or 0)}-{int(o.get('losses', 0) or 0)}"
+
+    _, option["cap_space"] = resolve_cap_for_owner(
+        roster_df,
+        cap_adj_df,
+        owner_name,
+        owner.get("handle"),
+        salary_cap,
+        active_season,
     )
+    mobile_team_options.append(option)
+
+mobile_team_options.sort(key=lambda t: (t["rank"] or 999, t["name"]))
+
+
+def _pick_mobile_team(name: str):
+    st.session_state["team_name"] = name
+    st.session_state["owner_picker"] = name
+    st.session_state["teams_mobile_team_search"] = ""
+    st.session_state["_teams_mobile_picked"] = True
+
+
+@st.dialog("Pick a team")
+def _mobile_team_sheet():
+    # A pick reruns only this dialog; rerun the whole page to show the team.
+    if st.session_state.pop("_teams_mobile_picked", False):
+        st.rerun()
+
+    query = st.text_input(
+        "Search owners",
+        key="teams_mobile_team_search",
+        placeholder="Search owners",
+        label_visibility="collapsed",
+    ).strip().lower()
+    st.markdown(
+        '<div class="teams-sheet-note">In standings order</div>',
+        unsafe_allow_html=True,
+    )
+
+    for i, team in enumerate(mobile_team_options):
+        if query and query not in team["name"].lower():
+            continue
+        is_current = team["name"] == sel_name
+        place = _ordinal(team["rank"]) if team["rank"] else "—"
+        check = '<span class="teams-sheet-check">✓</span>' if is_current else ""
+        with st.container(key=f"teams_sheet_row_{i}"):
+            st.markdown(
+                f'<div class="teams-sheet-row{" current" if is_current else ""}">'
+                f'<div class="teams-sheet-rank">{_mobile_escape(place)}</div>'
+                f'<div class="teams-sheet-avatar">{_mobile_escape(_mobile_initials(team["name"]))}</div>'
+                '<div class="teams-sheet-name">'
+                f'{_mobile_escape(team["name"])}'
+                f'<small>{_mobile_escape(team["cap_space"])}</small>'
+                '</div>'
+                f'<div class="teams-sheet-record">{_mobile_escape(team["record"])}</div>'
+                f'{check}'
+                '</div>',
+                unsafe_allow_html=True,
+            )
+            st.button(
+                team["name"],
+                key=f"teams_sheet_pick_{i}",
+                on_click=_pick_mobile_team,
+                args=(team["name"],),
+                use_container_width=True,
+            )
+
+
+with st.container(key="teams_mobile_switch"):
+    st.markdown(
+        '<div class="teams-mobile-switch">'
+        f'<div class="teams-mobile-avatar">{_mobile_escape(_mobile_initials(sel_name))}</div>'
+        '<div class="teams-mobile-switch-text">'
+        '<small>Viewing</small>'
+        f'<strong>{_mobile_escape(sel_name)}</strong>'
+        '</div>'
+        '<div class="teams-mobile-switch-pill">Switch ▾</div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+    if st.button("Switch team", key="teams_mobile_switch_btn", use_container_width=True):
+        _mobile_team_sheet()
 
 # Build the compact top portion in ONE markdown block so Streamlit cannot
 # insert large gaps between the summary, roster, and side-by-side cards.
 mobile_top_html: list[str] = ['<div class="teams-mobile-only teams-mobile-flow">']
 
 # Summary card.
-initials = _mobile_escape(_mobile_initials(sel_name))
-name_html = _mobile_escape(sel_name)
+mobile_record = record_txt.replace(" – ", "-")
 
 mobile_top_html.extend([
-    '<section class="teams-mobile-card">',
-    '<div class="teams-mobile-teamline">',
-    f'<div class="teams-mobile-avatar">{initials}</div>',
-    '<div>',
-    f'<div class="teams-mobile-team-name">{name_html}</div>',
-    '<div class="teams-mobile-team-sub">Team Dashboard</div>',
-    '</div>',
-    '</div>',
+    '<section class="teams-mobile-card teams-mobile-summary">',
     '<div class="teams-mobile-stats">',
     '<div class="teams-mobile-stat">',
     '<div class="teams-mobile-stat-label">Record</div>',
-    f'<div class="teams-mobile-stat-value gold">{_mobile_escape(record_txt)}</div>',
+    f'<div class="teams-mobile-stat-value gold">{_mobile_escape(mobile_record)}</div>',
     f'<div class="teams-mobile-stat-sub">{_mobile_escape(standing_txt)}</div>',
     '</div>',
     '<div class="teams-mobile-stat">',
@@ -2477,11 +2749,6 @@ mobile_top_html.extend([
     f'<div class="teams-mobile-stat-value gold">{_mobile_escape(cap_txt)}</div>',
     f'<div class="teams-mobile-stat-sub">{_mobile_escape(cap_sub)}</div>',
     '</div>',
-    '<div class="teams-mobile-stat">',
-    '<div class="teams-mobile-stat-label">Rank</div>',
-    f'<div class="teams-mobile-stat-value">{_mobile_escape(standing_txt)}</div>',
-    '<div class="teams-mobile-stat-sub">League</div>',
-    '</div>',
     '</div>',
     '</section>',
 ])
@@ -2495,11 +2762,6 @@ mobile_top_html.extend([
     '<div class="teams-mobile-title">Roster</div>',
     '</div>',
     f'<div class="teams-mobile-count">{len(mobile_roster)} Players</div>',
-    '</div>',
-    '<div class="teams-mobile-roster-header">',
-    '<div>Pos</div><div>Player</div>',
-    '<div style="text-align:right;">Yrs</div>',
-    '<div style="text-align:right;">Salary</div>',
     '</div>',
 ])
 
