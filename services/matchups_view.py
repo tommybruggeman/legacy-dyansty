@@ -162,13 +162,112 @@ def _team_row(team: dict, is_winner: bool, is_me: bool) -> str:
     )
 
 
+def _grid_columns(count: int) -> int:
+    """Columns for the desktop grid that leave no half-empty row
+    when that can be helped: 4 games -> 2x2, 6 -> 3x2."""
+
+    if count % 3 == 0:
+        return 3
+
+    if count % 2 == 0:
+        return 2
+
+    return 3
+
+
+def _my_team_note(me: dict, summary: dict | None) -> str:
+    """Where the signed-in owner stands against the Top 5 line."""
+
+    if not summary or me["score"] <= 0:
+        return ""
+
+    cut = summary["cut"]
+
+    if me["top5"]:
+        return "You're in the Top 5 this week"
+
+    gap = cut["score"] - me["score"]
+
+    return f"{gap:.2f} behind the Top 5 line ({cut['score']:.2f})"
+
+
+def _hero_html(game: dict, my_roster_id, summary, status, badge) -> str:
+    """Desktop: your matchup as a wide head-to-head card."""
+
+    leader, trailer = game["teams"]
+    decided = leader["score"] > trailer["score"]
+    total = leader["score"] + trailer["score"]
+    me = next(
+        t for t in game["teams"] if str(t["roster_id"]) == str(my_roster_id)
+    )
+
+    # Keep your side on the left.
+    left, right = (me, trailer if me is leader else leader)
+    left_share = 50.0 if total <= 0 else round(100 * left["score"] / total, 1)
+
+    def side(team, align):
+        classes = f"mm-hero-side {align}"
+
+        if decided and team is leader:
+            classes += " is-winner"
+
+        rank_class = "mm-rank top5" if team["top5"] else "mm-rank"
+        you = '<span class="mm-you">You</span>' if team is me else ""
+
+        return (
+            f'<div class="{classes}">'
+            '<div class="mm-hero-who">'
+            f'<div class="{rank_class}">{team["rank"]}</div>'
+            f'<span class="mm-name-text">{html.escape(team["name"])}</span>{you}'
+            "</div>"
+            f'<div class="mm-hero-score">{team["score"]:.2f}</div>'
+            "</div>"
+        )
+
+    note = _my_team_note(me, summary)
+    note_html = f'<span class="mm-hero-note">{html.escape(note)}</span>' if note else ""
+
+    return (
+        '<div class="mm-hero">'
+        '<div class="mm-hero-top">'
+        '<span class="mm-hero-label">Your matchup</span>'
+        f'<span class="mm-badge {badge.lower()}">{badge}</span>'
+        "</div>"
+        '<div class="mm-hero-body">'
+        f'{side(left, "left")}'
+        '<div class="mm-hero-vs">vs</div>'
+        f'{side(right, "right")}'
+        "</div>"
+        '<div class="mm-hero-bar">'
+        f'<div class="mm-hero-bar-fill" style="width:{left_share}%"></div>'
+        "</div>"
+        '<div class="mm-hero-foot">'
+        f"<span>{status}</span>{note_html}"
+        "</div>"
+        "</div>"
+    )
+
+
+def _badge(game: dict, is_final: bool) -> str:
+    leader, trailer = game["teams"]
+
+    if is_final:
+        return "Final"
+
+    if leader["score"] == 0 and trailer["score"] == 0:
+        return "Upcoming"
+
+    return "Live"
+
+
 def matchup_cards_html(
     games: list[dict],
     my_roster_id=None,
     is_final: bool = False,
 ) -> str:
     """The week's summary boxes, then one card per game.
-    The signed-in owner's game comes first."""
+    The signed-in owner's game comes first: a normal card on phones,
+    a wide head-to-head card above the grid on desktop."""
 
     def is_mine(game):
         return my_roster_id is not None and any(
@@ -202,13 +301,27 @@ def matchup_cards_html(
 
         parts.append("</div>")
 
-    parts.append('<div class="mm-games">')
+    mine_game = next((g for g in ordered if is_mine(g)), None)
+
+    if mine_game:
+        parts.append(
+            _hero_html(
+                mine_game,
+                my_roster_id,
+                summary,
+                _status_line(mine_game, is_final),
+                _badge(mine_game, is_final),
+            )
+        )
+
+    desktop_count = len(ordered) - (1 if mine_game else 0)
+    parts.append(f'<div class="mm-games cols-{_grid_columns(desktop_count)}">')
 
     for game in ordered:
         mine = is_mine(game)
         leader, trailer = game["teams"]
         decided = leader["score"] > trailer["score"]
-        card_class = "mm-card is-mine" if mine else "mm-card"
+        card_class = "mm-card is-mine phone-only" if mine else "mm-card"
 
         parts.append(f'<div class="{card_class}">')
 
@@ -225,13 +338,7 @@ def matchup_cards_html(
             )
 
         status = _status_line(game, is_final)
-
-        if is_final:
-            badge = "Final"
-        elif leader["score"] == 0 and trailer["score"] == 0:
-            badge = "Upcoming"
-        else:
-            badge = "Live"
+        badge = _badge(game, is_final)
 
         parts.append(
             '<div class="mm-status">'

@@ -81,6 +81,26 @@ class MatchupsViewTest(unittest.TestCase):
         self.assertIn("Tommy won by 10.00", out)
         self.assertIn("Final", out)
 
+    def test_desktop_hero_and_even_grid(self):
+        # 3 games with yours pulled into the hero leaves 2: one full row.
+        out = matchup_cards_html(self.games, my_roster_id=1)
+        self.assertIn('class="mm-hero"', out)
+        self.assertIn("mm-card is-mine phone-only", out)
+        self.assertIn("mm-games cols-2", out)
+        self.assertIn("in the Top 5 this week", out)
+
+        games = build_games(
+            _rows({1: (1, 90), 2: (1, 80), 3: (2, 150), 4: (2, 60), 5: (3, 70), 6: (3, 65)}),
+            NAMES,
+        )
+        out = matchup_cards_html(games, my_roster_id=4)
+        self.assertIn("behind the Top 5 line", out)
+
+    def test_no_hero_without_my_team(self):
+        out = matchup_cards_html(self.games)
+        self.assertNotIn('class="mm-hero"', out)
+        self.assertIn("mm-games cols-3", out)
+
 
 if __name__ == "__main__":
     unittest.main()
