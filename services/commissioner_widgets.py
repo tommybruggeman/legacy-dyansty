@@ -210,8 +210,7 @@ _AUCTION_CSS = _SHARED_CSS + """
 .pm{width:56px;height:56px;border-radius:16px;border:1px solid var(--line);background:transparent;color:var(--gold);font-size:28px;flex:none}
 .amtwrap{flex:1;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:50px;letter-spacing:-.02em}
 .amtwrap span{color:inherit}
-.amt{width:3.2ch;background:transparent;border:0;color:inherit;font:inherit;text-align:left;outline:none;padding:0;-moz-appearance:textfield}
-.amt::-webkit-outer-spin-button,.amt::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.amt{width:3.2ch;background:transparent;border:0;color:inherit;font:inherit;text-align:left;outline:none;padding:0;caret-color:var(--gold)}
 .bad .amtwrap{color:var(--red)}
 .chips{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
 .chips button{background:transparent;border:1px solid var(--line);border-radius:999px;padding:8px 0;font-size:13px;font-weight:600;color:var(--gold)}
@@ -271,7 +270,41 @@ export default function(component) {
     }
     return `<input class="search" type="search" autocomplete="off" placeholder="Search free agents" value="${esc(st.q)}"><div class="res"></div>`;
   }
+  // The amount box is drawn once per full redraw; typing in it only redraws
+  // the parts below, so the caret stays where the user is typing.
   function drawBid() {
+    bidCard.innerHTML = `${playerBlock()}
+      <div class="bid"><button class="pm" data-step="-1" aria-label="Lower bid">−</button>
+        <div class="amtwrap"><span>$</span><input class="amt" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" value="${st.bid}" aria-label="Bid"></div>
+        <button class="pm" data-step="1" aria-label="Raise bid">+</button></div>
+      <div data-a="rest"></div>`;
+    const amt = bidCard.querySelector('.amt');
+    const size = () => { amt.style.width = Math.max(1, amt.value.length) + 0.4 + 'ch'; };
+    size();
+    // Tapping the box selects the old bid, so typing replaces it.
+    amt.onfocus = amt.onclick = () => setTimeout(() => { try { amt.select(); } catch (e) {} }, 0);
+    amt.oninput = () => {
+      const digits = amt.value.replace(/[^0-9]/g, '').replace(/^0+(?=\d)/, '').slice(0, 4);
+      if (digits !== amt.value) amt.value = digits;
+      st.bid = digits ? Number(digits) : 0;
+      st.armed = false;
+      size(); drawRest(); drawWin();
+    };
+    amt.onkeydown = (e) => { if (e.key === 'Enter') amt.blur(); };
+    amt.onblur = () => { if (!amt.value) { amt.value = String(st.bid || 0); size(); } };
+    bidCard.querySelectorAll('.bid [data-step]').forEach(b => b.onclick = () => step(Number(b.dataset.step)));
+    const clear = bidCard.querySelector('[data-a=clear]');
+    if (clear) clear.onclick = () => { st.player = null; st.q = ''; st.armed = false; drawBid(); drawWin(); focusSearch(); };
+    wireSearch();
+    drawRest();
+  }
+  function step(n) {
+    st.bid = Math.max(1, st.bid + n); st.armed = false;
+    const amt = bidCard.querySelector('.amt');
+    amt.value = String(st.bid); amt.style.width = Math.max(1, amt.value.length) + 0.4 + 'ch';
+    drawRest(); drawWin();
+  }
+  function drawRest() {
     const ok = valid(st.bid, st.years);
     let tiles = '';
     for (let y = 1; y <= 4; y++) {
@@ -285,33 +318,20 @@ export default function(component) {
       else tiles += `<button class="y ${cur ? 'on' : ''}" data-y="${y}" data-v="${v}"><div class="k">${label}</div><div class="v">${money(cur ? st.bid : v)}</div><div class="c">${cur ? 'current' : 'same value'}</div></button>`;
     }
     bidCard.className = 'card' + (ok ? '' : ' bad');
-    bidCard.innerHTML = `${playerBlock()}
-      <div class="bid"><button class="pm" data-step="-1" aria-label="Lower bid">−</button>
-        <div class="amtwrap"><span>$</span><input class="amt" type="number" inputmode="numeric" min="1" step="1" value="${st.bid}" aria-label="Bid"></div>
-        <button class="pm" data-step="1" aria-label="Raise bid">+</button></div>
-      <div class="chips">${[1,2,5,10].map(n => `<button data-step="${n}">+${n}</button>`).join('')}</div>
+    const rest = bidCard.querySelector('[data-a=rest]');
+    rest.innerHTML = `<div class="chips">${[1,2,5,10].map(n => `<button data-step="${n}">+${n}</button>`).join('')}</div>
       <div class="lbl">Bid is for</div>
       <div class="yseg">${[1,2,3,4].map(y => `<button data-yrs="${y}" ${y > R.max_years ? 'disabled' : ''} class="${y === st.years ? (ok ? 'on' : 'badon') : ''}">${y} yr${y > 1 ? 's' : ''}</button>`).join('')}</div>
       ${ok ? '' : `<div class="warn">✕ Not a valid bid. ${st.bid < 1 ? 'Bids start at $1.' : `A ${st.years}-year deal needs at least ${money(minFor(st.years))}. Raise the bid or pick fewer years.`}</div>`}
       <div class="lbl">Same bid at other lengths · tap to switch</div><div class="yrs">${tiles}</div>`;
-    const amt = bidCard.querySelector('.amt');
-    amt.style.width = Math.max(1, String(st.bid).length) + 0.4 + 'ch';
-    amt.oninput = () => { const n = Math.floor(Number(amt.value)); st.bid = isFinite(n) && n > 0 ? n : 0; st.armed = false; amt.style.width = Math.max(1, amt.value.length) + 0.4 + 'ch'; drawBidSoft(); drawWin(); };
-    bidCard.querySelectorAll('[data-step]').forEach(b => b.onclick = () => { st.bid = Math.max(1, st.bid + Number(b.dataset.step)); st.armed = false; drawBid(); drawWin(); });
-    bidCard.querySelectorAll('[data-yrs]').forEach(b => b.onclick = () => { st.years = Number(b.dataset.yrs); st.armed = false; drawBid(); drawWin(); });
-    bidCard.querySelectorAll('.y[data-v]').forEach(b => b.onclick = () => { st.bid = Number(b.dataset.v); st.years = Number(b.dataset.y); st.armed = false; drawBid(); drawWin(); });
-    const clear = bidCard.querySelector('[data-a=clear]');
-    if (clear) clear.onclick = () => { st.player = null; st.q = ''; st.armed = false; drawBid(); drawWin(); focusSearch(); };
-    wireSearch();
-  }
-  // While typing in the bid box, redraw everything except the box itself.
-  function drawBidSoft() {
-    const amt = bidCard.querySelector('.amt');
-    const pos = amt.selectionStart;
-    drawBid();
-    const fresh = bidCard.querySelector('.amt');
-    fresh.focus();
-    try { fresh.setSelectionRange(pos, pos); } catch (e) {}
+    rest.querySelectorAll('[data-step]').forEach(b => b.onclick = () => step(Number(b.dataset.step)));
+    rest.querySelectorAll('[data-yrs]').forEach(b => b.onclick = () => { st.years = Number(b.dataset.yrs); st.armed = false; drawRest(); drawWin(); });
+    rest.querySelectorAll('.y[data-v]').forEach(b => b.onclick = () => {
+      st.bid = Number(b.dataset.v); st.years = Number(b.dataset.y); st.armed = false;
+      const amt = bidCard.querySelector('.amt');
+      amt.value = String(st.bid); amt.style.width = Math.max(1, amt.value.length) + 0.4 + 'ch';
+      drawRest(); drawWin();
+    });
   }
   function wireSearch() {
     const input = bidCard.querySelector('.search');
