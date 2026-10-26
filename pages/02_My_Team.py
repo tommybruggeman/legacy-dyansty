@@ -556,10 +556,96 @@ html, body, [data-testid="stAppViewContainer"]{
   display: none;
 }
 
-@media (min-width: 769px) {
-  .st-key-my_team_phone_designations {
-    display: none !important;
-  }
+/* ==========================================================
+   ACTION CARDS (desktop + phone)
+   Trade Block, Taxi Squad and IR share the roster card's gold
+   border, gradient and heading size. Taxi and IR sit side by side.
+   ========================================================== */
+
+.st-key-my_team_trade_block,
+.st-key-my_team_taxi,
+.st-key-my_team_ir {
+  border:1px solid var(--goldSoft) !important;
+  border-radius:18px !important;
+  background:radial-gradient(120% 140% at 20% 0%, var(--panel) 0%, var(--panel2) 100%) !important;
+  box-shadow:var(--shadow) !important;
+  padding:15px 16px !important;
+  gap:.6rem !important;
+}
+
+/* Stretch Taxi and IR to the same height. */
+.st-key-my_team_designations [data-testid="stColumn"] [data-testid="stLayoutWrapper"],
+.st-key-my_team_designations [data-testid="stColumn"] [data-testid="stVerticalBlock"] {
+  height:100% !important;
+}
+
+.st-key-my_team_trade_block h3,
+.st-key-my_team_taxi h3,
+.st-key-my_team_ir h3 {
+  font-size:.98rem !important;
+  font-weight:900 !important;
+  line-height:1.2 !important;
+  margin:0 !important;
+  padding:0 !important;
+}
+
+.st-key-my_team_trade_block h4 {
+  font-size:.82rem !important;
+  font-weight:800 !important;
+  color:var(--muted) !important;
+  text-transform:uppercase;
+  letter-spacing:.05em;
+  margin:0 0 .4rem 0 !important;
+  padding:0 !important;
+}
+
+.st-key-my_team_trade_block hr {
+  margin:.3rem 0 !important;
+  border-color:var(--rule) !important;
+}
+
+.st-key-my_team_trade_block p,
+.st-key-my_team_taxi p,
+.st-key-my_team_ir p {
+  font-size:.86rem !important;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+
+.st-key-my_team_trade_block [data-testid="stSelectbox"] label,
+.st-key-my_team_taxi [data-testid="stSelectbox"] label,
+.st-key-my_team_ir [data-testid="stSelectbox"] label {
+  font-size:.72rem !important;
+}
+
+.st-key-my_team_taxi [data-testid="stCaptionContainer"],
+.st-key-my_team_ir [data-testid="stCaptionContainer"] {
+  margin:0 !important;
+  font-size:.72rem !important;
+}
+
+.st-key-my_team_designations {
+  margin-top:4px;
+}
+
+.st-key-my_team_designations [data-testid="stHorizontalBlock"] {
+  display:grid !important;
+  grid-template-columns:minmax(0,1fr) minmax(0,1fr) !important;
+  gap:12px !important;
+  align-items:stretch !important;
+}
+
+.st-key-my_team_designations [data-testid="stHorizontalBlock"] > [data-testid="stColumn"],
+.st-key-my_team_designations [data-testid="stHorizontalBlock"] > [data-testid="column"] {
+  width:100% !important;
+  min-width:0 !important;
+  max-width:100% !important;
+}
+
+.st-key-my_team_designations [data-testid="stElementContainer"]:has(> [data-testid="stButton"]),
+.st-key-my_team_designations [data-testid="stButton"],
+.st-key-my_team_designations [data-testid="stButton"] button {
+  width:100% !important;
 }
 
 @media (max-width: 768px) {
@@ -708,10 +794,8 @@ html, body, [data-testid="stAppViewContainer"]{
 
   /* ======================================================
      MY TEAM PHONE LAYOUT
-     Roster runs full width. The desktop action column
-     (Trade Block + combined Taxi / IR) is hidden, and Taxi Squad
-     and IR show as two cards side by side below the roster.
-     Desktop remains unchanged.
+     Roster runs full width, then Taxi Squad and IR side by side
+     below it. Trade Block is desktop only.
      Streamlit 1.4x+ names columns stColumn; older builds used column.
      ====================================================== */
 
@@ -726,48 +810,27 @@ html, body, [data-testid="stAppViewContainer"]{
     max-width:100% !important;
   }
 
-  .st-key-my_team_main_layout [data-testid="stColumn"]:has(.st-key-my_team_mobile_actions),
-  .st-key-my_team_main_layout [data-testid="column"]:has(.st-key-my_team_mobile_actions) {
+  .st-key-my_team_trade_block {
     display:none !important;
   }
 
-  .st-key-my_team_phone_designations {
+  .st-key-my_team_designations {
     margin-top:14px !important;
   }
 
-  .st-key-my_team_phone_designations > [data-testid="stHorizontalBlock"],
-  .st-key-my_team_phone_designations [data-testid="stHorizontalBlock"] {
+  /* Keep Taxi + IR side by side even though the main layout stacks. */
+  .st-key-my_team_main_layout .st-key-my_team_designations [data-testid="stHorizontalBlock"] {
     display:grid !important;
-    grid-template-columns:minmax(0,1fr) minmax(0,1fr) !important;
     gap:10px !important;
-    align-items:stretch !important;
   }
 
-  .st-key-my_team_phone_designations [data-testid="stHorizontalBlock"] > [data-testid="stColumn"],
-  .st-key-my_team_phone_designations [data-testid="stHorizontalBlock"] > [data-testid="column"] {
-    width:100% !important;
-    min-width:0 !important;
-    max-width:100% !important;
-  }
-
-  .st-key-my_team_phone_taxi,
-  .st-key-my_team_phone_ir,
-  .st-key-my_team_activity {
-    border:1px solid rgba(226,188,91,.40) !important;
-    border-radius:18px !important;
-    background:linear-gradient(145deg,#10201E 0%,#081513 100%) !important;
-    box-shadow:0 8px 26px rgba(0,0,0,.28) !important;
-  }
-
-  .st-key-my_team_phone_taxi,
-  .st-key-my_team_phone_ir {
-    height:100% !important;
+  .st-key-my_team_taxi,
+  .st-key-my_team_ir {
     padding:14px 12px !important;
-    gap:.6rem !important;
   }
 
-  .st-key-my_team_phone_taxi h3,
-  .st-key-my_team_phone_ir h3,
+  .st-key-my_team_taxi h3,
+  .st-key-my_team_ir h3,
   .st-key-my_team_activity h3 {
     font-size:1.05rem !important;
     line-height:1.2 !important;
@@ -775,29 +838,11 @@ html, body, [data-testid="stAppViewContainer"]{
     padding:0 !important;
   }
 
-  .st-key-my_team_phone_taxi p,
-  .st-key-my_team_phone_ir p {
-    font-size:.86rem !important;
-    overflow:hidden;
-    text-overflow:ellipsis;
-  }
-
-  .st-key-my_team_phone_taxi [data-testid="stSelectbox"] label,
-  .st-key-my_team_phone_ir [data-testid="stSelectbox"] label {
-    font-size:.74rem !important;
-  }
-
-  .st-key-my_team_phone_taxi [data-testid="stCaptionContainer"],
-  .st-key-my_team_phone_ir [data-testid="stCaptionContainer"] {
-    margin:0 !important;
-    font-size:.72rem !important;
-  }
-
-  /* Full-width buttons are easier to hit with a thumb. */
-  .st-key-my_team_phone_designations [data-testid="stElementContainer"]:has(> [data-testid="stButton"]),
-  .st-key-my_team_phone_designations [data-testid="stButton"],
-  .st-key-my_team_phone_designations [data-testid="stButton"] button {
-    width:100% !important;
+  .st-key-my_team_activity {
+    border:1px solid rgba(226,188,91,.40) !important;
+    border-radius:18px !important;
+    background:linear-gradient(145deg,#10201E 0%,#081513 100%) !important;
+    box-shadow:0 8px 26px rgba(0,0,0,.28) !important;
   }
 
   /* Mobile controls: larger touch targets without changing desktop controls. */
@@ -1674,12 +1719,12 @@ with left:
     )
 
 # ---------- right actions ----------
-# Desktop: remains in the existing right column.
-# Phone: the action area moves below the roster, and Trade Block
-# and Taxi Squad / IR stack full width.
+# Desktop: Trade Block on top, Taxi Squad and IR as two cards below it.
+# Phone: this column drops below the roster and Trade Block is hidden.
 with right:
-    with st.container(key="my_team_mobile_actions"):
-        action_trade_col, action_designation_col = st.columns(2)
+    action_trade_col = st.container()
+    with st.container(key="my_team_designations"):
+        taxi_col, ir_col = st.columns(2)
 
 with action_trade_col:
     with st.container(border=True, key="my_team_trade_block"):
@@ -1714,6 +1759,7 @@ with action_trade_col:
             options=roster_names if roster_names else ["No roster players found"],
             disabled=not bool(roster_names),
             key="trade_block_player",
+            label_visibility="collapsed",
         )
 
         if st.button("Add to Trade Block", disabled=not bool(roster_names)):
@@ -1736,8 +1782,7 @@ with action_trade_col:
             st.rerun()
 
 # ---------- taxi / IR helpers ----------
-# Shared by the desktop Taxi Squad / IR card and the phone-only Taxi and IR
-# cards, so both layouts follow the same league rules.
+# Used by the Taxi Squad and IR cards on both desktop and phone.
 DESIGNATION_ADJUSTMENT_TYPES = {
     "Taxi Squad": "taxi_adjustment",
     "Injured Reserve": "ir_adjustment",
@@ -1943,104 +1988,9 @@ def render_designation_form(designation: str, player_options: list[str], key_pre
         apply_designation(designation, selected_player, player_row, salary)
 
 
-with action_designation_col:
-    with st.container(border=True, key="my_team_taxi_ir"):
-        st.markdown("### Taxi Squad / IR")
-
-        if not current_designations.empty:
-            st.markdown("#### Current Designations")
-
-            for _, d in current_designations.iterrows():
-                designation_id = d.get("id")
-                player_name = d.get("player_name") or "Player"
-                adjustment_type = d.get("adjustment_type")
-
-                if adjustment_type == "taxi_adjustment":
-                    label = "Taxi Squad"
-                    remove_action = "taxi_removed"
-                else:
-                    label = "Injured Reserve"
-                    remove_action = "ir_removed"
-
-                # Canonical Taxi rule: a rookie placed on Taxi is locked there
-                # for the whole season, so the designation cannot be lifted.
-                designation_locked = adjustment_type == "taxi_adjustment"
-
-                cols = st.columns([3, 1])
-
-                with cols[0]:
-                    st.markdown(f"**{label}:** {player_name}")
-                    if designation_locked:
-                        st.caption("Locked for the season")
-
-                with cols[1]:
-                    if designation_locked:
-                        st.button(
-                            "Locked",
-                            key=f"remove_designation_{designation_id}",
-                            disabled=True,
-                            help=(
-                                "Taxi Squad is a season-long designation. "
-                                "This player stays on Taxi until season rollover."
-                            ),
-                        )
-                    elif designation_id and st.button(
-                        "Remove",
-                        key=f"remove_designation_{designation_id}"
-                    ):
-                        remove_ir_designation(designation_id, label, player_name, remove_action)
-
-            st.markdown("---")
-
-        designation = st.session_state.get("designation_type", "Taxi Squad")
-        if designation == "Taxi Squad" and taxi_provenance_error:
-            st.warning(taxi_provenance_error)
-
-        selected_designation_player = st.selectbox(
-            "Player",
-            taxi_options if designation == "Taxi Squad" else ir_options,
-            key="designation_player",
-        )
-
-        designation = st.selectbox(
-            "Designation",
-            ["Taxi Squad", "Injured Reserve"],
-            key="designation_type",
-        )
-
-        current_holders = designation_holders(designation)
-        if current_holders:
-            st.info(f"Current {designation}: {', '.join(current_holders)}")
-        else:
-            st.caption(f"Current {designation}: open")
-
-        if selected_designation_player:
-            player_row = my_roster[
-                my_roster["player"] == selected_designation_player
-            ].iloc[0]
-
-            salary = float(player_row.get("salary") or 0)
-            adjustment_amount = designation_cap_adjustment(designation, salary)
-
-            st.caption(
-                f"Cap Adjustment: ${adjustment_amount:.2f}"
-            )
-
-            if st.button(
-                "Apply Designation",
-                key="apply_designation"
-            ):
-                apply_designation(designation, selected_designation_player, player_row, salary)
-
-
-# ---------- phone taxi / IR ----------
-# Phone only: Trade Block is hidden, and Taxi Squad and IR get their own
-# side-by-side cards. Same rules as the desktop card above.
-with st.container(key="my_team_phone_designations"):
-    phone_taxi_col, phone_ir_col = st.columns(2)
-
-with phone_taxi_col:
-    with st.container(border=True, key="my_team_phone_taxi"):
+# ---------- taxi / IR cards ----------
+with taxi_col:
+    with st.container(border=True, key="my_team_taxi"):
         st.markdown("### Taxi Squad")
         if taxi_provenance_error:
             st.warning(taxi_provenance_error)
@@ -2052,10 +2002,10 @@ with phone_taxi_col:
             st.caption("Locked for the season")
         else:
             st.caption("Open")
-            render_designation_form("Taxi Squad", taxi_options, "phone_taxi")
+            render_designation_form("Taxi Squad", taxi_options, "taxi")
 
-with phone_ir_col:
-    with st.container(border=True, key="my_team_phone_ir"):
+with ir_col:
+    with st.container(border=True, key="my_team_ir"):
         st.markdown("### IR")
 
         ir_rows = current_designations
@@ -2069,7 +2019,7 @@ with phone_ir_col:
                 st.markdown(f"**{player_name}**")
                 if designation_id and st.button(
                     "Remove",
-                    key=f"phone_remove_designation_{designation_id}",
+                    key=f"remove_designation_{designation_id}",
                 ):
                     remove_ir_designation(designation_id, "Injured Reserve", player_name, "ir_removed")
         else:
@@ -2079,7 +2029,7 @@ with phone_ir_col:
                     st.markdown(f"**{holder}**")
             else:
                 st.caption("Open")
-                render_designation_form("Injured Reserve", ir_options, "phone_ir")
+                render_designation_form("Injured Reserve", ir_options, "ir")
 # ---------- activity ----------
 with st.container(border=True, key="my_team_activity"):
     st.markdown("### Recent Team Activity")
