@@ -639,6 +639,19 @@ Very subtle so it feels premium rather than flashy.
 }
 
 
+.mobile-leader-link,
+.mobile-leader-link:hover,
+.mobile-leader-link:visited {
+    color: inherit !important;
+}
+
+
+.mobile-leader-link,
+.mobile-leader-link * {
+    text-decoration: none !important;
+}
+
+
 .mobile-leader-icon {
     display: flex;
 
@@ -922,57 +935,92 @@ div[data-testid="stDataFrame"]
     display: grid;
 
     grid-template-columns:
-        24px
-        minmax(0, 1.65fr)
-        40px
-        46px
-        34px
-        34px;
+        26px
+        minmax(0, 1fr)
+        38px
+        44px
+        30px
+        30px;
 
     align-items: center;
 
-    column-gap: 3px;
+    column-gap: 6px;
 
     width: 100%;
+
+    padding:
+        0 14px 0 10px;
 
     box-sizing: border-box;
 }
 
 
-.mobile-standings-header {
-    min-height: 38px;
+/* Every stat column is centered, header and value alike,
+   so the labels sit directly over their numbers. */
+.mobile-standings-header > div,
+.mobile-standing-number,
+.mobile-standing-rank {
+    text-align: center;
+}
 
-    padding:
-        0 7px;
+
+.mobile-standings-header > div:nth-child(2) {
+    text-align: left;
+
+    padding-left: 4px;
+}
+
+
+.mobile-standings-header {
+    min-height: 36px;
 
     background:
-        rgba(255,255,255,.02);
+        rgba(255,255,255,.03);
 
     color: var(--muted);
 
-    font-size: .55rem;
+    font-size: .62rem;
 
-    font-weight: 900;
+    font-weight: 800;
 
-    letter-spacing: .045em;
+    letter-spacing: .08em;
 
     text-transform: uppercase;
 
     border-bottom:
-        1px solid rgba(226,188,91,.16);
+        1px solid rgba(226,188,91,.18);
+}
+
+
+.mobile-standings-header > div:nth-child(3) {
+    color: var(--gold);
 }
 
 
 .mobile-standings-row {
-    min-height: 44px;
-
-    padding:
-        0 7px;
+    min-height: 46px;
 
     color: var(--text);
 
+    text-decoration: none !important;
+
     border-bottom:
-        1px solid rgba(226,188,91,.10);
+        1px solid rgba(226,188,91,.09);
+}
+
+
+a.mobile-standings-row,
+a.mobile-standings-row:hover,
+a.mobile-standings-row:visited {
+    color: var(--text) !important;
+
+    text-decoration: none !important;
+}
+
+
+a.mobile-standings-row:active {
+    background:
+        rgba(226,188,91,.08);
 }
 
 
@@ -985,11 +1033,44 @@ div[data-testid="stDataFrame"]
 .mobile-standing-rank {
     color: var(--muted);
 
-    font-size: .64rem;
+    font-size: .72rem;
 
     font-weight: 800;
+}
 
-    text-align: center;
+
+/* Gold / silver / bronze rank chips for the top three. */
+.mobile-standings-row.rank-1 .mobile-standing-rank,
+.mobile-standings-row.rank-2 .mobile-standing-rank,
+.mobile-standings-row.rank-3 .mobile-standing-rank {
+    width: 22px;
+
+    height: 22px;
+
+    line-height: 22px;
+
+    margin: 0 auto;
+
+    border-radius: 50%;
+
+    color: #0C1917;
+
+    font-weight: 900;
+}
+
+
+.mobile-standings-row.rank-1 .mobile-standing-rank {
+    background: var(--gold);
+}
+
+
+.mobile-standings-row.rank-2 .mobile-standing-rank {
+    background: #C9CED6;
+}
+
+
+.mobile-standings-row.rank-3 .mobile-standing-rank {
+    background: #C98A55;
 }
 
 
@@ -1002,7 +1083,7 @@ div[data-testid="stDataFrame"]
 
     text-overflow: ellipsis;
 
-    font-size: .69rem;
+    font-size: .86rem;
 
     font-weight: 700;
 
@@ -1010,19 +1091,24 @@ div[data-testid="stDataFrame"]
 }
 
 
-.mobile-standing-number {
-    font-size: .65rem;
-
-    font-weight: 700;
-
-    text-align: right;
+.mobile-standings-row.rank-1 .mobile-standing-team {
+    color: var(--gold);
 }
 
 
-.mobile-standings-row:first-of-type
-.mobile-standing-rank,
-.mobile-standings-row:first-of-type
-.mobile-standing-team {
+.mobile-standing-number {
+    font-size: .82rem;
+
+    font-weight: 600;
+
+    font-variant-numeric: tabular-nums;
+
+    color: var(--text);
+}
+
+
+/* Standing Points decide the table, so they stand out. */
+.mobile-standing-number.sp {
     color: var(--gold);
 
     font-weight: 900;
@@ -1099,6 +1185,15 @@ div[data-testid="stDataFrame"]
 ========================================================= */
 
 @media (max-width: 700px) {
+
+    /* Stop the whole page from sliding sideways on a swipe. */
+    html,
+    body,
+    [data-testid="stAppViewContainer"],
+    [data-testid="stMain"] {
+        overflow-x: hidden !important;
+    }
+
 
     .block-container {
         padding-top:
@@ -1616,6 +1711,11 @@ LEADER_ICONS = {
 # MOBILE HTML HELPERS
 # ============================================================
 
+def _team_href(team: str) -> str:
+    """Link to that team on the Teams page (it reads ?team=)."""
+    return f"/Teams?team={urlparse.quote(team)}"
+
+
 def _mobile_leaders_html(
     leaders: list[dict],
 ) -> str:
@@ -1651,7 +1751,7 @@ def _mobile_leaders_html(
         cards.append(
             (
                 '<div class="mobile-leader-card">'
-                f'<a class="mobile-leader-link" href="{href}">'
+                f'<a class="mobile-leader-link" href="{href}" target="_self">'
                 f'<div class="mobile-leader-icon">{icon}</div>'
                 '<div class="mobile-leader-copy">'
                 f'<div class="mobile-leader-label">{label}</div>'
@@ -1682,8 +1782,13 @@ def _mobile_standings_html(
 
     for index, row in standings_df.iterrows():
 
-        team = html.escape(
-            str(row.get("Team", ""))
+        team_name = str(row.get("Team", ""))
+
+        team = html.escape(team_name)
+
+        href = html.escape(
+            _team_href(team_name),
+            quote=True,
         )
 
         standing_points = as_int(
@@ -1705,14 +1810,15 @@ def _mobile_standings_html(
 
         rows.append(
             (
-                '<div class="mobile-standings-row">'
+                f'<a class="mobile-standings-row rank-{index + 1}" '
+                f'href="{href}" target="_self">'
                 f'<div class="mobile-standing-rank">{index + 1}</div>'
                 f'<div class="mobile-standing-team">{team}</div>'
-                f'<div class="mobile-standing-number">{standing_points}</div>'
+                f'<div class="mobile-standing-number sp">{standing_points}</div>'
                 f'<div class="mobile-standing-number">{pf}</div>'
                 f'<div class="mobile-standing-number">{wins}</div>'
                 f'<div class="mobile-standing-number">{top5}</div>'
-                '</div>'
+                '</a>'
             )
         )
 
@@ -1941,10 +2047,7 @@ for label, column, ascending in leader_specs:
 
     else:
 
-        target_href = (
-            "/?page=teams&team="
-            f"{urlparse.quote(team)}"
-        )
+        target_href = _team_href(team)
 
 
     leader_results.append(
