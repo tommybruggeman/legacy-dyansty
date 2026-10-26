@@ -170,7 +170,7 @@ def _future_frame(
                 "Player": row.player,
                 "Position": row.position,
                 "NFL Team": row.nfl_team,
-                "Contracted Team": row.contracted_team,
+                "Owner": row.contracted_team,
                 "Salary": (
                     "—"
                     if row.salary is None
@@ -197,7 +197,7 @@ def _future_frame(
             "Player",
             "Position",
             "NFL Team",
-            "Contracted Team",
+            "Owner",
             "Salary",
             last_column,
             current_column,
@@ -271,6 +271,105 @@ def _render_html_table(frame: pd.DataFrame) -> None:
         """,
         unsafe_allow_html=True,
     )
+
+
+def _season_label(season) -> str:
+    return f"'{str(season)[-2:]} PPG"
+
+
+def _ppg_text(value) -> str:
+    return "—" if value is None else f"{value:.1f}"
+
+
+def _render_player_cards(cards) -> None:
+    """
+    Render phone-only player cards. Each card is
+    (position, player, subline, [(value, label, highlight), ...]).
+    """
+
+    card_html = []
+
+    for position, player, subline, stats in cards:
+        stat_html = "".join(
+            f'<div class="fa-card-stat{" fa-card-stat-hot" if highlight else ""}">'
+            f"<b>{html.escape(str(value))}</b>"
+            f"<span>{html.escape(str(label))}</span>"
+            "</div>"
+            for value, label, highlight in stats
+        )
+
+        card_html.append(
+            '<div class="fa-card">'
+            f'<span class="fa-card-pos">{html.escape(str(position))}</span>'
+            '<div class="fa-card-main">'
+            f'<div class="fa-card-name">{html.escape(str(player))}</div>'
+            f'<div class="fa-card-sub">{html.escape(str(subline))}</div>'
+            "</div>"
+            f"{stat_html}"
+            "</div>"
+        )
+
+    st.markdown(
+        f'<div class="fa-cards">{"".join(card_html)}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _open_market_cards(rows, *, ppg_state):
+    return [
+        (
+            row.position,
+            row.player,
+            row.nfl_team,
+            [
+                (
+                    _ppg_text(row.last_season_ppg),
+                    _season_label(ppg_state.last_season),
+                    False,
+                ),
+                (
+                    _ppg_text(row.current_season_ppg),
+                    _season_label(ppg_state.active_season),
+                    True,
+                ),
+            ],
+        )
+        for row in rows
+    ]
+
+
+def _expiring_cards(rows, *, ppg_state):
+    return [
+        (
+            row.position,
+            row.player,
+            f"{row.contracted_team} · {row.nfl_team}",
+            [
+                (
+                    "—" if row.salary is None else f"${row.salary:.0f}",
+                    "Salary",
+                    False,
+                ),
+                (
+                    _ppg_text(row.current_season_ppg),
+                    _season_label(ppg_state.active_season),
+                    True,
+                ),
+            ],
+        )
+        for row in rows
+    ]
+
+
+def _position_chips(key: str) -> str:
+    choice = st.segmented_control(
+        "Position",
+        ["All", *SUPPORTED_POSITIONS],
+        default="All",
+        key=key,
+    )
+
+    return choice or "All"
 
 
 user = current_user() or {}
@@ -476,6 +575,42 @@ st.markdown(
     div[data-testid="stButton"] button { border:1px solid var(--legacy-gold); border-radius:12px; min-height:3rem; font-weight:850; background:var(--legacy-panel-deep); color:var(--legacy-gold); }
     div[data-testid="stButton"] button[kind="primary"] { background:var(--legacy-gold); border-color:var(--legacy-gold); color:#061311; box-shadow:0 0 18px rgba(226,188,91,.24); }
     div[data-testid="stButton"] button:hover, div[data-testid="stButton"] button:focus { border-color:var(--legacy-gold); color:var(--legacy-text); box-shadow:0 0 0 1px rgba(226,188,91,.25); }
+    [data-testid="stElementContainer"]:has(> [data-testid="stButtonGroup"]), [data-testid="stButtonGroup"] { width:100%!important; }
+    [data-testid="stButtonGroup"] [role="radiogroup"] { display:flex; flex-wrap:nowrap; width:100%!important; max-width:none!important; gap:.4rem; }
+    [data-testid="stButtonGroup"] button { flex:1 1 0; min-width:0; min-height:2.5rem; padding:0 .2rem; background:rgba(255,255,255,.035)!important; border:1px solid var(--legacy-gold-soft)!important; border-radius:999px!important; color:var(--legacy-muted)!important; }
+    [data-testid="stButtonGroup"] button p { font-weight:800; }
+    [data-testid="stButtonGroup"] button[aria-checked="true"] { background:var(--legacy-gold)!important; border-color:var(--legacy-gold)!important; color:#061311!important; }
+    .st-key-fa_expiring_filters [data-testid="stButtonGroup"] { max-width:440px; }
+    .fa-cards { display:none; }
+    .fa-card { display:flex; align-items:center; gap:.65rem; background:linear-gradient(135deg,var(--legacy-panel),var(--legacy-panel-deep)); border:1px solid var(--legacy-gold-soft); border-radius:16px; padding:.65rem .75rem; margin-bottom:.5rem; }
+    .fa-card-pos { flex:0 0 auto; display:inline-flex; align-items:center; justify-content:center; width:2.3rem; height:1.55rem; border-radius:999px; border:1px solid rgba(226,188,91,.5); background:#1c2418; font-size:.7rem; font-weight:800; color:var(--legacy-text); }
+    .fa-card-main { flex:1; min-width:0; }
+    .fa-card-name { font-weight:800; color:var(--legacy-text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .fa-card-sub { color:var(--legacy-muted); font-size:.78rem; margin-top:.1rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .fa-card-stat { flex:0 0 3.4rem; text-align:center; }
+    .fa-card-stat b { display:block; font-size:1rem; color:var(--legacy-text); }
+    .fa-card-stat span { display:block; font-size:.62rem; font-weight:800; color:var(--legacy-muted); text-transform:uppercase; letter-spacing:.02em; }
+    .fa-card-stat-hot b { color:var(--legacy-gold); }
+    @media (max-width:768px) {
+        .block-container { padding-left:1rem; padding-right:1rem; }
+        .fa-hero { padding:1rem 1.1rem; margin-bottom:1rem; border-radius:18px; }
+        .fa-title { font-size:1.8rem; }
+        .fa-subtitle { font-size:.9rem!important; }
+        [data-testid="stTabs"] [data-baseweb="tab-list"] { gap:1rem; }
+        .fa-section-space { display:none; }
+        .fa-table-wrap { display:none; }
+        .fa-cards { display:block; margin-top:.35rem; }
+        .st-key-fa_open_market_filters [data-testid="stHorizontalBlock"] { flex-wrap:wrap!important; gap:.5rem!important; }
+        .st-key-fa_open_market_filters [data-testid="stColumn"] { flex:1 1 calc(50% - .25rem)!important; min-width:calc(50% - .25rem)!important; width:calc(50% - .25rem)!important; }
+        .st-key-fa_open_market_filters [data-testid="stColumn"]:nth-child(-n+2) { flex-basis:100%!important; min-width:100%!important; width:100%!important; }
+        .st-key-fa_open_market_filters [data-testid="stColumn"]:nth-child(-n+2) [data-testid="stWidgetLabel"] { display:none; }
+        .st-key-fa_expiring_filters [data-testid="stWidgetLabel"] { display:none; }
+        .st-key-fa_expiring_filters [data-testid="stButtonGroup"] { max-width:none; }
+        [data-testid="stButtonGroup"] button p { font-size:14px!important; overflow:visible; text-overflow:clip; }
+        .st-key-fa_expiring_years [data-testid="stHorizontalBlock"] { flex-wrap:nowrap!important; gap:.4rem!important; }
+        .st-key-fa_expiring_years [data-testid="stColumn"] { min-width:0!important; width:auto!important; flex:1 1 0!important; }
+        .st-key-fa_expiring_years div[data-testid="stButton"] button { min-height:2.5rem; padding:0 .25rem; }
+    }
     </style>
     <div class="fa-hero">
         <div class="fa-kicker">League Market</div>
@@ -515,35 +650,38 @@ with open_market_tab:
         unsafe_allow_html=True,
     )
 
-    search_col, position_col, team_col, roster_col = st.columns(
-        [2, 1, 1, 1.35],
-        gap="medium",
+    filter_box = st.container(
+        key="fa_open_market_filters",
     )
+
+    with filter_box:
+        search_col, position_col, team_col, roster_col = st.columns(
+            [1.6, 1.7, 1, 1.35],
+            gap="medium",
+        )
 
     with search_col:
         search = st.text_input(
             "Search player",
-            placeholder="Player name",
+            placeholder="🔍  Search player",
             key="open_market_search",
         )
 
     with position_col:
-        position = st.selectbox(
-            "Position",
-            ["All", *SUPPORTED_POSITIONS],
-            key="open_market_position",
+        position = _position_chips(
+            "open_market_position_chips"
         )
 
     with team_col:
         nfl_team = st.selectbox(
-            "NFL team",
+            "NFL Team",
             ["All", *results.nfl_teams],
             key="open_market_nfl_team",
         )
 
     with roster_col:
         roster_status = st.selectbox(
-            "NFL Roster Status",
+            "Roster Status",
             [
                 "All",
                 "Active roster",
@@ -611,6 +749,13 @@ with open_market_tab:
             )
         )
 
+        _render_player_cards(
+            _open_market_cards(
+                visible_rows,
+                ppg_state=ppg_state,
+            )
+        )
+
         if visible_count < len(current_rows):
             remaining_players = (
                 len(current_rows)
@@ -670,10 +815,13 @@ with expiring_tab:
         ] = seasons[0]
 
 
-    year_columns = st.columns(
-        len(seasons),
-        gap="small",
-    )
+    with st.container(
+        key="fa_expiring_years",
+    ):
+        year_columns = st.columns(
+            len(seasons),
+            gap="small",
+        )
 
 
     for column, season in zip(
@@ -704,11 +852,12 @@ with expiring_tab:
     ]
 
 
-    position = st.selectbox(
-        "Position",
-        ["All", *SUPPORTED_POSITIONS],
-        key="expiring_contracts_position",
-    )
+    with st.container(
+        key="fa_expiring_filters",
+    ):
+        position = _position_chips(
+            "expiring_contracts_position_chips"
+        )
 
 
     future_rows = future_free_agents_for_season(
@@ -729,6 +878,13 @@ with expiring_tab:
 
         _render_html_table(
             _future_frame(
+                future_rows,
+                ppg_state=ppg_state,
+            )
+        )
+
+        _render_player_cards(
+            _expiring_cards(
                 future_rows,
                 ppg_state=ppg_state,
             )
