@@ -1132,7 +1132,7 @@ def build_free_agent_results(
     )
 
 
-    team_names = _team_names_by_id(
+    team_names = _owner_names_by_id(
         state.league_teams
     )
 
@@ -2098,6 +2098,29 @@ def _team_names_by_id(
             )
             or row.get(
                 "owner_name"
+            )
+        )
+        for row in rows
+        if (
+            team_id := _clean(
+                row.get("id")
+            )
+        )
+    }
+
+
+def _owner_names_by_id(
+    rows: Sequence[Mapping[str, Any]],
+) -> dict[str, str]:
+    """Label each league team by its owner's name, falling back to the team name."""
+
+    return {
+        team_id: _display(
+            row.get(
+                "owner_name"
+            )
+            or row.get(
+                "team_name"
             )
         )
         for row in rows

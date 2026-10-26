@@ -423,6 +423,12 @@ class FreeAgentServiceTest(unittest.TestCase):
         self.assertEqual(names, {"p-1": "Canonical Team", "p-2": "Legacy Team"})
         self.assertIn("internal:legacy_contract_team_label_fallback", result.warnings)
 
+    def test_future_rows_show_owner_name_before_team_name(self):
+        universe = [player("p-1", "Owned")]
+        teams = [{"id": "team-1", "league_id": "league-1", "team_name": "Canonical Team", "owner_name": "Dylan"}]
+        result = build_free_agent_results(universe, state(contracts=[contract("p-1")], teams=teams), active_season=2026)
+        self.assertEqual(result.future[0].contracted_team, "Dylan")
+
     def test_open_market_ranking_uses_previous_season_ppg_before_active_scoring(self):
         universe = [
             player("p-1", "Lower Last PPG"),
