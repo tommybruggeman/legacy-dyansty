@@ -1,0 +1,6 @@
+.git
+mobile
+**/__pycache__
+.env
+fantasy_env
+**/fantasy_env
