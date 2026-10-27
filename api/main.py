@@ -10,8 +10,10 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from supabase import Client, create_client
+
+from api import league
 
 app = FastAPI(title="Legacy API")
 
@@ -45,15 +47,18 @@ def _first(rows: list[dict] | None) -> dict | None:
     return (rows or [None])[0]
 
 
+@app.get("/")
+def root() -> dict[str, str]:
+    return {"service": "Legacy API", "status": "running"}
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.get("/me")
-def me(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+def resolve_team(client: Client, user: Any) -> dict[str, Any]:
     """The owner's league and team, resolved like services/app_context.resolve_my_team."""
-    client, user = owner
     membership = _first(
         client.table("league_memberships").select("*").eq("user_id", user.id).limit(1).execute().data
     )
@@ -70,11 +75,50 @@ def me(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
         team = _first(query.eq("id", team_id).execute().data)
     elif owner_name:
         team = _first(query.eq("owner_name", owner_name).execute().data)
+    team = team or {}
+
+    try:
+        roster_id = int(team.get("sleeper_roster_id"))
+    except (TypeError, ValueError):
+        roster_id = None
 
     return {
         "league_id": league_id,
-        "team_id": (team or {}).get("id"),
-        "team_name": (team or {}).get("team_name") or membership.get("team_name") or (team or {}).get("owner_name"),
-        "owner_name": (team or {}).get("owner_name") or owner_name,
+        "team_id": team.get("id"),
+        "team_name": team.get("team_name") or membership.get("team_name") or team.get("owner_name"),
+        "owner_name": team.get("owner_name") or owner_name,
         "role": membership.get("role"),
+        "sleeper_roster_id": roster_id,
     }
+
+
+@app.get("/me")
+def me(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    return resolve_team(client, user)
+
+
+def _league_context(client: Client, user: Any) -> tuple[str, dict[int, str], int | None]:
+    team = resolve_team(client, user)
+    try:
+        sleeper_id = league.sleeper_league_id(client, team["league_id"])
+    except LookupError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return sleeper_id, league.roster_names(client, team["league_id"], sleeper_id), team["sleeper_roster_id"]
+
+
+@app.get("/standings")
+def standings(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    sleeper_id, names, my_roster_id = _league_context(*owner)
+    return league.standings(sleeper_id, names, my_roster_id)
+
+
+@app.get("/matchups")
+def matchups(
+    week: int | None = Query(default=None, ge=1, le=25),
+    owner: tuple[Client, Any] = Depends(owner_client),
+) -> dict[str, Any]:
+    sleeper_id, names, my_roster_id = _league_context(*owner)
+    result = league.matchups(sleeper_id, names, week or league.current_week(), my_roster_id)
+    result["current_week"] = league.current_week()
+    return result

@@ -62,6 +62,7 @@ def test_me_resolves_team_by_id():
     })
     assert client.get("/me").json() == {
         "league_id": "L", "team_id": "t1", "team_name": "Legacy", "owner_name": "Tommy", "role": "owner",
+        "sleeper_roster_id": None,
     }
 
 
