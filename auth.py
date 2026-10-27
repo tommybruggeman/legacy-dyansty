@@ -466,19 +466,6 @@ def sign_in(email: str, password: str):
     if not email or not password:
         raise ValueError("Email and password required.")
 
-    import hashlib
-    expected_password = os.getenv("GATE3_COMMISSIONER_PASSWORD", "")
-    supplied_fp = hashlib.sha256(password.encode()).hexdigest()[:12]
-    expected_fp = hashlib.sha256(expected_password.encode()).hexdigest()[:12] if expected_password else "MISSING"
-
-    print(
-        f"[GATE3 AUTH DEBUG] url={os.getenv('SUPABASE_URL')} "
-        f"email={email} supplied_password_fp={supplied_fp} "
-        f"expected_password_fp={expected_fp} "
-        f"password_match={bool(expected_password and password == expected_password)}",
-        flush=True,
-    )
-
     client = _sb_anon()
     result = client.auth.sign_in_with_password(
         {
