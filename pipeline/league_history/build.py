@@ -164,3 +164,48 @@ def build_matchups(league_id: str, season: int, week: int, matchups: Iterable[di
                      "standing_points": (win_points if won else 0) + (bonus_points if bonus else 0),
                      "is_playoff": bool(playoff_start_week and week >= playoff_start_week), "source": "sleeper", "refreshed_at": stamp})
     return rows
+
+
+FIXED_SLOTS = {"QB", "RB", "WR", "TE", "K", "DEF"}
+FLEX_SLOTS = {"FLEX": {"RB", "WR", "TE"}, "WRRB_FLEX": {"RB", "WR"}, "REC_FLEX": {"WR", "TE"}, "SUPER_FLEX": {"QB", "RB", "WR", "TE"}}
+
+
+def best_lineup_points(points: Mapping[str, float], positions: Mapping[str, str | None], slots: Iterable[str]) -> float:
+    """Most points this roster could have scored that week: fixed slots first, then flex slots, best available each time."""
+    pool = sorted(points, key=lambda pid: -points[pid])
+    used: set[str] = set()
+    total = 0.0
+    slots = [s for s in slots if s in FIXED_SLOTS] + [s for s in slots if s in FLEX_SLOTS]
+    for slot in slots:
+        eligible = {slot} if slot in FIXED_SLOTS else FLEX_SLOTS[slot]
+        pick = next((pid for pid in pool if pid not in used and positions.get(pid) in eligible), None)
+        if pick:
+            used.add(pick)
+            total += points[pick]
+    return round(total, 2)
+
+
+def build_lineup_events(league_id: str, season: int, week: int, matchups: Iterable[dict[str, Any]], owners: OwnerMap,
+                        players: Mapping[str, dict[str, Any]], roster_positions: Iterable[str]) -> list[dict[str, Any]]:
+    """One 'lineup' event per team per week: who started and who sat, with points, and the best lineup possible.
+    Start/sit habits are learned from these, whichever app the lineups were set in."""
+    stamp = now_iso()
+    slots = [s for s in roster_positions or [] if s not in {"BN", "IR", "TAXI"}]
+    rows = []
+    for m in matchups:
+        pts = {str(k): float(v or 0) for k, v in (m.get("players_points") or {}).items()}
+        starters = [str(s) for s in m.get("starters") or [] if s and str(s) != "0"]
+        if not pts or not starters:
+            continue
+        pos = {pid: (players.get(pid) or {}).get("position") for pid in pts}
+        bench = [pid for pid in m.get("players") or [] if str(pid) not in set(starters)]
+        owner = owners.name(m.get("roster_id"))
+        scored = round(sum(pts.get(s, 0.0) for s in starters), 2)
+        rows.append({"league_id": league_id, "event_id": f"sleeper:lineup:{season}:{week}:{m.get('roster_id')}", "kind": "lineup", "season": season,
+                     "week": week, "occurred_at": None, "owner_name": owner, "counterparty_names": [], "player_name": None, "player_id": None,
+                     "position": None, "faab_bid": None, "contract_salary": None, "contract_years": None,
+                     "details": {"starters": [{"id": s, "pos": pos.get(s), "pts": pts.get(s, 0.0)} for s in starters],
+                                 "bench": [{"id": str(b), "pos": pos.get(str(b)), "pts": pts.get(str(b), 0.0)} for b in bench],
+                                 "points": scored, "best": best_lineup_points(pts, pos, slots)},
+                     "summary": f"{owner} week {week} lineup: {scored:g} points", "source": "sleeper", "refreshed_at": stamp})
+    return rows

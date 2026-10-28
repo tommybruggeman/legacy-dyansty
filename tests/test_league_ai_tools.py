@@ -36,6 +36,7 @@ class FakeQuery:
 
     def select(self, *_a, **k): self._count = k.get('count'); return self
     def eq(self, col, val): self.rows = [r for r in self.rows if str(r.get(col)) == str(val)]; return self
+    def neq(self, col, val): self.rows = [r for r in self.rows if str(r.get(col)) != str(val)]; return self
     def ilike(self, col, pat):
         needle = pat.strip("%").lower()
         self.rows = [r for r in self.rows if needle in str(r.get(col) or "").lower()]; return self

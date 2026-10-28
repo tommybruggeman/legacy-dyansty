@@ -22,8 +22,7 @@ class LeagueHistory:
 
     def events(self, kind: str | None = None, owner: str | None = None, player: str | None = None, season: int | None = None, limit: int = 40) -> list[dict[str, Any]]:
         q = self.client.table("league_history_events").select("kind, season, week, occurred_at, owner_name, counterparty_names, player_name, position, faab_bid, contract_salary, contract_years, summary").eq("league_id", self.league_id)
-        if kind:
-            q = q.eq("kind", kind)
+        q = q.eq("kind", kind) if kind else q.neq("kind", "lineup")  # weekly lineups are read by the tendency profile, not listed
         if season:
             q = q.eq("season", int(season))
         if owner:

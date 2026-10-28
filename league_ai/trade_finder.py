@@ -452,6 +452,17 @@ def trade_finder_tools(load: Callable[[], tuple[League, Mapping[str, float], str
             cache["profiles"] = _load_profiles(history, current_season) if history is not None else {}
         return cache["profiles"]
 
+    def habits() -> dict[str, dict[str, Any]]:
+        """Start/sit, FAAB and add/drop habits by owner, from the league's activity log (league_ai.tendencies)."""
+        if "habits" not in cache:
+            try:
+                from league_ai.tendencies import owner_tendencies
+
+                cache["habits"] = owner_tendencies(history.client, history.league_id, current_season) if history is not None else {}
+            except Exception:
+                cache["habits"] = {}
+        return cache["habits"]
+
     def my_pitches() -> dict[str, dict[str, int]]:
         if "pitches" not in cache:
             try:
@@ -493,6 +504,9 @@ def trade_finder_tools(load: Callable[[], tuple[League, Mapping[str, float], str
                     idea["partner_style"] = f"{p['trades']} trades here; {p['style']}; acquires mostly {', '.join(list(p['positions_acquired'])[:2]) or 'nothing yet'}"
                 if pitches.get(str(idea["partner"])):
                     idea["your_past_pitches_to_them"] = pitches[str(idea["partner"])]
+                h = habits().get(str(idea["partner"]))
+                if h and h.get("style") != "not enough activity yet":
+                    idea["partner_habits"] = h["style"]
         return out
 
     def evaluate(partner: str, you_get: list[str] | None = None, you_send: list[str] | None = None, picks_you_get: list[str] | None = None,
@@ -543,6 +557,10 @@ def trade_finder_tools(load: Callable[[], tuple[League, Mapping[str, float], str
         prof = profiles()
         name = next((k for k in prof if owner.casefold() in k.casefold()), None)
         out: dict[str, Any] = {"owner": name or owner, "profile": prof.get(name) if name else "no completed trades on record"}
+        h = habits()
+        hname = next((k for k in h if owner.casefold() in k.casefold()), None)
+        if hname:
+            out["habits"] = h[hname]
         mine = [o for o in (outcomes(partner=name or owner) if outcomes else [])]
         if mine:
             out["your_pitches_to_them"] = pitch_record(mine).get(str(name or owner)) or pitch_record(mine)
@@ -594,8 +612,10 @@ def trade_finder_tools(load: Callable[[], tuple[League, Mapping[str, float], str
         evaluate,
     ), ToolSpec(
         "get_owner_trade_profile",
-        "How one owner trades, from every completed trade in this league on Sleeper: how often, with whom, positions they buy and sell, picks in and out, "
+        "How one owner trades, from every completed trade in this league: how often, with whom, positions they buy and sell, picks in and out, "
         "whether they buy youth or veterans, plus how this owner's own past pitches to them went (accepted, declined, not completed) and what they said. "
+        "Also their habits: start/sit lean (hot hand vs season-long), how close their lineups get to their best, FAAB spend and timing by position, "
+        "how fast they cut adds, and first-round rookie picks by position. Pitch what fits those habits. "
         "Use before pitching or pricing a trade with that owner.",
         {"type": "object", "properties": {"owner": {"type": "string"}}, "required": ["owner"]},
         profile,
