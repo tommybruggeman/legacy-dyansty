@@ -7,7 +7,7 @@ on:
       check:
         description: Which check to run
         type: choice
-        options: [odds_backtest, odds_trial]
+        options: [odds_backtest, odds_trial, odds_grade]
         default: odds_backtest
 
 jobs:
@@ -26,4 +26,8 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           REPORT_DETAIL: ${{ vars.REPORT_DETAIL }}
         run: |
-          if [ "${{ inputs.check }}" = "odds_trial" ]; then python -m league_ai.odds_trial; else python -m league_ai.playoff_odds; fi
+          case "${{ inputs.check }}" in
+            odds_trial) python -m league_ai.odds_trial ;;
+            odds_grade) python -m league_ai.matchup_odds ;;
+            *) python -m league_ai.playoff_odds ;;
+          esac

@@ -58,6 +58,7 @@ class PlayerStrength:
     gsis_id: str | None = None
     week_now: float | None = None  # now adjusted for this week's matchup; None = no matchup data
     matchup: str | None = None
+    spread: float | None = None  # week-to-week standard deviation of fantasy points; None = too few games
 
     def score(self, key: str) -> float:
         value = getattr(self, key)

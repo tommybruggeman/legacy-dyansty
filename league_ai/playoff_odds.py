@@ -98,6 +98,8 @@ class OddsModel:
     def __init__(self, rows: list[Mapping[str, Any]], means: Mapping[str, float], week: int, playoff_start: int,
                  schedule_for: Callable[[range], Schedule]):
         self.week, self.playoff_start = int(week), int(playoff_start)
+        self._odds: dict[str, float] | None = None
+        self.week_wins: dict[str, dict[str, Any]] = {}  # this week's matchup odds, when the caller has them
         self.means = dict(means)
         # One spelling per owner: the power rankings' names win over the matchup history's.
         canon = {name.casefold(): name for name in self.means}
@@ -114,7 +116,11 @@ class OddsModel:
         return self.full_schedule[1:] if self.last_final >= 1 else self.full_schedule
 
     def odds(self, means: Mapping[str, float] | None = None) -> dict[str, float]:
-        return simulate(standings_through(self.rows, self.last_final), means or self.means, self.remaining(), spread=self.spread)
+        if means is None:
+            if self._odds is None:
+                self._odds = simulate(standings_through(self.rows, self.last_final), self.means, self.remaining(), spread=self.spread)
+            return self._odds
+        return simulate(standings_through(self.rows, self.last_final), means, self.remaining(), spread=self.spread)
 
     def last_week_odds(self) -> dict[str, float]:
         """The odds as they stood before the last finished week, so the app can show the move."""
@@ -124,14 +130,27 @@ class OddsModel:
 
     def summary(self) -> dict[str, Any]:
         now, before = self.odds(), self.last_week_odds()
-        return {"odds": {t: round(100 * p) for t, p in now.items()},
-                "change": {t: round(100 * (p - before[t])) for t, p in now.items() if t in before},
-                "weeks_left": len(self.remaining()), "spots": PLAYOFF_SPOTS}
+        out: dict[str, Any] = {"odds": {t: round(100 * p) for t, p in now.items()},
+                               "change": {t: round(100 * (p - before[t])) for t, p in now.items() if t in before},
+                               "weeks_left": len(self.remaining()), "spots": PLAYOFF_SPOTS}
+        if self.week_wins:
+            out["this_week_win_odds"] = {t: f"{round(100 * w['win'])}% vs {w['opp']}" for t, w in self.week_wins.items()}
+        return out
+
+
+def pickup_odds(model: OddsModel, owner: str, gain: float) -> dict[str, Any]:
+    """This owner's playoff odds with and without a pickup that changes their weekly points by `gain`."""
+    before = model.odds()
+    means = dict(model.means)
+    means[owner] = means.get(owner, 0.0) + gain
+    after = model.odds(means)
+    return {"before": round(100 * before.get(owner, 0)), "after": round(100 * after.get(owner, 0)), "weekly_points_change": round(gain, 1),
+            "weeks_left": len(model.remaining())}
 
 
 def load_rows(client: Any, league_id: str, season: int) -> list[dict[str, Any]]:
     try:
-        return (client.table("league_matchups").select("owner_name, week, points, standing_points, is_playoff")
+        return (client.table("league_matchups").select("owner_name, week, points, standing_points, is_playoff, won")
                 .eq("league_id", league_id).eq("season", int(season)).limit(2000).execute().data or [])
     except Exception:
         return []

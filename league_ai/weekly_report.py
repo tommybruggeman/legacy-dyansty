@@ -189,6 +189,7 @@ def build_report(client: Any, league_id: str, start: datetime, end: datetime, *,
             "still_open": sum(1 for p in preds_all if p.get("status") == "open"),
         },
         "odds_trial": _odds_trial(client, league_id),
+        "odds_grade": _odds_grade(client, league_id),
         "autonomous": {
             "briefs_written": len(briefs), "brief_cost": round(sum(_num(r.get("cost_usd")) for r in briefs), 4),
             "grading_model_calls": len(grading_runs), "grading_cost": round(sum(_num(r.get("cost_usd")) for r in grading_runs), 4),
@@ -204,6 +205,16 @@ def _odds_trial(client: Any, league_id: str) -> dict[str, Any] | None:
 
     rows = odds_trial.load(client, league_id)
     return odds_trial.summarize(rows) if rows else None
+
+
+def _odds_grade(client: Any, league_id: str) -> dict[str, Any] | None:
+    from league_ai.matchup_odds import league_grade
+
+    try:
+        g = league_grade(client, league_id)
+    except Exception:
+        return None
+    return g if g.get("weekly_games") or g.get("playoff_predictions") else None
 
 
 def _owner_names(client: Any, league_id: str) -> dict[str, str]:
@@ -270,6 +281,13 @@ def render_html(rep: Mapping[str, Any], league_name: str = "the league") -> str:
         parts.append("<h4>Season scorecard</h4><p>" + "<br>".join(_e(f"{label}: " + ", ".join(f"{x} {v}" for x, v in (sc.get(key) or {}).items()))
                                                              for key, label in (("by_kind", "By kind"), ("by_factor", "By main factor"), ("by_cause", "Causes of misses"), ("calibration", "Calibration"))
                                                              if sc.get(key)) + "</p>")
+    g = rep.get("odds_grade")
+    if g:
+        parts.append(f"<h3>How the odds graded: {g['weekly_games']} games</h3><p>Weekly win odds Brier score {g['weekly_brier']} (0.25 is a coin flip; lower is better). "
+                     f"Spread tuned to ×{g['tuned_scale']} from the graded games."
+                     + (f" Playoff odds: {g['playoff_predictions']} predictions, Brier {g['playoff_brier']}." if g.get("playoff_predictions") else "") + "</p>")
+        if g.get("weekly_calibration"):
+            parts.append(_table(["Said", "Games", "Won"], [[_e(b["said"]), b["games"], _e(b["won"])] for b in g["weekly_calibration"]]))
     t = rep.get("odds_trial")
     if t:
         full = rep["detail"] == "full"

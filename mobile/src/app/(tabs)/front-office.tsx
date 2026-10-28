@@ -119,7 +119,7 @@ export default function FrontOfficeScreen() {
         {!focused ? (
           <>
             <Tiles header={data.header} />
-            <Moves week={data.week} moves={data.moves ?? []} onAsk={send} />
+            <Moves week={data.week} moves={data.moves ?? []} win={data.win} onAsk={send} />
             <Pressable onPress={() => router.push('/report-card')} style={styles.card}>
               <ReportRing record={Object.values(data.report_card.record)[0]} />
               <View style={{ flex: 1 }}>
@@ -228,12 +228,12 @@ function Tiles({ header }: { header?: FoHeader }) {
 const initials = (name: string) => name.split(' ').filter(Boolean).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
 
 // The changes to make in Sleeper this week. Tapping one asks the GM why.
-function Moves({ week, moves, onAsk }: { week: number; moves: FoMove[]; onAsk: (q: string) => void }) {
+function Moves({ week, moves, win, onAsk }: { week: number; moves: FoMove[]; win?: FrontOffice['win']; onAsk: (q: string) => void }) {
   return (
     <>
       <View style={styles.movesHead}>
         <Text style={styles.eyebrow}>WEEK {week} MOVES</Text>
-        {moves.length ? <Text style={styles.small}>{moves.length}</Text> : null}
+        {win ? <Text style={[styles.small, win.pct >= 50 ? styles.up : styles.down]}>{win.pct}% to beat {win.opponent.split(' ')[0]}</Text> : null}
       </View>
       <View style={styles.card2}>
         {moves.length ? moves.map((m, i) => {

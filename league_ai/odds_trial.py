@@ -19,7 +19,7 @@ from league_ai.usage import cost_usd, record as record_usage, response_usage, us
 EXPERIMENT = "playoff_odds_v1"
 LIMIT = 20
 MODEL = "claude-haiku-4-5"
-ODDS_TOOLS = ("get_playoff_odds", "evaluate_trade")
+ODDS_TOOLS = ("get_playoff_odds", "evaluate_trade", "get_pickup_odds")
 
 SYSTEM = """You audit a fantasy football assistant GM. It answered an owner's question using a new input: playoff odds from a
 simulation of the rest of the season. Judge what that input did to the answer.
@@ -46,8 +46,8 @@ def watch(tools: ToolRegistry) -> list[dict[str, Any]]:
 
         def wrapped(*args: Any, _inner: Callable[..., Any] = inner, _name: str = name, **kwargs: Any) -> Any:
             out = _inner(*args, **kwargs)
-            odds = out.get("playoff_odds") if _name == "evaluate_trade" and isinstance(out, Mapping) else out
-            if isinstance(odds, Mapping) and ("odds" in odds or "you" in odds):
+            odds = out.get("playoff_odds") if _name != "get_playoff_odds" and isinstance(out, Mapping) else out
+            if isinstance(odds, Mapping) and ("odds" in odds or "you" in odds or "before" in odds):
                 seen.append({"tool": _name, "args": kwargs, "odds": dict(odds)})
             return out
         spec.fn = wrapped

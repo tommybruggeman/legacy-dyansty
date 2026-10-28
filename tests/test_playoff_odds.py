@@ -141,3 +141,20 @@ class BacktestTests(unittest.TestCase):
         self.assertLess(score["brier"], 0.15)  # a league this lopsided is easy to call
         self.assertIn("baseline_brier", score)
         self.assertTrue(score["calibration"])
+
+
+class PickupToolTests(unittest.TestCase):
+    def test_pickup_raises_odds_when_he_starts(self):
+        from league_ai.power import PlayerStrength
+        league = _league()
+        names = [t["owner_name"] for t in league.teams.values()]
+        model = OddsModel([], {n: 100 for n in names}, week=5, playoff_start=12,
+                          schedule_for=lambda w: [[(names[0], names[1]), (names[2], names[3])]] * len(w))
+        fa = PlayerStrength(sleeper_id="fa1", name="Free Guy", position="WR", team_id="me", owner="Me", now=19, dynasty=12, available=True)
+        tools = {t.name: t for t in trade_finder_tools(lambda: (league, {t: 50.0 for t in league.teams}, "me"), odds=lambda: model,
+                                                       free_agent=lambda n: fa if "free" in n.lower() else None)}
+        out = tools["get_pickup_odds"].fn(player="Free Guy", drop="WR me-wr2", bid=10)
+        self.assertGreater(out["playoff_odds"]["weekly_points_change"], 0)
+        self.assertGreaterEqual(out["playoff_odds"]["after"], out["playoff_odds"]["before"])
+        self.assertIn("odds_per_dollar", out)
+        self.assertIn("error", tools["get_pickup_odds"].fn(player="Nobody"))
