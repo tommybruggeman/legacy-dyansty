@@ -17,14 +17,37 @@ on:
         description: Build on Expo and submit to TestFlight (uses ios.buildNumber in mobile/app.json)
         type: boolean
         default: true
+      practice:
+        description: Run the free practice test first (start/sit, odds, trade tools on the real league) and stop if it fails
+        type: boolean
+        default: true
 
 concurrency:
   group: ship-app
   cancel-in-progress: false
 
 jobs:
+  # Free: the engine's own numbers on the real league, no model calls (league_ai/practice_test.py). Prints rates only.
+  practice:
+    if: ${{ inputs.server && inputs.practice }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install supabase requests && pip install -r api/requirements.txt
+      - name: Practice test
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          LEAGUE_AI_IDEA_LOG: "off"
+        run: python -m league_ai.practice_test
+
   server:
-    if: ${{ inputs.server }}
+    needs: practice
+    if: ${{ inputs.server && !failure() && !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
