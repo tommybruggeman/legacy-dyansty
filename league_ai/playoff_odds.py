@@ -20,7 +20,7 @@ DEFAULT_SPREAD = 25.0  # points; used until the season has enough games to measu
 # A team's expected points are themselves a guess, shakiest early in the season. Each simulated season draws a
 # season-long offset per team of MEAN_SD_K * spread / sqrt(games + MEAN_SD_GAMES), so early odds stay humble.
 # Tuned on the backtest (check odds_backtest); 0 turns it off.
-MEAN_SD_K = 0.5
+MEAN_SD_K = 0.75   # 2024-25 backtest: weeks 1-5 Brier 0.206 -> 0.196, week 6 on unchanged (0.070)
 MEAN_SD_GAMES = 2.0
 SLEEPER = "https://api.sleeper.app/v1"
 

@@ -453,12 +453,14 @@ def _why(league: League, team_id: str, window: str, sends: list[PlayerStrength],
 def trade_finder_tools(load: Callable[[], tuple[League, Mapping[str, float], str]], history: Any | None = None,
                        outcomes: Callable[..., list[Mapping[str, Any]]] | None = None, current_season: int | None = None,
                        odds: Callable[[], Any] | None = None, free_agent: Callable[[str], PlayerStrength | None] | None = None,
-                       roster_rules: Callable[[], tuple[Any, bool, float]] | None = None) -> list[ToolSpec]:
+                       roster_rules: Callable[[], tuple[Any, bool, float]] | None = None,
+                       log_ideas: Callable[[Mapping[str, Any]], Any] | None = None) -> list[ToolSpec]:
     """load() -> (League, cap space by team id, asker team id); called once per answer that needs it.
     history: LeagueHistory for completed trades; outcomes(partner=None) -> this owner's recorded trade outcomes.
     odds() -> a playoff_odds.OddsModel (or None), so a judged trade comes with both teams' playoff odds before and after.
     free_agent(name) -> that player valued like a rostered one (None if not found), for pickup questions.
-    roster_rules() -> (roster_moves.Rules from the league's settings, offseason?, share of the season left)."""
+    roster_rules() -> (roster_moves.Rules from the league's settings, offseason?, share of the season left).
+    log_ideas(answer) saves the ideas shown, so the learning job can see which ones turned into real trades (league_ai.idea_log)."""
     cache: dict[str, Any] = {}
 
     def profiles() -> dict[str, dict[str, Any]]:
@@ -507,6 +509,7 @@ def trade_finder_tools(load: Callable[[], tuple[League, Mapping[str, float], str
             p = profiles().get(str(out.get("partner"))) if history is not None and "error" not in out else None
             if p:
                 out["partner_style"] = f"{p['trades']} trades here; {p['style']}"
+            _log(out)
             return out
         out = find_trades(league=lg, asker_team_id=cache["asker"], cap_space=cache["cap"], want_position=position, goal=goal,
                           partner=partner, limit=max(1, min(int(limit or 4), 8)))
@@ -522,7 +525,15 @@ def trade_finder_tools(load: Callable[[], tuple[League, Mapping[str, float], str
                 h = habits().get(str(idea["partner"]))
                 if h and h.get("style") != "not enough activity yet":
                     idea["partner_habits"] = h["style"]
+        _log(out)
         return out
+
+    def _log(out: Mapping[str, Any]) -> None:
+        if log_ideas is not None and "error" not in out:
+            try:
+                log_ideas(out)
+            except Exception:
+                pass
 
     def evaluate(partner: str, you_get: list[str] | None = None, you_send: list[str] | None = None, picks_you_get: list[str] | None = None,
                  picks_you_send: list[str] | None = None, windows: Mapping[str, str] | None = None) -> dict[str, Any]:

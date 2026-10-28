@@ -6,7 +6,7 @@ have started, using only what was known before kickoff, and check it against who
 
 - owner: what the owner started
 - projection: Sleeper's projection in league scoring
-- projection_matchup: the projection tilted by the same matchup context the app uses (defense vs position as of that
+- projection_matchup (and _half_: half the tilt): the projection tilted by the same matchup context the app uses (defense vs position as of that
   week, Vegas implied points, game weather, rest), capped at +/-20%
 - season_avg / recent: points per game so far this season / over the last two games
 
@@ -21,7 +21,7 @@ from typing import Any, Callable, Iterable, Mapping
 MIN_PROJECTED = 3.0   # a bench player projected under this wasn't a real option (out, inactive, deep backup)
 CLOSE_SHARE = 0.25    # a "close" call: the two projections within 25% of each other
 EARLY_WEEKS = 5
-METHODS = ("owner", "projection", "projection_matchup", "season_avg", "recent")
+METHODS = ("owner", "projection", "projection_matchup", "projection_half_matchup", "season_avg", "recent")
 SKILL = ("QB", "RB", "WR", "TE")
 
 
@@ -63,6 +63,7 @@ def grade(lineups: Iterable[Mapping[str, Any]], projections: Callable[[int, int]
                     "owner": (1.0, 0.0),
                     "projection": (proj[sid], proj[bid]),
                     "projection_matchup": (proj[sid] * k(sid), proj[bid] * k(bid)),
+                    "projection_half_matchup": (proj[sid] * k(sid) ** 0.5, proj[bid] * k(bid) ** 0.5),
                     "season_avg": (sum(hs) / len(hs) if hs else None, sum(hb) / len(hb) if hb else None),
                     "recent": (sum(hs[-2:]) / len(hs[-2:]) if hs else None, sum(hb[-2:]) / len(hb[-2:]) if hb else None),
                 }
