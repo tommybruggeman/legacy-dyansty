@@ -199,7 +199,7 @@ def trade_odds(model: OddsModel, owner: str, partner: str, my_gain: float, their
 # ---- backtest: how accurate are the odds? ------------------------------------------
 
 def backtest_season(rows: list[Mapping[str, Any]], *, sims: int = 2000, shrink_games: float = 3.0, k: float | None = None,
-                    prior_games: float | None = None) -> list[dict[str, Any]]:
+                    prior_games: float | None = None, prior: Mapping[str, float] | None = None) -> list[dict[str, Any]]:
     """Replay one finished season week by week: predict with only what was known then, then compare with who made it.
 
     Expected points for a team = its points per game so far, pulled toward the league average by shrink_games
@@ -224,7 +224,8 @@ def backtest_season(rows: list[Mapping[str, Any]], *, sims: int = 2000, shrink_g
         pts: dict[str, list[float]] = {}
         for r in played:
             pts.setdefault(str(r["owner_name"]), []).append(float(r.get("points") or 0))
-        means = {t: (sum(p) + avg * shrink_games) / (len(p) + shrink_games) for t, p in pts.items()}
+        # early averages are pulled toward a prior: the league average, or (with prior) each team's own carry-over strength
+        means = {t: (sum(p) + (prior or {}).get(t, avg) * shrink_games) / (len(p) + shrink_games) for t, p in pts.items()}
         spread = week_spread(played)
         odds = simulate(table, means, [games.get(x, []) for x in range(w + 1, last + 1)], spread=spread, sims=sims, seed=w,
                         mean_spread=mean_sd(spread, w, k, prior_games))
@@ -272,8 +273,25 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{league.get('name')} ALL SEASONS: {score_backtest(everything)}")
             for half, label in ((lambda w: w <= 5, "weeks 1-5"), (lambda w: w > 5, "week 6 on")):
                 print(f"  {label}: {score_backtest([p for p in everything if half(p['week'])])}")
-            # tuning grid for the early-season humility (MEAN_SD_K, MEAN_SD_GAMES) and the points-per-game shrink
             done = [s for s in seasons if not (s == max(seasons) and not any(r.get("is_playoff") for r in rows if int(r["season"]) == s))]
+            # carry-over: last season's points per game, half-way back to that season's average, as each team's prior
+            for carry in (0.25, 0.5, 0.75):
+                preds = []
+                for s in done:
+                    last = [r for r in rows if int(r["season"]) == s - 1 and not r.get("is_playoff") and r.get("owner_name")]
+                    if not last:
+                        continue
+                    by: dict[str, list[float]] = {}
+                    for r in last:
+                        by.setdefault(str(r["owner_name"]), []).append(float(r.get("points") or 0))
+                    lg_avg = sum(sum(v) for v in by.values()) / max(1, sum(len(v) for v in by.values()))
+                    prior = {t: lg_avg + carry * (sum(v) / len(v) - lg_avg) for t, v in by.items()}
+                    preds += backtest_season([r for r in rows if int(r["season"]) == s], sims=1000, shrink_games=6.0, prior=prior)
+                if preds:
+                    print(f"  carry-over {carry:g} (seasons with a prior season): early {score_backtest([p for p in preds if p['week'] <= 5]).get('brier')} "
+                          f"late {score_backtest([p for p in preds if p['week'] > 5]).get('brier')}; no carry-over on the same seasons: "
+                          + str(score_backtest([p for s in done if any(int(r['season']) == s - 1 for r in rows) for p in backtest_season([r for r in rows if int(r['season']) == s], sims=1000, shrink_games=6.0) if p['week'] <= 5]).get('brier')))
+            # tuning grid for the early-season humility (MEAN_SD_K, MEAN_SD_GAMES) and the points-per-game shrink
             for shrink in (3.0, 6.0):
                 for k in (0.0, 0.25, 0.5, 0.75, 1.0):
                     for g in (1.0, 2.0, 4.0):

@@ -32,6 +32,8 @@ def compact(out: Mapping[str, Any]) -> list[dict[str, Any]]:
         for rung in RUNGS:
             if idea.get(rung):
                 row[rung] = [_name(p) for p in idea[rung]]
+        if idea.get("their_share"):
+            row["their_share"] = dict(idea["their_share"])   # numbers per rung, for fitting an acceptance model later
         if row["partner"] and row["gets"] and row.get("open_with"):
             rows.append(row)
     return rows

@@ -326,16 +326,24 @@ def run(client: Any, runner: Runner, *, season: int | None = None, web_search: b
 
 def run_trade_backtests(client: Any, *, now: datetime, dry_run: bool = False) -> dict[str, Any]:
     """Replay every completed trade per league, report the engine's hit rate, and save each owner's revealed lean. No model calls."""
+    from league_ai.acceptance import accepted_shares, save as save_accepted
     from league_ai.trade_backtest import backtest, load_trades, save_styles
 
     out: dict[str, Any] = {}
     leagues = {str(r["league_id"]) for r in (client.table("league_history_events").select("league_id").eq("kind", "trade").limit(5000).execute().data or [])}
     for lid in sorted(leagues):
-        result = backtest(load_trades(client, lid))
+        trades = load_trades(client, lid)
+        result = backtest(trades)
         out[lid] = {k: result[k] for k in ("trades", "graded", "hit_rate")}
-        print(f"[learning] trade backtest {lid}: {result['graded']} trades graded, hit rate {result['hit_rate']}, leans {result['owner_now_weight']}", flush=True)
+        shares = accepted_shares(trades)
+        out[lid]["accepted_sides"] = len(shares)
+        # counts only: the Actions logs are public, so no owner names
+        print(f"[learning] trade backtest: {result['graded']} trades graded, hit rate {result['hit_rate']}, {len(result['owner_now_weight'])} owner leans, "
+              f"{len(shares)} accepted sides", flush=True)
         if not dry_run:
             save_styles(client, lid, result, now)
+            if shares:
+                save_accepted(client, lid, shares, now)
     return out
 
 

@@ -105,6 +105,20 @@ class ClientLoopTests(unittest.TestCase):
         result = ClaudeClient(CONFIG, sdk_client=sdk).run(system=[], messages=[{"role": "user", "content": "q"}], tools=reg)
         self.assertEqual(result.text, "Start Young: the Lions allow 299 passing yards a game.\n\nLogged at 52%.")
 
+    def test_one_line_after_compare_players_gets_the_full_answer(self):
+        reg = ToolRegistry()
+        reg.register(ToolSpec("compare_players", "cmp", {"type": "object", "properties": {}}, lambda **kw: {"engine_pick": "start A over B"}))
+        reg.register(ToolSpec("log_prediction", "log", {"type": "object", "properties": {}}, lambda **kw: {"logged": True}))
+        full = "Start A: he projects 14.2 to B's 9.1, and B faces the league's toughest defense against his position this week."
+        sdk = FakeSDK([
+            _resp([_tool_use("t1", "compare_players", {})], stop="tool_use"),
+            _resp([_tool_use("t2", "log_prediction", {})], stop="tool_use"),
+            _resp([_text("Start A over B this week.")]),
+            _resp([_text(full)]),
+        ])
+        result = ClaudeClient(CONFIG, sdk_client=sdk).run(system=[], messages=[{"role": "user", "content": "A or B?"}], tools=reg)
+        self.assertIn("14.2", result.text)
+
     def test_bare_acknowledgement_never_replaces_the_answer(self):
         reg = ToolRegistry()
         reg.register(ToolSpec("log_prediction", "log", {"type": "object", "properties": {}}, lambda **kw: {"logged": True}))
