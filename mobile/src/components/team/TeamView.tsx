@@ -3,9 +3,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type { Pick, Player, TeamPage } from '../../lib/api';
-import { POS_COLORS, teamColors } from '../../lib/nflColors';
 import { colors } from '../../lib/theme';
-import { initialsOf } from '../Pictures';
+import { PlayerFace } from '../PlayerFace';
 import { Card, Note, Pill, Pos, Row, Segmented, SwipeTabs, Tile, Tiles, Title, money, ordinal, record, ui } from '../ui';
 
 const TABS = ['Roster', 'Contracts', 'Picks', 'Activity'] as const;
@@ -63,18 +62,8 @@ export function TeamView({ team, eyebrow }: { team: TeamPage; eyebrow?: string }
 // Short injury labels so the tag doesn't crowd the name.
 const INJURY_SHORT: Record<string, string> = { questionable: 'Q', doubtful: 'D', out: 'OUT', ir: 'IR', pup: 'PUP', sus: 'SUS' };
 
-// Player circle in their NFL team's colors with a position badge.
 function Face({ p, label, hurt }: { p: Player; label: string; hurt?: boolean }) {
-  const [fill, ring] = teamColors(p.nfl_team);
-  return (
-    <View style={styles.face}>
-      <View style={[styles.circle, { backgroundColor: fill, borderColor: ring }]}>
-        <Text style={styles.initials}>{initialsOf(p.name)}</Text>
-      </View>
-      <Text style={[styles.badge, { backgroundColor: POS_COLORS[label] ?? colors.muted }]}>{label || '—'}</Text>
-      {hurt ? <View style={styles.hurt} /> : null}
-    </View>
-  );
+  return <PlayerFace name={p.name} team={p.nfl_team} pos={label} hurt={hurt} />;
 }
 
 // Cap used for one season as a ring of ticks, with space left in the middle.
@@ -339,14 +328,6 @@ const styles = StyleSheet.create({
   expiringCard: { borderColor: '#6B5524', backgroundColor: '#17190F' },
   groupHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 },
   groupTitle: { fontSize: 11, fontWeight: '800', letterSpacing: 1.6 },
-  face: { width: 44, height: 44 },
-  circle: { width: 44, height: 44, borderRadius: 22, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
-  initials: { color: '#FFFFFF', fontSize: 15, fontWeight: '800' },
-  badge: {
-    position: 'absolute', bottom: -5, alignSelf: 'center', color: colors.bg, fontSize: 9, fontWeight: '800',
-    borderRadius: 6, overflow: 'hidden', paddingHorizontal: 5, paddingVertical: 1,
-  },
-  hurt: { position: 'absolute', top: -1, right: -1, width: 12, height: 12, borderRadius: 6, backgroundColor: '#E66A6A', borderWidth: 2, borderColor: colors.row },
   subLine: { flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 3 },
   pips: { flexDirection: 'row', gap: 3 },
   pip: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#33402F' },

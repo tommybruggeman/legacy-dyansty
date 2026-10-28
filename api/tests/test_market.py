@@ -50,3 +50,33 @@ def test_free_agents_skip_players_on_a_sleeper_roster_without_a_contract():
     ppg = SimpleNamespace(current_ppg={}, last_ppg={}, ranking_ppg={}, active_season=2026, last_season=2025, active_season_started=True)
     out = m.free_agents(pool, {"roster": []}, ppg, rostered={"1": 6})
     assert [p["name"] for p in out["players"]] == ["Real FA"]
+
+
+GAMES = SimpleNamespace(active_season=2026, last_season=2025, active_season_started=True,
+                        current_ppg={"7": 9.8, "8": 16.1}, last_ppg={}, ranking_ppg={"7": 9.8, "8": 16.1, "1": 20.0},
+                        ranking_games={"7": 8, "8": 3, "1": 7})
+
+
+def test_free_agents_rank_by_season_points_and_keep_ppg():
+    rows = market.free_agents(POOL, STATE, GAMES)["players"]
+    assert [(p["name"], p["points"]) for p in rows] == [("Tyjae Spears", 78.4), ("Bryce Young", 48.3), ("Nobody", None)]
+    assert rows[1]["rank_ppg"] == 16.1
+
+
+def test_expiring_adds_nfl_team_and_points():
+    rows = market.expiring(STATE, "t2", pool=[{"sleeper_id": "1", "team": "TEN"}], ppg=GAMES)
+    assert (rows[0]["name"], rows[0]["nfl_team"], rows[0]["points"]) == ("Derrick Henry", "TEN", 140.0)
+    assert rows[1]["nfl_team"] == "FA" and rows[1]["points"] is None
+
+
+def test_targets_show_owner_or_free_agent_in_saved_order():
+    rows = market.targets(["8", "2", "missing"], STATE, "t2", POOL, GAMES)
+    assert [(t["name"], t["owner_name"], t["is_mine"]) for t in rows] == [("Bryce Young", None, False), ("Davante Adams", "Tommy", True)]
+    assert rows[0]["salary"] is None and rows[1]["salary"] == 14.0 and rows[0]["nfl_team"] == "CAR"
+
+
+def test_strategy_question_names_each_target():
+    saved = [{"name": "Bijan Robinson", "owner_name": "Nick"}, {"name": "Tyjae Spears", "owner_name": None}]
+    q = market.strategy_question(saved, 2026)
+    assert "Bijan Robinson (Nick) and Tyjae Spears (free agent)" in q
+    assert market.strategy_question([], 2026) == "Plan my offseason after the 2026 season."
