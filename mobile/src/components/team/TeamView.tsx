@@ -2,16 +2,11 @@ import { router } from 'expo-router';
 import { useState } from 'react';
 import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import type { Lean, Pick, Player, TeamPage } from '../../lib/api';
+import type { Pick, Player, TeamPage } from '../../lib/api';
 import { colors } from '../../lib/theme';
 import { Bar, Card, Note, Pill, Pos, Row, Segmented, Tile, Tiles, Title, money, ordinal, record, ui } from '../ui';
 
 const TABS = ['Roster', 'Contracts', 'Picks', 'Activity'] as const;
-const LEAN: Record<Exclude<Lean, null>, { label: string; tone: 'live' | 'warn' | 'out' }> = {
-  contending: { label: 'CONTENDING', tone: 'live' },
-  middle: { label: 'MIDDLE', tone: 'warn' },
-  rebuilding: { label: 'REBUILDING', tone: 'out' },
-};
 
 // One owner's team with the same four tabs as My Team. Other owners' teams
 // are read only; trades are made in Sleeper.
@@ -22,12 +17,7 @@ export function TeamView({ team, eyebrow }: { team: TeamPage; eyebrow?: string }
 
   return (
     <>
-      <Title
-        eyebrow={eyebrow ?? team.owner_name.toUpperCase()}
-        right={team.lean ? <Pill label={LEAN[team.lean].label} tone={LEAN[team.lean].tone} /> : undefined}
-      >
-        {team.team_name}
-      </Title>
+      <Title eyebrow={eyebrow ?? team.owner_name.toUpperCase()}>{team.team_name}</Title>
       <Tiles>
         <Tile label="RECORD" value={record(r.wins, r.losses, r.ties)} sub={`${ordinal(r.rank)} · ${r.standing_points} SP`} />
         <Tile label="PPG" value={r.pf_per_game != null ? r.pf_per_game.toFixed(1) : '—'} sub="avg / game" />

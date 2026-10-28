@@ -1,16 +1,10 @@
 import { router } from 'expo-router';
 import { StyleSheet, Text, View } from 'react-native';
 
-import { type Lean, type TeamList, useApi } from '../../lib/api';
+import { type TeamList, useApi } from '../../lib/api';
 import { colors } from '../../lib/theme';
 import { ErrorState, Loading } from '../ScreenState';
-import { Card, Note, Pill, Row, money, ordinal, record, ui } from '../ui';
-
-const LEAN: Record<Exclude<Lean, null>, { label: string; tone: 'live' | 'warn' | 'out' }> = {
-  contending: { label: 'CONTENDING', tone: 'live' },
-  middle: { label: 'MIDDLE', tone: 'warn' },
-  rebuilding: { label: 'REBUILDING', tone: 'out' },
-};
+import { Card, Row, money, ordinal, record, ui } from '../ui';
 
 const initials = (name: string) =>
   name.split(' ').filter(Boolean).slice(0, 2).map((w) => w[0]?.toUpperCase()).join('');
@@ -38,13 +32,11 @@ export function TeamsView() {
               </Text>
             </View>
             <View style={ui.right}>
-              {team.lean ? <Pill label={LEAN[team.lean].label} tone={LEAN[team.lean].tone} /> : null}
-              <Text style={[ui.sub, styles.cap]}>{money(team.cap_space)} cap</Text>
+              <Text style={ui.sub}>{money(team.cap_space)} cap</Text>
             </View>
           </Row>
         ))}
       </Card>
-      <Note>Contending or rebuilding comes from each owner's trade history.</Note>
     </>
   );
 }
@@ -57,5 +49,4 @@ const styles = StyleSheet.create({
   },
   avatarMe: { borderColor: colors.gold },
   avatarText: { color: colors.gold, fontWeight: '800', fontSize: 13 },
-  cap: { marginTop: 4 },
 });

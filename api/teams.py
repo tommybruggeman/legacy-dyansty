@@ -246,7 +246,7 @@ def contracts_view(players: list[dict[str, Any]], state: dict[str, Any], team_id
 def picks_view(state: dict[str, Any], team_id: str) -> dict[str, Any]:
     owned, traded_away = [], []
     for row in state.get("draft_picks", []):
-        if _text(row.get("asset_status")) not in {"", "active", "available", "owned"}:
+        if _text(row.get("asset_status")) not in {"", "tradable", "active", "available", "owned"}:
             continue
         current = _text(row.get("current_owner_league_team_id"))
         original = _text(row.get("original_league_team_id"))

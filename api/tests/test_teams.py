@@ -85,6 +85,17 @@ def test_picks_show_acquired_and_traded_away():
     assert [(p["round"], p["current_owner"]) for p in picks["traded_away"]] == [(3, "Grady")]
 
 
+def test_picks_keep_tradable_and_drop_used_ones():
+    # Supabase marks live picks "tradable"; drafted ones become consumed or historical.
+    rows = [
+        {**STATE["draft_picks"][0], "asset_status": "tradable"},
+        {**STATE["draft_picks"][1], "asset_status": "consumed"},
+        {**STATE["draft_picks"][0], "draft_year": 2026, "asset_status": "historical"},
+    ]
+    picks = teams.picks_view({**STATE, "draft_picks": rows}, T1)
+    assert [(p["year"], p["round"]) for p in picks["owned"]] == [(2027, 1)]
+
+
 def test_activity_and_contracts_only_for_this_team():
     assert teams.activity_view(STATE, T1) == [{"kind": "SIGN", "player": "Tank Dell", "at": "2026-10-20"}]
     roster = teams.roster_rows(STATE, T1, {}, [], {}, {})
