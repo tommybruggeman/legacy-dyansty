@@ -8,14 +8,14 @@ import { type TeamPage, useApi } from '../../lib/api';
 
 // The owner portal: your own team page, with IR moves and the league cap view.
 export default function MyTeam() {
-  const { data, error, loading, reload } = useApi<TeamPage>('/my-team');
+  const { data, error, loading, reload, refresh } = useApi<TeamPage>('/my-team');
 
   // Coming back from an IR move should show the change.
   const seen = useRef(false);
   useFocusEffect(useCallback(() => {
-    if (seen.current) reload();
+    if (seen.current) refresh();
     seen.current = true;
-  }, [reload]));
+  }, [refresh]));
 
   if (loading && !data) return <Loading />;
   if (error && !data) return <ErrorState message={error} onRetry={reload} />;

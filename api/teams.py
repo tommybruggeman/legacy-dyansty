@@ -6,6 +6,7 @@ the website. Lineups and points come from Sleeper.
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Iterable
 
 from api import sleeper
@@ -78,13 +79,17 @@ def team_leans(client: Any, league_id: str) -> dict[str, str]:
 
 def seasons_state(client: Any, league_id: str, season: int) -> list[dict[str, Any]]:
     """League-wide team state for this season and the next two (for cap by year)."""
-    states = [load_team_state(client, league_id, season)]
-    for year in range(season + 1, season + CAP_YEARS):
+    def later(year: int) -> dict[str, Any]:
         try:
-            states.append(load_team_state(client, league_id, year))
+            return load_team_state(client, league_id, year)
         except Exception:
-            states.append({"season": year, "roster": [], "dead_cap": [], "cap_adjustments": []})
-    return states
+            return {"season": year, "roster": [], "dead_cap": [], "cap_adjustments": []}
+
+    # The three seasons are separate database calls, so they run side by side.
+    with ThreadPoolExecutor(max_workers=CAP_YEARS) as pool:
+        future = [pool.submit(later, year) for year in range(season + 1, season + CAP_YEARS)]
+        states = [load_team_state(client, league_id, season)]
+        return states + [f.result() for f in future]
 
 
 def cap_by_year(states: list[dict[str, Any]], cap: float, team_id: str) -> list[dict[str, Any]]:
