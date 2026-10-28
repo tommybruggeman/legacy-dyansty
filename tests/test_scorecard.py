@@ -18,11 +18,55 @@ class ScorecardTest(unittest.TestCase):
         self.assertEqual(card["overall"]["calls"], 3)
         self.assertEqual([w["week"] for w in card["by_week"]], [1, 2])
         self.assertEqual(card["by_position"][0]["pos"], "WR")
-        view = scorecard.for_owner(card, "ann")
+        db = FakeDB({"league_teams": [{"id": "t1", "owner_name": "Ann", "league_id": "L"}, {"id": "t2", "owner_name": "Bo", "league_id": "L"}],
+                     "league_memberships": [{"user_id": "u1", "league_team_id": "t1", "league_id": "L"}]})
+        self.assertEqual(scorecard.save(db, "L", card), 1)   # Bo has no account: no private line
+        shared = db.inserted[0]
+        self.assertNotIn("owners", shared["result"])           # other owners' lines never go in the shared row
+        self.assertEqual(shared["user_id"], scorecard.SYSTEM_USER)
+        self.assertEqual(db.inserted[1]["user_id"], "u1")
+        view = scorecard.load(db, "L", "u1")
         self.assertEqual(view["you"]["calls"], 2)
-        self.assertNotIn("owners", view)   # other owners' lines stay private
-        self.assertIsNone(scorecard.for_owner({}, "Ann"))
+        self.assertNotIn("owners", view)
 
+
+class FakeDB:
+    def __init__(self, tables):
+        self.tables, self.inserted = tables, []
+
+    def table(self, name):
+        return _Q(self, name)
+
+
+class _Q:
+    def __init__(self, db, name):
+        self.db, self.name, self.filters, self.rows = db, name, {}, None
+
+    def select(self, *_):
+        return self
+
+    def eq(self, k, v):
+        self.filters[k] = v
+        return self
+
+    def order(self, *_, **__):
+        return self
+
+    def limit(self, *_):
+        return self
+
+    def insert(self, rows):
+        rows = rows if isinstance(rows, list) else [rows]
+        self.db.inserted += rows
+        self.rows = rows
+        return self
+
+    def execute(self):
+        if self.rows is not None:
+            return type("R", (), {"data": self.rows})
+        src = self.db.inserted if self.name == "league_ai_experiments" else self.db.tables.get(self.name, [])
+        data = [r for r in src if all(r.get(k) == v for k, v in self.filters.items())][::-1]
+        return type("R", (), {"data": data})
 
 if __name__ == "__main__":
     unittest.main()

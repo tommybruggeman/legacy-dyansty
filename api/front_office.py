@@ -220,7 +220,7 @@ def _accuracy(client: Any, owner: runtime.Owner) -> dict[str, Any] | None:
     from league_ai import scorecard
 
     try:
-        return scorecard.for_owner(scorecard.load(client, owner.league_id), owner.owner_name)
+        return scorecard.load(client, owner.league_id, owner.user_id)
     except Exception:
         return None
 

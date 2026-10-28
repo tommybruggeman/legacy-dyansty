@@ -320,13 +320,13 @@ def run(client: Any, runner: Runner, *, season: int | None = None, web_search: b
         try:
             summary["trade_backtest"] = run_trade_backtests(client, now=now, dry_run=dry_run)
         except Exception as exc:
-            print(f"[learning] trade backtest skipped: {type(exc).__name__}: {exc}", flush=True)
+            print(f"[learning] trade backtest skipped: {type(exc).__name__}", flush=True)
         try:
             from league_ai import scorecard as start_sit_scorecard
 
             summary["start_sit_scorecard"] = start_sit_scorecard.run(client, now=now, dry_run=dry_run)
         except Exception as exc:
-            print(f"[learning] start/sit scorecard skipped: {type(exc).__name__}: {exc}", flush=True)
+            print(f"[learning] start/sit scorecard skipped: {type(exc).__name__}", flush=True)   # no error text: it can hold owner names
     return summary
 
 

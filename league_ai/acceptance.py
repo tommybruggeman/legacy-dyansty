@@ -60,7 +60,7 @@ def owner_rate(by_owner: Mapping[str, list[float]], owner: str | None, share: fl
 def save(client: Any, league_id: str, by_owner: Mapping[str, list[float]], now: datetime | None = None) -> None:
     now = now or datetime.now(timezone.utc)
     client.table("league_ai_experiments").insert({
-        "league_id": league_id, "experiment": EXPERIMENT, "question": "weekly accepted-trade shares",
+        "league_id": league_id, "user_id": "00000000-0000-0000-0000-000000000000", "experiment": EXPERIMENT, "question": "weekly accepted-trade shares",
         "result": {"shares": sorted(s for v in by_owner.values() for s in v), "by_owner": dict(by_owner), "computed_at": now.isoformat()}, "cost_usd": 0,
     }).execute()
 
