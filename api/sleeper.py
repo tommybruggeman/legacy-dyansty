@@ -38,3 +38,14 @@ def get(path: str, ttl: int = DEFAULT_TTL) -> Any:
 
 def clear() -> None:
     _cache.clear()
+
+
+def get_url(url: str, ttl: int = DEFAULT_TTL) -> Any:
+    """Like get(), for Sleeper endpoints outside /v1 (weekly stats and projections)."""
+    now = time.monotonic()
+    hit = _cache.get(url)
+    if hit and hit[0] > now:
+        return hit[1]
+    data = fetch(url)
+    _cache[url] = (now + ttl, data)
+    return data

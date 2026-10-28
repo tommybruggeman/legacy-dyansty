@@ -254,13 +254,23 @@ export type TeamPage = {
   head_to_head: { wins: number; losses: number; ties: number; last: { week: number; me: number; them: number } } | null;
 };
 
-export type BoxPlayer = { player_id: string; name: string; slot: string; points: number };
+export type BoxPlayer = {
+  player_id: string;
+  name: string;
+  slot: string;
+  points: number;
+  pos?: string;
+  team?: string | null;
+  status?: 'bye' | 'waiting' | 'playing' | 'final';
+  proj?: number | null;
+  rank?: string | null;
+};
 export type BoxScore = {
   week: number;
   is_final: boolean;
   matchup_id: number;
   my_roster_id: number | null;
-  teams: { roster_id: number; team_id: string | null; name: string; score: number; players: BoxPlayer[] }[];
+  teams: { roster_id: number; team_id: string | null; name: string; score: number; projected?: number; players: BoxPlayer[] }[];
 };
 
 export type PlayerPage = {
@@ -285,6 +295,67 @@ export type PlayerPage = {
     is_rookie: boolean;
   } | null;
   is_mine: boolean;
+  bye_week: number | null;
+  nfl_season: {
+    games: number;
+    tiles: { value: string; label: string }[];
+    snap_pct: number | null;
+    snap_trend: 'up' | 'down' | null;
+  } | null;
+  league_season: {
+    ppg: number | null;
+    ppg_started: number | null;
+    rank: { rank: number; of: number; pos: string; total: number } | null;
+    started: number;
+    played: number;
+    per_dollar: number | null;
+  };
+  game_log: GameLogRow[];
+  next_game: {
+    week: number;
+    bye: boolean;
+    opp?: string;
+    home?: boolean;
+    kickoff?: string | null;
+    team_total?: number | null;
+    projected?: number | null;
+    weather?: string | null;
+    vs_pos?: { label: 'tough' | 'soft' | 'neutral' | null; text: string; allowed: number | null } | null;
+  } | null;
+  health: {
+    status: string;
+    healthy: boolean;
+    detail: string | null;
+    update: string | null;
+    return: string | null;
+    this_week: { week: number; practice: string | null; game_status: string | null; injury: string | null } | null;
+    missed: { injury: string; season: number; games: number; back: boolean }[];
+  };
+  history: {
+    kind: string;
+    title: string;
+    owner: string;
+    team_id: string;
+    date: string;
+    salary: number | null;
+    years: number | null;
+    tag: string | null;
+    live: boolean;
+  }[];
+};
+
+export type GameLogRow = {
+  week: number;
+  opp: string;
+  status: 'started' | 'bench' | 'out' | 'bye' | 'free_agent';
+  points: number | null;
+  rank?: string | null;
+  line: {
+    carries: number; rush_yds: number; rush_td: number;
+    targets: number; rec: number; rec_yds: number; rec_td: number;
+    snap_pct: number | null;
+    comp?: number; att?: number; pass_yds?: number; pass_td?: number; ints?: number;
+  } | null;
 };
 
 export type FreeAgent = {

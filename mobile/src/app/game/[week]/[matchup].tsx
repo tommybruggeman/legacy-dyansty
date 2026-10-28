@@ -4,7 +4,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { ErrorState, Loading } from '../../../components/ScreenState';
 import { Back, Card, Note, Pos, Row, Screen, firstName } from '../../../components/ui';
-import { type BoxScore, useApi } from '../../../lib/api';
+import { type BoxPlayer, type BoxScore, useApi } from '../../../lib/api';
 import { colors } from '../../../lib/theme';
 
 // Live games refresh every 30 seconds while this screen is open.
@@ -32,7 +32,10 @@ export default function Game() {
       {[a, b].map((side, i) => (
         <Pressable key={side.roster_id} onPress={open(side.team_id)} style={styles.scoreLine}>
           <Text style={[styles.team, i === 0 && a.score >= b.score && styles.gold]} numberOfLines={1}>{side.name}</Text>
-          <Text style={[styles.score, (i === 0 ? a.score >= b.score : b.score > a.score) && styles.gold]}>{side.score.toFixed(2)}</Text>
+          <View style={styles.scoreBox}>
+            <Text style={[styles.score, (i === 0 ? a.score >= b.score : b.score > a.score) && styles.gold]}>{side.score.toFixed(2)}</Text>
+            {!data.is_final && side.projected != null ? <Text style={styles.proj}>proj {side.projected.toFixed(1)}</Text> : null}
+          </View>
         </Pressable>
       ))}
       <Card style={styles.card}>
@@ -46,25 +49,42 @@ export default function Game() {
           const pb = b.players[i];
           return (
             <Row key={i}>
-              <View style={styles.side}>
+              <Pressable style={styles.side} onPress={openPlayer(pa)}>
                 <Text style={styles.player} numberOfLines={1}>{pa?.name ?? ''}</Text>
                 <Text style={[styles.points, styles.gold]}>{pa ? pa.points.toFixed(1) : ''}</Text>
-              </View>
+                {pa && detail(pa) ? <Text style={styles.small} numberOfLines={1}>{detail(pa)}</Text> : null}
+              </Pressable>
               <View style={styles.mid}><Pos label={pa?.slot || pb?.slot || ''} /></View>
-              <View style={styles.side}>
+              <Pressable style={styles.side} onPress={openPlayer(pb)}>
                 <Text style={[styles.player, styles.rightText]} numberOfLines={1}>{pb?.name ?? ''}</Text>
                 <Text style={[styles.points, styles.rightText]}>{pb ? pb.points.toFixed(1) : ''}</Text>
-              </View>
+                {pb && detail(pb) ? <Text style={[styles.small, styles.rightText]} numberOfLines={1}>{detail(pb)}</Text> : null}
+              </Pressable>
             </Row>
           );
         })}
       </Card>
-      <Note>Tap a name at the top to open that team.</Note>
+      <Note>Projections use our league's scoring and this week's matchup. Tap a player for his page, or a name at the top for that team.</Note>
     </Screen>
   );
 }
 
+// The small line under each score: "proj 14.1" before kickoff, "proj 14.1 · LIVE"
+// mid-game, and his position rank that week ("RB4") once it's over.
+function detail(p: BoxPlayer) {
+  if (!p.player_id || p.player_id === '0') return '';
+  const proj = p.proj != null ? `proj ${p.proj.toFixed(1)}` : null;
+  if (p.status === 'bye') return 'BYE';
+  if (p.status === 'playing') return [proj, 'LIVE'].filter(Boolean).join(' · ');
+  if (p.status === 'final') return [p.rank, proj].filter(Boolean).join(' · ');
+  return proj ?? '';
+}
+
+const openPlayer = (p?: BoxPlayer) => (p?.player_id && p.player_id !== '0' ? () => router.push(`/player/${p.player_id}`) : undefined);
+
 const styles = StyleSheet.create({
+  scoreBox: { alignItems: 'flex-end' },
+  proj: { color: colors.muted, fontSize: 12, marginTop: -2 },
   eyebrow: { color: colors.gold, fontSize: 11, fontWeight: '800', letterSpacing: 1.2, marginBottom: 4 },
   scoreLine: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4 },
   team: { color: colors.text, fontSize: 20, fontWeight: '800', flexShrink: 1 },
@@ -77,4 +97,5 @@ const styles = StyleSheet.create({
   rightText: { textAlign: 'right' },
   player: { color: colors.text, fontSize: 14, fontWeight: '700' },
   points: { color: colors.muted, fontSize: 12, marginTop: 1 },
+  small: { color: colors.muted, fontSize: 10, marginTop: 1, opacity: 0.8 },
 });
