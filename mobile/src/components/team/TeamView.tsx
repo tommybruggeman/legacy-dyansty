@@ -1,5 +1,5 @@
-import { router } from 'expo-router';
-import { useState } from 'react';
+import { router, useFocusEffect } from 'expo-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type { Pick, Player, TeamPage } from '../../lib/api';
@@ -8,10 +8,27 @@ import { Bar, Card, Note, Pill, Pos, Row, Segmented, SwipeTabs, Tile, Tiles, Tit
 
 const TABS = ['Roster', 'Contracts', 'Picks', 'Activity'] as const;
 
+// Set when a team page opens a page of its own, so returning from it keeps the tab.
+let openedHere = false;
+function go(path: Parameters<typeof router.push>[0]) {
+  openedHere = true;
+  router.push(path);
+}
+
 // One owner's team with the same four tabs as My Team. Other owners' teams
 // are read only; trades are made in Sleeper.
 export function TeamView({ team, eyebrow }: { team: TeamPage; eyebrow?: string }) {
   const [tab, setTab] = useState<(typeof TABS)[number]>('Roster');
+  // Always open on the roster. Coming back from a player or cap page opened here keeps the tab;
+  // leaving for another part of the app and coming back starts over.
+  const opened = useRef(false);
+  useFocusEffect(useCallback(() => {
+    const back = opened.current;
+    opened.current = false;
+    if (!back) setTab('Roster');
+    return () => { opened.current = openedHere; openedHere = false; };
+  }, []));
+  useEffect(() => setTab('Roster'), [team.team_id]);
   const next = team.cap.by_year[1];
   const r = team.record;
 
@@ -42,7 +59,7 @@ export function TeamView({ team, eyebrow }: { team: TeamPage; eyebrow?: string }
 function PlayerRow({ p, first, showSlot }: { p: Player; first?: boolean; showSlot?: boolean }) {
   const tag = p.injury ? <Pill label={p.injury.toUpperCase()} tone="out" /> : p.is_rookie ? <Pill label="ROOKIE" tone="gold" /> : null;
   return (
-    <Row first={first} onPress={() => router.push(`/player/${p.player_id}`)}>
+    <Row first={first} onPress={() => go(`/player/${p.player_id}`)}>
       <Pos label={showSlot && p.slot ? p.slot : p.pos} />
       <View style={ui.flex}>
         <View style={styles.nameLine}>
@@ -95,7 +112,7 @@ function RosterTab({ team }: { team: TeamPage }) {
             </View>
           )) : <Text style={ui.sub}>1 spot open</Text>}
           {team.is_me ? (
-            <Pressable onPress={() => router.push('/ir')} hitSlop={8}>
+            <Pressable onPress={() => go('/ir')} hitSlop={8}>
               <Text style={[ui.link, styles.manage]}>{ir.length ? 'Remove / swap ›' : 'Move a player ›'}</Text>
             </Pressable>
           ) : null}
@@ -118,7 +135,7 @@ function ContractsTab({ team }: { team: TeamPage }) {
       <Card
         title="Cap by year"
         right={
-          <Pressable onPress={() => router.push('/league-cap')} hitSlop={8}>
+          <Pressable onPress={() => go('/league-cap')} hitSlop={8}>
             <Text style={ui.link}>Whole league ›</Text>
           </Pressable>
         }
@@ -133,7 +150,7 @@ function ContractsTab({ team }: { team: TeamPage }) {
       </Card>
       <Card title="Biggest contracts" right="yrs left · salary">
         {biggest.map((p, i) => (
-          <Row key={p.player_id} first={i === 0} onPress={() => router.push(`/player/${p.player_id}`)}>
+          <Row key={p.player_id} first={i === 0} onPress={() => go(`/player/${p.player_id}`)}>
             <Pos label={p.pos} />
             <View style={ui.flex}>
               <View style={styles.nameLine}>
