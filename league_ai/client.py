@@ -248,7 +248,8 @@ class ClaudeClient:
                 if trace.rounds > limit + 2:
                     ended_on_tools = True
                     break
-            researched = sum(1 for name in trace.tool_calls if name not in SILENT_TOOLS) >= RESEARCHED_LOOKUPS
+            lookups = [name for name in trace.tool_calls if name not in SILENT_TOOLS]
+            researched = len(lookups) >= RESEARCHED_LOOKUPS or any(name in FULL_RESEARCH_TOOLS for name in lookups)
             if ((ended_on_tools or not best_text) and len(best_text) < KEEP_TEXT_CHARS or researched and len(best_text) < THIN_ANSWER_CHARS) \
                     and trace.stop_reason != "max_tokens":
                 # the model stopped on a tool round or with no answer, or did real research and then wrote one line
@@ -292,6 +293,8 @@ RESEARCHED_LOOKUPS = 2  # lookups (not bookkeeping calls like log_prediction) th
 KEEP_TEXT_CHARS = 150  # text at least this long before a lookup is reasoning, not a "let me check" preamble
 # Tools that only record something; text written alongside them is part of the answer, not a preamble.
 SILENT_TOOLS = frozenset({"log_prediction", "record_trade_response", "remember", "forget"})
+# One call to these is the whole research for an answer (compare_players covers a start/sit in one call).
+FULL_RESEARCH_TOOLS = frozenset({"compare_players"})
 
 
 FINAL_ANSWER_NUDGE = ("Write your complete answer to my question now, using what you already found. "
