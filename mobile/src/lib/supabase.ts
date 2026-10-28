@@ -1,6 +1,7 @@
 import 'react-native-url-polyfill/auto';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient } from '@supabase/supabase-js';
+import { AppState } from 'react-native';
 
 // Only the public (anon) key ships in the app. Every read and write runs as
 // the signed-in owner, so the database's row-level security decides access,
@@ -15,4 +16,12 @@ export const supabase = createClient(url, anonKey, {
     persistSession: true,
     detectSessionInUrl: false,
   },
+});
+
+// Stay signed in: the session is saved on the phone, and the token refresh
+// runs whenever the app is open, so owners sign in once and never again
+// unless they sign out.
+AppState.addEventListener('change', (state) => {
+  if (state === 'active') supabase.auth.startAutoRefresh();
+  else supabase.auth.stopAutoRefresh();
 });
