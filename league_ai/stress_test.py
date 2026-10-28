@@ -30,6 +30,14 @@ WRITE_TOOLS = ("remember", "forget", "record_trade_response", "log_prediction")
 MIX = {"start_sit": 15, "win": 5, "pickup": 8, "trade_find": 6, "trade_target": 6, "buy_sell": 3, "playoffs": 5, "partner": 2}
 
 
+def current_league(client: Any, cols: str) -> dict | None:
+    """The league playing the latest season. The database also keeps last season's league (with its own Sleeper id), so "first league" can be the wrong one."""
+    seasons = client.table("league_seasons").select("league_id, season").eq("is_active", True).order("season", desc=True).limit(1).execute().data or []
+    if not seasons:
+        return None
+    return next(iter(client.table("leagues").select(cols).eq("id", seasons[0]["league_id"]).limit(1).execute().data or []), None)
+
+
 def _pos(p: Mapping[str, Any]) -> str:
     return str(p.get("pos") or "").upper()
 
@@ -194,7 +202,7 @@ def ask(client: Any) -> int:
     from league_ai.tools.nfl import NflData
     from league_ai.usage import cost_usd
 
-    league = next(iter(client.table("leagues").select("id, name, sleeper_league_id").not_.is_("sleeper_league_id", "null").limit(1).execute().data or []), None)
+    league = current_league(client, "id, name, sleeper_league_id")
     if not league:
         print("no league with a Sleeper id")
         return 1
@@ -294,7 +302,7 @@ def grade_saved(client: Any, path: str) -> int:
     from league_ai.learning_job import WeeklyStats, completed_week, league_scoring, league_points
 
     data = json.load(open(path))
-    league = next(iter(client.table("leagues").select("id").not_.is_("sleeper_league_id", "null").limit(1).execute().data or []), None)
+    league = current_league(client, "id")
     scoring = league_scoring(client, str(league["id"])) if league else {}
     season, done, stats = int(data["season"]), completed_week(client, int(data["season"])), WeeklyStats()
     horizon = {"start_sit": 1, "pickup": 3, "trade": 4}
@@ -327,7 +335,7 @@ def rosters(client: Any) -> int:
 
     from services.team_roster_state import state_roster
 
-    league = next(iter(client.table("leagues").select("id, sleeper_league_id").not_.is_("sleeper_league_id", "null").limit(1).execute().data or []))
+    league = current_league(client, "id, sleeper_league_id")
     season = int(os.environ.get("STRESS_SEASON") or requests.get("https://api.sleeper.app/v1/state/nfl", timeout=15).json()["season"])
     state = league_state(client, str(league["id"]), season)
     roster = state_roster(state)
@@ -373,7 +381,7 @@ def contracts(client: Any) -> int:
     from services.team_roster_state import state_roster
 
     get = lambda url: requests.get(url, timeout=20).json()
-    league = next(iter(client.table("leagues").select("id, sleeper_league_id").not_.is_("sleeper_league_id", "null").limit(1).execute().data or []))
+    league = current_league(client, "id, sleeper_league_id")
     lid, sl_id = str(league["id"]), str(league["sleeper_league_id"])
     season = int(os.environ.get("STRESS_SEASON") or get("https://api.sleeper.app/v1/state/nfl")["season"])
     roster = state_roster(league_state(client, lid, season))
