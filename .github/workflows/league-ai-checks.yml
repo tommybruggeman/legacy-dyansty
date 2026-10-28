@@ -8,13 +8,13 @@ on:
       check:
         description: Which check to run
         type: choice
-        options: [odds_backtest, odds_trial, odds_grade, stress_test, stress_grade, stress_rosters, stress_contracts, stress_league_link, stress_history, stress_ping, draft_study]
+        options: [odds_backtest, odds_trial, odds_grade, stress_test, stress_grade, stress_rosters, stress_contracts, stress_league_link, stress_history, stress_ping, draft_study, league_sim]
         default: odds_backtest
       budget:
         description: "stress_test only: stop before spending more than this many dollars"
         default: "5"
       questions:
-        description: "stress_test only: how many questions"
+        description: "stress_test: how many questions; league_sim: how many leagues"
         default: "50"
       skip:
         description: "stress_test only: skip the first N planned questions (resume a stopped run)"
@@ -60,13 +60,14 @@ jobs:
             stress_league_link) python -m league_ai.stress_test league_link ;;
             stress_contracts) python -m league_ai.stress_test contracts ;;
             draft_study) python -m league_ai.draft_study ;;
+            league_sim) SIM_LEAGUES=${{ inputs.questions }} python -m league_ai.league_sim ;;
             stress_grade) python -m league_ai.stress_test grade stress/grading-input.json ;;
             *) python -m league_ai.playoff_odds ;;
           esac
       - name: Commit the stress test results to this branch, encrypted
         # The repo is public and the answers name owners' rosters and plans, so only an encrypted copy is committed.
         # It opens with the private key kept in the project files (stress/results-key.pub.pem is its public half).
-        if: always() && (inputs.check == 'stress_test' || inputs.check == 'stress_rosters' || inputs.check == 'stress_contracts' || inputs.check == 'draft_study') && github.ref_name != 'main'
+        if: always() && (inputs.check == 'stress_test' || inputs.check == 'stress_rosters' || inputs.check == 'stress_contracts' || inputs.check == 'draft_study' || inputs.check == 'league_sim') && github.ref_name != 'main'
         run: |
           [ -f stress_results.json ] || exit 0
           KEY=$(openssl rand -hex 32)
@@ -75,7 +76,7 @@ jobs:
           git config user.name "github-actions[bot]" && git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
           git add stress/results.json.gz.enc stress/results.key.enc && git commit -qm "Stress test results (encrypted)" && git push origin HEAD:${{ github.ref_name }}
       - name: Save the stress test results
-        if: always() && (startsWith(inputs.check, 'stress') || inputs.check == 'draft_study')
+        if: always() && (startsWith(inputs.check, 'stress') || inputs.check == 'draft_study' || inputs.check == 'league_sim')
         uses: actions/upload-artifact@v4
         with:
           name: ${{ inputs.check }}-results
