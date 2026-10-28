@@ -153,3 +153,38 @@ def test_designated_players_never_show_as_starters():
     roster = teams.roster_rows(STATE, T1, {"starters": ["10", "13"]}, ["QB", "WR"], {}, {})
     assert [p["name"] for p in roster["starters"]] == ["Josh Allen"]
     assert [p["name"] for p in roster["ir"]] == ["Davante Adams"]
+
+
+def test_value_board_ranks_by_points_per_dollar_and_grades_against_the_league():
+    from api import teams as t
+    state = {"roster": [{"sleeper_player_id": str(i), "contract_cap_hit": 10} for i in range(9)]}
+    ppg = {str(i): float(i + 1) for i in range(9)}  # 0.1 .. 0.9 PPG per dollar
+    cuts = t.league_value_cuts(state, ppg)
+    players = [
+        {"player_id": "a", "contract_salary": 2, "years_left": 1, "ppg": 10.0},
+        {"player_id": "b", "contract_salary": 40, "years_left": 2, "ppg": 8.0},
+        {"player_id": "c", "contract_salary": 10, "years_left": 2, "ppg": 5.0},
+        {"player_id": "d", "contract_salary": 12, "years_left": 2, "ppg": None, "designation": "taxi"},
+    ]
+    board = t.value_board(players, cuts, 2026)
+    assert [p["player_id"] for p in board] == ["a", "c", "b", "d"]
+    assert [p["grade"] for p in board] == ["bargain", "fair", "overpaid", "stash"]
+    assert board[1]["per_dollar"] == 0.5 and board[1]["through"] == 2027
+
+
+def test_moves_count_completed_transactions_and_trades(monkeypatch):
+    from api import teams as t
+    weeks = {0: [{"transaction_id": "1", "status": "complete", "type": "trade", "roster_ids": [3, 5]}],
+             1: [{"transaction_id": "2", "status": "complete", "type": "waiver", "roster_ids": [3]},
+                 {"transaction_id": "3", "status": "failed", "type": "waiver", "roster_ids": [3]},
+                 {"transaction_id": "4", "status": "complete", "type": "free_agent", "roster_ids": [7]}]}
+    monkeypatch.setattr(t.sleeper, "get", lambda path, ttl=0: weeks.get(int(path.rsplit("/", 1)[1]), []))
+    assert t.moves("L", 3, 1) == {"moves": 2, "trades": 1}
+    assert t.moves("L", None, 1) == {"moves": 0, "trades": 0}
+
+
+def test_faab_left_from_sleeper(monkeypatch):
+    from api import teams as t
+    monkeypatch.setattr(t.sleeper, "get", lambda path, ttl=0: {"settings": {"waiver_budget": 100}})
+    assert t.faab("L", {"settings": {"waiver_budget_used": 58}}) == {"left": 42.0, "budget": 100.0}
+    assert t.faab("L", {}) is None
