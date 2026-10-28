@@ -8,6 +8,7 @@ from tests.fixtures.league_ai_state import CHASE, LEAGUE_ID, TOMMY, fixture_stat
 PLAYERS = [
     {"sleeper_id": "p1", "full_name": "Josh Allen", "search_name": "josh allen", "position": "QB", "team": "BUF", "age": 30.4, "years_exp": 8, "depth_chart_order": 1, "depth_chart_position": "QB", "injury_status": None, "status": "Active", "college": "Wyoming", "draft_year": 2018, "draft_round": 1, "draft_ovr": 7, "gsis_id": "g1", "search_rank": 5, "refreshed_at": "2026-09-29T09:00:00"},
     {"sleeper_id": "p2", "full_name": "Bijan Robinson", "search_name": "bijan robinson", "position": "RB", "team": "ATL", "age": 24.6, "years_exp": 3, "depth_chart_order": 1, "depth_chart_position": "RB", "injury_status": "Questionable", "injury_body_part": "Ankle", "status": "Active", "college": "Texas", "draft_year": 2023, "draft_round": 1, "draft_ovr": 8, "gsis_id": "g2", "search_rank": 3, "refreshed_at": "2026-09-29T09:00:00"},
+    {"sleeper_id": "p98", "full_name": "Retired Back", "search_name": "retired back", "position": "RB", "team": None, "age": 33.0, "years_exp": 11, "status": "Inactive", "gsis_id": "g98", "search_rank": 50, "refreshed_at": "2026-09-29T09:00:00"},
     {"sleeper_id": "p99", "full_name": "Free Agent Back", "search_name": "free agent back", "position": "RB", "team": "SEA", "age": 23.0, "years_exp": 1, "depth_chart_order": 2, "status": "Active", "gsis_id": "g99", "search_rank": 200, "refreshed_at": "2026-09-29T09:00:00"},
 ]
 STATS = [
@@ -35,6 +36,7 @@ class FakeQuery:
 
     def select(self, *_a, **k): self._count = k.get('count'); return self
     def eq(self, col, val): self.rows = [r for r in self.rows if str(r.get(col)) == str(val)]; return self
+    def neq(self, col, val): self.rows = [r for r in self.rows if str(r.get(col)) != str(val)]; return self
     def ilike(self, col, pat):
         needle = pat.strip("%").lower()
         self.rows = [r for r in self.rows if needle in str(r.get(col) or "").lower()]; return self

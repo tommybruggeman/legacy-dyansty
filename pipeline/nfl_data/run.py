@@ -21,6 +21,7 @@ from pipeline.nfl_data.market_values import PICKS_URL, VALUES_URL, read_csv as r
 from pipeline.nfl_data.nflverse_stats import SNAPS_URL, STATS_URL, read_csv as read_stats_csv, transform_stats
 from pipeline.nfl_data.sleeper_players import INJURY_DETAIL_COLUMNS, SLEEPER_PLAYERS_URL, transform_players
 from pipeline.nfl_data.prospects import build_prospects, fetch_season_inputs
+from pipeline.nfl_data.prospects_free import fetch_free_inputs
 from pipeline.nfl_data.situational import FTN_URL, PARTICIPATION_URL, PBP_URL, read_ftn, read_participation, read_pbp, transform_splits
 
 
@@ -223,13 +224,16 @@ def sync_situational(client: Any, seasons: list[int], crosswalk: Crosswalk | Non
 def sync_prospects(client: Any, crosswalk: Crosswalk, seasons: list[int]) -> int:
     import os
 
-    if not os.environ.get("CFBD_API_KEY", "").strip():
-        print("[nfl_data] prospects skipped: CFBD_API_KEY not set", flush=True)
-        return 0
+    keyed = bool(os.environ.get("CFBD_API_KEY", "").strip())
+    if not keyed:
+        print("[nfl_data] prospects: no CFBD_API_KEY, using the keyless cfbfastR-data files (no recruiting ratings)", flush=True)
     written = 0
     for season in seasons[-3:]:  # current college season and two prior: enough for the next two rookie classes
-        inputs = fetch_season_inputs(season, recruit_years=list(range(season - 4, season + 1)))
-        rows = build_prospects(season, crosswalk=crosswalk, **inputs)
+        if keyed:
+            inputs = fetch_season_inputs(season, recruit_years=list(range(season - 4, season + 1)))
+        else:
+            inputs = fetch_free_inputs(season)
+        rows = build_prospects(season, crosswalk=crosswalk, source="cfbd" if keyed else "cfbfastr", **inputs)
         written += upsert_rows(client, "nfl_prospects", rows, on_conflict="cfbd_athlete_id,season")
         print(f"[nfl_data] prospects {season}: {len(rows)} rows", flush=True)
     return written

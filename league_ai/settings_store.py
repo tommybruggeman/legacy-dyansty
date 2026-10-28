@@ -109,6 +109,7 @@ def fetch_sleeper_scoring(sleeper_league_id: str, *, get_json=None) -> dict[str,
         "scoring_settings": payload.get("scoring_settings") or {},
         "roster_positions": payload.get("roster_positions") or [],
         "league_settings": payload.get("settings") or {},
+        "status": payload.get("status"),
     }
 
 

@@ -29,6 +29,9 @@ WRITE_TOOLS = ("remember", "forget", "record_trade_response", "log_prediction")
 # how many of each kind of question, out of QUESTIONS
 MIX = {"start_sit": 24, "win": 8, "pickup": 12, "trade_find": 10, "trade_target": 12, "buy_sell": 6, "playoffs": 8, "partner": 4,
        "owner_style": 6, "contract": 6, "faab": 4}
+_ONLY = [k.strip() for k in (os.environ.get("STRESS_ONLY") or "").split(",") if k.strip()]
+if _ONLY:  # re-test just these kinds of question
+    MIX = {k: n for k, n in MIX.items() if k in _ONLY}
 
 
 def current_league(client: Any, cols: str) -> dict | None:

@@ -188,7 +188,9 @@ class LedgerTests(unittest.TestCase):
         ledger.resolve_player = lambda n: {"player a": {"sleeper_id": "111", "full_name": "Player A"}, **lookup_b}.get(n.lower())
         self.assertTrue(ledger.log_prediction("start_sit", ["Player A"], ["Player B"], "x", {}, 0.6)["logged"])
         self.assertFalse(ledger.log_prediction("start_sit", ["Player A"], ["Player B"], "again", {}, 0.7)["logged"])
-        self.assertTrue(ledger.log_prediction("start_sit", ["Player B"], ["Player A"], "flipped", {}, 0.55)["logged"])
+        flipped = ledger.log_prediction("start_sit", ["Player B"], ["Player A"], "flipped", {}, 0.55)
+        self.assertTrue(flipped["logged"])
+        self.assertIn("start Player A over Player B", flipped["changed_earlier_call"])  # the answer has to own the change
         statuses = [r["status"] for r in db.tables["league_ai_predictions"]]
         self.assertEqual(statuses, ["void", "open"])
         self.assertEqual(db.tables["league_ai_predictions"][0]["status"], "void")
@@ -298,6 +300,17 @@ class FactsAndPackTests(unittest.TestCase):
         self.assertIn("matchup 1-4 (20%)", lines[1])
         self.assertIn("Lesson [start_sit/recent_usage] (seen 4x): Trust route share over matchup.", lines[2])
         self.assertIn("start_sit 1-0 (100%)", lines[3])
+
+    def test_pack_lists_this_weeks_open_calls(self):
+        db = MemDB({"league_ai_predictions": [
+            {"league_id": "L1", "user_id": "u1", "season": 2026, "status": "open", "kind": "start_sit", "week": 8, "confidence": 0.6,
+             "pick": [{"name": "Dak Prescott"}], "over": [{"name": "Jayden Daniels"}]},
+            {"league_id": "L1", "user_id": "u1", "season": 2026, "status": "open", "kind": "start_sit", "week": 7,
+             "pick": [{"name": "Old Call"}], "over": [{"name": "Gone"}]},
+        ]})
+        line = learning_pack_lines(db, "L1", "u1", 2026)[-1]
+        self.assertIn("week 8: start Dak Prescott over Jayden Daniels (60%)", line)
+        self.assertNotIn("Old Call", line)
 
 
 class JobTests(unittest.TestCase):

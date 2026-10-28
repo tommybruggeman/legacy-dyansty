@@ -11,7 +11,7 @@ import sys
 import traceback
 from typing import Any
 
-from pipeline.league_history.build import OwnerMap, build_draft_events, build_matchups, build_transaction_events
+from pipeline.league_history.build import OwnerMap, build_draft_events, build_lineup_events, build_matchups, build_transaction_events
 from pipeline.nfl_data.common import fetch_json, log_run, now_iso, service_client, upsert_rows
 
 SLEEPER = "https://api.sleeper.app/v1"
@@ -110,6 +110,7 @@ def sync_league(client: Any, league: dict[str, Any], players: dict[str, dict[str
             txs = _get(f"{SLEEPER}/league/{sid}/transactions/{week}") or []
             events.extend(build_transaction_events(league_id, season, txs, owners, players, contracts))
             ms = _get(f"{SLEEPER}/league/{sid}/matchups/{week}") or []
+            events.extend(build_lineup_events(league_id, season, week, ms, owners, players, sl.get("roster_positions") or []))
             matchups.extend(build_matchups(league_id, season, week, ms, owners, top_n=int(ai.get("top_scorer_bonus_count", 5) or 5),
                                            win_points=int(ai.get("win_points", 2) or 2), bonus_points=int(ai.get("top_scorer_bonus_points", 1) or 1), playoff_start_week=playoff_start))
         for draft in _get(f"{SLEEPER}/league/{sid}/drafts") or []:

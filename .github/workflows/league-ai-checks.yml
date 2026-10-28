@@ -20,7 +20,7 @@ on:
         description: "stress_test only: skip the first N planned questions (resume a stopped run)"
         default: "0"
       leagues:
-        description: "draft_study only: extra Sleeper league ids to score real rookie drafts from (comma-separated)"
+        description: "draft_study: extra Sleeper league ids (comma-separated); stress_test: only these question kinds, e.g. trade_target"
         default: ""
 
 permissions:
@@ -49,6 +49,7 @@ jobs:
           STRESS_SKIP: ${{ inputs.skip }}
           STRESS_MAX_ANSWER: "0.2"
           DRAFT_LEAGUES: ${{ inputs.leagues }}
+          STRESS_ONLY: ${{ inputs.check == 'stress_test' && inputs.leagues || '' }}
         run: |
           case "${{ inputs.check }}" in
             odds_trial) python -m league_ai.odds_trial ;;

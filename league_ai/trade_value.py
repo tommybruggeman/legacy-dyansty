@@ -10,8 +10,9 @@ lot to a team trying to win this year. So every player gets three numbers on the
              player holds by current production (the RB2 by points is valued like the RB2 by market)
   contract : cap surplus or cost. A $21 x 2yr bench WR costs a cap team real room.
 
-A player coming off a major or moderate injury has his future (market) part tilted by what that injury did to
-similar players' next seasons (league_ai.injuries), and the explanation says so.
+A player coming off a major or moderate injury gets a note on what that injury did to similar players' next seasons
+(league_ai.injuries). Tilting his value by it is off (INJURY_TILT): on this league's completed trades it made the
+engine fit what owners actually agreed to slightly worse, so it informs the owner without moving the price.
 
 Each team's window (contending / middle / rebuilding) sets how much now and future count for it.
 """
@@ -24,6 +25,7 @@ from league_ai.power import PlayerStrength
 
 WINDOWS = ("contending", "middle", "rebuilding")
 NOW_WEIGHT = {"contending": 0.8, "middle": 0.5, "rebuilding": 0.2}
+INJURY_TILT = False    # multiply the market part by the injury history effect
 CONTRACT_WEIGHT = 0.5  # share of a contract's cap surplus or cost counted in the player's value
 POSITIONS = ("QB", "RB", "WR", "TE")
 
@@ -65,7 +67,7 @@ class Valuer:
 
     def base(self, p: PlayerStrength, window: str) -> float:
         w = NOW_WEIGHT.get(window, 0.5)
-        return w * self.now(p) + (1 - w) * market_value(p) * float(getattr(p, "injury_mult", 1.0) or 1.0)
+        return w * self.now(p) + (1 - w) * market_value(p) * (float(getattr(p, "injury_mult", 1.0) or 1.0) if INJURY_TILT else 1.0)
 
     def contract(self, p: PlayerStrength, window: str) -> float:
         """Cap surplus (+) or cost (-) on the value scale: how far the cap hit sits from what players of this value cost

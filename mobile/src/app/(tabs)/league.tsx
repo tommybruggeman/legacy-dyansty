@@ -9,12 +9,12 @@ import { Screen, Segmented, SwipeTabs, Title } from '../../components/ui';
 const VIEWS = ['Standings', 'Matchups', 'Teams'] as const;
 
 export default function League() {
-  const [view, setView] = useState<(typeof VIEWS)[number]>('Standings');
+  const [view, setView] = useState<(typeof VIEWS)[number]>('Matchups');
   const navigation = useNavigation();
   const { at } = useLocalSearchParams<{ at?: string }>();
-  // Opening League from the tab bar or Home's standings card always starts on
-  // Standings; coming back from a game or team page keeps the view you were on.
-  useEffect(() => navigation.addListener('tabPress' as never, () => setView('Standings')), [navigation]);
+  // Opening League from the tab bar starts on Matchups and Home's standings card
+  // opens Standings; coming back from a game or team page keeps the view you were on.
+  useEffect(() => navigation.addListener('tabPress' as never, () => setView('Matchups')), [navigation]);
   useEffect(() => {
     if (at) setView('Standings');
   }, [at]);
