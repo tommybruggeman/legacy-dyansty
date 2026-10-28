@@ -49,6 +49,7 @@ def build_prospects(
     recruits: list[dict[str, Any]],
     draft_picks: list[dict[str, Any]],
     crosswalk: Crosswalk | None = None,
+    source: str = "cfbd",
 ) -> list[dict[str, Any]]:
     stamp = now_iso()
     players: dict[str, dict[str, Any]] = defaultdict(dict)
@@ -163,7 +164,7 @@ def build_prospects(
             "scrimmage_yds": (p.get("rush_yds") or 0) + (p.get("rec_yds") or 0),
             "nfl_draft_year": d.get("year"), "nfl_draft_round": d.get("round"), "nfl_draft_pick": d.get("pick"), "nfl_team": d.get("team"),
             "sleeper_id": crosswalk.sleeper_for_name(name, p.get("position")) if (crosswalk and d) else None,
-            "source": "cfbd",
+            "source": source,
             "refreshed_at": stamp,
         })
     return rows
