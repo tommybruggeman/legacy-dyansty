@@ -210,3 +210,29 @@ export type Expiring = {
   years: number[];
   players: { player_id: string; name: string; pos: string; owner_name: string; team_id: string; salary: number; is_mine: boolean }[];
 };
+
+export type FoTile = { value: string; label: string; tone: 'good' | 'warn' | null };
+export type ReportCard = {
+  record: Record<string, string>;
+  open_calls: number;
+  recent: { when: string; call: string; right: boolean; points: string; why: string | null }[];
+  lessons: { lesson: string; seen: number }[];
+};
+export type FrontOffice = {
+  greeting: string;
+  ai_ready: boolean;
+  week: number;
+  season: number;
+  tiles: FoTile[];
+  brief: {
+    injuries: { items: { player: string; status: string }[]; call?: string };
+    matchup: { headline: string; lines: string[]; stakes?: string };
+  };
+  prompts: string[];
+  report_card: ReportCard;
+  sleeper_league_id: string | null;
+};
+export type ChatMessage = { role: 'user' | 'assistant'; content: string };
+export type ChatReply = { ok: boolean; text: string; conversation_id: string | null };
+export type Conversations = { conversations: { id: string; title: string; updated_at: string | null }[] };
+export type Conversation = { id: string; title: string; messages: ChatMessage[] };
