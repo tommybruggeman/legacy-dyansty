@@ -6,9 +6,12 @@ server instance; anything about one owner is keyed by their user id.
 """
 from __future__ import annotations
 
+import json
+import queue
+import threading
 import time
 from datetime import date, datetime
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 from zoneinfo import ZoneInfo
 
 from league_ai import runtime
@@ -149,7 +152,7 @@ def home(session: Session) -> dict[str, Any]:
     }
 
 
-def ask(session: Session, question: str, conversation_id: str | None) -> dict[str, Any]:
+def ask(session: Session, question: str, conversation_id: str | None, on_event: Callable[[str, Any], None] | None = None) -> dict[str, Any]:
     """One chat turn. Returns the answer, or a friendly error the app can show."""
     o, client = session.owner, session.client
     memory = o.memory(client)
@@ -169,12 +172,49 @@ def ask(session: Session, question: str, conversation_id: str | None) -> dict[st
                                positions=session.positions, playoff_week=session.playoff_start,
                                question=lambda: question, conversation_id=lambda: conversation_id)
     turn = runtime.chat_turn(client, o, question=question, history=history, conversation_id=conversation_id, pack=session.pack(), tools=tools,
-                             week_context=week_context(fo, o.owner_name))
+                             on_event=on_event, week_context=week_context(fo, o.owner_name))
     if turn.notes_changed:
         session.forget_pack()  # new notes show up in the next answer
     result = turn.result
     print(result.trace_line(), flush=True)
     return {"ok": result.ok, "text": result.text if result.ok else result.human_error, "conversation_id": turn.conversation_id}
+
+
+def stream_event(kind: str, payload: Any) -> dict[str, Any] | None:
+    """A model event as the app sees it: a status line for each lookup, text as it arrives."""
+    if kind == "tool":
+        return {"e": "status", "text": runtime.TOOL_STATUS.get(str(payload), "Checking the data")}
+    if kind == "text":
+        return {"e": "text", "d": str(payload or "")} if payload else None
+    if kind == "reset":
+        return {"e": "reset"}  # text before a lookup is replaced by the next round's answer
+    if kind == "round":
+        return {"e": "round"}
+    return None
+
+
+def ask_stream(session: Session, question: str, conversation_id: str | None) -> Iterator[str]:
+    """The same turn as ask(), as newline-delimited JSON events ending with a 'done' event."""
+    events: queue.Queue[dict[str, Any] | None] = queue.Queue()
+
+    def on_event(kind: str, payload: Any) -> None:
+        event = stream_event(kind, payload)
+        if event:
+            events.put(event)
+
+    def run() -> None:
+        try:
+            events.put({"e": "done", **ask(session, question, conversation_id, on_event)})
+        except Exception as exc:
+            print(f"APP_CHAT_ERROR {type(exc).__name__}: {exc}", flush=True)
+            events.put({"e": "done", "ok": False, "text": "Something went wrong. Try again.", "conversation_id": conversation_id})
+        finally:
+            events.put(None)
+
+    threading.Thread(target=run, daemon=True).start()
+    yield json.dumps({"e": "status", "text": "Reading your roster"}) + "\n"
+    while (event := events.get()) is not None:
+        yield json.dumps(event) + "\n"
 
 
 def conversations(client: Any, owner: runtime.Owner) -> list[dict[str, Any]]:

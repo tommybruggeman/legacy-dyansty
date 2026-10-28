@@ -69,3 +69,24 @@ def test_conversation_drops_the_old_opening_line():
     convo = front_office.conversation(client, OWNER, "c1")
     assert [m["content"] for m in convo["messages"]] == ["Am I a contender?", "Yes."]
     assert front_office.conversation(FakeClient({}), OWNER, "nope") is None
+
+
+def test_stream_events_name_the_lookup_and_pass_text_through():
+    assert front_office.stream_event("tool", "get_injury_report") == {"e": "status", "text": "Checking the injury report"}
+    assert front_office.stream_event("tool", "something_new") == {"e": "status", "text": "Checking the data"}
+    assert front_office.stream_event("text", "Yes") == {"e": "text", "d": "Yes"}
+    assert front_office.stream_event("text", "") is None
+    assert front_office.stream_event("reset", None) == {"e": "reset"}
+
+
+def test_ask_stream_ends_with_done(monkeypatch):
+    def fake_ask(session, question, conversation_id, on_event=None):
+        on_event("tool", "find_trade_targets")
+        on_event("text", "Three fits.")
+        return {"ok": True, "text": "Three fits.", "conversation_id": "c1"}
+
+    monkeypatch.setattr(front_office, "ask", fake_ask)
+    import json
+    events = [json.loads(line) for line in front_office.ask_stream(None, "Find me a trade", None)]
+    assert [e["e"] for e in events] == ["status", "status", "text", "done"]
+    assert events[1]["text"].startswith("Scanning every roster") and events[-1]["conversation_id"] == "c1"

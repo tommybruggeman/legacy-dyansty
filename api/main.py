@@ -11,6 +11,7 @@ import os
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from supabase import Client, create_client
 
@@ -371,8 +372,7 @@ def front_office_home(owner: tuple[Client, Any] = Depends(owner_client)) -> dict
         raise HTTPException(status_code=502, detail="Couldn't load the Front Office. Try again.")
 
 
-@app.post("/front-office/chat")
-def front_office_chat(body: ChatRequest, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+def _chat_session(body: ChatRequest, client: Client, user: Any) -> tuple[front_office.Session, str]:
     question = body.question.strip()
     if not question:
         raise HTTPException(status_code=400, detail="Ask a question first.")
@@ -380,10 +380,24 @@ def front_office_chat(body: ChatRequest, owner: tuple[Client, Any] = Depends(own
         raise HTTPException(status_code=400, detail="That question is too long. Keep it under 2,000 characters.")
     if not front_office.ai_ready():
         raise HTTPException(status_code=503, detail="The Assistant GM isn't switched on for the app yet.")
-    session = _front_office(*owner)
+    session = _front_office(client, user)
     if not front_office.take_question(session.owner.user_id):
         raise HTTPException(status_code=429, detail=f"That's {front_office.DAILY_QUESTIONS} questions today. The Assistant GM is back tomorrow.")
+    return session, question
+
+
+@app.post("/front-office/chat")
+def front_office_chat(body: ChatRequest, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    session, question = _chat_session(body, *owner)
     return front_office.ask(session, question, body.conversation_id)
+
+
+@app.post("/front-office/chat/stream")
+def front_office_chat_stream(body: ChatRequest, owner: tuple[Client, Any] = Depends(owner_client)) -> StreamingResponse:
+    """The same answer as /front-office/chat, streamed: what the GM is checking, then the answer as it's written."""
+    session, question = _chat_session(body, *owner)
+    return StreamingResponse(front_office.ask_stream(session, question, body.conversation_id), media_type="application/x-ndjson",
+                             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
 
 
 @app.get("/front-office/conversations")

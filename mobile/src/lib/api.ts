@@ -1,3 +1,4 @@
+import { fetch as streamingFetch } from 'expo/fetch';
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { AppState } from 'react-native';
@@ -33,6 +34,38 @@ export async function apiSend<T>(method: 'POST' | 'DELETE', path: string, body?:
   const result = await response.json().catch(() => null);
   if (!response.ok) throw new Error(result?.detail ?? `Request failed (${response.status}).`);
   return result as T;
+}
+
+// Posts as the signed-in owner and reads a newline-delimited JSON stream,
+// calling onEvent for each line as it arrives.
+export async function apiStream<E>(path: string, body: unknown, onEvent: (event: E) => void): Promise<void> {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error('Sign in required.');
+
+  const response = await streamingFetch(`${API_URL}${path}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/x-ndjson' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok || !response.body) {
+    const detail = await response.json().catch(() => null);
+    throw new Error(detail?.detail ?? `Request failed (${response.status}).`);
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (value) buffer += decoder.decode(value, { stream: true });
+    let newline;
+    while ((newline = buffer.indexOf('\n')) >= 0) {
+      const line = buffer.slice(0, newline).trim();
+      buffer = buffer.slice(newline + 1);
+      if (line) onEvent(JSON.parse(line) as E);
+    }
+    if (done) break;
+  }
 }
 
 // refreshEvery (ms) quietly re-fetches while the screen is open and the app
@@ -234,5 +267,11 @@ export type FrontOffice = {
 };
 export type ChatMessage = { role: 'user' | 'assistant'; content: string };
 export type ChatReply = { ok: boolean; text: string; conversation_id: string | null };
+export type ChatEvent =
+  | { e: 'status'; text: string }
+  | { e: 'text'; d: string }
+  | { e: 'reset' }
+  | { e: 'round' }
+  | ({ e: 'done' } & ChatReply);
 export type Conversations = { conversations: { id: string; title: string; updated_at: string | null }[] };
 export type Conversation = { id: string; title: string; messages: ChatMessage[] };

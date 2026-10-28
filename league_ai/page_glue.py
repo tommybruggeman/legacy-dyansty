@@ -53,31 +53,7 @@ def _cached_pack(league_id: str, season: int, league_team_id: str, user_id: str,
                                     league={"name": league_name, "sleeper_league_id": sleeper_league_id})
 
 
-TOOL_STATUS = {
-    "get_player_profile": "Pulling up the player profile",
-    "get_player_stats": "Checking the stats",
-    "compare_players": "Comparing players",
-    "get_injury_report": "Checking the injury report",
-    "get_prospects": "Scouting the prospects",
-    "get_market_values": "Checking market values",
-    "search_players": "Searching the player pool",
-    "simulate_trade": "Running the trade through the cap",
-    "evaluate_trade": "Weighing the trade from both sides",
-    "get_league_history": "Digging through league history",
-    "get_waiver_prices": "Looking up what pickups cost here",
-    "get_trade_tendencies": "Checking who trades with whom",
-    "get_matchup_history": "Checking matchup history",
-    "remember": "Making a note",
-    "forget": "Updating my notes",
-    "log_prediction": "Logging this call so I can grade it after the games",
-    "get_my_track_record": "Checking how my past calls graded",
-    "find_trade_targets": "Scanning every roster for trades that work for both sides",
-    "get_owner_trade_profile": "Checking how that owner trades",
-    "record_trade_response": "Noting how they answered",
-    "get_schedule_outlook": "Grading the rest of the schedule",
-    "get_return_outlook": "Comparing his return with past players who had the same injury",
-    "get_position_room": "Checking how his team splits the work",
-}
+TOOL_STATUS = runtime.TOOL_STATUS
 
 
 class LiveAnswer:

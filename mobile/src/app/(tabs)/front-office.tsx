@@ -8,7 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Markdown } from '../../components/frontoffice/Markdown';
 import { ErrorState, Loading } from '../../components/ScreenState';
 import { Pill } from '../../components/ui';
-import { type ChatMessage, type ChatReply, type Conversation, type FoTile, type FrontOffice, apiGet, apiSend, useApi } from '../../lib/api';
+import { type ChatEvent, type ChatMessage, type Conversation, type FoTile, type FrontOffice, apiGet, apiStream, useApi } from '../../lib/api';
 import { colors } from '../../lib/theme';
 
 // The Assistant GM: this week's tiles and brief, starter questions, then the
@@ -20,6 +20,9 @@ export default function FrontOfficeScreen() {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [thinking, setThinking] = useState(false);
+  // While the GM works: what it's checking right now, and the answer so far.
+  const [status, setStatus] = useState('');
+  const [partial, setPartial] = useState('');
   const [problem, setProblem] = useState<string | null>(null);
   const [typing, setTyping] = useState(false);
   const scroll = useRef<ScrollViewInstance>(null);
@@ -39,21 +42,40 @@ export default function FrontOfficeScreen() {
       .catch((e) => setProblem(e?.message ?? 'Couldn’t open that chat.'));
   }, [c]);
 
-  const send = async (text: string) => {
-    const question = text.trim();
+  const send = async (input: string) => {
+    const question = input.trim();
     if (!question || thinking) return;
     setDraft('');
     setProblem(null);
     setMessages((m) => [...m, { role: 'user', content: question }]);
     setThinking(true);
+    setStatus('Reading your roster');
+    setPartial('');
+    let answer = '';
     try {
-      const reply = await apiSend<ChatReply>('POST', '/front-office/chat', { question, conversation_id: conversationId });
-      setMessages((m) => [...m, { role: 'assistant', content: reply.text }]);
-      if (reply.conversation_id) setConversationId(reply.conversation_id);
+      await apiStream<ChatEvent>('/front-office/chat/stream', { question, conversation_id: conversationId }, (event) => {
+        if (event.e === 'status') {
+          setStatus(event.text);
+          setPartial('');
+        } else if (event.e === 'text') {
+          answer += event.d;
+          setPartial(answer);
+        } else if (event.e === 'reset') {
+          answer = '';
+          setPartial('');
+        } else if (event.e === 'round' && answer) {
+          answer += '\n\n';
+        } else if (event.e === 'done') {
+          if (event.ok) setMessages((m) => [...m, { role: 'assistant', content: event.text }]);
+          else setProblem(event.text);
+          if (event.conversation_id) setConversationId(event.conversation_id);
+        }
+      });
     } catch (e: any) {
       setProblem(e?.message ?? 'Something went wrong.');
     } finally {
       setThinking(false);
+      setPartial('');
     }
   };
 
@@ -65,7 +87,6 @@ export default function FrontOfficeScreen() {
   // starter chips step aside and it's just you and the GM.
   const focused = typing || messages.length > 0 || thinking;
   const sleeper = data.sleeper_league_id ? `https://sleeper.com/leagues/${data.sleeper_league_id}` : null;
-  const lastQuestion = [...messages].reverse().find((m) => m.role === 'user')?.content ?? '';
 
   return (
     <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -116,10 +137,15 @@ export default function FrontOfficeScreen() {
             )}
           </View>
         ))}
-        {thinking ? (
+        {thinking && partial ? (
+          <View style={styles.theirs}>
+            <Text style={styles.gm}>GM</Text>
+            <Markdown text={`${partial} ▌`} />
+          </View>
+        ) : thinking ? (
           <View style={[styles.theirs, styles.thinking]}>
             <ActivityIndicator color={colors.gold} size="small" />
-            <Text style={styles.thinkingText}>{/trade/i.test(lastQuestion) ? 'Scanning every roster…' : 'Thinking…'}</Text>
+            <Text style={styles.thinkingText}>{status}…</Text>
           </View>
         ) : null}
         {problem ? <Text style={styles.problem}>{problem}</Text> : null}
