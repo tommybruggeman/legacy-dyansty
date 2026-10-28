@@ -64,7 +64,7 @@ export function SwipeTabs<T extends string>({ options, value, onChange, children
   latest.current = { options, value, onChange };
   const responder = useMemo(() => {
     const width = Dimensions.get('window').width;
-    const settle = () => Animated.spring(shift, { toValue: 0, useNativeDriver: true, damping: 22, stiffness: 220, mass: 0.9 }).start();
+    const settle = () => Animated.spring(shift, { toValue: 0, useNativeDriver: true, damping: 24, stiffness: 170, mass: 0.9 }).start();
     return PanResponder.create({
       onMoveShouldSetPanResponderCapture: (_, g) => Math.abs(g.dx) > 14 && Math.abs(g.dx) > Math.abs(g.dy) * 2,
       onPanResponderTerminationRequest: () => false,
@@ -81,10 +81,10 @@ export function SwipeTabs<T extends string>({ options, value, onChange, children
         const step = g.dx < -width * 0.25 || g.vx < -0.4 ? 1 : g.dx > width * 0.25 || g.vx > 0.4 ? -1 : 0;
         const next = opts[i + step];
         if (!step || !next) return settle();
-        Animated.timing(shift, { toValue: -step * width, duration: 140, easing: Easing.out(Easing.quad), useNativeDriver: true }).start(() => {
+        Animated.timing(shift, { toValue: -step * width, duration: 190, easing: Easing.out(Easing.quad), useNativeDriver: true }).start(() => {
           change(next);
           shift.setValue(step * width * 0.6);
-          Animated.timing(shift, { toValue: 0, duration: 260, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+          Animated.timing(shift, { toValue: 0, duration: 360, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
         });
       },
       onPanResponderTerminate: settle,
