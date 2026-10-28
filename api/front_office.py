@@ -19,6 +19,7 @@ from league_ai.config import load_config
 from league_ai import matchup_odds, odds_trial, playoff_odds
 from league_ai.front_office import lineup_moves, load_brief, merge_brief, rotating_prompts, week_context
 from league_ai.learning import Ledger
+from league_ai.sleeper_roster import fill_from_sleeper
 from league_ai.service import load_league_rules
 from services.team_roster_state import load_team_state
 
@@ -76,7 +77,9 @@ class Session:
         self.sleeper_id = sleeper_league_id
         o = owner
         # League-wide reads are the same for every owner; RLS lets every member read them.
-        self.state = lambda: _cached(("state", o.league_id, o.season), 300, lambda: load_team_state(client, o.league_id, o.season))
+        # Sleeper-rostered players without a contract this season are added (at $0, flagged) so the GM sees whole rosters
+        self.state = lambda: _cached(("state", o.league_id, o.season), 300,
+                                     lambda: fill_from_sleeper(client, load_team_state(client, o.league_id, o.season), sleeper_league_id, o.league_id))
         self.rules = lambda: _cached(("rules", o.league_id), 300, lambda: load_league_rules(client, o.league_id))
         self.positions = lambda: _cached(("positions", o.league_id), 1800, lambda: runtime.roster_positions(client, o.league_id, sleeper_league_id))
         self.week = lambda: _cached("week", 3600, runtime.nfl_week)
