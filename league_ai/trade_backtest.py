@@ -96,7 +96,7 @@ def compare_variants(trades: list[Mapping[str, Any]]) -> dict[str, Any]:
     lower is better)."""
     out: dict[str, Any] = {}
     for v in VARIANTS:
-        hits, gaps = [], []
+        hits, gaps, lows = [], [], []
         for t in trades:
             shares = [side_share(sd, DEFAULT_WEIGHT, v) for sd in t["sides"].values()]
             if not shares or any(x is None for x in shares):
@@ -104,8 +104,13 @@ def compare_variants(trades: list[Mapping[str, Any]]) -> dict[str, Any]:
             hits.append(all(x >= OPEN_SHARE for x in shares))
             logs = [math.log(max(0.2, min(x, 5.0))) for x in shares]
             gaps.append(max(logs) - min(logs))
+            lows.append(min(shares))
         out[v] = {"graded": len(hits), "hit_rate": round(sum(hits) / len(hits), 3) if hits else None,
-                  "imbalance": round(sum(gaps) / len(gaps), 3) if gaps else None}
+                  "imbalance": round(sum(gaps) / len(gaps), 3) if gaps else None,
+                  "median_low_share": round(sorted(lows)[len(lows) // 2], 3) if lows else None}
+    assets = [a for t in trades for sd in t["sides"].values() for a in sd["gets"]]
+    out["assets_without_market"] = sum(1 for a in assets if not a.get("market"))
+    out["assets"] = len(assets)
     out["trades_with_picks"] = sum(1 for t in trades if any(a.get("pick") for sd in t["sides"].values() for a in sd["gets"]))
     out["trades_with_injured"] = sum(1 for t in trades if any((a.get("inj") or 1.0) < 1.0 for sd in t["sides"].values() for a in sd["gets"]))
     return out
@@ -131,7 +136,7 @@ def load_trades(client: Any, league_id: str) -> list[dict[str, Any]]:
     market = _market_history(client, pids)
     positions = _positions(client, pids)
     seasons = sorted({int(r["season"]) for r in rows if r.get("season")})
-    production = {s: _season_weeks(client, s) for s in seasons}
+    production = {s: _season_weeks(client, s, positions) for s in seasons}
     curves = _now_curves(client)
     picks = _pick_values(client)
     episodes = _injury_episodes(client, pids)
@@ -231,18 +236,21 @@ def _positions(client: Any, pids: list[str]) -> dict[str, str]:
     return out
 
 
-def _season_weeks(client: Any, season: int) -> dict[str, list[tuple[int, float]]]:
-    """sleeper_id -> [(week, points)] for one regular season, paged."""
+def _season_weeks(client: Any, season: int, positions: dict[str, str] | None = None) -> dict[str, list[tuple[int, float]]]:
+    """sleeper_id -> [(week, points)] for one regular season, paged. Fills `positions` for every player with games, so a
+    traded player's production rank is taken among all players at his position, not only the other traded ones."""
     out: dict[str, list[tuple[int, float]]] = defaultdict(list)
     start = 0
     while True:
         try:
-            rows = (client.table("nfl_player_stats").select("sleeper_id, week, fantasy_points_ppr").eq("season", season).eq("season_type", "REG")
+            rows = (client.table("nfl_player_stats").select("sleeper_id, week, position, fantasy_points_ppr").eq("season", season).eq("season_type", "REG")
                     .range(start, start + 999).execute().data or [])
         except Exception:
             break
         for r in rows:
             out[str(r["sleeper_id"])].append((int(r.get("week") or 0), float(r.get("fantasy_points_ppr") or 0)))
+            if positions is not None and r.get("position"):
+                positions.setdefault(str(r["sleeper_id"]), str(r["position"]))
         if len(rows) < 1000:
             break
         start += 1000
