@@ -32,7 +32,8 @@ class League:
 
     def __init__(self, players: list[PlayerStrength], teams: list[Mapping[str, Any]], roster_positions: list[str] | None,
                  windows: Mapping[str, str] | None = None, records: Mapping[str, tuple[int, int]] | None = None,
-                 pick_values: list[tuple[str, float]] | None = None, leanings: Mapping[str, str] | None = None):
+                 pick_values: list[tuple[str, float]] | None = None, leanings: Mapping[str, str] | None = None,
+                 pick_book: Any = None):
         self.slots = _slots(roster_positions)
         self.teams = {str(t["league_team_id"]): t for t in teams}
         self.players = players
@@ -43,7 +44,10 @@ class League:
         self.now_rank = {tid: tp.now_rank for tid, tp in power.items()}
         self.dynasty_rank = {tid: tp.dynasty_rank for tid, tp in power.items()}
         self.records = dict(records or {})
-        self.pick_values = list(pick_values or [])
+        self.pick_book = pick_book  # league_ai.pick_values.PickBook: slot-aware pick prices (None in tests -> pick_values labels)
+        if pick_book is not None:
+            pick_book.records = self.records
+        self.pick_values = list(pick_values or (pick_book.labels() if pick_book is not None else []))
         self.leanings = dict(leanings or {})
         self.playoff_odds: dict[str, float] = {}
         self.set_windows(windows)
@@ -298,7 +302,7 @@ def evaluate_trade(league: League, asker_team_id: str, partner: str, you_get: li
         (sends.append(p) if p else missing.append(f"{name} (not on your roster)"))
     if missing:
         return {"error": "couldn't find: " + ", ".join(missing)}
-    pk_get, pk_send = _picks(league, picks_you_get), _picks(league, picks_you_send)
+    pk_get, pk_send = _picks(league, picks_you_get, tid), _picks(league, picks_you_send, asker)
     v = league.valuer
     their_out, their_in = v.package(tid, gets, pk_get), v.package(tid, sends, pk_send)
     my_in, my_out = v.package(asker, gets, pk_get), v.package(asker, sends, pk_send)
@@ -324,7 +328,7 @@ def evaluate_trade(league: League, asker_team_id: str, partner: str, you_get: li
         out["their_motivation"] = "; ".join(motives)
     # a cheaper opening: drop one piece we send and see if it still clears what they could take
     pieces = [(p.name, v.package(tid, [p]), v.package(asker, [p])) for p in sends] + \
-             [(lbl, val * _pick_weight(league.window(tid)), val * _pick_weight(league.window(asker))) for lbl, val in _pick_list(league, picks_you_send)]
+             [(lbl, val * _pick_weight(league.window(tid)), val * _pick_weight(league.window(asker))) for lbl, val in _pick_list(league, picks_you_send, asker)]
     cheaper = [(name, their_in - t) for name, t, _ in pieces if len(pieces) > 1 and their_out and (their_in - t) / their_out >= OPEN_SHARE]
     if cheaper:
         name, rest = max(cheaper, key=lambda x: next(m for n, _, m in pieces if n == x[0]))
@@ -333,6 +337,7 @@ def evaluate_trade(league: League, asker_team_id: str, partner: str, you_get: li
     return out
 
 
+ROOKIE_ROUNDS = 3  # the league's rollover policy: three-round rookie drafts
 OPEN_SHARE = 0.85   # an opening offer they might take: at least this share of what they give up, by their own goals
 CLOSE_SHARE = 1.0   # a deal they should take
 WALK_AWAY_SHARE = 1.1  # never pay more than this share of what the player is worth to the asker
@@ -368,16 +373,28 @@ def _market_view(league: League, gets: list[PlayerStrength], sends: list[PlayerS
     return line
 
 
-def _picks(league: League, labels: list[str] | None) -> float:
-    return sum(val for _, val in _pick_list(league, labels))
+def _picks(league: League, labels: list[str] | None, owner: str | None = None) -> float:
+    return sum(val for _, val in _pick_list(league, labels, owner))
 
 
-def _pick_list(league: League, labels: list[str] | None) -> list[tuple[str, float]]:
+def _pick_list(league: League, labels: list[str] | None, owner: str | None = None) -> list[tuple[str, float]]:
+    """(label, value) per pick. owner = the team sending it, taken as its original owner unless the label says 'via X'."""
+    if league.pick_book is not None:
+        from league_ai.pick_values import parse
+        out = []
+        for label in labels or []:
+            via = parse(label)["via"]
+            value, _ = league.pick_book.value(str(label), league.team_id(via) if via else owner)
+            if value:
+                out.append((str(label), value))
+        return out
     out = []
     for label in labels or []:
+        from league_ai.pick_values import parse
+        parsed = parse(label)
         words = str(label).lower().replace("first", "1st").replace("second", "2nd").replace("third", "3rd").split()
         cands = [(lbl, val) for lbl, val in league.pick_values if all(w in lbl.lower() for w in words if w.isdigit() and len(w) == 4)]
-        rnd = next((w[0] for w in words if w[:1].isdigit() and len(w) <= 3), None)
+        rnd = str(parsed["round"]) if parsed["round"] else None  # "R1", "Round 1", "1st", "1.03" all read as round 1
         cands = [c for c in cands if not rnd or f" {rnd}" in c[0].lower() or f"{rnd}." in c[0].lower()] or cands
         if cands:
             out.append((str(label), sum(v for _, v in cands) / len(cands)))
@@ -663,6 +680,7 @@ def load_league(client: Any, state: Mapping[str, Any], season: int, roster_posit
         p.no_contract = p.sleeper_id in no_contract  # type: ignore[attr-defined]  # on Sleeper, but the app has no salary for him
         if p.sleeper_id in values:
             p.market_value = values[p.sleeper_id]  # type: ignore[attr-defined]  # superflex dynasty market
+    _attach_injuries(client, players, season)
     teams = list(state.get("teams", []))
     cap = {str(t["league_team_id"]): float(calculate_team_financials(roster, adjustments, salary_cap=salary_cap, league_team_id=str(t["league_team_id"]))["cap_space"])
            for t in teams}
@@ -683,7 +701,29 @@ def load_league(client: Any, state: Mapping[str, Any], season: int, roster_posit
     if league_id:
         from league_ai.trade_backtest import load_styles
         leanings = load_styles(client, league_id)
-    return League(players, teams, roster_positions, records=records, pick_values=_pick_values(client, season), leanings=leanings), cap, str(asker_team_id)
+    from league_ai.pick_values import PickBook
+    book = PickBook(_pick_rows(client), teams=len(teams), rounds=ROOKIE_ROUNDS, season=season)
+    return League(players, teams, roster_positions, records=records, leanings=leanings, pick_book=book), cap, str(asker_team_id)
+
+
+def _attach_injuries(client: Any, players: list[PlayerStrength], season: int) -> None:
+    """Players with a major or moderate injury this season or last get the historical effect of that injury on their
+    dynasty value (league_ai.injuries) and a line explaining it."""
+    from league_ai.injuries import recent_injury
+
+    ids = sorted({p.sleeper_id for p in players if p.sleeper_id})
+    episodes: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for i in range(0, len(ids), 150):
+        try:
+            for r in (client.table("nfl_injury_episodes").select("sleeper_id, last_game_season, injury, games_missed")
+                      .in_("sleeper_id", ids[i:i + 150]).gte("last_game_season", int(season) - 1).execute().data or []):
+                episodes[str(r["sleeper_id"])].append(r)
+        except Exception:
+            return
+    for p in players:
+        found = recent_injury(episodes.get(p.sleeper_id, []), int(season))
+        if found:
+            p.injury_mult, p.injury_note = found  # type: ignore[attr-defined]
 
 
 def _market_values(client: Any, ids: list[str]) -> dict[str, float]:
@@ -704,6 +744,16 @@ def _market_values(client: Any, ids: list[str]) -> dict[str, float]:
         except Exception:
             pass
     return out
+
+
+def _pick_rows(client: Any) -> list[dict[str, Any]]:
+    """Latest market pick prices, every draft year (slot rows give the market's slot curve)."""
+    try:
+        rows = client.table("nfl_pick_values").select("pick_label, draft_year, round, slot, value_2qb, scrape_date").order("scrape_date", desc=True).limit(400).execute().data or []
+    except Exception:
+        return []
+    latest = rows[0]["scrape_date"] if rows else None
+    return [r for r in rows if r.get("scrape_date") == latest]
 
 
 def _pick_values(client: Any, season: int) -> list[tuple[str, float]]:

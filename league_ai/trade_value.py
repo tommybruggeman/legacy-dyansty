@@ -10,6 +10,9 @@ lot to a team trying to win this year. So every player gets three numbers on the
              player holds by current production (the RB2 by points is valued like the RB2 by market)
   contract : cap surplus or cost. A $21 x 2yr bench WR costs a cap team real room.
 
+A player coming off a major or moderate injury has his future (market) part tilted by what that injury did to
+similar players' next seasons (league_ai.injuries), and the explanation says so.
+
 Each team's window (contending / middle / rebuilding) sets how much now and future count for it.
 """
 from __future__ import annotations
@@ -62,7 +65,7 @@ class Valuer:
 
     def base(self, p: PlayerStrength, window: str) -> float:
         w = NOW_WEIGHT.get(window, 0.5)
-        return w * self.now(p) + (1 - w) * market_value(p)
+        return w * self.now(p) + (1 - w) * market_value(p) * float(getattr(p, "injury_mult", 1.0) or 1.0)
 
     def contract(self, p: PlayerStrength, window: str) -> float:
         """Cap surplus (+) or cost (-) on the value scale: how far the cap hit sits from what players of this value cost
@@ -90,7 +93,8 @@ class Valuer:
         c, base = self.contract(p, window), self.base(p, window)
         contract = (" contract is a bargain" if c > 0 else " contract costs more than he returns") if base and abs(c) >= 0.15 * base else ""
         ranks = f"{p.position}{self.now_rank.get(p.sleeper_id, '?')} by this season's production, {p.position}{self.market_rank.get(p.sleeper_id, '?')} on the dynasty market"
-        return f"{p.name}: {ranks} (rostered players){';' + contract if contract else ''}"
+        injury = getattr(p, "injury_note", None)
+        return f"{p.name}: {ranks} (rostered players){';' + contract if contract else ''}{'; injury history ' + injury if injury else ''}"
 
 
 def team_windows(players: Iterable[PlayerStrength], teams: Iterable[Mapping[str, Any]], now_rank: Mapping[str, int], dynasty_rank: Mapping[str, int],
