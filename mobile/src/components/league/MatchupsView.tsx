@@ -1,5 +1,5 @@
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { ErrorState, Loading } from '../ScreenState';
@@ -8,12 +8,18 @@ import { colors } from '../../lib/theme';
 
 const first = (name: string) => name.split(' ')[0];
 
+// Live games refresh every 30 seconds while this screen is open.
+const LIVE_REFRESH_MS = 30_000;
+
+
 // Built from the phone Weekly Matchups design: week picker, three summary
 // tiles, your game pinned first, gold rank = a Top 5 score this week.
 // Tapping a game opens its box score.
 export function MatchupsView() {
   const [week, setWeek] = useState<number | null>(null);
-  const { data, error, loading, reload } = useApi<MatchupsData>(week ? `/matchups?week=${week}` : '/matchups');
+  const [live, setLive] = useState(true);
+  const { data, error, loading, reload } = useApi<MatchupsData>(week ? `/matchups?week=${week}` : '/matchups', live ? LIVE_REFRESH_MS : 0);
+  useEffect(() => { if (data) setLive(!data.is_final); }, [data]);
 
   if (loading && !data) return <Loading />;
   if (error && !data) return <ErrorState message={error} onRetry={reload} />;

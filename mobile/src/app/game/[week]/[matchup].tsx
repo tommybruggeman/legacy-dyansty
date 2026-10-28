@@ -1,4 +1,5 @@
 import { router, useLocalSearchParams } from 'expo-router';
+import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { ErrorState, Loading } from '../../../components/ScreenState';
@@ -6,10 +7,15 @@ import { Back, Card, Note, Pos, Row, Screen, firstName } from '../../../componen
 import { type BoxScore, useApi } from '../../../lib/api';
 import { colors } from '../../../lib/theme';
 
+// Live games refresh every 30 seconds while this screen is open.
+const LIVE_REFRESH_MS = 30_000;
+
 // One game, slot by slot: your side on the left when you're playing.
 export default function Game() {
   const { week, matchup } = useLocalSearchParams<{ week: string; matchup: string }>();
-  const { data, error, loading, reload } = useApi<BoxScore>(`/matchups/${week}/${matchup}`);
+  const [live, setLive] = useState(true);
+  const { data, error, loading, reload } = useApi<BoxScore>(`/matchups/${week}/${matchup}`, live ? LIVE_REFRESH_MS : 0);
+  useEffect(() => { if (data) setLive(!data.is_final); }, [data]);
 
   if (loading && !data) return <Loading />;
   if (error && !data) return <ErrorState message={error} onRetry={reload} />;

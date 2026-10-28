@@ -14,7 +14,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel
 from supabase import Client, create_client
 
-from api import league, teams
+from api import league, market, teams
 from season_engine import SeasonResolver
 
 app = FastAPI(title="Legacy API")
@@ -298,7 +298,8 @@ def box_score(
     ctx = _season_context(client, user)
     if not 1 <= week <= 25:
         raise HTTPException(status_code=404, detail="No such week.")
-    ttl = 86400 if week <= league.last_scored_week(ctx["sleeper_id"]) else 60
+    final = week <= league.last_scored_week(ctx["sleeper_id"])
+    ttl = 86400 if final else league.LIVE_TTL
     ids = teams.starter_ids(ctx["sleeper_id"], week, matchup_id, ttl)
     result = teams.box_score(ctx["sleeper_id"], week, matchup_id, ctx["names"], ctx["slots"], teams.player_info(client, ids), ttl)
     if result is None:
@@ -307,4 +308,39 @@ def box_score(
     for side in result["teams"]:
         side["team_id"] = teams_by_roster.get(side["roster_id"])
     result["my_roster_id"] = ctx["sleeper_roster_id"]
+    result["is_final"] = final
     return result
+
+
+def _season_state(client: Client, ctx: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return teams.load_team_state(client, ctx["league_id"], ctx["season"])
+    except Exception:
+        raise HTTPException(status_code=502, detail="Couldn't load league contracts. Try again.")
+
+
+@app.get("/market/free-agents")
+def free_agents(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    ctx = _season_context(client, user)
+    state = _season_state(client, ctx)
+    try:
+        pool = market.player_pool(client)
+        ppg = market.ranking(client, ctx["season"])
+    except Exception:
+        raise HTTPException(status_code=502, detail="Couldn't load the player pool. Try again.")
+    return market.free_agents(pool, state, ppg)
+
+
+EXPIRING_YEARS = 3
+
+
+@app.get("/market/expiring")
+def expiring(year: int | None = None, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """Contracts ending after `year` (this season by default, up to two seasons ahead)."""
+    client, user = owner
+    ctx = _season_context(client, user)
+    years = [ctx["season"] + i for i in range(EXPIRING_YEARS)]
+    year = year if year in years else years[0]
+    players = market.expiring(_season_state(client, ctx), ctx["team_id"], year - ctx["season"])
+    return {"season": year, "years": years, "players": players}

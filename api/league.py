@@ -13,6 +13,10 @@ from services.standings_rules import last_completed_week, score_week
 
 PLAYOFF_TEAMS = 4
 
+# Live scores: Sleeper is asked at most this often, however many owners are
+# watching, so the app can refresh every 30 seconds and stay close to Sleeper.
+LIVE_TTL = 15
+
 
 def sleeper_league_id(client: Any, league_id: str) -> str:
     season = SeasonResolver(client).get_active_season(league_id)
@@ -142,8 +146,7 @@ def standings(sleeper_id: str, names: dict[int, str], my_roster_id: int | None) 
 
 def matchups(sleeper_id: str, names: dict[int, str], week: int, my_roster_id: int | None) -> dict[str, Any]:
     final = week <= last_scored_week(sleeper_id)
-    # Live weeks refresh every minute, like the website's matchups page.
-    rows = sleeper.get(f"league/{sleeper_id}/matchups/{week}", ttl=86400 if final else 60) or []
+    rows = sleeper.get(f"league/{sleeper_id}/matchups/{week}", ttl=86400 if final else LIVE_TTL) or []
     games = build_games(rows, names)
     summary = week_summary(games)
     return {
