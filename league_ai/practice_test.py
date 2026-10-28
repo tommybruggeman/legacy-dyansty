@@ -123,6 +123,8 @@ def check_tools(client: Any, league: Mapping[str, Any], season: int) -> list[str
         finder = tools.tools.get("find_trade_targets")
         counts["owners"] += 1
         ideas = _call(tools, "find_trade_targets") or {}
+        if "say which position" in str(ideas.get("error", "")):   # a strong lineup: the finder asks for a position, so give it one
+            ideas = next((r for r in (_call(tools, "find_trade_targets", position=pos) or {} for pos in ("RB", "WR", "TE", "QB")) if "error" not in r), ideas)
         if "error" in ideas:
             fails.append(f"team {n}: find_trade_targets error: {_redact(str(ideas['error']), shared, teams)}")
         else:
