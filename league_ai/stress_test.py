@@ -437,6 +437,22 @@ def contracts(client: Any) -> int:
     return 0
 
 
+def league_link(client: Any) -> int:
+    """Free check: which Sleeper league each app season points at, and what Sleeper says about it (ids only)."""
+    import requests
+
+    for l in client.table("leagues").select("id, sleeper_league_id").execute().data or []:
+        sl = requests.get(f"https://api.sleeper.app/v1/league/{l['sleeper_league_id']}", timeout=15).json() if l.get("sleeper_league_id") else {}
+        print(f"league {l['id']} sleeper {l.get('sleeper_league_id')} sleeper_season {sl.get('season')} status {sl.get('status')}")
+        for s in client.table("league_seasons").select("season, sleeper_league_id, is_active, status").eq("league_id", l["id"]).order("season").execute().data or []:
+            print(f"  season {s['season']} sleeper {s.get('sleeper_league_id')} active {s.get('is_active')} status {s.get('status')}")
+    for lid in ("1361083066197491712", "1257435354890260480"):
+        sl = requests.get(f"https://api.sleeper.app/v1/league/{lid}", timeout=15).json() or {}
+        tx = sum(len(requests.get(f"https://api.sleeper.app/v1/league/{lid}/transactions/{w}", timeout=15).json() or []) for w in range(1, 10))
+        print(f"sleeper {lid} season {sl.get('season')} status {sl.get('status')} previous {sl.get('previous_league_id')} tx_weeks1-9 {tx}")
+    return 0
+
+
 def main() -> int:
     from supabase import create_client
 
@@ -444,6 +460,8 @@ def main() -> int:
     mode = sys.argv[1] if len(sys.argv) > 1 else "ask"
     if mode == "rosters":
         return rosters(client)
+    if mode == "league_link":
+        return league_link(client)
     if mode == "contracts":
         return contracts(client)
     if mode == "grade":
