@@ -333,6 +333,7 @@ def rosters(client: Any) -> int:
     roster = state_roster(state)
     teams = client.table("league_teams").select("id, owner_name, sleeper_roster_id").eq("league_id", league["id"]).execute().data or []
     sleeper = {r["roster_id"]: r for r in requests.get(f"https://api.sleeper.app/v1/league/{league['sleeper_league_id']}/rosters", timeout=15).json()}
+    missing: set = set()
     print(f"state season {state.get('season')} roster rows {len(roster)} keys {sorted(state.keys())}")
     for t in teams:
         mine = [r for r in roster if str(r.get("league_team_id")) == str(t["id"])]
@@ -340,6 +341,24 @@ def rosters(client: Any) -> int:
         sr = sleeper.get(t.get("sleeper_roster_id")) or {}
         sl = {str(p) for k in ("players", "taxi", "reserve") for p in (sr.get(k) or [])}
         print(f"{t['owner_name']:<16} app {len(mine):>2}  sleeper {len(sl):>2}  on Sleeper but not in app {len(sl - ids):>2}  in app not on Sleeper {len(ids - sl):>2}")
+        missing |= {(p, t["id"]) for p in sl - ids}
+    # why they're missing: any contract rows at all, and in what state
+    from collections import Counter
+    why: Counter = Counter()
+    sample = []
+    for pid, team_id in sorted(missing):
+        rows = client.table("contract_agreements").select("id, status, league_team_id, superseded_by_contract_id").eq("league_id", league["id"]).eq("sleeper_player_id", pid).execute().data or []
+        seasons = []
+        for r in rows:
+            seasons += [f"{c['season']}:{c.get('obligation_status')}" for c in client.table("contract_seasons").select("season, obligation_status").eq("contract_id", r["id"]).execute().data or []]
+        key = "no contract row" if not rows else ",".join(sorted({f"{r['status']}{'(superseded)' if r.get('superseded_by_contract_id') else ''}{'' if str(r['league_team_id']) == str(team_id) else '(other team)'}" for r in rows})) + " | seasons " + ",".join(sorted(set(seasons)))
+        why[key] += 1
+        if len(sample) < 25:
+            p = (client.table("nfl_players").select("full_name, position").eq("sleeper_id", pid).limit(1).execute().data or [{}])[0]
+            sample.append(f"{p.get('full_name') or pid} ({p.get('position')}): {key}")
+    for k, v in why.most_common():
+        print(f"{v:>3}  {k}")
+    print("\n".join(sample))
     return 0
 
 
