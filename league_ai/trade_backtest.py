@@ -37,6 +37,10 @@ def asset_value(a: Mapping[str, Any], w: float, variant: str = "current") -> flo
     market = float(a.get("market") or 0) * (float(a.get("inj") or 1.0) if variant in ("injury", "both") else 1.0)
     base = w * float(a.get("now") or 0) + (1 - w) * market
     cap, fair = float(a.get("cap") or 0), float(a.get("fair") or 0)
+    if variant.startswith("cap:"):
+        # each dollar of salary taken on (this year and up to two more) costs k on the value scale
+        k = float(variant[4:])
+        return max(base - k * cap * min(int(a.get("years") or 1), 3), 0.05 * base)
     if "contract" in variant and cap > 0 and fair > 0:
         gap = max(-1.0, min(1.0, (fair - cap) / max(fair, cap)))
         base += CONTRACT_WEIGHT * (2 if variant.endswith("x2") else 1) * gap * min(int(a.get("years") or 1), 3) / 3 * base
@@ -143,6 +147,26 @@ def compare_variants(trades: list[Mapping[str, Any]]) -> dict[str, Any]:
     return out
 
 
+CAP_DOLLAR_GRID = (0, 10, 20, 35, 50, 75, 100, 150, 200, 300)
+
+
+def fit_cap_dollar(trades: list[Mapping[str, Any]]) -> dict[str, Any]:
+    """What a dollar of cap room is worth in this league's trades: the value per committed salary dollar that makes
+    completed trades look most even (both sides said yes). Only trades whose players all have a known salary count."""
+    known = [t for t in trades if all(a.get("cap") for sd in t["sides"].values() for a in sd["gets"] if not a.get("pick"))]
+    def gap(k: float) -> float | None:
+        gaps = []
+        for t in known:
+            shares = [side_share(sd, DEFAULT_WEIGHT, f"cap:{k}") for sd in t["sides"].values()]
+            if shares and None not in shares:
+                logs = [math.log(max(0.2, min(x, 5.0))) for x in shares]
+                gaps.append(max(logs) - min(logs))
+        return round(sum(gaps) / len(gaps), 3) if gaps else None
+    curve = {k: gap(k) for k in CAP_DOLLAR_GRID}
+    best = min((k for k in curve if curve[k] is not None), key=lambda k: curve[k], default=None)
+    return {"trades_with_salaries": len(known), "imbalance_by_value_per_dollar": curve, "best": best}
+
+
 def lean_label(w: float | None) -> str | None:
     if w is None:
         return None
@@ -174,7 +198,7 @@ def load_trades(client: Any, league_id: str) -> list[dict[str, Any]]:
     # trades before our own scrapes began are priced from the DynastyProcess file as it stood that week
     old_days = sorted({str(legs[0].get("occurred_at") or "")[:10] for legs in by_tid.values()} - {""})
     history = dp_history([d for d in old_days if not first_scrape or d < first_scrape])
-    contracts = _contracts(client, league_id)
+    contracts = _contracts(client)
     for r in rows:  # where the contract tables don't reach back, the deal on file when the trade was synced
         if r.get("player_id") and r.get("contract_salary") and r.get("season"):
             contracts.setdefault((str(r["player_id"]), int(r["season"])), (float(r["contract_salary"]), int(r.get("contract_years") or 1)))
@@ -291,13 +315,14 @@ def dp_history(days: list[str]) -> dict[str, dict[str, Any]]:
     return out
 
 
-def _contracts(client: Any, league_id: str) -> dict[tuple[str, int], tuple[float, int]]:
-    """(player, season) -> (cap hit that season, seasons left on the deal counting that one)."""
+def _contracts(client: Any, league_id: str | None = None) -> dict[tuple[str, int], tuple[float, int]]:
+    """(player, season) -> (cap hit that season, seasons left on the deal counting that one). Reads every league row
+    unless one is named: each season of this league lives under its own league row (2025 under the old one)."""
     rows, start = [], 0
     while True:
         try:
-            page = (client.table("contract_seasons").select("contract_id, player_id, season, cap_hit").eq("league_id", league_id)
-                    .range(start, start + 999).execute().data or [])
+            q = client.table("contract_seasons").select("contract_id, player_id, season, cap_hit")
+            page = ((q.eq("league_id", league_id) if league_id else q).order("id").range(start, start + 999).execute().data or [])
         except Exception:
             break
         rows += page
@@ -478,6 +503,7 @@ def main() -> None:
         if trades:
             print(f"  hit rate by now weight: {backtest(trades)['hit_rate']}")
             print(f"  valuation changes: {compare_variants(trades)}")
+            print(f"  cap dollar: {fit_cap_dollar(trades)}")
             dated = [t for t in trades if t.get("dated")]
             print(f"  {len(dated)} trades after the first market scrape, {sum(1 for t in trades if t.get('faab'))} include FAAB/cap")
             if dated:
