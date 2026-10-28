@@ -680,6 +680,7 @@ def load_league(client: Any, state: Mapping[str, Any], season: int, roster_posit
         p.no_contract = p.sleeper_id in no_contract  # type: ignore[attr-defined]  # on Sleeper, but the app has no salary for him
         if p.sleeper_id in values:
             p.market_value = values[p.sleeper_id]  # type: ignore[attr-defined]  # superflex dynasty market
+    _attach_injuries(client, players, season)
     teams = list(state.get("teams", []))
     cap = {str(t["league_team_id"]): float(calculate_team_financials(roster, adjustments, salary_cap=salary_cap, league_team_id=str(t["league_team_id"]))["cap_space"])
            for t in teams}
@@ -703,6 +704,26 @@ def load_league(client: Any, state: Mapping[str, Any], season: int, roster_posit
     from league_ai.pick_values import PickBook
     book = PickBook(_pick_rows(client), teams=len(teams), rounds=ROOKIE_ROUNDS, season=season)
     return League(players, teams, roster_positions, records=records, leanings=leanings, pick_book=book), cap, str(asker_team_id)
+
+
+def _attach_injuries(client: Any, players: list[PlayerStrength], season: int) -> None:
+    """Players with a major or moderate injury this season or last get the historical effect of that injury on their
+    dynasty value (league_ai.injuries) and a line explaining it."""
+    from league_ai.injuries import recent_injury
+
+    ids = sorted({p.sleeper_id for p in players if p.sleeper_id})
+    episodes: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for i in range(0, len(ids), 150):
+        try:
+            for r in (client.table("nfl_injury_episodes").select("sleeper_id, last_game_season, injury, games_missed")
+                      .in_("sleeper_id", ids[i:i + 150]).gte("last_game_season", int(season) - 1).execute().data or []):
+                episodes[str(r["sleeper_id"])].append(r)
+        except Exception:
+            return
+    for p in players:
+        found = recent_injury(episodes.get(p.sleeper_id, []), int(season))
+        if found:
+            p.injury_mult, p.injury_note = found  # type: ignore[attr-defined]
 
 
 def _market_values(client: Any, ids: list[str]) -> dict[str, float]:

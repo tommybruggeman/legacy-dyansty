@@ -27,15 +27,19 @@ DEFAULT_WEIGHT = 0.5
 PICK_NOW_SHARE = {0.0: 1.0}  # picks don't score this season: they count (1 - 0.6 * w) of market
 
 
-def asset_value(a: Mapping[str, float], w: float) -> float:
+def asset_value(a: Mapping[str, Any], w: float, variant: str = "current") -> float:
+    """variant: "current" = the engine as it was; "picks" = picks priced by PickBook (market blended with what slots
+    really became); "injury" = dynasty value tilted for a recent injury; "both"."""
     if a.get("pick"):
-        return float(a.get("market") or 0) * (1 - 0.6 * w)
-    return w * float(a.get("now") or 0) + (1 - w) * float(a.get("market") or 0)
+        market = float((a.get("book") if variant in ("picks", "both") and a.get("book") else a.get("market")) or 0)
+        return market * (1 - 0.6 * w)
+    market = float(a.get("market") or 0) * (float(a.get("inj") or 1.0) if variant in ("injury", "both") else 1.0)
+    return w * float(a.get("now") or 0) + (1 - w) * market
 
 
-def side_share(side: Mapping[str, list[Mapping[str, float]]], w: float) -> float | None:
-    gives = sum(asset_value(a, w) for a in side.get("gives") or [])
-    gets = sum(asset_value(a, w) for a in side.get("gets") or [])
+def side_share(side: Mapping[str, list[Mapping[str, Any]]], w: float, variant: str = "current") -> float | None:
+    gives = sum(asset_value(a, w, variant) for a in side.get("gives") or [])
+    gets = sum(asset_value(a, w, variant) for a in side.get("gets") or [])
     if gives <= 0:
         return None if gets <= 0 else 9.99
     return gets / gives
@@ -83,6 +87,30 @@ def backtest(trades: list[Mapping[str, Any]]) -> dict[str, Any]:
     }
 
 
+VARIANTS = ("current", "picks", "injury", "both")
+
+
+def compare_variants(trades: list[Mapping[str, Any]]) -> dict[str, Any]:
+    """Each valuation change against the current engine on every completed trade: hit rate (both sides at or above
+    OPEN_SHARE, default now weight) and how far the two sides' shares sit apart (a fair trade has them near equal;
+    lower is better)."""
+    out: dict[str, Any] = {}
+    for v in VARIANTS:
+        hits, gaps = [], []
+        for t in trades:
+            shares = [side_share(sd, DEFAULT_WEIGHT, v) for sd in t["sides"].values()]
+            if not shares or any(x is None for x in shares):
+                continue
+            hits.append(all(x >= OPEN_SHARE for x in shares))
+            logs = [math.log(max(0.2, min(x, 5.0))) for x in shares]
+            gaps.append(max(logs) - min(logs))
+        out[v] = {"graded": len(hits), "hit_rate": round(sum(hits) / len(hits), 3) if hits else None,
+                  "imbalance": round(sum(gaps) / len(gaps), 3) if gaps else None}
+    out["trades_with_picks"] = sum(1 for t in trades if any(a.get("pick") for sd in t["sides"].values() for a in sd["gets"]))
+    out["trades_with_injured"] = sum(1 for t in trades if any((a.get("inj") or 1.0) < 1.0 for sd in t["sides"].values() for a in sd["gets"]))
+    return out
+
+
 def lean_label(w: float | None) -> str | None:
     if w is None:
         return None
@@ -106,6 +134,10 @@ def load_trades(client: Any, league_id: str) -> list[dict[str, Any]]:
     production = {s: _season_weeks(client, s) for s in seasons}
     curves = _now_curves(client)
     picks = _pick_values(client)
+    episodes = _injury_episodes(client, pids)
+    from league_ai.pick_values import PickBook
+    books: dict[int, PickBook] = {}
+    pick_rows = _pick_rows_raw(client)
     trades = []
     for tid, legs in by_tid.items():
         first = legs[0]
@@ -119,14 +151,17 @@ def load_trades(client: Any, league_id: str) -> list[dict[str, Any]]:
             if r.get("position") == "PICK":
                 label = str(r.get("player_name") or "")
                 frm = next((p.get("from") for p in details.get("picks") or [] if label.startswith(str(p.get("pick"))) and p.get("to") == to), None)
-                asset = {"pick": 1.0, "market": _pick_value(picks, label, season), "name": label}
+                if season not in books:
+                    books[season] = PickBook(pick_rows, teams=10, rounds=3, season=season)
+                book = books[season]
+                asset = {"pick": 1.0, "market": _pick_value(picks, label, season), "book": book.value(label)[0], "name": label}
             else:
                 pid = str(r.get("player_id") or "")
                 frm = movers.get((r.get("player_name"), to))
                 pos = positions.get(pid) or r.get("position")
                 ppg = _ppg(production.get(season, {}), pid, week) or _ppg(production.get(season - 1, {}), pid, 99)
                 asset = {"market": _value_at(market.get(pid, []), when), "now": _now_value(curves, pos, ppg, production.get(season, {}), positions, week),
-                         "name": r.get("player_name")}
+                         "name": r.get("player_name"), "inj": _injury_mult(episodes.get(pid, []), season, week)}
             if to in sides:
                 sides[to]["gets"].append(asset)
             if frm in sides:
@@ -134,6 +169,33 @@ def load_trades(client: Any, league_id: str) -> list[dict[str, Any]]:
         if len(sides) >= 2 and all(s["gets"] and s["gives"] for s in sides.values()):
             trades.append({"tid": tid, "season": season, "week": week, "date": when, "sides": sides})
     return sorted(trades, key=lambda t: t["date"])
+
+
+def _injury_episodes(client: Any, pids: list[str]) -> dict[str, list[dict[str, Any]]]:
+    out: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for i in range(0, len(pids), 150):
+        try:
+            for r in (client.table("nfl_injury_episodes").select("sleeper_id, last_game_season, last_game_week, injury, games_missed")
+                      .in_("sleeper_id", pids[i:i + 150]).execute().data or []):
+                out[str(r["sleeper_id"])].append(r)
+        except Exception:
+            pass
+    return out
+
+
+def _injury_mult(episodes: list[dict[str, Any]], season: int, week: int) -> float:
+    """The injury tilt as it would have stood at the trade: only absences that had started before it."""
+    from league_ai.injuries import recent_injury
+
+    before = [e for e in episodes if (int(e.get("last_game_season") or 0), int(e.get("last_game_week") or 0)) < (season, week or 99)]
+    found = recent_injury(before, season)
+    return found[0] if found else 1.0
+
+
+def _pick_rows_raw(client: Any) -> list[dict[str, Any]]:
+    from league_ai.trade_finder import _pick_rows
+
+    return _pick_rows(client)
 
 
 def _market_history(client: Any, pids: list[str]) -> dict[str, list[tuple[str, float]]]:
@@ -253,3 +315,22 @@ def load_styles(client: Any, league_id: str) -> dict[str, str]:
     except Exception:
         return {}
     return {str(r["owner_name"]): str(r["lean"]) for r in rows if r.get("lean")}
+
+
+def main() -> None:
+    """Compare valuation changes on every league's completed trades. Prints counts and rates only (the repo is public)."""
+    import os
+
+    from supabase import create_client
+
+    client = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_ROLE_KEY"])
+    for n, lg in enumerate(client.table("leagues").select("id").execute().data or [], start=1):
+        trades = load_trades(client, lg["id"])
+        print(f"league {n}: {len(trades)} completed trades")
+        if trades:
+            print(f"  hit rate by now weight: {backtest(trades)['hit_rate']}")
+            print(f"  valuation changes: {compare_variants(trades)}")
+
+
+if __name__ == "__main__":
+    main()

@@ -159,3 +159,16 @@ class RealTradeTests(unittest.TestCase):
         self.assertEqual(set(league.windows.values()) <= {"contending", "middle", "rebuilding"}, True)
         league.set_windows({"Grady": "rebuilding"})
         self.assertEqual(league.window("grady"), "rebuilding")
+
+
+class InjuryTiltTest(unittest.TestCase):
+    def test_recent_major_injury_lowers_future_value_and_is_explained(self):
+        from league_ai.injuries import recent_injury
+        from league_ai.trade_value import Valuer
+
+        healthy, hurt = _p("A", "h", "RB", 15.0), _p("A", "x", "RB", 15.0)
+        healthy.market_value = hurt.market_value = 5000.0
+        hurt.injury_mult, hurt.injury_note = recent_injury([{"last_game_season": 2026, "injury": "Knee", "games_missed": 9}], 2026)
+        v = Valuer([healthy, hurt], {"A": "rebuilding"})
+        self.assertLess(v.base(hurt, "rebuilding"), v.base(healthy, "rebuilding"))
+        self.assertIn("major knee", v.explain("A", hurt))
