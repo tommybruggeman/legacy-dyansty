@@ -14,6 +14,7 @@ from statistics import median
 from typing import Any, Callable, Iterable, Mapping
 
 from league_ai.power import PlayerStrength, compute_power, fill_lineup
+from league_ai.playoff_odds import pickup_odds
 from league_ai.tools import ToolSpec
 from league_ai.trade_value import WINDOWS, Valuer, market_value, nearest_pick, team_windows
 
@@ -43,11 +44,19 @@ class League:
         self.records = dict(records or {})
         self.pick_values = list(pick_values or [])
         self.leanings = dict(leanings or {})
+        self.playoff_odds: dict[str, float] = {}
         self.set_windows(windows)
 
     def set_windows(self, overrides: Mapping[str, str] | None) -> None:
-        self.windows = team_windows(self.players, self.teams.values(), self.now_rank, self.dynasty_rank, overrides, self.records, self.leanings)
+        self._overrides = dict(overrides or {})
+        self.windows = team_windows(self.players, self.teams.values(), self.now_rank, self.dynasty_rank, overrides, self.records, self.leanings,
+                                    playoff_odds=self.playoff_odds)
         self.valuer = Valuer(self.players, self.windows)
+
+    def set_playoff_odds(self, odds: Mapping[str, float]) -> None:
+        """Owner name -> playoff chance (0-1); windows are worked out again from them."""
+        self.playoff_odds = dict(odds)
+        self.set_windows(self._overrides)
 
     def window(self, team_id: str) -> str:
         return self.windows.get(str(team_id), "middle")
@@ -342,10 +351,11 @@ def _why(league: League, team_id: str, window: str, sends: list[PlayerStrength],
 
 def trade_finder_tools(load: Callable[[], tuple[League, Mapping[str, float], str]], history: Any | None = None,
                        outcomes: Callable[..., list[Mapping[str, Any]]] | None = None, current_season: int | None = None,
-                       odds: Callable[[], Any] | None = None) -> list[ToolSpec]:
+                       odds: Callable[[], Any] | None = None, free_agent: Callable[[str], PlayerStrength | None] | None = None) -> list[ToolSpec]:
     """load() -> (League, cap space by team id, asker team id); called once per answer that needs it.
     history: LeagueHistory for completed trades; outcomes(partner=None) -> this owner's recorded trade outcomes.
-    odds() -> a playoff_odds.OddsModel (or None), so a judged trade comes with both teams' playoff odds before and after."""
+    odds() -> a playoff_odds.OddsModel (or None), so a judged trade comes with both teams' playoff odds before and after.
+    free_agent(name) -> that player valued like a rostered one (None if not found), for pickup questions."""
     cache: dict[str, Any] = {}
 
     def profiles() -> dict[str, dict[str, Any]]:
@@ -365,6 +375,9 @@ def trade_finder_tools(load: Callable[[], tuple[League, Mapping[str, float], str
         if "league" not in cache:
             cache["league"], cache["cap"], cache["asker"] = load()
             cache["windows"] = {}
+            model = odds() if odds is not None else None
+            if model is not None and model.remaining():
+                cache["league"].set_playoff_odds(model.odds())
         if windows:
             cache["windows"].update({str(k): str(v).lower() for k, v in windows.items()})
             cache["league"].set_windows(cache["windows"])
@@ -400,6 +413,28 @@ def trade_finder_tools(load: Callable[[], tuple[League, Mapping[str, float], str
             out["playoff_odds"] = trade_playoff_odds(lg, cache["asker"], str(out["partner"]), you_get or [], you_send or [], odds)
         return out
 
+    def pickup(player: str, drop: str | None = None, bid: float | None = None) -> dict[str, Any]:
+        model = odds() if odds is not None else None
+        fa = free_agent(player) if free_agent is not None else None
+        if model is None or fa is None:
+            return {"error": "couldn't value that pickup (player not found, or no playoff odds yet)"}
+        lg = league(None)
+        asker = cache["asker"]
+        if lg.find_player(fa.name) is not None and lg.find_player(fa.name).team_id != asker:
+            return {"error": f"{fa.name} is on another roster; use evaluate_trade"}
+        sends = [p for p in [lg.find_player(drop, asker)] if p] if drop else []
+        gain = lg.gain(asker, sends, [fa], "now")
+        me = model.name(str(lg.teams[asker].get("owner_name") or ""))
+        out = {"player": f"{fa.position} {fa.name}", "expected_weekly_points": fa.now, "drop": sends[0].name if sends else None,
+               "playoff_odds": pickup_odds(model, me, gain)}
+        change = out["playoff_odds"]["after"] - out["playoff_odds"]["before"]
+        if bid:
+            out["odds_per_dollar"] = round(change / float(bid), 2)
+        out["how_to_use"] = ("A pickup only changes the odds if he'd start for this owner. Size a cap bid by the odds gained "
+                             "(a point or two of playoff odds is a small bid; several points late in a close race is worth paying for). "
+                             "He also costs cap space on future years if signed long, so mention the contract.")
+        return out
+
     def playoffs() -> dict[str, Any]:
         model = odds() if odds is not None else None
         if model is None:
@@ -420,7 +455,7 @@ def trade_finder_tools(load: Callable[[], tuple[League, Mapping[str, float], str
 
     windows_schema = {"type": "object", "additionalProperties": {"type": "string", "enum": list(WINDOWS)},
                       "description": "owner name -> contending / middle / rebuilding, for any team whose plans you know from the owner or league notes; "
-                                     "otherwise each window is worked out from standings, lineup and roster age"}
+                                     "otherwise each window is worked out from playoff odds (or standings and lineup), roster age and trading habits"}
     return [ToolSpec(
         "find_trade_targets",
         "Shortlist trades for this owner that the other owner has a reason to take: each team valued its own way (contenders weigh this season, rebuilders the "
@@ -463,7 +498,18 @@ def trade_finder_tools(load: Callable[[], tuple[League, Mapping[str, float], str
         "playoffs', 'am I a contender' or buy/sell questions. evaluate_trade already includes the odds before and after for both teams.",
         {"type": "object", "properties": {}},
         playoffs,
-    )] if odds is not None else [])
+    )] if odds is not None else []) + ([ToolSpec(
+        "get_pickup_odds",
+        "What a free-agent pickup does to this owner's playoff odds: the player's expected weekly points, the change to the starting lineup "
+        "(after dropping someone, if named) and the playoff odds before and after. With bid (cap dollars), also odds gained per dollar. "
+        "Use for waiver, free agent and bid questions.",
+        {"type": "object", "properties": {
+            "player": {"type": "string", "description": "the free agent"},
+            "drop": {"type": "string", "description": "the player this owner would cut, if any"},
+            "bid": {"type": "number", "description": "the cap dollars they'd bid"},
+        }, "required": ["player"]},
+        pickup,
+    )] if odds is not None and free_agent is not None else [])
 
 
 SIMS_NOTE = "5,000 simulated rest-of-seasons"

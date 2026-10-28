@@ -103,7 +103,17 @@ def test_activity_and_contracts_only_for_this_team():
     view = teams.contracts_view(players, STATE, T1)
     assert view["biggest"][0]["name"] == "Josh Allen" and view["biggest"][0]["through"] == 2028
     assert {p["name"] for p in view["expiring"]} == {"Davante Adams", "Tank Dell"}
-    assert view["dead_cap"] == [{"player": "Zack Moss", "amount": 3.0}]
+    assert view["dead_cap"] == [{"player": "Zack Moss", "amount": 3.0, "years_left": 1, "through": 2026, "more": False}]
+
+
+def test_dead_cap_counts_the_seasons_still_charged():
+    moss = STATE["dead_cap"][0]
+    later = [{"season": 2027, "dead_cap": [{**moss, "season": 2027}], "cap_adjustments": []},
+             {"season": 2028, "dead_cap": [], "cap_adjustments": []}]
+    view = teams.contracts_view([], STATE, T1, later)
+    assert view["dead_cap"][0] | {} == {"player": "Zack Moss", "amount": 3.0, "years_left": 2, "through": 2027, "more": False}
+    later[1]["dead_cap"] = [{**moss, "season": 2028}]
+    assert teams.contracts_view([], STATE, T1, later)["dead_cap"][0]["more"] is True
 
 
 def test_head_to_head_and_box_score():

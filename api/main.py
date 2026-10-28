@@ -226,6 +226,7 @@ def _team_page(client: Client, ctx: dict[str, Any], team_id: str) -> dict[str, A
         info=teams.player_info(client, ids),
         ppg=teams.player_ppg(ctx["sleeper_id"], weeks),
         h2h=teams.head_to_head(ctx["sleeper_id"], weeks, ctx["sleeper_roster_id"], summary["roster_id"]),
+        later=states[1:],
     )
     return {"season": ctx["season"], "salary_cap": cap, "sleeper_league_id": ctx["sleeper_id"], **detail}
 

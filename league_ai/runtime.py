@@ -54,6 +54,8 @@ TOOL_STATUS = {
     "get_return_outlook": "Comparing his return with past players who had the same injury",
     "get_position_room": "Checking how his team splits the work",
     "get_playoff_odds": "Simulating the rest of the season",
+    "get_pickup_odds": "Simulating the season with him on your roster",
+    "get_matchup_odds": "Working out your odds to win this week",
 }
 
 
@@ -169,6 +171,11 @@ def power_rows(client: Any, league_id: str, season: int, *, state: Mapping[str, 
     def bye_label(p: Any) -> str:
         return f"{p.position} {p.name} ({p.nfl_team})"
 
+    def player_row(p: Any, slot: str | None = None) -> dict:
+        # pts: this week's matchup-adjusted expectation; sd: how much he swings week to week (None = too few games)
+        return {"id": p.sleeper_id, "name": p.name, "pos": p.position, "slot": slot, "matchup": p.matchup, "injury": p.injury,
+                "pts": round(p.score("week_now"), 2), "sd": p.spread}
+
     def week_label(p: Any) -> str:
         return f"{p.position} {p.name} ({p.score('week_now'):.1f}" + (f", {p.matchup})" if p.matchup else ")")
 
@@ -178,8 +185,8 @@ def power_rows(client: Any, league_id: str, season: int, *, state: Mapping[str, 
              "week_starters": [week_label(p) for p in tp.week_starters], "week_bench": [week_label(p) for p in tp.week_bench],
              "team_notes": ctx.team_lines([p.nfl_team for p in tp.week_starters + tp.week_bench], games) if ctx else [],
              "on_bye": [bye_label(p) for p in tp.on_bye], "on_bye_names": [p.name for p in tp.on_bye], "bye_next": [bye_label(p) for p in tp.bye_next],
-             "week_lineup": [{"id": p.sleeper_id, "name": p.name, "pos": p.position, "slot": slot, "matchup": p.matchup, "injury": p.injury}
-                             for slot, p in zip(tp.week_slots, tp.week_starters)],
+             "week_lineup": [player_row(p, slot) for slot, p in zip(tp.week_slots, tp.week_starters)],
+             "week_bench_detail": [player_row(p) for p in tp.week_bench],
              "on_bye_ids": [p.sleeper_id for p in tp.on_bye]} for tp in rankings]
 
 
@@ -234,9 +241,10 @@ def front_office_data(client: Any, owner: Owner, league: Mapping[str, Any], load
 
 def chat_tools(client: Any, owner: Owner, *, state: Mapping[str, Any], rules: Mapping[str, Any], league: Mapping[str, Any], week: int,
                positions: Callable[[], list[str]], playoff_week: Callable[[], int | None],
-               question: Callable[[], str], conversation_id: Callable[[], str | None], odds: Callable[[], Any] | None = None) -> ToolRegistry:
+               question: Callable[[], str], conversation_id: Callable[[], str | None], odds: Callable[[], Any] | None = None,
+               extra: list[Any] | None = None) -> ToolRegistry:
     """Every tool the Assistant GM can call for this owner."""
-    from league_ai.front_office import build_player_strengths
+    from league_ai.front_office import build_player_strengths, free_agent_strength
     from league_ai.tools.history import LeagueHistory
     from league_ai.trade_finder import load_league, trade_finder_tools
 
@@ -251,9 +259,10 @@ def chat_tools(client: Any, owner: Owner, *, state: Mapping[str, Any], rules: Ma
                             league_id=owner.league_id, playoff_start=playoff_week() or 15),
         LeagueHistory(client, owner.league_id),
         outcomes=ledger.trade_outcomes, current_season=owner.season, odds=odds,
+        free_agent=lambda name: next((free_agent_strength(client, r, owner.season, owner.league_team_id) for r in nfl.find_players(name, limit=1)), None),
     )
     return build_registry(client, league_state=state, salary_cap=rules.get("salary_cap", 225), dead_cap_pct=float(rules.get("default_dead_cap_pct", 50) or 50),
-                          extra=[*history_tools(client, owner.league_id), *owner.memory(client).tools(), *ledger.tools(), *finder])
+                          extra=[*history_tools(client, owner.league_id), *owner.memory(client).tools(), *ledger.tools(), *finder, *(extra or [])])
 
 
 @dataclass

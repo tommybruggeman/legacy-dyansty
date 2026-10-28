@@ -252,7 +252,7 @@ export type TeamPage = {
   record: { wins: number; losses: number; ties: number; rank: number | null; standing_points: number; pf_per_game: number | null };
   cap: { space: number; by_year: CapYear[] };
   roster: { starters: Player[]; bench: Player[]; taxi: Player[]; ir: Player[]; count: number };
-  contracts: { biggest: Player[]; expiring: Player[]; dead_cap: { player: string; amount: number }[] };
+  contracts: { biggest: Player[]; expiring: Player[]; dead_cap: { player: string; amount: number; years_left?: number; through?: number; more?: boolean }[] };
   picks: { owned: Pick[]; traded_away: Pick[] };
   activity: { kind: 'SIGN' | 'CUT'; player: string; at: string | null }[];
   head_to_head: { wins: number; losses: number; ties: number; last: { week: number; me: number; them: number } } | null;
@@ -405,6 +405,7 @@ export type FrontOffice = {
   tiles: FoTile[];
   header?: FoHeader;
   moves?: FoMove[];
+  win?: { pct: number; opponent: string } | null;
   brief: {
     injuries: { items: { player: string; status: string }[]; call?: string };
     matchup: { headline: string; lines: string[]; stakes?: string };

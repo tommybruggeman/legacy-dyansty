@@ -5,6 +5,7 @@ import json
 import re
 from collections import defaultdict
 from datetime import date, datetime, timezone
+from statistics import pstdev
 from typing import Any, Callable, Iterable, Mapping
 
 import requests
@@ -110,6 +111,22 @@ def team_record(standings: list[dict[str, Any]], owner: str) -> dict[str, Any] |
 
 # ---- player strengths from nfl_* tables ------------------------------------------
 
+def free_agent_strength(client: Any, nfl_row: Mapping[str, Any], season: int, team_id: str) -> PlayerStrength:
+    """A player outside the league's rosters, valued like a rostered one (production this season, injury, team), for pickup questions."""
+    sid = str(nfl_row.get("sleeper_id") or "")
+    try:
+        rows = client.table("nfl_player_stats").select("week, fantasy_points_ppr").eq("season", season).eq("season_type", "REG").eq("sleeper_id", sid).execute().data or []
+    except Exception:
+        rows = []
+    pts = [_num(r.get("fantasy_points_ppr")) for r in sorted(rows, key=lambda r: int(r.get("week") or 0))]
+    recent = pts[-4:]
+    p = player_strength({"sleeper_player_id": sid, "player_name": nfl_row.get("full_name") or "", "position": nfl_row.get("position") or "", "league_team_id": team_id},
+                        recent_ppg=round(sum(recent) / len(recent), 2) if recent else None, season_ppg=round(sum(pts) / len(pts), 2) if pts else None,
+                        pos_rank=None, age=nfl_row.get("age"), injury_status=nfl_row.get("injury_status"), nfl_team=team_code(nfl_row["team"]) if nfl_row.get("team") else None)
+    p.spread = round(pstdev(pts), 2) if len(pts) >= 3 else None
+    return p
+
+
 def build_player_strengths(client: Any, state: Mapping[str, Any], season: int) -> list[PlayerStrength]:
     roster = state_roster(state)
     ids = sorted({str(r.get("sleeper_player_id") or r.get("player_id") or "") for r in roster} - {""})
@@ -165,6 +182,7 @@ def build_player_strengths(client: Any, state: Mapping[str, Any], season: int) -
         recent_ppg = round(sum(recent) / len(recent), 2) if recent else None
         out.append(player_strength(row, recent_ppg=recent_ppg, season_ppg=season_ppg, pos_rank=market.get(sid), age=ages.get(sid), injury_status=injuries.get(sid), nfl_team=nfl_teams.get(sid)))
         out[-1].gsis_id = gsis.get(sid)
+        out[-1].spread = round(pstdev(pts), 2) if len(pts) >= 3 else None
     return out
 
 
@@ -573,7 +591,7 @@ def lineup_moves(best: list[Mapping[str, Any]], current: list[str] | None, *, on
     starting = {str(pid) for pid in current if pid and str(pid) != "0"}
     best_ids = {str(p["id"]) for p in best}
     starts = [{"action": "start", "player": str(p["name"]), "slot": "FLEX" if "FLEX" in str(p.get("slot") or "") else str(p.get("pos") or ""),
-               "note": short_matchup(p.get("matchup"))} for p in best if str(p["id"]) not in starting]
+               "note": p.get("note") or short_matchup(p.get("matchup"))} for p in best if str(p["id"]) not in starting]
     sits = []
     for pid in current:
         pid = str(pid)

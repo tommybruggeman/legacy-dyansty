@@ -254,16 +254,37 @@ def roster_rows(
     return {"starters": starters, "bench": bench, "taxi": taxi, "ir": ir, "count": sum(1 for p in contracts.values() if not p.get("no_contract"))}
 
 
-def contracts_view(players: list[dict[str, Any]], state: dict[str, Any], team_id: str) -> dict[str, Any]:
-    players = [p for p in players if not p.get("no_contract")]
-    biggest = sorted(players, key=lambda p: -p["contract_salary"])[:8]
-    season = int(state["season"])
-    dead = [
-        {"player": _text(r.get("player_name")) or "Player", "amount": _f(r.get("amount"))}
-        for r in state_cap_adjustments(state)
+def _dead_rows(state: dict[str, Any], team_id: str) -> list[dict[str, Any]]:
+    return [
+        r for r in state_cap_adjustments({"dead_cap": state.get("dead_cap", []), "cap_adjustments": state.get("cap_adjustments", [])})
         if _text(r.get("league_team_id")) == team_id
         and r.get("adjustment_type") in {"dropped_player_charge", "trade_retained_salary"}
     ]
+
+
+def _dead_key(r: dict[str, Any]) -> tuple[str, str]:
+    who = _text(r.get("player_id") or r.get("sleeper_player_id")) or _text(r.get("player_name")).casefold()
+    return who, _text(r.get("adjustment_type"))
+
+
+def contracts_view(players: list[dict[str, Any]], state: dict[str, Any], team_id: str, later: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """`later` is the team state for the seasons after this one, used to count how long each dead cap charge runs."""
+    players = [p for p in players if not p.get("no_contract")]
+    biggest = sorted(players, key=lambda p: -p["contract_salary"])[:8]
+    season = int(state["season"])
+    charged = [{_dead_key(r) for r in _dead_rows(s, team_id)} for s in later or []]
+    dead = []
+    for r in _dead_rows(state, team_id):
+        years = 1
+        for keys in charged:  # consecutive seasons still charged
+            if _dead_key(r) not in keys:
+                break
+            years += 1
+        dead.append({
+            "player": _text(r.get("player_name")) or "Player", "amount": _f(r.get("amount")),
+            "years_left": years, "through": season + years - 1,
+            "more": bool(later) and years == len(later) + 1,  # still charged in the last season loaded
+        })
     return {
         "biggest": [{**p, "through": season + max(p["years_left"], 1) - 1} for p in biggest],
         "expiring": [p for p in players if p["years_left"] <= 1],
@@ -337,6 +358,7 @@ def team_detail(
     info: dict[str, dict[str, Any]],
     ppg: dict[str, float],
     h2h: dict[str, Any] | None,
+    later: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     roster = roster_rows(state, team["team_id"], _sleeper_roster(sleeper_id, team["roster_id"]), slots, info, ppg)
     everyone = roster["starters"] + roster["bench"] + roster["taxi"] + roster["ir"]
@@ -351,7 +373,7 @@ def team_detail(
         },
         "cap": {"space": summary["cap_space"], "by_year": summary["cap_by_year"]},
         "roster": roster,
-        "contracts": contracts_view(everyone, state, team["team_id"]),
+        "contracts": contracts_view(everyone, state, team["team_id"], later),
         "picks": picks_view(state, team["team_id"]),
         "activity": activity_view(state, team["team_id"]),
         "head_to_head": h2h,

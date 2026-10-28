@@ -95,9 +95,13 @@ class Valuer:
 
 def team_windows(players: Iterable[PlayerStrength], teams: Iterable[Mapping[str, Any]], now_rank: Mapping[str, int], dynasty_rank: Mapping[str, int],
                  overrides: Mapping[str, str] | None = None, records: Mapping[str, tuple[int, int]] | None = None,
-                 leanings: Mapping[str, str] | None = None) -> dict[str, str]:
+                 leanings: Mapping[str, str] | None = None, playoff_odds: Mapping[str, float] | None = None) -> dict[str, str]:
     """Each team's window from its lineup ranks, record, roster age and trading history (leanings). overrides (team id or owner name -> window)
-    come from what owners have said ('Grady is rebuilding') and always win."""
+    come from what owners have said ('Grady is rebuilding') and always win.
+
+    playoff_odds (owner name -> 0-1, from the season simulation) replace the lineup-rank and record terms when present: they already
+    combine both, plus the schedule left, and backtest better than either."""
+    odds = {str(k).casefold(): float(v) for k, v in (playoff_odds or {}).items()}
     teams = list(teams)
     n = len(teams) or 1
     third = max(2, round(n / 3))
@@ -119,12 +123,16 @@ def team_windows(players: Iterable[PlayerStrength], teams: Iterable[Mapping[str,
             continue
         nr, dr = now_rank.get(tid, n), dynasty_rank.get(tid, n)
         score = 0.0  # + leans contending, - leans rebuilding
-        score += 0.75 if nr <= third else -0.75 if nr > n - third else 0.0
+        p = odds.get(str(t.get("owner_name") or "").casefold())
+        if p is not None:
+            score += 1.5 if p >= 0.6 else 0.75 if p >= 0.45 else -1.5 if p <= 0.15 else -0.75 if p <= 0.3 else 0.0
+        else:
+            score += 0.75 if nr <= third else -0.75 if nr > n - third else 0.0
+            w, l = (records or {}).get(tid, (0, 0))
+            if w + l >= 4:
+                pct = w / (w + l)
+                score += 0.75 if pct >= 0.6 else -0.75 if pct <= 0.35 else 0.0
         score += 0.5 if dr - nr >= 3 else -0.5 if nr - dr >= 3 else 0.0
-        w, l = (records or {}).get(tid, (0, 0))
-        if w + l >= 4:
-            pct = w / (w + l)
-            score += 0.75 if pct >= 0.6 else -0.75 if pct <= 0.35 else 0.0
         ages = sorted((p.age for p in by_team.get(tid, []) if p.age is not None and p.position in POSITIONS), reverse=True)[:12]
         if ages:
             avg = sum(ages) / len(ages)

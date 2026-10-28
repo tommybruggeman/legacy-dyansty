@@ -151,13 +151,18 @@ function ContractsTab({ team }: { team: TeamPage }) {
           {dead_cap.map((d, i) => (
             <Row key={`${d.player}-${i}`} first={i === 0}>
               <Text style={[ui.value, ui.flex]}>{d.player}</Text>
-              <Text style={ui.value}>{money(d.amount)}</Text>
+              <Text style={ui.value}>{d.years_left ? `${deadYears(d)} · ` : ''}{money(d.amount)}</Text>
             </Row>
           ))}
         </Card>
       ) : null}
     </>
   );
+}
+
+function deadYears(d: { years_left?: number; more?: boolean }) {
+  const n = d.years_left ?? 1;
+  return `${n}${d.more ? '+' : ''} ${n === 1 && !d.more ? 'yr' : 'yrs'}`;
 }
 
 const ROUND = ['', '1st', '2nd', '3rd', '4th', '5th'];

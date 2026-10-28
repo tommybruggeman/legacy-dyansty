@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 
 from league_ai import runtime
 from league_ai.config import load_config
-from league_ai import odds_trial, playoff_odds
+from league_ai import matchup_odds, odds_trial, playoff_odds
 from league_ai.front_office import lineup_moves, load_brief, merge_brief, rotating_prompts, week_context
 from league_ai.learning import Ledger
 from league_ai.service import load_league_rules
@@ -128,21 +128,62 @@ class Session:
         return _cached(("odds_model", o.league_id, o.season, week), 1800, build)
 
     def odds_summary(self, fo: dict[str, Any] | None = None) -> dict[str, Any] | None:
+        """Playoff odds for every team; also saves this week's odds (playoff and matchup) so they can be graded later."""
         o = self.owner
         fo = fo or self.front_office()
         try:
             model = self.odds_model(fo)
-            return _cached(("odds", o.league_id, o.season, fo.get("week")), 1800, model.summary) if model else None
+            if not model:
+                return None
+
+            def build() -> dict[str, Any]:
+                out = model.summary()
+                week = self.week_view(fo)
+                matchup_odds.save_history(self.client, matchup_odds.history_rows(o.league_id, o.season, int(fo.get("week") or 0),
+                                                                                  week.get("wins") or {}, model.odds()))
+                return out
+            return _cached(("odds", o.league_id, o.season, fo.get("week")), 1800, build)
         except Exception as exc:
             print(f"APP_PLAYOFF_ODDS_ERROR {type(exc).__name__}: {exc}", flush=True)
             return None
 
-    def moves(self, fo: dict[str, Any]) -> list[dict[str, str]]:
-        """This week's lineup changes: the app's best lineup against the starters set in Sleeper now."""
-        o, sid, week, rid = self.owner, self.sleeper_id, fo.get("week"), fo.get("my_roster_id")
+    def week_view(self, fo: dict[str, Any]) -> dict[str, Any]:
+        """This week's win odds for every game, with the spread tuned on the league's graded history."""
+        o, sid, week = self.owner, self.sleeper_id, int(fo.get("week") or 0)
+        model = self.odds_model(fo)
+        if not model or not sid or week >= model.playoff_start:
+            return {}
+
+        def build() -> dict[str, Any]:
+            games = playoff_odds.sleeper_schedule(sid, range(week, week + 1), dict(fo.get("roster_to_owner") or {}))[0]
+            results = [{**r, "season": o.season} for r in model.rows]
+            scale = matchup_odds.fit_scale(matchup_odds.graded_games(matchup_odds.load_history(self.client, o.league_id, o.season), results))
+            return {"wins": matchup_odds.week_odds(fo.get("rankings") or [], [(model.name(a), model.name(b)) for a, b in games], scale), "scale": scale}
+        return _cached(("week_view", o.league_id, o.season, week), 1800, build)
+
+    def my_week(self, fo: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        """(my ranking row, my win odds row) for this week."""
+        o = self.owner
         mine = next((r for r in fo.get("rankings") or [] if str(r.get("team_id")) == o.league_team_id), None)
+        try:
+            wins = self.week_view(fo).get("wins") or {}
+        except Exception as exc:
+            print(f"APP_WEEK_ODDS_ERROR {type(exc).__name__}: {exc}", flush=True)
+            wins = {}
+        return mine, next((v for k, v in wins.items() if k.casefold() == o.owner_name.casefold()), None)
+
+    def moves(self, fo: dict[str, Any]) -> list[dict[str, str]]:
+        """This week's lineup changes: the app's best lineup (with risk-aware swaps for this matchup) against the starters set in Sleeper now."""
+        o, sid, week, rid = self.owner, self.sleeper_id, fo.get("week"), fo.get("my_roster_id")
+        mine, win = self.my_week(fo)
         if not sid or not week or rid is None or not mine or "week_lineup" not in mine:
             return []
+        best = [dict(p) for p in mine["week_lineup"]]
+        if win:
+            swaps, _, _ = matchup_odds.risk_swaps(best, mine.get("week_bench_detail") or [], win["opp_mu"], win["opp_var"],
+                                                  scale=(self.week_view(fo) or {}).get("scale", 1.0))
+            for sw in swaps:
+                best = [{**sw["in"], "slot": sw["slot"], "note": sw["why"]} if p["id"] == sw["out"]["id"] else p for p in best]
         from api import sleeper
         try:
             rows = sleeper.get(f"league/{sid}/matchups/{week}", ttl=300) or []
@@ -151,7 +192,7 @@ class Session:
         current = next((r.get("starters") for r in rows if r.get("roster_id") == rid), None)
         from services.team_roster_state import state_roster
         names = {str(r.get("sleeper_player_id") or r.get("player_id") or ""): str(r.get("player_name") or "") for r in state_roster(self.state())}
-        return lineup_moves(mine["week_lineup"], current, on_bye=mine.get("on_bye_ids") or [], names=names)
+        return lineup_moves(best, current, on_bye=mine.get("on_bye_ids") or [], names=names)
 
 
 def report_card(client: Any, owner: runtime.Owner, week: int) -> dict[str, Any]:
@@ -176,6 +217,36 @@ def greeting(owner_name: str, now: datetime | None = None) -> str:
     return f"{part}, {(owner_name or '').split(' ')[0] or 'there'}."
 
 
+def _gm_odds(session: Session, fo: dict[str, Any]) -> playoff_odds.OddsModel | None:
+    model = session.odds_model(fo)
+    if model is not None:
+        try:
+            model.week_wins = session.week_view(fo).get("wins") or {}
+        except Exception:
+            pass
+    return model
+
+
+def matchup_tool(session: Session, fo: dict[str, Any]) -> Any:
+    from league_ai.tools import ToolSpec
+
+    def run() -> dict[str, Any]:
+        mine, win = session.my_week(fo)
+        if not mine or not win:
+            return {"error": "no matchup odds this week (bye, playoffs not set, or lineups not loaded)"}
+        swaps, before, after = matchup_odds.risk_swaps(mine["week_lineup"], mine.get("week_bench_detail") or [], win["opp_mu"], win["opp_var"],
+                                                       scale=session.week_view(fo).get("scale", 1.0))
+        return {"opponent": win["opp"], "win_chance": f"{round(100 * before)}%", "your_expected_points": win["mu"], "their_expected_points": win["opp_mu"],
+                "risk_swaps": [{"start": sw["in"]["name"], "over": sw["out"]["name"], "slot": sw["slot"], "why": sw["why"],
+                                "win_chance_gain": f"+{round(100 * sw['gain'])}"} for sw in swaps],
+                "win_chance_with_swaps": f"{round(100 * after)}%",
+                "how_to_use": "Win chance compares both best lineups (expected points and how much each starter swings week to week). A risk swap is a close "
+                              "call where the steadier player (as the favourite) or the boom-or-bust one (as the underdog) wins more often, even with a "
+                              "slightly lower average. Mention it only for close calls; never bench a clearly better player for variance."}
+    return ToolSpec("get_matchup_odds", "This owner's chance to win this week's matchup and any risk-aware start/sit swaps (steadier players as the favourite, "
+                    "boom-or-bust as the underdog). Use for start/sit and 'will I win this week' questions.", {"type": "object", "properties": {}}, run)
+
+
 def _pct_word(note: str | None) -> str:
     """'-35% vs league median' -> '-35%'; anything without a percentage -> ''."""
     first = (note or "").split(" ")[0]
@@ -195,7 +266,7 @@ def home(session: Session) -> dict[str, Any]:
     fo = session.front_office()
     week = int(fo.get("week") or 0)
     saved = load_brief(session.client, o.league_id, o.user_id, o.season, week)
-    mine = next((r for r in fo.get("rankings") or [] if str(r.get("team_id")) == o.league_team_id), None)
+    mine, win = session.my_week(fo)
     odds = session.odds_summary(fo)
     try:
         moves = session.moves(fo)
@@ -215,6 +286,7 @@ def home(session: Session) -> dict[str, Any]:
             "power": {"rank": mine.get("now_rank"), "move": fo.get("power_movement")} if mine else None,
         },
         "moves": moves,
+        "win": {"pct": round(100 * win["win"]), "opponent": win["opp"]} if win else None,
         "brief": merge_brief(fo.get("data_brief") or {}, saved),
         "prompts": rotating_prompts(week=week),
         "report_card": report_card(session.client, o, week),
@@ -250,7 +322,7 @@ def ask(session: Session, question: str, conversation_id: str | None, on_event: 
     tools = runtime.chat_tools(client, o, state=state, rules=session.rules(), league=session.league, week=session.week(),
                                positions=session.positions, playoff_week=session.playoff_start,
                                question=lambda: question, conversation_id=lambda: conversation_id,
-                               odds=(lambda: session.odds_model(fo)) if fo else None)
+                               odds=(lambda: _gm_odds(session, fo)) if fo else None, extra=[matchup_tool(session, fo)] if fo else None)
     seen = odds_trial.watch(tools)
     turn = runtime.chat_turn(client, o, question=question, history=history, conversation_id=conversation_id, pack=session.pack(), tools=tools,
                              on_event=on_event, week_context=week_context(fo, o.owner_name))
