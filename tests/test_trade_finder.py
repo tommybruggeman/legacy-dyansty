@@ -162,7 +162,8 @@ class RealTradeTests(unittest.TestCase):
 
 
 class InjuryTiltTest(unittest.TestCase):
-    def test_recent_major_injury_lowers_future_value_and_is_explained(self):
+    def test_recent_major_injury_is_explained_and_tilts_only_when_on(self):
+        from league_ai import trade_value
         from league_ai.injuries import recent_injury
         from league_ai.trade_value import Valuer
 
@@ -170,5 +171,10 @@ class InjuryTiltTest(unittest.TestCase):
         healthy.market_value = hurt.market_value = 5000.0
         hurt.injury_mult, hurt.injury_note = recent_injury([{"last_game_season": 2026, "injury": "Knee", "games_missed": 9}], 2026)
         v = Valuer([healthy, hurt], {"A": "rebuilding"})
-        self.assertLess(v.base(hurt, "rebuilding"), v.base(healthy, "rebuilding"))
+        self.assertEqual(v.base(hurt, "rebuilding"), v.base(healthy, "rebuilding"))
         self.assertIn("major knee", v.explain("A", hurt))
+        trade_value.INJURY_TILT = True
+        try:
+            self.assertLess(v.base(hurt, "rebuilding"), v.base(healthy, "rebuilding"))
+        finally:
+            trade_value.INJURY_TILT = False
