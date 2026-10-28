@@ -86,7 +86,9 @@ def grade(lineups: Iterable[Mapping[str, Any]], projections: Callable[[int, int]
                 tier = "high" if top >= TIER_HIGH else "mid" if top >= TIER_MID else "low"
                 buckets = ["all", "close" if close else "clear", "weeks_1_5" if week <= EARLY_WEEKS else "weeks_6_on", f"pos_{pos}",
                            # where each position struggles: close calls, early season, and how big the players are
-                           f"{pos}_{'close' if close else 'clear'}", f"{pos}_{'weeks_1_5' if week <= EARLY_WEEKS else 'weeks_6_on'}", f"{pos}_tier_{tier}"]
+                           f"{pos}_{'close' if close else 'clear'}", f"{pos}_{'weeks_1_5' if week <= EARLY_WEEKS else 'weeks_6_on'}", f"{pos}_tier_{tier}",
+                           # for the app's report card (saved to the database, never printed: the logs are public)
+                           f"season:{season}", f"season:{season}:{pos}", f"week:{season}:{week}", f"owner:{r.get('owner_name')}:{season}"]
                 for m, (a, c) in score.items():
                     if a is None or c is None or a == c:
                         continue
@@ -252,7 +254,8 @@ def signal_variants(client: Any, week_lines: Callable[[int, int], Mapping[str, M
     }
 
 
-def run_league(client: Any, league_id: str, sleeper_league_id: str) -> dict[str, Any]:
+def run_league(client: Any, league_id: str, sleeper_league_id: str, variants: bool = True) -> dict[str, Any]:
+    """variants=False skips the experimental signals (the weekly scorecard only needs the engine and the owners)."""
     from api.projections import score
     from league_ai.nfl_data import defense_vs_position_from_stats, season_games, season_stat_rows, team_code, total_multiplier, week_matchups
     from pipeline.league_history.run import league_chain
@@ -292,8 +295,8 @@ def run_league(client: Any, league_id: str, sleeper_league_id: str) -> dict[str,
         return total_multiplier(pos, game, dvp.get((game["opponent"], pos)) if game else None, weights)
 
     games_for = lambda season, week: dvp_cache.get((season, week), (None, {}))[1] or week_matchups(season_games(client, season), week)
-    variants = {**wr_variants(client, week_lines, games_for), **signal_variants(client, week_lines, games_for)}
-    out = grade(rows, projections, lambda s, w, pid: tilt(s, w, pid, {}), lambda s, w, pid: tilt(s, w, pid), variants)
+    extra = {**wr_variants(client, week_lines, games_for), **signal_variants(client, week_lines, games_for)} if variants else {}
+    out = grade(rows, projections, lambda s, w, pid: tilt(s, w, pid, {}), lambda s, w, pid: tilt(s, w, pid), extra)
     out["lineups"] = len(rows)
     out["seasons"] = sorted({int(r["season"]) for r in rows})
     return out

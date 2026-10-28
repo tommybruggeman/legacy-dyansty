@@ -8,7 +8,7 @@ on:
       check:
         description: Which check to run
         type: choice
-        options: [odds_backtest, odds_trial, odds_grade, start_sit_grade, practice_test]
+        options: [odds_backtest, odds_trial, odds_grade, start_sit_grade, practice_test, weekly_cards]
         default: odds_backtest
 
 jobs:
@@ -21,7 +21,7 @@ jobs:
         with:
           python-version: "3.13"
       - run: pip install supabase requests
-      - if: inputs.check == 'start_sit_grade' || inputs.check == 'practice_test'
+      - if: inputs.check == 'start_sit_grade' || inputs.check == 'practice_test' || inputs.check == 'weekly_cards'
         run: pip install -r api/requirements.txt
       - name: Run
         env:
@@ -35,5 +35,7 @@ jobs:
             odds_grade) python -m league_ai.matchup_odds ;;
             start_sit_grade) python -m league_ai.start_sit_grade ;;
             practice_test) python -m league_ai.practice_test ;;
+            # the weekly start/sit scorecard and accepted-trade shares now, without waiting for Tuesday's learning job (no model calls)
+            weekly_cards) python -c 'from datetime import datetime, timezone; from supabase import create_client; import os; from league_ai import scorecard; from league_ai.learning_job import run_trade_backtests; c = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_ROLE_KEY"]); n = datetime.now(timezone.utc); print("scorecards:", len(scorecard.run(c, now=n))); print("trade backtests:", len(run_trade_backtests(c, now=n)))' ;;
             *) python -m league_ai.playoff_odds ;;
           esac

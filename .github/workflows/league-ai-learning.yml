@@ -40,7 +40,7 @@ jobs:
           python-version: "3.13"
 
       - name: Install dependencies
-        run: pip install supabase requests pandas anthropic
+        run: pip install supabase requests pandas anthropic && pip install -r api/requirements.txt  # api.projections for the weekly start/sit scorecard
 
       - name: Grade calls and update the playbook
         env:

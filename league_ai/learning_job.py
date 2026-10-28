@@ -321,12 +321,18 @@ def run(client: Any, runner: Runner, *, season: int | None = None, web_search: b
             summary["trade_backtest"] = run_trade_backtests(client, now=now, dry_run=dry_run)
         except Exception as exc:
             print(f"[learning] trade backtest skipped: {type(exc).__name__}: {exc}", flush=True)
+        try:
+            from league_ai import scorecard as start_sit_scorecard
+
+            summary["start_sit_scorecard"] = start_sit_scorecard.run(client, now=now, dry_run=dry_run)
+        except Exception as exc:
+            print(f"[learning] start/sit scorecard skipped: {type(exc).__name__}: {exc}", flush=True)
     return summary
 
 
 def run_trade_backtests(client: Any, *, now: datetime, dry_run: bool = False) -> dict[str, Any]:
     """Replay every completed trade per league, report the engine's hit rate, and save each owner's revealed lean. No model calls."""
-    from league_ai.acceptance import accepted_shares, save as save_accepted
+    from league_ai.acceptance import accepted_by_owner, save as save_accepted
     from league_ai.trade_backtest import backtest, load_trades, save_styles
 
     out: dict[str, Any] = {}
@@ -335,7 +341,8 @@ def run_trade_backtests(client: Any, *, now: datetime, dry_run: bool = False) ->
         trades = load_trades(client, lid)
         result = backtest(trades)
         out[lid] = {k: result[k] for k in ("trades", "graded", "hit_rate")}
-        shares = accepted_shares(trades)
+        by_owner = accepted_by_owner(trades)
+        shares = [x for v in by_owner.values() for x in v]
         out[lid]["accepted_sides"] = len(shares)
         # counts only: the Actions logs are public, so no owner names
         print(f"[learning] trade backtest: {result['graded']} trades graded, hit rate {result['hit_rate']}, {len(result['owner_now_weight'])} owner leans, "
@@ -343,7 +350,7 @@ def run_trade_backtests(client: Any, *, now: datetime, dry_run: bool = False) ->
         if not dry_run:
             save_styles(client, lid, result, now)
             if shares:
-                save_accepted(client, lid, shares, now)
+                save_accepted(client, lid, by_owner, now)
     return out
 
 

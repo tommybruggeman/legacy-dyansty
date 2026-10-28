@@ -481,24 +481,29 @@ def trade_finder_tools(load: Callable[[], tuple[League, Mapping[str, float], str
                 cache["habits"] = {}
         return cache["habits"]
 
-    def accepted() -> list[float]:
-        """Shares that sides of real trades here accepted (league_ai.acceptance), to put each offer next to them."""
+    def accepted() -> dict[str, list[float]]:
+        """Shares that each owner's real trades here gave them (league_ai.acceptance), to put each offer next to them."""
         if "accepted" not in cache:
             try:
-                from league_ai.acceptance import load as load_accepted
+                from league_ai.acceptance import load_by_owner
 
-                cache["accepted"] = load_accepted(history.client, history.league_id) if history is not None else []
+                cache["accepted"] = load_by_owner(history.client, history.league_id) if history is not None else {}
             except Exception:
-                cache["accepted"] = []
+                cache["accepted"] = {}
         return cache["accepted"]
 
     def _vs_real(item: dict[str, Any]) -> None:
-        from league_ai.acceptance import compare
+        from league_ai.acceptance import compare, owner_rate
 
+        by_owner = accepted()
+        league = sorted(x for v in by_owner.values() for x in v)
         shares = item.get("their_share") or {}
-        notes = {rung: compare(accepted(), shares.get(rung)) for rung in ("open", "close")}
+        notes = {rung: compare(league, shares.get(rung)) for rung in ("open", "close")}
         if any(notes.values()):
             item["vs_real_trades"] = {k: v for k, v in notes.items() if v}
+        rate = owner_rate(by_owner, str(item.get("partner") or ""), shares.get("open"))
+        if rate is not None:   # how this partner's own deals compare (their record pulled toward the league's)
+            item["partner_took_this_or_less"] = f"about {round(100 * rate)}% of {item.get('partner')}'s deals gave them the opening offer's share or less"
 
     def my_pitches() -> dict[str, dict[str, int]]:
         if "pitches" not in cache:
