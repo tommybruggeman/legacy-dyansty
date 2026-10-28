@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, timezone
 
 from api import home
 
@@ -21,11 +21,12 @@ def test_my_game_and_bye():
     assert home.my_game(games, 9) is None
 
 
-def test_playoff_picture_always_includes_me():
-    rows = [{"rank": i, "name": f"T{i}", "standing_points": 20 - i, "is_me": i == 9} for i in range(1, 11)]
-    picture = home.playoff_picture(rows, 4, show=5)
-    assert [r["rank"] for r in picture] == [1, 2, 3, 4, 9]
-    assert picture[3]["in"] and not picture[4]["in"] and picture[4]["is_me"]
+def test_standings_table_always_includes_me():
+    rows = [{"rank": i, "roster_id": i, "name": f"T{i}", "wins": 9 - i, "losses": i, "standing_points": 20 - i, "is_me": i == 9} for i in range(1, 11)]
+    table = home.standings_table(rows, {9: "team-9"}, {9: "pic"}, 4, show=5)
+    assert [r["rank"] for r in table] == [1, 2, 3, 4, 9]
+    assert table[3]["in"] and not table[4]["in"]
+    assert table[4]["is_me"] and table[4]["team_id"] == "team-9" and table[4]["avatar"] == "pic"
 
 
 def test_bracket_keeps_title_path_with_scores():
@@ -73,3 +74,36 @@ def test_draft_prep_pieces():
     assert [m["name"] for m in home.who_has_money(summaries, season_index=0)] == ["B", "A"]
     picks = home.upcoming_picks([{"year": 2028, "round": 1}, {"year": 2027, "round": 2}, {"year": 2027, "round": 1}])
     assert picks["year"] == 2027 and len(picks["picks"]) == 2
+
+
+def test_avatars_prefer_team_picture():
+    users = [{"user_id": "u1", "avatar": "abc", "metadata": {}}, {"user_id": "u2", "avatar": "def", "metadata": {"avatar": "https://x/team.png"}}, {"user_id": "u3"}]
+    rosters = [{"roster_id": 1, "owner_id": "u1"}, {"roster_id": 2, "owner_id": "u2"}, {"roster_id": 3, "owner_id": "u3"}]
+    assert home.avatars(users, rosters) == {1: "https://sleepercdn.com/avatars/thumbs/abc", 2: "https://x/team.png", 3: None}
+
+
+def test_lineup_status_from_kickoff():
+    # Sunday 1:00 PM Eastern is 17:00 UTC in late October (EDT).
+    starts = home.kickoffs([{"gameday": "2026-10-25", "gametime": "13:00", "home_team": "BUF", "away_team": "LA"},
+                            {"gameday": "2026-10-26", "gametime": "20:15", "home_team": "DET", "away_team": "MIN"}])
+    assert starts["LAR"] == datetime(2026, 10, 25, 17, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 10, 25, 18, 0, tzinfo=timezone.utc)
+    row = {"starters": ["1", "2", "0", "3", "DET"], "starters_points": [12.5, 0, 0, 0, 0]}
+    info = {"1": {"full_name": "Josh Allen", "position": "QB", "team": "BUF"},
+            "2": {"full_name": "Amon-Ra St. Brown", "position": "WR", "team": "DET", "injury_status": "Questionable"},
+            "3": {"full_name": "Bye Guy", "position": "TE", "team": "KC"}}
+    players = home.lineup(row, info, starts, now)
+    assert [p["status"] for p in players] == ["playing", "waiting", "empty", "bye", "waiting"]
+    assert players[0]["points"] == 12.5 and players[4]["pos"] == "DEF"
+    issues = home.lineup_issues(players)
+    assert [(p["name"], p["issue"]) for p in issues] == [("Amon-Ra St. Brown", "Questionable"), ("Empty slot", "Empty slot"), ("Bye Guy", "On bye")]
+    later = datetime(2026, 10, 25, 21, 0, tzinfo=timezone.utc)
+    assert home.lineup(row, info, starts, later)[0]["status"] == "final"
+
+
+def test_standing_points_earned():
+    win_top5 = {"me": {"score": 130, "top5": True}, "them": {"score": 110}}
+    loss = {"me": {"score": 90, "top5": False}, "them": {"score": 110}}
+    assert home.standing_points_earned(win_top5) == 3
+    assert home.standing_points_earned(loss) == 0
+    assert home.standing_points_earned(None) == 0

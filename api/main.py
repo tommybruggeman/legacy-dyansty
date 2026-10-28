@@ -456,17 +456,65 @@ def home_page(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, An
         "front_office": {"line": _brief_line(client, ctx, user, week), "prompts": front_office.rotating_prompts(week=week)},
     }
 
+    pics: dict[int, str | None] = {}
     if phase in ("game_day", "recap", "playoffs"):
+        try:
+            pics = home.avatars(league.sleeper.get(f"league/{sid}/users") or [], league.sleeper.get(f"league/{sid}/rosters") or [])
+        except Exception:
+            pics = {}
+        by_roster = {r["roster_id"]: r for r in standings_rows}
+        team_ids = {r["roster_id"]: r["team_id"] for r in rows}
+
+        def side(s: dict[str, Any] | None) -> dict[str, Any] | None:
+            if not s:
+                return s
+            st = by_roster.get(s["roster_id"], {})
+            return {**s, "avatar": pics.get(s["roster_id"]), "team_id": team_ids.get(s["roster_id"]), "season_rank": st.get("rank"),
+                    "wins": st.get("wins", 0), "losses": st.get("losses", 0), "ties": st.get("ties", 0), "ppg": st.get("pf_per_game")}
+
+        def game_view(game: dict[str, Any] | None) -> dict[str, Any]:
+            return {**game, "me": side(game.get("me")), "them": side(game.get("them"))} if game else {}
+
+        def lineups(wk: int, game: dict[str, Any] | None, final: bool) -> dict[str, list[dict[str, Any]]]:
+            if not game or not game.get("me"):
+                return {"me": [], "them": []}
+            raw = league.sleeper.get(f"league/{sid}/matchups/{wk}", ttl=86400 if final else league.LIVE_TTL) or []
+            mine = next((r for r in raw if r.get("roster_id") == game["me"]["roster_id"]), None)
+            theirs = next((r for r in raw if game.get("them") and r.get("roster_id") == game["them"]["roster_id"]), None)
+            ids = [p for r in (mine, theirs) if r for p in (r.get("starters") or [])]
+            info = teams.player_info(client, ids)
+            try:
+                nfl = client.table("nfl_games").select("gameday,gametime,home_team,away_team").eq("season", ctx["season"]).eq("week", wk).execute().data or []
+            except Exception:
+                nfl = []
+            now = datetime.now(front_office.LEAGUE_TZ)
+            return {"me": home.lineup(mine, info, home.kickoffs(nfl), now), "them": home.lineup(theirs, info, home.kickoffs(nfl), now)}
+
         current = league.matchups(sid, names, week, my_roster)
-        out["game"] = {"week": week, "is_final": current["is_final"], **(home.my_game(current["games"], my_roster) or {})}
+        mine_now = home.my_game(current["games"], my_roster)
+        out["game"] = {"week": week, "is_final": current["is_final"], **game_view(mine_now)}
+        out["weekday"] = today.weekday()
+        out["standings"] = home.standings_table(standings_rows, team_ids, pics, league.PLAYOFF_TEAMS)
+        if phase in ("game_day", "playoffs"):
+            players = lineups(week, mine_now, current["is_final"])
+            out["players"] = players
+            out["lineup_issues"] = home.lineup_issues(players["me"])
+            out["race"] = home.race(current["games"], my_roster, pics)
+            them = (mine_now or {}).get("them")
+            if them:
+                out["series"] = teams.head_to_head(sid, weeks, my_roster, them["roster_id"])
     if phase == "recap" and week > 1:
         last = league.matchups(sid, names, week - 1, my_roster)
         game = home.my_game(last["games"], my_roster)
-        out["recap"] = {"week": week - 1, "game": game, "summary": last["summary"]}
-        out["picture"] = home.playoff_picture(
-            [{**r, "team_id": next((t["team_id"] for t in rows if t["roster_id"] == r["roster_id"]), None)} for r in standings_rows],
-            league.PLAYOFF_TEAMS,
-        )
+        recap_players = lineups(week - 1, game, True)["me"]
+        out["recap"] = {
+            "week": week - 1, "game": game_view(game), "summary": last["summary"],
+            "top_scorers": sorted((p for p in recap_players if p["player_id"]), key=lambda p: -p["points"])[:3],
+            "standing_points": home.standing_points_earned(game),
+        }
+        them = (mine_now or {}).get("them")
+        if them:
+            out["series"] = teams.head_to_head(sid, weeks, my_roster, them["roster_id"])
         out["weeks_left"] = max(0, playoff_start - week)
     if phase == "playoffs":
         try:
@@ -479,6 +527,12 @@ def home_page(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, An
                 for side in game["teams"]:
                     points[(rnd, side["roster_id"])] = side["score"]
         out["bracket"] = home.bracket(matches, names, points, playoff_start)
+        for rnd in out["bracket"]:
+            for g in rnd["games"]:
+                for key in ("a", "b"):
+                    if g[key]:
+                        g[key]["avatar"] = pics.get(g[key]["roster_id"])
+                        g[key]["seed"] = by_roster.get(g[key]["roster_id"], {}).get("rank")
     if phase == "decisions":
         ppg = teams.player_ppg(sid, weeks)
         try:
@@ -496,8 +550,11 @@ def home_page(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, An
         }
     if phase == "draft_prep":
         out["picks"] = home.upcoming_picks(teams.picks_view(state, ctx["team_id"])["owned"])
-        out["who_has_money"] = home.who_has_money(rows, season_index=0)
-        out["roster_count"] = sum(1 for r in state.get("roster", []) if str(r.get("league_team_id")) == ctx["team_id"])
+        counts: dict[str, int] = {}
+        for r in state.get("roster", []):
+            counts[str(r.get("league_team_id"))] = counts.get(str(r.get("league_team_id")), 0) + 1
+        out["who_has_money"] = home.who_has_money(rows, season_index=0, roster_counts=counts)
+        out["roster_count"] = counts.get(ctx["team_id"], 0)
         out["roster_max"] = home.ROSTER_MAX
         out["coming_off"] = home.coming_off_books(state.get("roster", []), ctx["team_id"])
     return out

@@ -276,9 +276,21 @@ export type ChatEvent =
 export type Conversations = { conversations: { id: string; title: string; updated_at: string | null }[] };
 export type Conversation = { id: string; title: string; messages: ChatMessage[] };
 
-export type HomeSide = { roster_id: number; name: string; score: number; rank?: number; top5?: boolean };
+export type HomeSide = {
+  roster_id: number; name: string; score: number; rank?: number; top5?: boolean;
+  avatar?: string | null; team_id?: string | null; season_rank?: number | null; wins?: number; losses?: number; ties?: number; ppg?: number | null;
+};
+export type LivePlayer = {
+  player_id: string | null; name: string; pos: string; team: string; points: number;
+  status: 'waiting' | 'playing' | 'final' | 'bye' | 'empty'; kickoff: string | null; injury: string | null; issue?: string;
+};
+export type TableRow = {
+  rank: number; roster_id: number; name: string; wins: number; losses: number; ties: number; standing_points: number;
+  is_me: boolean; in: boolean; team_id: string | null; avatar: string | null;
+};
+export type RaceRow = { rank: number; roster_id: number; name: string; score: number; top5: boolean; is_me: boolean; avatar: string | null };
 export type HomeGame = { matchup_id?: number; me?: HomeSide; them?: HomeSide | null };
-export type BracketSide = { roster_id: number; name: string; score: number | null } | null;
+export type BracketSide = { roster_id: number; name: string; score: number | null; avatar?: string | null; seed?: number | null } | null;
 export type RookieDeal = {
   decision_id: string | null; player_id: string; name: string; pos: string; salary: number; ppg: number | null;
   choice: 'keep' | 'walk' | 'review' | null; open: boolean; status: string;
@@ -295,14 +307,19 @@ export type HomeData = {
   playoff_teams: number;
   front_office: { line: string; prompts: string[] };
   game?: HomeGame & { week: number; is_final: boolean };
-  recap?: { week: number; game: HomeGame | null; summary: { high: HomeSide; cut: HomeSide } | null };
-  picture?: { rank: number; name: string; standing_points: number; is_me: boolean; in: boolean; team_id: string | null }[];
+  recap?: { week: number; game: HomeGame | null; summary: { high: HomeSide; cut: HomeSide } | null; top_scorers: LivePlayer[]; standing_points: number };
+  weekday?: number;
+  standings?: TableRow[];
+  players?: { me: LivePlayer[]; them: LivePlayer[] };
+  lineup_issues?: LivePlayer[];
+  race?: RaceRow[];
+  series?: { wins: number; losses: number; ties: number } | null;
   weeks_left?: number;
   bracket?: { round: number; week: number; label: string; games: { a: BracketSide; b: BracketSide; winner: number | null }[] }[];
   decisions?: { window_open: boolean; deadline: string; players: RookieDeal[] };
   picks?: { year: number | null; picks: Pick[] };
-  who_has_money?: { name: string; space: number; is_me: boolean; team_id: string | null }[];
+  who_has_money?: { name: string; space: number; is_me: boolean; team_id: string | null; open_spots: number | null }[];
   roster_count?: number;
   roster_max?: number;
-  coming_off?: { total: number; players: { name: string; salary: number }[] };
+  coming_off?: { total: number; players: { name: string; player_id: string; pos: string; salary: number }[] };
 };
