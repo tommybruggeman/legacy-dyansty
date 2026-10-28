@@ -188,6 +188,7 @@ def build_report(client: Any, league_id: str, start: datetime, end: datetime, *,
             "logged_list": [call_line(p) for p in logged],
             "still_open": sum(1 for p in preds_all if p.get("status") == "open"),
         },
+        "odds_trial": _odds_trial(client, league_id),
         "autonomous": {
             "briefs_written": len(briefs), "brief_cost": round(sum(_num(r.get("cost_usd")) for r in briefs), 4),
             "grading_model_calls": len(grading_runs), "grading_cost": round(sum(_num(r.get("cost_usd")) for r in grading_runs), 4),
@@ -196,6 +197,13 @@ def build_report(client: Any, league_id: str, start: datetime, end: datetime, *,
             "scorecard": (card[0]["stats"] if card else None),
         },
     }
+
+
+def _odds_trial(client: Any, league_id: str) -> dict[str, Any] | None:
+    from league_ai import odds_trial
+
+    rows = odds_trial.load(client, league_id)
+    return odds_trial.summarize(rows) if rows else None
 
 
 def _owner_names(client: Any, league_id: str) -> dict[str, str]:
@@ -262,6 +270,13 @@ def render_html(rep: Mapping[str, Any], league_name: str = "the league") -> str:
         parts.append("<h4>Season scorecard</h4><p>" + "<br>".join(_e(f"{label}: " + ", ".join(f"{x} {v}" for x, v in (sc.get(key) or {}).items()))
                                                              for key, label in (("by_kind", "By kind"), ("by_factor", "By main factor"), ("by_cause", "Causes of misses"), ("calibration", "Calibration"))
                                                              if sc.get(key)) + "</p>")
+    t = rep.get("odds_trial")
+    if t:
+        full = rep["detail"] == "full"
+        parts.append(f"<h3>Playoff odds trial: {t['checks']} of {t['of']} checks</h3><p>{_e(t['verdict'])} Checks cost {_money(t['cost'])}.</p>")
+        parts.append(_table(["When", "Changed the call", "Effect", "Better"] + (["Why", "Risk", "Without the odds"] if full else []),
+                            [[_e(i["when"]), "yes" if i["changed"] else "no", _e(i["effect"]), _e(i["better"])]
+                             + ([_e(i["why"]), _e(i["risk"]), _e(i["without_answer"])] if full else []) for i in t["items"]]))
     if u["errors"]:
         parts.append("<h3>Errors</h3>" + _table(["When", "Part", "Model"], [[_e(x["when"]), _e(x["feature"]), _e(x["model"])] for x in u["errors"]]))
     if rep["detail"] != "full":

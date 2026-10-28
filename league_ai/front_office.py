@@ -5,7 +5,7 @@ import json
 import re
 from collections import defaultdict
 from datetime import date, datetime, timezone
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 import requests
 
@@ -547,3 +547,40 @@ def week_context(fo: Mapping[str, Any] | None, owner: str, today: date | None = 
         if opp and opp.get("on_bye"):
             lines.append(f"- Opponent {opp_name}'s players on bye this week: " + ", ".join(opp["on_bye"]) + ".")
     return "\n".join(lines)
+
+
+# ---- this week's lineup moves -----------------------------------------------------
+
+def short_matchup(note: str | None) -> str:
+    """'vs DET, soft: DET allows 4th-most PPR to WR (…), team implied 27 pts' -> 'vs DET · soft'."""
+    if not note:
+        return ""
+    parts = note.split(", ")
+    label = parts[1].split(":", 1)[0] if len(parts) > 1 and ":" in parts[1] else ""
+    return f"{parts[0]} · {label}" if label else parts[0]
+
+
+def lineup_moves(best: list[Mapping[str, Any]], current: list[str] | None, *, on_bye: Iterable[str] = (), names: Mapping[str, str] | None = None,
+                 injuries: Mapping[str, str] | None = None, limit: int = 5) -> list[dict[str, str]]:
+    """What to change in Sleeper this week: the app's best lineup (power week_lineup) against the starters set now.
+
+    Starts come first (each with its slot and matchup), then sits with the reason. No current starters
+    (Sleeper hasn't posted the week yet) means no moves: the screen says the lineup looks set.
+    """
+    if not current:
+        return []
+    names, injuries, bye = names or {}, injuries or {}, set(on_bye)
+    starting = {str(pid) for pid in current if pid and str(pid) != "0"}
+    best_ids = {str(p["id"]) for p in best}
+    starts = [{"action": "start", "player": str(p["name"]), "slot": "FLEX" if "FLEX" in str(p.get("slot") or "") else str(p.get("pos") or ""),
+               "note": short_matchup(p.get("matchup"))} for p in best if str(p["id"]) not in starting]
+    sits = []
+    for pid in current:
+        pid = str(pid)
+        if pid in starting and pid not in best_ids:
+            reason = "bye" if pid in bye else (injuries.get(pid) or "").lower() or "better option on bench"
+            sits.append({"action": "sit", "player": names.get(pid, "Unknown player"), "slot": "", "note": reason})
+    empty = sum(1 for pid in current if not pid or str(pid) == "0")
+    if empty and not starts:
+        sits.append({"action": "sit", "player": f"{empty} empty slot{'s' if empty > 1 else ''}", "slot": "", "note": "fill from your bench"})
+    return (starts + sits)[:limit]

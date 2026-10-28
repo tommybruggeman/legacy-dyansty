@@ -53,6 +53,7 @@ TOOL_STATUS = {
     "get_schedule_outlook": "Grading the rest of the schedule",
     "get_return_outlook": "Comparing his return with past players who had the same injury",
     "get_position_room": "Checking how his team splits the work",
+    "get_playoff_odds": "Simulating the rest of the season",
 }
 
 
@@ -176,7 +177,10 @@ def power_rows(client: Any, league_id: str, season: int, *, state: Mapping[str, 
              "starters": [f"{p.position} {p.name} ({p.now:.1f})" for p in tp.starters],
              "week_starters": [week_label(p) for p in tp.week_starters], "week_bench": [week_label(p) for p in tp.week_bench],
              "team_notes": ctx.team_lines([p.nfl_team for p in tp.week_starters + tp.week_bench], games) if ctx else [],
-             "on_bye": [bye_label(p) for p in tp.on_bye], "on_bye_names": [p.name for p in tp.on_bye], "bye_next": [bye_label(p) for p in tp.bye_next]} for tp in rankings]
+             "on_bye": [bye_label(p) for p in tp.on_bye], "on_bye_names": [p.name for p in tp.on_bye], "bye_next": [bye_label(p) for p in tp.bye_next],
+             "week_lineup": [{"id": p.sleeper_id, "name": p.name, "pos": p.position, "slot": slot, "matchup": p.matchup, "injury": p.injury}
+                             for slot, p in zip(tp.week_slots, tp.week_starters)],
+             "on_bye_ids": [p.sleeper_id for p in tp.on_bye]} for tp in rankings]
 
 
 @dataclass
@@ -223,14 +227,14 @@ def front_office_data(client: Any, owner: Owner, league: Mapping[str, Any], load
         items = instant["injuries"]["items"]
         instant["injuries"]["items"] = ([{"player": n, "status": f"Bye · week {week}"} for n in mine.get("on_bye_names") or []] + items)[:5]
     bye_teams = sorted(t for t, w in load.byes().items() if w == week)
-    return {"tiles": tiles, "data_brief": instant, "week": week, "bye_teams": bye_teams, "playoff_start_week": load.playoff_start(), "opponent": opponent, "h2h": h2h,
+    return {"tiles": tiles, "data_brief": instant, "week": week, "power_movement": movement, "my_roster_id": my_roster_id, "roster_to_owner": dict(roster_to_owner), "bye_teams": bye_teams, "playoff_start_week": load.playoff_start(), "opponent": opponent, "h2h": h2h,
             "standings": table, "owner_name": owner.owner_name, "league_name": league.get("name") or "the league",
             "season": season, "rankings": rankings_raw, "weakest_slot": mine["weakest_slot"] if mine else None, "salary_cap": salary_cap}
 
 
 def chat_tools(client: Any, owner: Owner, *, state: Mapping[str, Any], rules: Mapping[str, Any], league: Mapping[str, Any], week: int,
                positions: Callable[[], list[str]], playoff_week: Callable[[], int | None],
-               question: Callable[[], str], conversation_id: Callable[[], str | None]) -> ToolRegistry:
+               question: Callable[[], str], conversation_id: Callable[[], str | None], odds: Callable[[], Any] | None = None) -> ToolRegistry:
     """Every tool the Assistant GM can call for this owner."""
     from league_ai.front_office import build_player_strengths
     from league_ai.tools.history import LeagueHistory
@@ -246,7 +250,7 @@ def chat_tools(client: Any, owner: Owner, *, state: Mapping[str, Any], rules: Ma
         lambda: load_league(client, state, owner.season, positions(), rules.get("salary_cap", 225), owner.league_team_id, build_player_strengths,
                             league_id=owner.league_id, playoff_start=playoff_week() or 15),
         LeagueHistory(client, owner.league_id),
-        outcomes=ledger.trade_outcomes, current_season=owner.season,
+        outcomes=ledger.trade_outcomes, current_season=owner.season, odds=odds,
     )
     return build_registry(client, league_state=state, salary_cap=rules.get("salary_cap", 225), dead_cap_pct=float(rules.get("default_dead_cap_pct", 50) or 50),
                           extra=[*history_tools(client, owner.league_id), *owner.memory(client).tools(), *ledger.tools(), *finder])
