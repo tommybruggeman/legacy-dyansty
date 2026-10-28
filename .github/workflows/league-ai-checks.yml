@@ -17,6 +17,9 @@ on:
         description: "stress_test only: how many questions"
         default: "50"
 
+permissions:
+  contents: write  # the stress test saves its results to its own branch
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -37,6 +40,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ inputs.check == 'stress_test' && secrets.ANTHROPIC_API_KEY || '' }}
           STRESS_BUDGET: ${{ inputs.budget }}
           STRESS_QUESTIONS: ${{ inputs.questions }}
+          STRESS_MAX_ANSWER: "0.2"
         run: |
           case "${{ inputs.check }}" in
             odds_trial) python -m league_ai.odds_trial ;;
@@ -45,6 +49,12 @@ jobs:
             stress_grade) python -m league_ai.stress_test grade stress/stress_results.json ;;
             *) python -m league_ai.playoff_odds ;;
           esac
+      - name: Commit the stress test results to this branch
+        if: always() && startsWith(inputs.check, 'stress') && github.ref_name != 'main'
+        run: |
+          mkdir -p stress && cp stress_*.json stress/ 2>/dev/null || exit 0
+          git config user.name "github-actions[bot]" && git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add stress && git commit -qm "Stress test results (${{ inputs.check }})" && git push origin HEAD:${{ github.ref_name }}
       - name: Save the stress test results
         if: always() && startsWith(inputs.check, 'stress')
         uses: actions/upload-artifact@v4
