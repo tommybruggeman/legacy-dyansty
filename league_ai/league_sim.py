@@ -45,6 +45,9 @@ NOISE_MARKET = 0.25                        # each market owner's valuation noise
 BENCH_DEPTH = {"QB": 1, "RB": 3, "WR": 3, "TE": 1}  # backups the bot keeps per position beyond its starters
 BEYOND_NEED = 0.2                          # a player the bot has no lineup spot for is worth this share of his value
 LINEUP_AWARE = os.environ.get("SIM_LINEUP_AWARE", "1") == "1"
+SMART_OWNERS = os.environ.get("SIM_SMART_OWNERS", "1") == "1"  # the other owners also buy for need, learn and draft off a board
+OWNER_SKILL = (0.3, 0.9)                   # how far each other owner leans on learned values over the market price
+NEED_PENALTY = 8.0                         # rookie board spots a player drops when his position is already full
 
 
 # ---- data ----------------------------------------------------------------------------------------------------
@@ -197,6 +200,8 @@ class Bot:
 
 OWNER_CURVES: dict[int, np.ndarray] = {}     # position -> salary by preseason rank, from this league's real auction contracts
 OWNER_YEARS: dict[str, list[float]] = {}      # price tier -> share of 1/2/3/4-year contracts owners actually signed
+OWNER_PROFILES: list[dict[str, Any]] = []     # one per real owner: how his prices and lengths lean against the league's
+PROFILE_SHRINK = 10                           # contracts' worth of pull toward league average (thin samples stay near 1.0)
 
 
 def market_dollars(d: Data, season: int) -> np.ndarray:
@@ -219,6 +224,54 @@ def market_dollars(d: Data, season: int) -> np.ndarray:
     return out
 
 
+def owner_profiles(df: pd.DataFrame, d: Data) -> list[dict[str, Any]]:
+    """Each owner's lean against what the league pays for the same preseason rank: big names, depth, each position,
+    contract length and player age. Every lean is shrunk toward 1.0 (or 0) by sample size."""
+    df = df.copy()
+    df["curve"] = [max(MIN_SALARY, float(OWNER_CURVES[p][int(min(r, MAX_RANK))])) for p, r in zip(df.pos, df["rank"])]
+    df["ratio"] = (df.salary / df.curve).clip(0.2, 5.0)
+    df["exp"] = df.season - pd.Series(d.draft_year[df.i.to_numpy()], index=df.index)
+    tier = pd.cut(df.salary, [0, 5, 15, 30, 1e9], labels=False, right=False)
+    df["yrs_over"] = df.years - df.groupby(tier).years.transform("mean")
+    exp_mean = float(df.exp.mean())
+
+    def lean(x: pd.Series, base: float = 1.0) -> float:
+        n = len(x)
+        return round(float(base + (x.mean() - base) * n / (n + PROFILE_SHRINK)), 3) if n else base
+
+    out = []
+    for name, g in df.groupby("owner"):
+        if len(g) < 8 or name == "?":
+            continue
+        e = g.dropna(subset=["exp"])
+        slope = float(np.polyfit(e.exp - exp_mean, np.log(e.ratio), 1)[0]) if len(e) >= 8 and e.exp.std() > 0 else 0.0
+        out.append({"owner": name, "contracts": int(len(g)),
+                    "stars": lean(g[g["rank"] <= 12].ratio),          # pays this much of the going rate for top-12 names
+                    "depth": lean(g[g["rank"] > 24].ratio),           # ... and for players ranked below 24
+                    "positions": {POS[p]: lean(g[g.pos == p].ratio) for p in range(len(POS))},
+                    "years": lean(g.yrs_over, 0.0),                   # extra contract years vs the league at that price
+                    "age_slope": round(slope * len(e) / (len(e) + PROFILE_SHRINK), 3),   # + = pays up for veterans
+                    "exp_mean": round(exp_mean, 2),
+                    "top3_share": round(float(g.groupby("season").salary.apply(lambda x: x.nlargest(3).sum() / max(x.sum(), 1)).mean()), 3)})
+    return out
+
+
+def personality_mult(profile: dict[str, Any] | None, d: Data, season: int) -> np.ndarray:
+    """Per-player multiplier on the market price for one owner's personality."""
+    if not profile:
+        return np.ones(d.n)
+    ranks = d.rp.get(season, np.full(d.n, np.nan))
+    m = np.ones(d.n)
+    m[ranks <= 12] *= profile["stars"]
+    m[ranks > 24] *= profile["depth"]
+    for p, name in enumerate(POS):
+        m[d.pos == p] *= profile["positions"].get(name, 1.0)
+    exp = season - d.draft_year
+    exp = np.where(np.isnan(exp), np.nanmean(exp), exp)
+    m *= np.exp(np.clip(profile["age_slope"] * (exp - profile.get("exp_mean", 4.0)), -0.5, 0.5))
+    return m
+
+
 def owner_years(salary: float) -> list[float]:
     tier = "$30+" if salary >= 30 else "$15-30" if salary >= 15 else "$5-15" if salary >= 5 else "$1-5"
     return OWNER_YEARS.get(tier) or [0.35, 0.3, 0.2, 0.15]
@@ -228,6 +281,8 @@ def load_owner_market(client: Any, d: Data, sleeper_to_gsis: dict[str, str]) -> 
     """Fit what this league's owners really pay (non-rookie contracts, by preseason position rank) and how long they sign.
     Returns aggregate stats only: the repo and its logs are public."""
     leagues = client.table("leagues").select("id").execute().data or []
+    teams = client.table("league_teams").select("id, owner_name, team_name").execute().data or []
+    owners = {str(t["id"]): str(t.get("owner_name") or t.get("team_name") or "?") for t in teams}   # same owner across seasons
     rows = []
     for lg in leagues:
         agreements = client.table("contract_agreements").select("*").eq("league_id", lg["id"]).execute().data or []
@@ -248,7 +303,8 @@ def load_owner_market(client: Any, d: Data, sleeper_to_gsis: dict[str, str]) -> 
             if not ss or g not in d.idx:
                 continue
             start = int(ss[0]["season"] or 0)
-            rows.append({"i": d.idx[g], "season": start, "salary": float(ss[0].get("salary") or 0), "years": len(ss)})
+            rows.append({"i": d.idx[g], "season": start, "salary": float(ss[0].get("salary") or 0), "years": len(ss),
+                         "owner": owners.get(str(a.get("league_team_id")), "?")})
     df = pd.DataFrame(rows)
     df = df[(df.salary >= MIN_SALARY) & df.season.isin(list(d.rp))] if len(df) else df
     if len(df) < 60:
@@ -262,12 +318,14 @@ def load_owner_market(client: Any, d: Data, sleeper_to_gsis: dict[str, str]) -> 
     for t, g in df.groupby(tier, observed=True):
         counts = np.array([(g.years.clip(1, 4) == y).sum() for y in (1, 2, 3, 4)], float) + 0.5
         OWNER_YEARS[str(t)] = list(counts / counts.sum())
+    OWNER_PROFILES[:] = owner_profiles(df, d)
     df["real"] = [float(d.value[s][i]) if s in d.value else np.nan for s, i in zip(df.season, df.i)]
     first = df.dropna(subset=["real"])
     return {"contracts": int(len(df)), "used": True, "seasons": sorted(int(x) for x in df.season.unique()),
             "owners_first_year_error": round(float((first.salary - first.real).abs().mean()), 1),
             "owners_first_year_bias": round(float((first.salary - first.real).mean()), 1),
             "years_by_price": {k: [round(x, 2) for x in v] for k, v in OWNER_YEARS.items()},
+            "owner_profiles": OWNER_PROFILES,
             "salary_by_rank": {POS[p]: {f"{POS[p]}{r}": round(float(OWNER_CURVES[p][r]), 1) for r in (1, 3, 6, 12, 24)} for p in range(len(POS))}}
 
 
@@ -315,6 +373,15 @@ class League:
         for p in ("RB", "WR"):
             starters[p] += slots.get("FLEX", 0)
         self.need_cap = np.array([starters[p] + BENCH_DEPTH[p] for p in POS])
+        self.skill = rng.uniform(*OWNER_SKILL, size=self.T) if SMART_OWNERS else np.zeros(self.T)
+        self.skill[self.bot] = 1.0
+        picks = rng.permutation(len(OWNER_PROFILES))[:self.T] if OWNER_PROFILES else []
+        self.profile: list[dict[str, Any] | None] = [OWNER_PROFILES[k] for k in picks] + [None] * (self.T - len(picks))
+        self.profile[self.bot] = None
+
+    def full(self, team: int, i: int) -> bool:
+        """The team already has its starters and backups at this player's position."""
+        return bool((self.d.pos[self.roster(team)] == self.d.pos[i]).sum() >= self.need_cap[self.d.pos[i]])
 
     def roster(self, team: int) -> np.ndarray:
         return np.flatnonzero(self.owner == team)
@@ -324,8 +391,12 @@ class League:
 
     def values(self, season: int, bot: Bot, market: np.ndarray) -> np.ndarray:
         """teams x players: what each owner thinks a player is worth this season (bot row = bot's prices)."""
-        v = market[None, :] * self.noise
-        v[self.bot] = np.array([bot.dollars_by_year(i)[0] for i in range(self.d.n)])
+        learned = np.array([bot.dollars_by_year(i)[0] for i in range(self.d.n)])
+        v = (self.skill[:, None] * learned[None, :] + (1 - self.skill[:, None]) * market[None, :]) * self.noise
+        for t in range(self.T):
+            if self.profile[t]:
+                v[t] *= personality_mult(self.profile[t], self.d, season)
+        v[self.bot] = learned
         return v
 
     def auction(self, season: int, bot: Bot, market: np.ndarray, values: np.ndarray) -> None:
@@ -349,13 +420,23 @@ class League:
                     if i not in offers:
                         offers[i] = bot.offer(i)
                     sal, yrs = offers[i]
-                    if LINEUP_AWARE and (self.d.pos[self.roster(t)] == self.d.pos[i]).sum() >= self.need_cap[self.d.pos[i]]:
+                    if LINEUP_AWARE and self.full(t, i):
                         sal = max(MIN_SALARY, sal * BEYOND_NEED)   # no lineup spot left at his position: bench value only
                 else:
                     sal = values[t, i]
-                    yrs = int(self.rng.choice([1, 2, 3, 4], p=owner_years(sal)))
+                    if SMART_OWNERS and self.rng.random() < self.skill[t]:
+                        if i not in offers:
+                            offers[i] = bot.offer(i)
+                        yrs = offers[i][1]                        # a sharp owner picks the length the numbers favor
+                    else:
+                        yrs = int(self.rng.choice([1, 2, 3, 4], p=owner_years(sal)))
+                    lean = (self.profile[t] or {}).get("years", 0.0)
+                    if self.rng.random() < min(1.0, abs(lean)):
+                        yrs = int(min(4, max(1, yrs + np.sign(lean))))   # this owner tends to go longer (or shorter)
                     while yrs > 1 and sal < MIN_BID[yrs]:
                         yrs -= 1
+                    if SMART_OWNERS and self.full(t, i):
+                        sal = max(MIN_SALARY, sal * BEYOND_NEED)
                 room = budget[t] - (need[t] - 1) * MIN_SALARY
                 sal = min(sal, room)
                 terms.append((sal, yrs))
@@ -377,13 +458,17 @@ class League:
 
     def rookie_draft(self, season: int, order: list[int], bot_board: list[int]) -> None:
         board = [b for b in self.d.rookie_board.get(season, []) if self.owner[b[0]] < 0]
+        learned_rank = {i: r for r, i in enumerate(bot_board, start=1)}
         taken: set[int] = set()
         for rnd in (1, 2, 3):
             for slot, team in enumerate(order, start=1):
                 if team == self.bot:
-                    pick = next((i for i in bot_board if i not in taken and self.owner[i] < 0), None)
+                    left = [i for i in bot_board if i not in taken and self.owner[i] < 0]
+                    pick = min(left, key=lambda i: learned_rank[i] + (NEED_PENALTY if LINEUP_AWARE and self.full(team, i) else 0.0), default=None)
                 else:
-                    noisy = sorted(((e + self.rng.normal(0, max(sd, 1.0)), i) for i, e, sd in board if i not in taken))
+                    k = self.skill[team] if SMART_OWNERS else 0.0
+                    noisy = sorted(((k * learned_rank.get(i, e) + (1 - k) * e + self.rng.normal(0, max(sd, 1.0))
+                                     + (NEED_PENALTY if SMART_OWNERS and self.full(team, i) else 0.0), i) for i, e, sd in board if i not in taken))
                     pick = noisy[0][1] if noisy else None
                 if pick is None:
                     continue
@@ -577,6 +662,18 @@ def roster_slots(positions: list[str]) -> dict[str, int]:
     return slots or {"QB": 1, "RB": 2, "WR": 3, "TE": 1, "FLEX": 1, "SUPER_FLEX": 1}
 
 
+def redact(obj: Any) -> Any:
+    """Owner names stay out of the public Actions log (the committed results are encrypted and keep them)."""
+    if isinstance(obj, dict):
+        out = {k: redact(v) for k, v in obj.items()}
+        if isinstance(out.get("owner_profiles"), list):
+            out["owner_profiles"] = [{**p, "owner": f"Owner {chr(65 + n)}"} for n, p in enumerate(out["owner_profiles"])]
+        return out
+    if isinstance(obj, list):
+        return [redact(x) for x in obj]
+    return obj
+
+
 def main() -> None:
     sims = int(os.environ.get("SIM_LEAGUES", SIMS_DEFAULT))
     live = ds.league_chain(ds.LIVE_LEAGUE)[0]
@@ -612,7 +709,7 @@ def main() -> None:
                                        dict(zip(sl.sleeper_id.astype(int).astype(str), sl.gsis_id)))
         except Exception as exc:
             owners = {"used": False, "error": f"{type(exc).__name__}: {str(exc)[:200]}"}
-    print(f"Owner market from this league's contracts: {owners}")
+    print(f"Owner market from this league's contracts: {redact(owners)}")
     print(f"League: {teams} teams, slots {slots}, stats through {live_season} wk {live_week}, {d.n} players, {sims} leagues")
     seasons = [s for s in d.seasons if s >= FIRST]
     accuracy = price_accuracy(d)
@@ -620,7 +717,18 @@ def main() -> None:
     report = {"setup": {"teams": teams, "slots": slots, "leagues": sims, "seasons": seasons, "stats_through": f"{live_season} wk {live_week}",
                         "k_dollar": {int(s): round(v, 3) for s, v in d.k_dollar.items()}},
               "owner_market": owners, "price_accuracy": accuracy, "leagues": grade_leagues(d, leagues)}
-    print(json.dumps(report, indent=1, default=str)[:30000])
+    if owners.get("owner_profiles"):    # how each real owner's personality fared when it played a seat
+        fin: dict[str, list[int]] = {}
+        for lg in leagues:
+            for r in lg.results:
+                prof = lg.profile[r["team"]]
+                if prof:
+                    fin.setdefault(prof["owner"], []).append(r["rank"])
+        for prof in owners["owner_profiles"]:
+            ranks = fin.get(prof["owner"], [])
+            prof["sim_avg_finish"] = round(float(np.mean(ranks)), 2) if ranks else None
+            prof["sim_top4_rate"] = round(float(np.mean([x <= 4 for x in ranks])), 3) if ranks else None
+    print(json.dumps(redact(report), indent=1, default=str)[:30000])
     with open("stress_results.json", "w") as f:
         json.dump(report, f, default=str)
 
