@@ -8,6 +8,7 @@ reads run as that owner so row-level security applies just like the website.
 from __future__ import annotations
 
 import os
+from datetime import datetime
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
@@ -15,8 +16,9 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from supabase import Client, create_client
 
-from api import front_office, league, market, teams
+from api import front_office, home, league, market, teams
 from season_engine import SeasonResolver
+from services.season_rollover_owner_ui import OwnerRolloverDecisionError, OwnerRolloverDecisionService
 
 app = FastAPI(title="Legacy API")
 
@@ -413,3 +415,108 @@ def front_office_conversation(conversation_id: str, owner: tuple[Client, Any] = 
     if result is None:
         raise HTTPException(status_code=404, detail="Conversation not found.")
     return result
+
+
+# ---- Home --------------------------------------------------------------------------
+
+
+def _brief_line(client: Client, ctx: dict[str, Any], user: Any, week: int) -> str:
+    """This week's saved Front Office call, if the brief has been written (no AI call here)."""
+    saved = front_office.load_brief(client, ctx["league_id"], str(user.id), ctx["season"], week) or {}
+    return ((saved.get("injuries") or {}).get("call") or (saved.get("matchup") or {}).get("stakes") or "").strip()
+
+
+@app.get("/home")
+def home_page(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    ctx = _season_context(client, user)
+    if not ctx.get("team_id"):
+        raise HTTPException(status_code=404, detail="This account isn't linked to a team yet.")
+    sid, names, my_roster = ctx["sleeper_id"], ctx["names"], ctx["sleeper_roster_id"]
+    sleeper_league = league.sleeper.get(f"league/{sid}") or {}
+    playoff_start = int((sleeper_league.get("settings") or {}).get("playoff_week_start") or 15)
+    week = league.current_week()
+    today = datetime.now(front_office.LEAGUE_TZ).date()
+    phase = home.phase(today, sleeper_league.get("status"), week, playoff_start)
+
+    rows, states, standings_rows, cap = _league_teams(client, ctx)
+    me = next((r for r in rows if r["team_id"] == ctx["team_id"]), None) or {}
+    state = states[0]
+    weeks = league.last_scored_week(sid)
+    out: dict[str, Any] = {
+        "phase": phase,
+        "season": ctx["season"],
+        "week": week,
+        "today": today.isoformat(),
+        "owner_name": ctx.get("owner_name") or "",
+        "salary_cap": cap,
+        "me": {k: me.get(k) for k in ("rank", "wins", "losses", "ties", "standing_points", "cap_space", "cap_by_year", "team_id")},
+        "teams_count": len(rows),
+        "playoff_teams": league.PLAYOFF_TEAMS,
+        "front_office": {"line": _brief_line(client, ctx, user, week), "prompts": front_office.rotating_prompts(week=week)},
+    }
+
+    if phase in ("game_day", "recap", "playoffs"):
+        current = league.matchups(sid, names, week, my_roster)
+        out["game"] = {"week": week, "is_final": current["is_final"], **(home.my_game(current["games"], my_roster) or {})}
+    if phase == "recap" and week > 1:
+        last = league.matchups(sid, names, week - 1, my_roster)
+        game = home.my_game(last["games"], my_roster)
+        out["recap"] = {"week": week - 1, "game": game, "summary": last["summary"]}
+        out["picture"] = home.playoff_picture(
+            [{**r, "team_id": next((t["team_id"] for t in rows if t["roster_id"] == r["roster_id"]), None)} for r in standings_rows],
+            league.PLAYOFF_TEAMS,
+        )
+        out["weeks_left"] = max(0, playoff_start - week)
+    if phase == "playoffs":
+        try:
+            matches = league.sleeper.get(f"league/{sid}/winners_bracket", ttl=300) or []
+        except Exception:
+            matches = []
+        points: dict[tuple[int, int], float] = {}
+        for rnd in {int(m.get("r") or 0) for m in matches if m.get("r")}:
+            for game in league.matchups(sid, names, playoff_start + rnd - 1, my_roster)["games"]:
+                for side in game["teams"]:
+                    points[(rnd, side["roster_id"])] = side["score"]
+        out["bracket"] = home.bracket(matches, names, points, playoff_start)
+    if phase == "decisions":
+        ppg = teams.player_ppg(sid, weeks)
+        try:
+            loaded = OwnerRolloverDecisionService(client, ctx["league_id"]).load()
+        except OwnerRolloverDecisionError:
+            loaded = {"execution": None, "decisions": []}
+        execution = loaded.get("execution") or {}
+        window_open = execution.get("status") == "decision_window_open"
+        players = (home.rookie_decisions(loaded.get("decisions") or [], state.get("roster", []), ppg) if loaded.get("decisions")
+                   else home.rookie_deals_ending(state.get("roster", []), ctx["team_id"], ppg))
+        out["decisions"] = {
+            "window_open": window_open,
+            "deadline": execution.get("owner_deadline") or home.rollover_deadline(today).isoformat(),
+            "players": players,
+        }
+    if phase == "draft_prep":
+        out["picks"] = home.upcoming_picks(teams.picks_view(state, ctx["team_id"])["owned"])
+        out["who_has_money"] = home.who_has_money(rows, season_index=0)
+        out["roster_count"] = sum(1 for r in state.get("roster", []) if str(r.get("league_team_id")) == ctx["team_id"])
+        out["roster_max"] = home.ROSTER_MAX
+        out["coming_off"] = home.coming_off_books(state.get("roster", []), ctx["team_id"])
+    return out
+
+
+class DecisionRequest(BaseModel):
+    choice: str  # keep or walk
+
+
+@app.post("/home/decisions/{decision_id}")
+def rookie_decision(decision_id: str, body: DecisionRequest, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """Keep (extend) or let walk one rookie deal, through the same owner-only RPC as the website."""
+    choice = {"keep": "recontract", "walk": "decline"}.get(body.choice)
+    if choice is None:
+        raise HTTPException(status_code=400, detail="Choose keep or walk.")
+    client, user = owner
+    team = resolve_team(client, user)
+    try:
+        OwnerRolloverDecisionService(client, team["league_id"]).submit(decision_id, choice, "Submitted from the iOS app")
+    except OwnerRolloverDecisionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return {"ok": True}

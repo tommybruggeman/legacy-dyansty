@@ -19,6 +19,7 @@ function RootStack() {
         <Stack.Screen name="ir" />
         <Stack.Screen name="chats" />
         <Stack.Screen name="report-card" />
+        <Stack.Screen name="settings" />
       </Stack.Protected>
       <Stack.Protected guard={!session}>
         <Stack.Screen name="sign-in" />
