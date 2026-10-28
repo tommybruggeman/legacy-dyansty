@@ -3,7 +3,8 @@
 Two views, blended half and half:
 - the market: DynastyProcess pick prices (what other owners will pay for it today);
 - what picks really became: the draft study (league_ai/draft_study.py, 1,000 simulated drafts of every 2020-2024 class)
-  scored each slot by the trade value of the player it landed three seasons later.
+  scored each slot by the trade value of the player it landed three seasons later, blended with 7 real drafts of a
+  same-format league.
 
 The market prices the top of round 1 above what those picks turned into and prices late 1sts, 2nds and 3rds far below
 it, so the blend keeps 1.01 clearly ahead of 1.02 while not treating a 2nd as worthless.
@@ -21,10 +22,13 @@ from __future__ import annotations
 import re
 from typing import Any, Mapping
 
-# Trade value (superflex market scale) of the k-th rookie taken, three seasons later. 10-team superflex, 3 rounds,
-# FantasyPros rookie rankings as of each May, 1,000 drafts per class, classes 2020-2024 (run of 2026-10-28).
-REALIZED = [4575, 4988, 4394, 3757, 3346, 2934, 2626, 2272, 2166, 2070, 1712, 1551, 1454, 1373, 1367,
-            1245, 1297, 1252, 1180, 1051, 984, 898, 748, 710, 688, 687, 645, 621, 572, 511]
+# Trade value (superflex market scale) of the k-th rookie taken, three seasons later. Half from the draft study
+# (10-team superflex, 3 rounds, FantasyPros rookie rankings as of each May, 1,000 drafts per class, classes 2020-2024),
+# half from 7 real drafts (2017-2023) of a league with the same format, scaled to the same total and smoothed over
+# 3 picks. The real drafts are why 1.01 sits clearly above 1.02: their 1.01s never busted (7 of 7 hit), while 1.02
+# and 1.03 each busted 3 times.
+REALIZED = [6044, 5115, 3747, 2683, 2288, 2288, 2288, 2288, 2288, 2114, 2084, 1937, 1937, 1810, 1727,
+            1346, 1321, 1321, 1321, 1154, 1090, 1090, 1022, 843, 560, 556, 443, 402, 315, 256]
 # Market price of the k-th rookie pick (DynastyProcess "Pick r.ss", superflex), used when the database has no slot rows.
 MARKET = [7977, 6453, 5239, 4268, 3489, 2862, 2356, 1946, 1613, 1341, 1119, 937, 787, 663, 560,
           475, 405, 345, 296, 254, 219, 189, 164, 143, 124, 109, 95, 84, 74, 66, 58, 51, 45, 40, 35, 31]
