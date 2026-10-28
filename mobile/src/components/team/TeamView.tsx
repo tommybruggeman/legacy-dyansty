@@ -4,7 +4,7 @@ import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type { Pick, Player, TeamPage } from '../../lib/api';
 import { colors } from '../../lib/theme';
-import { Bar, Card, Note, Pill, Pos, Row, Segmented, Tile, Tiles, Title, money, ordinal, record, ui } from '../ui';
+import { Bar, Card, Note, Pill, Pos, Row, Segmented, SwipeTabs, Tile, Tiles, Title, money, ordinal, record, ui } from '../ui';
 
 const TABS = ['Roster', 'Contracts', 'Picks', 'Activity'] as const;
 
@@ -29,10 +29,12 @@ export function TeamView({ team, eyebrow }: { team: TeamPage; eyebrow?: string }
         />
       </Tiles>
       <Segmented options={TABS} value={tab} onChange={setTab} />
-      {tab === 'Roster' ? <RosterTab team={team} /> : null}
-      {tab === 'Contracts' ? <ContractsTab team={team} /> : null}
-      {tab === 'Picks' ? <PicksTab team={team} /> : null}
-      {tab === 'Activity' ? <ActivityTab team={team} /> : null}
+      <SwipeTabs options={TABS} value={tab} onChange={setTab}>
+        {tab === 'Roster' ? <RosterTab team={team} /> : null}
+        {tab === 'Contracts' ? <ContractsTab team={team} /> : null}
+        {tab === 'Picks' ? <PicksTab team={team} /> : null}
+        {tab === 'Activity' ? <ActivityTab team={team} /> : null}
+      </SwipeTabs>
     </>
   );
 }
