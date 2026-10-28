@@ -32,6 +32,15 @@ class SleeperRosterTests(unittest.TestCase):
         self.assertEqual(by["Rashee Rice"]["roster_designation"], "ir")
         self.assertTrue(all(is_no_contract(r) and r["cap_hit"] == 0 for r in rows))
 
+    def test_same_player_under_another_sleeper_id_is_not_added_twice(self):
+        # the app matched Omar Cooper Jr.'s contract to a different Sleeper id than the one on his Sleeper roster
+        state = {**STATE, "roster": STATE["roster"] + [{"sleeper_player_id": "old-1", "league_team_id": "t1", "player_name": "Omar Cooper Jr.", "pos": "WR"}]}
+        sleeper = [{"roster_id": 1, "players": ["100", "500"], "taxi": [], "reserve": []}]
+        self.assertEqual(missing_rows(state, sleeper, {1: "t1"}, {"500": {"full_name": "Omar Cooper", "position": "WR"}}), [])
+        # a different team's player with the same name is still added
+        other = [{"roster_id": 2, "players": ["500"], "taxi": [], "reserve": []}]
+        self.assertEqual(len(missing_rows(state, other, {2: "t2"}, {"500": {"full_name": "Omar Cooper", "position": "WR"}})), 1)
+
     def test_fill_never_breaks_the_state(self):
         def boom(url):
             raise RuntimeError("sleeper down")

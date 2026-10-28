@@ -857,9 +857,11 @@ def tool_search_players(data: NflData, position: str | None = None, nfl_team: st
         q = q.lte("age", max_age)
     if min_age is not None:
         q = q.gte("age", min_age)
-    rows = q.order("search_rank").limit(limit * 4).execute().data or []
+    rows = q.order("search_rank").limit(limit * 8).execute().data or []
     out = []
     for r in rows:
+        if not r.get("team"):
+            continue  # retired or unsigned: Sleeper keeps famous names high in search_rank long after they leave the league
         c = data.league_contract(r.get("sleeper_id"), r.get("full_name"))
         if league_free_agents_only and c:
             continue

@@ -12,10 +12,21 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any, Callable, Mapping
 
+import re
+
 import requests
 
 SLEEPER = "https://api.sleeper.app/v1"
 NO_CONTRACT = "no_contract"
+
+
+_SUFFIX = re.compile(r"\b(jr|sr|ii|iii|iv|v)\b")
+
+
+def name_key(name: Any) -> str:
+    """'Omar Cooper Jr.' and 'Omar Cooper' -> 'omarcooper': the app and Sleeper don't always agree on suffixes."""
+    text = re.sub(r"[^a-z ]", "", str(name or "").casefold().replace("-", " "))
+    return _SUFFIX.sub("", text).replace(" ", "")
 
 
 def is_no_contract(row: Mapping[str, Any]) -> bool:
@@ -24,8 +35,10 @@ def is_no_contract(row: Mapping[str, Any]) -> bool:
 
 def missing_rows(state: Mapping[str, Any], sleeper_rosters: list[Mapping[str, Any]], roster_to_team: Mapping[int, str],
                  players: Mapping[str, Mapping[str, Any]]) -> list[dict[str, Any]]:
-    """Roster rows for players on a Sleeper roster with no row in the state."""
+    """Roster rows for players on a Sleeper roster with no row in the state. A player the team already has under
+    another Sleeper id (the app's contract was matched to an old or wrong id) is the same player, not a new one."""
     have = {str(r.get("sleeper_player_id") or "") for r in state.get("roster") or []}
+    named = {(str(r.get("league_team_id") or ""), name_key(r.get("player_name"))) for r in state.get("roster") or [] if r.get("player_name")}
     teams = {str(t.get("league_team_id")): t for t in state.get("teams") or []}
     out = []
     for roster in sleeper_rosters:
@@ -40,6 +53,8 @@ def missing_rows(state: Mapping[str, Any], sleeper_rosters: list[Mapping[str, An
                 continue
             have.add(pid)
             p = players.get(pid) or {}
+            if p.get("full_name") and (str(team_id), name_key(p.get("full_name"))) in named:
+                continue
             out.append({
                 "contract_agreement_id": None, "league_id": state.get("league_id"), "league_team_id": str(team_id), "player_id": None,
                 "sleeper_player_id": pid, "player_name": p.get("full_name") or pid, "pos": p.get("position") or "",
