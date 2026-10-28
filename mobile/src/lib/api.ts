@@ -55,6 +55,7 @@ export type StandingsRow = {
   pf_per_game: number;
   pa_per_game: number;
   games: number;
+  team_id: string | null;
 };
 
 export type Standings = { weeks_played: number; playoff_teams: number; rows: StandingsRow[] };
@@ -68,4 +69,68 @@ export type Matchups = {
   my_roster_id: number | null;
   games: Game[];
   summary: { high: MatchupTeam; cut: MatchupTeam; closest: Game; closest_margin: number } | null;
+};
+
+export type CapYear = { season: number; used: number; space: number; dead_cap: number };
+export type Lean = 'contending' | 'middle' | 'rebuilding' | null;
+
+export type TeamSummary = {
+  team_id: string;
+  owner_name: string;
+  team_name: string;
+  roster_id: number | null;
+  rank: number | null;
+  wins: number;
+  losses: number;
+  ties: number;
+  standing_points: number;
+  is_me: boolean;
+  lean: Lean;
+  cap_space: number;
+  cap_by_year: CapYear[];
+};
+export type TeamList = { season: number; salary_cap: number; my_team_id: string | null; teams: TeamSummary[] };
+
+export type Player = {
+  player_id: string;
+  name: string;
+  pos: string;
+  nfl_team: string;
+  injury: string | null;
+  salary: number;
+  contract_salary: number;
+  years_left: number;
+  designation: 'taxi' | 'ir' | null;
+  is_rookie: boolean;
+  ppg: number | null;
+  slot?: string;
+  through?: number;
+};
+export type Pick = { year: number; round: number; original_owner: string; current_owner: string; own: boolean };
+
+export type TeamPage = {
+  season: number;
+  salary_cap: number;
+  sleeper_league_id: string;
+  team_id: string;
+  owner_name: string;
+  team_name: string;
+  roster_id: number | null;
+  is_me: boolean;
+  lean: Lean;
+  record: { wins: number; losses: number; ties: number; rank: number | null; standing_points: number; pf_per_game: number | null };
+  cap: { space: number; by_year: CapYear[] };
+  roster: { starters: Player[]; bench: Player[]; taxi: Player[]; ir: Player[]; count: number };
+  contracts: { biggest: Player[]; expiring: Player[]; dead_cap: { player: string; amount: number }[] };
+  picks: { owned: Pick[]; traded_away: Pick[] };
+  activity: { kind: 'SIGN' | 'CUT'; player: string; at: string | null }[];
+  head_to_head: { wins: number; losses: number; ties: number; last: { week: number; me: number; them: number } } | null;
+};
+
+export type BoxPlayer = { player_id: string; name: string; slot: string; points: number };
+export type BoxScore = {
+  week: number;
+  matchup_id: number;
+  my_roster_id: number | null;
+  teams: { roster_id: number; team_id: string | null; name: string; score: number; players: BoxPlayer[] }[];
 };

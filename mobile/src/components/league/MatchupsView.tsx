@@ -1,8 +1,8 @@
+import { router } from 'expo-router';
 import { useState } from 'react';
-import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { ErrorState, Loading } from '../../components/ScreenState';
+import { ErrorState, Loading } from '../ScreenState';
 import { type Game, type Matchups as MatchupsData, type MatchupTeam, useApi } from '../../lib/api';
 import { colors } from '../../lib/theme';
 
@@ -10,9 +10,9 @@ const first = (name: string) => name.split(' ')[0];
 
 // Built from the phone Weekly Matchups design: week picker, three summary
 // tiles, your game pinned first, gold rank = a Top 5 score this week.
-export default function Matchups() {
+// Tapping a game opens its box score.
+export function MatchupsView() {
   const [week, setWeek] = useState<number | null>(null);
-  const insets = useSafeAreaInsets();
   const { data, error, loading, reload } = useApi<MatchupsData>(week ? `/matchups?week=${week}` : '/matchups');
 
   if (loading && !data) return <Loading />;
@@ -24,13 +24,8 @@ export default function Matchups() {
   const shown = data.week;
 
   return (
-    <ScrollView
-      style={styles.screen}
-      contentContainerStyle={[styles.content, { paddingTop: insets.top + 12 }]}
-      refreshControl={<RefreshControl refreshing={loading} onRefresh={reload} tintColor={colors.gold} />}
-    >
+    <View style={styles.content}>
       <View style={styles.titleRow}>
-        <Text style={styles.title}>Weekly Matchups</Text>
         <View style={styles.weekPicker}>
           <Pressable disabled={shown <= 1} onPress={() => setWeek(shown - 1)} hitSlop={10}>
             <Text style={[styles.arrow, shown <= 1 && styles.dim]}>‹</Text>
@@ -56,12 +51,12 @@ export default function Matchups() {
         <Text style={styles.note}>No scores yet this week.</Text>
       )}
 
-      {mine ? <GameCard game={mine} myId={data.my_roster_id} final={data.is_final} isMine /> : null}
+      {mine ? <GameCard game={mine} week={shown} myId={data.my_roster_id} final={data.is_final} isMine /> : null}
       {others.map((game) => (
-        <GameCard key={game.matchup_id} game={game} myId={data.my_roster_id} final={data.is_final} />
+        <GameCard key={game.matchup_id} game={game} week={shown} myId={data.my_roster_id} final={data.is_final} />
       ))}
-      <Text style={styles.note}>Gold rank = a Top 5 score this week</Text>
-    </ScrollView>
+      <Text style={styles.note}>Gold rank = a Top 5 score this week · tap a game for the box score</Text>
+    </View>
   );
 }
 
@@ -75,14 +70,14 @@ function Tile({ label, value, sub }: { label: string; value: string; sub: string
   );
 }
 
-function GameCard({ game, myId, final, isMine }: { game: Game; myId: number | null; final: boolean; isMine?: boolean }) {
+function GameCard({ game, week, myId, final, isMine }: { game: Game; week: number; myId: number | null; final: boolean; isMine?: boolean }) {
   const [a, b] = game.teams;
   const margin = Math.abs(a.score - b.score).toFixed(2);
   const scored = a.score > 0 || b.score > 0;
   const status = !scored ? 'Not started' : a.score === b.score ? 'Tied' : `${first(a.name)} ${final ? 'won' : 'leads'} by ${margin}`;
 
   return (
-    <View style={[styles.card, isMine && styles.myCard]}>
+    <Pressable onPress={() => router.push(`/game/${week}/${game.matchup_id}`)} style={[styles.card, isMine && styles.myCard]}>
       {isMine ? <Text style={styles.yourMatchup}>YOUR MATCHUP</Text> : null}
       <TeamRow team={a} leading={scored && a.score > b.score} isMe={a.roster_id === myId} />
       <TeamRow team={b} leading={false} isMe={b.roster_id === myId} />
@@ -92,7 +87,7 @@ function GameCard({ game, myId, final, isMine }: { game: Game; myId: number | nu
           <Text style={[styles.badge, final ? styles.finalBadge : styles.liveBadge]}>{final ? 'FINAL' : 'LIVE'}</Text>
         ) : null}
       </View>
-    </View>
+    </Pressable>
   );
 }
 
@@ -110,10 +105,8 @@ function TeamRow({ team, leading, isMe }: { team: MatchupTeam; leading: boolean;
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.bg },
-  content: { padding: 16, paddingBottom: 32, gap: 12 },
-  titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  title: { color: colors.text, fontSize: 24, fontWeight: '800' },
+  content: { gap: 12 },
+  titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end' },
   weekPicker: {
     flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: 1, borderColor: colors.line,
     borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8,

@@ -13,7 +13,8 @@ from typing import Any
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from supabase import Client, create_client
 
-from api import league
+from api import league, teams
+from season_engine import SeasonResolver
 
 app = FastAPI(title="Legacy API")
 
@@ -107,10 +108,20 @@ def _league_context(client: Client, user: Any) -> tuple[str, dict[int, str], int
     return sleeper_id, league.roster_names(client, team["league_id"], sleeper_id), team["sleeper_roster_id"]
 
 
+def _team_ids(client: Client, user: Any) -> dict[int, str]:
+    """roster id -> league team id, so the app can open a team page from any row."""
+    team = resolve_team(client, user)
+    return {t["roster_id"]: t["team_id"] for t in teams.league_teams(client, team["league_id"])}
+
+
 @app.get("/standings")
 def standings(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
     sleeper_id, names, my_roster_id = _league_context(*owner)
-    return league.standings(sleeper_id, names, my_roster_id)
+    result = league.standings(sleeper_id, names, my_roster_id)
+    ids = _team_ids(*owner)
+    for row in result["rows"]:
+        row["team_id"] = ids.get(row["roster_id"])
+    return result
 
 
 @app.get("/matchups")
@@ -121,4 +132,91 @@ def matchups(
     sleeper_id, names, my_roster_id = _league_context(*owner)
     result = league.matchups(sleeper_id, names, week or league.current_week(), my_roster_id)
     result["current_week"] = league.current_week()
+    return result
+
+
+def _season_context(client: Client, user: Any) -> dict[str, Any]:
+    """Everything the team pages share: who I am, the season, and Sleeper ids."""
+    team = resolve_team(client, user)
+    season = SeasonResolver(client).get_active_season(team["league_id"])
+    if not season.sleeper_league_id:
+        raise HTTPException(status_code=409, detail="The active season isn't linked to a Sleeper league yet.")
+    sleeper_id = season.sleeper_league_id
+    return {
+        **team,
+        "season": int(season.season),
+        "sleeper_id": sleeper_id,
+        "names": league.roster_names(client, team["league_id"], sleeper_id),
+        "slots": (league.sleeper.get(f"league/{sleeper_id}") or {}).get("roster_positions") or [],
+    }
+
+
+def _league_teams(client: Client, ctx: dict[str, Any]) -> tuple[list[dict], list[dict], list[dict], float]:
+    standings_rows = league.standings(ctx["sleeper_id"], ctx["names"], ctx["sleeper_roster_id"])["rows"]
+    cap = teams.salary_cap(client, ctx["league_id"])
+    try:
+        states = teams.seasons_state(client, ctx["league_id"], ctx["season"])
+    except Exception:
+        raise HTTPException(status_code=502, detail="Couldn't load league contracts. Try again.")
+    rows = teams.summaries(
+        teams.league_teams(client, ctx["league_id"]), states, cap, standings_rows,
+        teams.team_leans(client, ctx["league_id"]),
+    )
+    return rows, states, standings_rows, cap
+
+
+@app.get("/teams")
+def team_list(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    ctx = _season_context(client, user)
+    rows, _, _, cap = _league_teams(client, ctx)
+    return {"season": ctx["season"], "salary_cap": cap, "my_team_id": ctx["team_id"], "teams": rows}
+
+
+@app.get("/teams/{team_id}")
+def team_page(team_id: str, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    ctx = _season_context(client, user)
+    rows, states, standings_rows, cap = _league_teams(client, ctx)
+    summary = next((t for t in rows if t["team_id"] == team_id), None)
+    if summary is None:
+        raise HTTPException(status_code=404, detail="Team not found in your league.")
+
+    state = states[0]
+    weeks = league.last_scored_week(ctx["sleeper_id"])
+    ids = [r.get("sleeper_player_id") for r in state.get("roster", []) if str(r.get("league_team_id")) == team_id]
+    standing = next((r for r in standings_rows if r["roster_id"] == summary["roster_id"]), None)
+    detail = teams.team_detail(
+        team={k: summary[k] for k in ("team_id", "owner_name", "team_name", "roster_id")},
+        summary=summary,
+        standing=standing,
+        state=state,
+        sleeper_id=ctx["sleeper_id"],
+        slots=ctx["slots"],
+        info=teams.player_info(client, ids),
+        ppg=teams.player_ppg(ctx["sleeper_id"], weeks),
+        h2h=teams.head_to_head(ctx["sleeper_id"], weeks, ctx["sleeper_roster_id"], summary["roster_id"]),
+    )
+    return {"season": ctx["season"], "salary_cap": cap, "sleeper_league_id": ctx["sleeper_id"], **detail}
+
+
+@app.get("/matchups/{week}/{matchup_id}")
+def box_score(
+    week: int,
+    matchup_id: int,
+    owner: tuple[Client, Any] = Depends(owner_client),
+) -> dict[str, Any]:
+    client, user = owner
+    ctx = _season_context(client, user)
+    if not 1 <= week <= 25:
+        raise HTTPException(status_code=404, detail="No such week.")
+    ttl = 86400 if week <= league.last_scored_week(ctx["sleeper_id"]) else 60
+    ids = teams.starter_ids(ctx["sleeper_id"], week, matchup_id, ttl)
+    result = teams.box_score(ctx["sleeper_id"], week, matchup_id, ctx["names"], ctx["slots"], teams.player_info(client, ids), ttl)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Game not found.")
+    teams_by_roster = {t["roster_id"]: t["team_id"] for t in teams.league_teams(client, ctx["league_id"])}
+    for side in result["teams"]:
+        side["team_id"] = teams_by_roster.get(side["roster_id"])
+    result["my_roster_id"] = ctx["sleeper_roster_id"]
     return result
