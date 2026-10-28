@@ -438,11 +438,13 @@ def _why(league: League, team_id: str, window: str, sends: list[PlayerStrength],
 
 def trade_finder_tools(load: Callable[[], tuple[League, Mapping[str, float], str]], history: Any | None = None,
                        outcomes: Callable[..., list[Mapping[str, Any]]] | None = None, current_season: int | None = None,
-                       odds: Callable[[], Any] | None = None, free_agent: Callable[[str], PlayerStrength | None] | None = None) -> list[ToolSpec]:
+                       odds: Callable[[], Any] | None = None, free_agent: Callable[[str], PlayerStrength | None] | None = None,
+                       roster_rules: Callable[[], tuple[Any, bool, float]] | None = None) -> list[ToolSpec]:
     """load() -> (League, cap space by team id, asker team id); called once per answer that needs it.
     history: LeagueHistory for completed trades; outcomes(partner=None) -> this owner's recorded trade outcomes.
     odds() -> a playoff_odds.OddsModel (or None), so a judged trade comes with both teams' playoff odds before and after.
-    free_agent(name) -> that player valued like a rostered one (None if not found), for pickup questions."""
+    free_agent(name) -> that player valued like a rostered one (None if not found), for pickup questions.
+    roster_rules() -> (roster_moves.Rules from the league's settings, offseason?, share of the season left)."""
     cache: dict[str, Any] = {}
 
     def profiles() -> dict[str, dict[str, Any]]:
@@ -547,6 +549,15 @@ def trade_finder_tools(load: Callable[[], tuple[League, Mapping[str, float], str
             out["what_they_said"] = [o.get("note") for o in mine if o.get("note")][:5]
         return out
 
+    def moves() -> dict[str, Any]:
+        from league_ai.roster_moves import plan
+
+        lg = league(None)
+        rules, offseason, left = roster_rules()
+        valuer = Valuer(lg.players, {tid: lg.window(tid) for tid in lg.teams})
+        return plan(lg.players, cache["asker"], rules, offseason=offseason, season=int(current_season or 0), season_left=left,
+                    fair_cap=getattr(valuer, "_fair_cap", {}))
+
     windows_schema = {"type": "object", "additionalProperties": {"type": "string", "enum": list(WINDOWS)},
                       "description": "owner name -> contending / middle / rebuilding, for any team whose plans you know from the owner or league notes; "
                                      "otherwise each window is worked out from playoff odds (or standings and lineup), roster age and trading habits"}
@@ -606,7 +617,15 @@ def trade_finder_tools(load: Callable[[], tuple[League, Mapping[str, float], str
             "bid": {"type": "number", "description": "the cap dollars they'd bid"},
         }, "required": ["player"]},
         pickup,
-    )] if odds is not None and free_agent is not None else [])
+    )] if odds is not None and free_agent is not None else []) + ([ToolSpec(
+        "plan_roster_moves",
+        "This owner's roster moves under the league's own rules: which contracts to cut and when (dead cap per season vs what the freed "
+        "room buys, waiting for the offseason auction when that's better), which of this year's rookies to put on taxi (the extra "
+        "contract year vs losing him this season), who goes in the IR slot, and whether to pick up each rookie option or let him walk. "
+        "Use for cut, drop, dead cap, taxi, IR, rookie option and 'how do I clear cap' questions.",
+        {"type": "object", "properties": {}},
+        moves,
+    )] if roster_rules is not None else [])
 
 
 SIMS_NOTE = "5,000 simulated rest-of-seasons"
@@ -681,6 +700,7 @@ def load_league(client: Any, state: Mapping[str, Any], season: int, roster_posit
         if p.sleeper_id in values:
             p.market_value = values[p.sleeper_id]  # type: ignore[attr-defined]  # superflex dynasty market
     _attach_injuries(client, players, season)
+    _attach_contracts(client, players, roster, season, league_id)
     teams = list(state.get("teams", []))
     cap = {str(t["league_team_id"]): float(calculate_team_financials(roster, adjustments, salary_cap=salary_cap, league_team_id=str(t["league_team_id"]))["cap_space"])
            for t in teams}
@@ -704,6 +724,28 @@ def load_league(client: Any, state: Mapping[str, Any], season: int, roster_posit
     from league_ai.pick_values import PickBook
     book = PickBook(_pick_rows(client), teams=len(teams), rounds=ROOKIE_ROUNDS, season=season)
     return League(players, teams, roster_positions, records=records, leanings=leanings, pick_book=book), cap, str(asker_team_id)
+
+
+def _attach_contracts(client: Any, players: list[PlayerStrength], roster: list[Mapping[str, Any]], season: int, league_id: str | None) -> None:
+    """Full salary, roster designation and contract type from the roster, plus rookie draft round and year from the draft
+    board, for roster-move planning (cuts, taxi, IR, rookie options)."""
+    rows = {str(r.get("sleeper_player_id") or r.get("player_id") or ""): r for r in roster}
+    drafted: dict[str, Mapping[str, Any]] = {}
+    if league_id:
+        try:
+            for r in (client.table("rookie_draft_board_assignments").select("player_id, draft_year, draft_round, round_pick")
+                      .eq("league_id", league_id).limit(2000).execute().data or []):
+                drafted[str(r.get("player_id"))] = r
+        except Exception:
+            pass
+    for p in players:
+        r = rows.get(p.sleeper_id) or {}
+        p.salary = float(r.get("salary") or r.get("cap_hit") or 0)  # type: ignore[attr-defined]  # full annual salary
+        p.designation = r.get("roster_designation")  # type: ignore[attr-defined]  # "taxi", "ir" or None
+        p.contract_type = r.get("contract_type")  # type: ignore[attr-defined]
+        d = drafted.get(p.sleeper_id)
+        p.rookie_round = int(d["draft_round"]) if d and d.get("draft_round") else None  # type: ignore[attr-defined]
+        p.rookie_year = int(d["draft_year"]) if d and d.get("draft_year") else None  # type: ignore[attr-defined]
 
 
 def _attach_injuries(client: Any, players: list[PlayerStrength], season: int) -> None:

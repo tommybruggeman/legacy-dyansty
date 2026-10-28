@@ -18,6 +18,7 @@ from league_ai.front_office import (
 from league_ai.learning import Ledger, learning_pack_lines
 from league_ai.memory import Memory
 from league_ai.nfl_data import add_weather, bye_weeks, data_freshness, defense_vs_position, season_games, week_matchups
+from league_ai.roster_moves import rules_from
 from league_ai.routing import effort_for, topic as question_topic
 from league_ai.service import AnswerResult, LeagueDataSources, answer, build_pack
 from league_ai.settings_store import apply_sleeper_scoring, fetch_sleeper_scoring, load_settings
@@ -48,6 +49,7 @@ TOOL_STATUS = {
     "log_prediction": "Logging this call so I can grade it after the games",
     "get_my_track_record": "Checking how my past calls graded",
     "find_trade_targets": "Scanning every roster for trades that work for both sides",
+    "plan_roster_moves": "Checking cuts, taxi, IR and rookie options under your league's rules",
     "get_owner_trade_profile": "Checking how that owner trades",
     "record_trade_response": "Noting how they answered",
     "get_schedule_outlook": "Grading the rest of the schedule",
@@ -134,6 +136,20 @@ def playoff_start(sleeper_league_id: str | None) -> int | None:
         return int(value) if value else None
     except Exception:
         return None
+
+
+def season_mode(sleeper_league_id: str | None, week: int, playoff_week: int | None) -> tuple[bool, float]:
+    """(offseason?, share of the regular season still to play). The offseason starts once the league's final game is
+    over (Sleeper marks the league complete) and runs until the next season starts."""
+    status = None
+    if sleeper_league_id:
+        try:
+            status = fetch_sleeper_scoring(sleeper_league_id).get("status")
+        except Exception:
+            status = None
+    offseason = status is not None and status != "in_season"
+    end = (playoff_week or 15) - 1
+    return offseason, (0.0 if offseason else max(0.0, min(1.0, (end - week + 1) / max(end, 1))))
 
 
 def build_owner_pack(client: Any, owner: Owner, *, state: Mapping[str, Any], rules: Mapping[str, Any], league: Mapping[str, Any]) -> str:
@@ -260,6 +276,8 @@ def chat_tools(client: Any, owner: Owner, *, state: Mapping[str, Any], rules: Ma
         LeagueHistory(client, owner.league_id),
         outcomes=ledger.trade_outcomes, current_season=owner.season, odds=odds,
         free_agent=lambda name: next((free_agent_strength(client, r, owner.season, owner.league_team_id) for r in nfl.find_players(name, limit=1)), None),
+        roster_rules=lambda: (rules_from(rules, load_settings(client, owner.league_id)),
+                              *season_mode(league.get("sleeper_league_id"), week, playoff_week())),
     )
     return build_registry(client, league_state=state, salary_cap=rules.get("salary_cap", 225), dead_cap_pct=float(rules.get("default_dead_cap_pct", 50) or 50),
                           extra=[*history_tools(client, owner.league_id), *owner.memory(client).tools(), *ledger.tools(), *finder, *(extra or [])])
