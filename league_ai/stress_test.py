@@ -241,7 +241,10 @@ def ask(client: Any) -> int:
     results: dict[str, Any] = {"league": league["name"], "season": season, "week": int(state_nfl.get("week") or 0), "model": config.model,
                                "budget": BUDGET, "items": [], "spent": 0.0, "stopped_early": False}
     spent = 0.0
+    skip = int(os.environ.get("STRESS_SKIP") or 0)  # resume a run that stopped: skip the questions already answered
     for n, (o, kind, q) in enumerate(queue, 1):
+        if n <= skip:
+            continue
         if spent + MAX_ANSWER > BUDGET:
             results["stopped_early"] = True
             print(f"budget stop before question {n}: spent ${spent:.2f}", flush=True)

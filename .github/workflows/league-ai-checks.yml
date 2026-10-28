@@ -16,6 +16,9 @@ on:
       questions:
         description: "stress_test only: how many questions"
         default: "50"
+      skip:
+        description: "stress_test only: skip the first N planned questions (resume a stopped run)"
+        default: "0"
 
 permissions:
   contents: write  # the stress test saves its results (encrypted) to its own branch
@@ -40,6 +43,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ (inputs.check == 'stress_test' || inputs.check == 'stress_ping') && secrets.ANTHROPIC_API_KEY || '' }}
           STRESS_BUDGET: ${{ inputs.budget }}
           STRESS_QUESTIONS: ${{ inputs.questions }}
+          STRESS_SKIP: ${{ inputs.skip }}
           STRESS_MAX_ANSWER: "0.2"
         run: |
           case "${{ inputs.check }}" in
