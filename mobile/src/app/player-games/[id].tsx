@@ -8,6 +8,8 @@ import { Back, Screen } from '../../components/ui';
 import { type PlayerPage, useApi } from '../../lib/api';
 import { colors } from '../../lib/theme';
 
+export { ScreenError as ErrorBoundary } from '../../components/ScreenState';
+
 // The full game log, opened from the player page's points chart: every
 // week's NFL line and snap share next to his points in this league.
 // It reads the same /players response, so it opens instantly from cache.
@@ -19,7 +21,8 @@ export default function PlayerGames() {
   if (error && !data) return <ErrorState message={error} onRetry={reload} />;
   if (!data) return null;
 
-  const played = data.game_log.filter((g) => g.points != null);
+  const log = data.game_log ?? [];
+  const played = log.filter((g) => g.points != null);
   const total = played.reduce((s, g) => s + (g.points ?? 0), 0);
   const tiles = data.nfl_season?.tiles ?? [];
 
@@ -41,7 +44,7 @@ export default function PlayerGames() {
             <Text style={[styles.th, styles.colLine]}>NFL LINE</Text>
             <Text style={[styles.th, styles.colPts, { color: colors.gold }]}>LEGACY</Text>
           </View>
-          {data.game_log.map((g) => {
+          {log.map((g) => {
             const [main, sub] = lineText(g, data.pos);
             const snap = g.line?.snap_pct;
             const on = g.status === 'started';

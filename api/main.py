@@ -384,6 +384,9 @@ def _add_projections(client: Client, ctx: dict[str, Any], week: int, final: bool
     season, sid = ctx["season"], ctx["sleeper_id"]
     proj_job = cache.pool.submit(lambda: cache.cached(("proj", sid, season, week), 900, lambda: projections.week_projections(client, sid, season, week, ids, positions, nfl_teams)))
     rank_job = cache.pool.submit(lambda: projections.week_ranks(sid, season, week, final, positions))
+    # week_ranks reads the same stat lines, so this second read comes from the Sleeper cache.
+    lines_job = cache.pool.submit(lambda: projections.week_lines("stats", season, week, 86400 if final else 120))
+    scoring_job = cache.pool.submit(lambda: projections.league_scoring(sid))
     starts = _week_kickoffs(client, season, week)
     now = datetime.now(front_office.LEAGUE_TZ)
     try:
@@ -399,6 +402,10 @@ def _add_projections(client: Client, ctx: dict[str, Any], week: int, final: bool
         ranks = rank_job.result()
     except Exception:
         ranks = {}
+    try:
+        lines, scoring = lines_job.result(), scoring_job.result()
+    except Exception:
+        lines, scoring = {}, {}
     for side in result["teams"]:
         total = 0.0
         for p in side["players"]:
@@ -408,6 +415,7 @@ def _add_projections(client: Client, ctx: dict[str, Any], week: int, final: bool
             p["status"] = "final" if final else home.player_status(home.NFLVERSE_TEAMS.get(p["team"] or "", p["team"] or ""), starts, now)
             p["proj"] = proj.get(pid)
             p["rank"] = (ranks.get(pid) or {}).get("label") if p["status"] in ("playing", "final") and p["points"] else None
+            p["breakdown"] = projections.breakdown((lines.get(pid) or {}).get("stats"), scoring) if p["status"] in ("playing", "final") else []
             if p["status"] == "final" or p["proj"] is None:
                 total += p["points"]
             elif p["status"] == "playing":

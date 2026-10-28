@@ -34,6 +34,44 @@ def score(stats: dict[str, Any] | None, scoring: dict[str, Any]) -> float:
     return round(total, 2)
 
 
+# Sleeper stat keys -> short labels for a score breakdown. Keys not listed still
+# count; they show under a tidied version of the key.
+LABELS = {
+    "pass_yd": "pass yds", "pass_td": "pass TD", "pass_int": "INT", "pass_2pt": "pass 2pt", "pass_cmp": "completions",
+    "pass_att": "pass att", "pass_inc": "incompletions", "pass_sack": "sacks taken",
+    "rush_yd": "rush yds", "rush_td": "rush TD", "rush_att": "carries", "rush_2pt": "rush 2pt",
+    "rec": "catches", "rec_yd": "rec yds", "rec_td": "rec TD", "rec_2pt": "rec 2pt", "rec_tgt": "targets",
+    "fum_lost": "fumbles lost", "fum": "fumbles", "fum_rec_td": "fumble return TD",
+    "xpm": "XP made", "xpmiss": "XP missed", "fgmiss": "FG missed",
+    "fgm_0_19": "FG 0-19", "fgm_20_29": "FG 20-29", "fgm_30_39": "FG 30-39", "fgm_40_49": "FG 40-49", "fgm_50p": "FG 50+",
+    "def_td": "D/ST TD", "sack": "sacks", "int": "INTs", "fum_rec": "fumble recoveries", "safe": "safeties", "blk_kick": "blocked kicks",
+    "pts_allow_0": "0 pts allowed", "pts_allow_1_6": "1-6 pts allowed", "pts_allow_7_13": "7-13 pts allowed",
+    "pts_allow_14_20": "14-20 pts allowed", "pts_allow_21_27": "21-27 pts allowed", "pts_allow_28_34": "28-34 pts allowed",
+    "pts_allow_35p": "35+ pts allowed", "st_td": "return TD", "kr_td": "kick return TD", "pr_td": "punt return TD",
+}
+
+
+def breakdown(stats: dict[str, Any] | None, scoring: dict[str, Any]) -> list[dict[str, Any]]:
+    """Where one stat line's points came from: [{label, value, points}], biggest first, zero rows dropped."""
+    rows = []
+    for key, weight in scoring.items():
+        value = (stats or {}).get(key)
+        try:
+            pts = float(value) * float(weight) if value is not None else 0.0
+        except (TypeError, ValueError):
+            continue
+        if abs(pts) < 0.005:
+            continue
+        value = float(value)
+        rows.append({
+            "label": LABELS.get(key) or key.replace("_", " "),
+            "value": int(value) if value.is_integer() else round(value, 1),
+            "points": round(pts, 2),
+        })
+    rows.sort(key=lambda r: -abs(r["points"]))
+    return rows
+
+
 def _rows(payload: Any) -> dict[str, dict[str, Any]]:
     """player_id -> {stats, pos, team}, from either Sleeper response shape (list of rows or id -> stats)."""
     out: dict[str, dict[str, Any]] = {}

@@ -41,3 +41,12 @@ def test_week_projections_score_and_mark_byes(monkeypatch):
     out = projections.week_projections(None, "S", 2026, 9, ["1", "2"], {"1": "RB", "2": "WR"}, {"1": "DEN", "2": "BUF"})
     assert out["1"] == 11.0  # 8 rush + 3 for half a TD, average matchup
     assert out["2"] == 0.0  # BUF has no game this week: bye
+
+
+def test_breakdown_lists_scoring_stats_biggest_first():
+    from api import projections
+    rows = projections.breakdown({"rush_yd": 87, "rush_td": 1, "rec": 3, "rec_yd": 22, "fum_lost": 1, "rush_att": 15},
+                                 {"rush_yd": 0.1, "rush_td": 6, "rec": 0.5, "rec_yd": 0.1, "fum_lost": -2, "pass_yd": 0.04})
+    assert rows[0] == {"label": "rush yds", "value": 87, "points": 8.7}
+    assert [r["label"] for r in rows] == ["rush yds", "rush TD", "rec yds", "fumbles lost", "catches"]
+    assert projections.breakdown(None, {"rush_yd": 0.1}) == []

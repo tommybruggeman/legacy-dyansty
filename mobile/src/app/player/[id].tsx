@@ -8,6 +8,8 @@ import { Back, Screen, money } from '../../components/ui';
 import { type PlayerPage, useApi } from '../../lib/api';
 import { colors } from '../../lib/theme';
 
+export { ScreenError as ErrorBoundary } from '../../components/ScreenState';
+
 // Any player, from any list: real NFL stats next to how he's done in this
 // league, the points chart (tap it for the full game log), next game,
 // contract history and health.
@@ -20,10 +22,15 @@ export default function Player() {
   if (!data) return null;
 
   const c = data.contract;
-  const ls = data.league_season;
+  const ls = data.league_season ?? { ppg: null, ppg_started: null, rank: null, started: 0, played: 0, per_dollar: null };
   const nfl = data.nfl_season;
+  const log = data.game_log ?? [];
+  const history = data.history ?? [];
+  const name = data.name ?? 'Player';
+  const owner = c?.owner_name ?? data.rostered_by?.owner_name ?? '';
   const eyebrow = [data.pos, data.nfl_team, data.age ? `AGE ${Math.floor(data.age)}` : null, c?.is_rookie ? 'ROOKIE' : null].filter(Boolean).join(' · ');
-  const h = data.health;
+  const h: PlayerPage['health'] = data.health ?? { healthy: true, status: 'Healthy', detail: null, update: null, return: null, this_week: null, missed: [] };
+  const missed = h.missed ?? [];
 
   return (
     <Screen loading={loading} onRefresh={reload}>
@@ -33,12 +40,12 @@ export default function Player() {
           <Headshot playerId={data.player_id} pos={data.pos} team={data.nfl_team} size={84} />
           <View style={styles.heroText}>
             <Text style={styles.eyebrow}>{eyebrow}</Text>
-            <Text style={styles.name} numberOfLines={2}>{data.name}</Text>
+            <Text style={styles.name} numberOfLines={2}>{name}</Text>
             <View style={styles.pills}>
               {data.is_mine ? (
                 <Text style={[styles.pill, styles.pillGold]}>YOURS</Text>
               ) : c || data.rostered_by ? (
-                <Text style={[styles.pill, styles.pillLine]}>{(c?.owner_name ?? data.rostered_by!.owner_name).split(' ')[0].toUpperCase()}</Text>
+                <Text style={[styles.pill, styles.pillLine]}>{(owner.split(' ')[0] || 'OWNED').toUpperCase()}</Text>
               ) : (
                 <Text style={[styles.pill, styles.pillLine]}>FREE AGENT</Text>
               )}
@@ -57,7 +64,7 @@ export default function Player() {
           <View style={styles.card}>
             <Text style={styles.label}>IN THE NFL · {nfl.games} GAME{nfl.games === 1 ? '' : 'S'}</Text>
             <View style={styles.statRow}>
-              {nfl.tiles.map((t) => (
+              {(nfl.tiles ?? []).map((t) => (
                 <View key={t.label} style={styles.stat}>
                   <Text style={styles.statValue}>{t.value}</Text>
                   <Text style={styles.statLabel}>{t.label}</Text>
@@ -74,23 +81,23 @@ export default function Player() {
           </View>
         ) : null}
 
-        {data.game_log.length ? (
-          <PointsChart weeks={data.game_log} avg={ls.ppg} onPress={() => router.push(`/player-games/${data.player_id}`)} />
+        {log.length ? (
+          <PointsChart weeks={log} avg={ls.ppg} onPress={() => router.push(`/player-games/${data.player_id}`)} />
         ) : null}
 
         {data.next_game ? <NextGame game={data.next_game} pos={data.pos} /> : null}
 
-        {data.history.length ? (
+        {history.length ? (
           <View style={styles.card}>
             <View style={styles.cardHead}>
               <Text style={styles.cardTitle}>Contract history</Text>
               <Text style={styles.small}>newest first</Text>
             </View>
-            {data.history.map((e, i) => (
+            {history.map((e, i) => (
               <Pressable key={`${e.kind}-${e.date}-${i}`} style={styles.event} onPress={e.team_id ? () => router.push(`/team/${e.team_id}`) : undefined}>
                 <View style={styles.rail}>
                   <View style={[styles.dot, { backgroundColor: DOT[e.kind] ?? (e.live ? colors.gold : '#4CC38A') }, e.live && { backgroundColor: colors.gold }]} />
-                  {i < data.history.length - 1 ? <View style={styles.railLine} /> : null}
+                  {i < history.length - 1 ? <View style={styles.railLine} /> : null}
                 </View>
                 <View style={styles.eventBody}>
                   <View style={styles.eventHead}>
@@ -105,12 +112,12 @@ export default function Player() {
         ) : !c && data.rostered_by ? (
           <Pressable style={styles.card} onPress={data.rostered_by.team_id ? () => router.push(`/team/${data.rostered_by!.team_id}`) : undefined}>
             <Text style={styles.cardTitle}>Contract</Text>
-            <Text style={styles.small}>On {data.rostered_by.owner_name}'s roster in Sleeper · contract not entered yet</Text>
+            <Text style={styles.small}>On {owner || 'a'}'s roster in Sleeper · contract not entered yet</Text>
           </Pressable>
         ) : c ? (
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Contract</Text>
-            <Text style={styles.small}>{c.owner_name} · {money(c.salary)} a year through {c.through}{c.is_rookie ? ' · rookie deal' : ''}</Text>
+            <Text style={styles.small}>{[c.owner_name, `${money(c.salary)} a year through ${c.through}`, c.is_rookie ? 'rookie deal' : null].filter(Boolean).join(' · ')}</Text>
           </View>
         ) : null}
 
@@ -125,18 +132,18 @@ export default function Player() {
           ) : null}
           {h.update ? <Text style={styles.small}>{h.update}</Text> : null}
           {h.return ? <Text style={styles.small}>Expected back {h.return}</Text> : null}
-          {h.missed.length ? (
+          {missed.length ? (
             <Text style={styles.small}>
-              Missed: {h.missed.map((m) => `${m.injury} (${m.season}, ${m.games} game${m.games === 1 ? '' : 's'})`).join(' · ')}
+              Missed: {missed.map((m) => `${m.injury} (${m.season}, ${m.games} game${m.games === 1 ? '' : 's'})`).join(' · ')}
             </Text>
           ) : (
             <Text style={styles.small}>No missed games on file.</Text>
           )}
         </View>
 
-        <Pressable onPress={() => router.navigate({ pathname: '/front-office', params: { q: `${data.is_mine ? 'Should I keep, start or trade' : 'What do you think of'} ${data.name}?`, at: String(Date.now()) } })} style={styles.ask}>
+        <Pressable onPress={() => router.navigate({ pathname: '/front-office', params: { q: `${data.is_mine ? 'Should I keep, start or trade' : 'What do you think of'} ${name}?`, at: String(Date.now()) } })} style={styles.ask}>
           <View style={styles.fo}><Text style={styles.foText}>FO</Text></View>
-          <Text style={styles.askText}>Ask the Front Office about {data.name.split(' ').slice(-1)[0]}</Text>
+          <Text style={styles.askText}>Ask the Front Office about {name.split(' ').slice(-1)[0]}</Text>
         </Pressable>
 
         {data.is_mine ? (

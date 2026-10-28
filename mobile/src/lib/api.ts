@@ -71,18 +71,21 @@ export async function apiStream<E>(path: string, body: unknown, onEvent: (event:
 
 // Pages open instantly with what was last loaded (kept in memory and on the
 // phone), then refresh quietly in the background. Cleared on sign out.
+// Bump CACHE_VERSION when a response changes shape, so an app update never
+// draws an old saved copy with the new screen.
+const CACHE_VERSION = 'v2';
 const CACHE_PREFIX = 'api:';
 const memory = new Map<string, unknown>();
 
 function remember(path: string, value: unknown) {
   memory.set(path, value);
-  AsyncStorage.setItem(CACHE_PREFIX + path, JSON.stringify(value)).catch(() => undefined);
+  AsyncStorage.setItem(CACHE_PREFIX + CACHE_VERSION + path, JSON.stringify(value)).catch(() => undefined);
 }
 
 async function recall<T>(path: string): Promise<T | null> {
   if (memory.has(path)) return memory.get(path) as T;
   try {
-    const saved = await AsyncStorage.getItem(CACHE_PREFIX + path);
+    const saved = await AsyncStorage.getItem(CACHE_PREFIX + CACHE_VERSION + path);
     if (saved) {
       const value = JSON.parse(saved) as T;
       memory.set(path, value);
@@ -265,6 +268,7 @@ export type BoxPlayer = {
   status?: 'bye' | 'waiting' | 'playing' | 'final';
   proj?: number | null;
   rank?: string | null;
+  breakdown?: { label: string; value: number; points: number }[];
 };
 export type BoxScore = {
   week: number;
