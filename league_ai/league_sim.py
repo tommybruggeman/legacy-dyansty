@@ -27,9 +27,11 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from league_ai import aging
 from league_ai import draft_study as ds
 
 FIRST, SIMS_DEFAULT = 2020, 1000
+HISTORY_FROM = 2012                        # earlier seasons only teach the aging curves
 CAP, MIN_SALARY = 225.0, 1.0
 POS = ("QB", "RB", "WR", "TE")
 YEAR_DISCOUNT = 0.10                       # league rule: each extra contract year makes a bid worth 10% more
@@ -45,6 +47,13 @@ NOISE_MARKET = 0.25                        # each market owner's valuation noise
 BENCH_DEPTH = {"QB": 1, "RB": 3, "WR": 3, "TE": 1}  # backups the bot keeps per position beyond its starters
 BEYOND_NEED = 0.2                          # a player the bot has no lineup spot for is worth this share of his value
 LINEUP_AWARE = os.environ.get("SIM_LINEUP_AWARE", "1") == "1"
+GOAL_WEIGHTS = {                           # how much each season's value counts, by what the owner is playing for
+    "contend": (1.15, 0.8, 0.6, 0.5),       # titles now: pay up for this year, discount later years
+    "balanced": (1.0, 1.0, 1.0, 1.0),
+    "rebuild": (0.75, 1.05, 1.1, 1.1),      # later years matter most: young, cheap, long contracts
+}
+BOT_GOALS = os.environ.get("SIM_BOT_GOALS", "0") == "1"   # bot picks contend/rebuild from last season's finish
+AGE_AWARE = os.environ.get("SIM_AGE_AWARE", "1") == "1"     # tilt later-year values for age (league_ai.aging)
 SMART_OWNERS = os.environ.get("SIM_SMART_OWNERS", "1") == "1"  # the other owners also buy for need, learn and draft off a board
 OWNER_SKILL = (0.3, 0.9)                   # how far each other owner leans on learned values over the market price
 NEED_PENALTY = 8.0                         # rookie board spots a player drops when his position is already full
@@ -87,6 +96,8 @@ class Data:
         for gs, y in zip(g.gsis_id, g.draft_year):
             if gs in self.idx and not pd.isna(y):
                 self.draft_year[self.idx[gs]] = y
+        self.born = birth_years(ids, self.idx, self.n)
+        self.history = pd.DataFrame(columns=["player_id", "season", "position", "par", "age"])   # long history for aging
         ecr = ecr.copy()
         ecr["gsis"] = ecr.id.astype(str).map(fp2gsis)
         ecr = ecr[ecr.gsis.isin(self.idx) & ecr.pos.isin(POS)]
@@ -119,6 +130,20 @@ class Data:
 MAX_RANK = 120
 
 
+def birth_years(ids: pd.DataFrame, idx: dict[str, int], n: int) -> np.ndarray:
+    """Birth date as a fractional year per player (NaN when unknown)."""
+    out = np.full(n, np.nan)
+    b = ids.dropna(subset=["gsis_id", "birthdate"])
+    for gs, day in zip(b.gsis_id, pd.to_datetime(b.birthdate, errors="coerce")):
+        if gs in idx and not pd.isna(day):
+            out[idx[gs]] = day.year + (day.dayofyear - 1) / 365.25
+    return out
+
+
+def age_in(born: np.ndarray, season: int) -> np.ndarray:
+    return season + 0.67 - born          # age on September 1
+
+
 def rank_curve(ranks: np.ndarray, outcome: np.ndarray) -> np.ndarray:
     """Expected outcome at each position rank 1..MAX_RANK: kernel-smoothed mean, never rising with rank."""
     ok = ~np.isnan(ranks)
@@ -140,15 +165,28 @@ def sorted_curve(par: np.ndarray, pos: np.ndarray, p: int) -> np.ndarray:
     return out
 
 
+_AGING: dict[int, dict[str, dict[int, np.ndarray]]] = {}
+
+
+def _aging_for(d: Data, season: int) -> dict[str, dict[int, np.ndarray]]:
+    """Aging curves from seasons before this one (cached: every league reuses them)."""
+    if season not in _AGING:
+        hist = d.history[d.history.season < season]
+        _AGING[season] = aging.retention_table(hist, season - 1) if len(hist) else {}
+    return _AGING[season]
+
+
 class Bot:
     """Preseason price and contract length for every player, from earlier seasons only."""
 
-    def __init__(self, d: Data, season: int):
-        self.d, self.t = d, season
+    def __init__(self, d: Data, season: int, goal: str = "balanced"):
+        self.d, self.t, self.goal = d, season, goal
         past = [s for s in d.seasons if FIRST <= s < season and s in d.rp]
         self.k_dollar = float(np.mean([d.k_dollar[s] for s in d.seasons if s < season] or [d.k_dollar[min(d.seasons)]]))
         self.yr1: dict[int, np.ndarray] = {}
         self.later: dict[tuple[int, int], np.ndarray] = {}
+        self.aging = _aging_for(d, season)
+        self.age = age_in(d.born, season)
         for p in range(len(POS)):
             if past:
                 ranks = np.concatenate([np.where(d.pos == p, d.rp[s], np.nan) for s in past])
@@ -178,11 +216,13 @@ class Bot:
         y0 = self.yr1[p][int(min(r0, MAX_RANK))] if not np.isnan(r0) else 0.0
         out = [y0]
         for k in (1, 2, 3):
-            out.append(self.later[(p, k)][int(min(rd, MAX_RANK))] if not np.isnan(rd) else y0 * RETENTION_PRIOR[POS[p]] ** k)
+            base = self.later[(p, k)][int(min(rd, MAX_RANK))] if not np.isnan(rd) else y0 * RETENTION_PRIOR[POS[p]] ** k
+            out.append(base * aging.age_tilt(self.aging, POS[p], float(self.age[i]), k) if AGE_AWARE else base)
         return out
 
     def dollars_by_year(self, i: int) -> list[float]:
-        return [MIN_SALARY + max(0.0, v) * self.k_dollar for v in self.par_by_year(i)]
+        w = GOAL_WEIGHTS[self.goal]
+        return [MIN_SALARY + max(0.0, v) * self.k_dollar * w[k] for k, v in enumerate(self.par_by_year(i))]
 
     def offer(self, i: int) -> tuple[float, int]:
         """(top annual salary, years) that gives the strongest bid under the league's year discount without overpaying."""
@@ -228,6 +268,7 @@ def owner_profiles(df: pd.DataFrame, d: Data) -> list[dict[str, Any]]:
     """Each owner's lean against what the league pays for the same preseason rank: big names, depth, each position,
     contract length and player age. Every lean is shrunk toward 1.0 (or 0) by sample size."""
     df = df.copy()
+    df["rank"] = df["rank"].fillna(MAX_RANK)          # unranked preseason = the bottom of the board
     df["curve"] = [max(MIN_SALARY, float(OWNER_CURVES[p][int(min(r, MAX_RANK))])) for p, r in zip(df.pos, df["rank"])]
     df["ratio"] = (df.salary / df.curve).clip(0.2, 5.0)
     df["exp"] = df.season - pd.Series(d.draft_year[df.i.to_numpy()], index=df.index)
@@ -268,7 +309,7 @@ def personality_mult(profile: dict[str, Any] | None, d: Data, season: int) -> np
         m[d.pos == p] *= profile["positions"].get(name, 1.0)
     exp = season - d.draft_year
     exp = np.where(np.isnan(exp), np.nanmean(exp), exp)
-    m *= np.exp(np.clip(profile["age_slope"] * (exp - profile.get("exp_mean", 4.0)), -0.5, 0.5))
+    m *= np.exp(np.clip(profile["age_slope"] * (exp - profile.get("exp_mean", 4.0)), -0.3, 0.3))
     return m
 
 
@@ -391,12 +432,13 @@ class League:
 
     def values(self, season: int, bot: Bot, market: np.ndarray) -> np.ndarray:
         """teams x players: what each owner thinks a player is worth this season (bot row = bot's prices)."""
-        learned = np.array([bot.dollars_by_year(i)[0] for i in range(self.d.n)])
+        mine = np.array([bot.dollars_by_year(i)[0] for i in range(self.d.n)])
+        learned = MIN_SALARY + (mine - MIN_SALARY) / GOAL_WEIGHTS[bot.goal][0]   # other owners don't share the bot's goal
         v = (self.skill[:, None] * learned[None, :] + (1 - self.skill[:, None]) * market[None, :]) * self.noise
         for t in range(self.T):
             if self.profile[t]:
                 v[t] *= personality_mult(self.profile[t], self.d, season)
-        v[self.bot] = learned
+        v[self.bot] = mine
         return v
 
     def auction(self, season: int, bot: Bot, market: np.ndarray, values: np.ndarray) -> None:
@@ -529,12 +571,22 @@ def bot_rookie_board(d: Data, season: int) -> list[int]:
     return [i for _, i in sorted(adj)]
 
 
+def goal_for(lg: "League", season: int) -> str:
+    """The bot's goal this season from where it finished last season: top 3 contend, bottom 3 rebuild."""
+    if not BOT_GOALS:
+        return "balanced"
+    last = [r["rank"] for r in lg.results if r["team"] == lg.bot and r["season"] == season - 1]
+    if not last:
+        return "balanced"
+    return "contend" if last[0] <= 3 else "rebuild" if last[0] > lg.T - 3 else "balanced"
+
+
 def run_league(d: Data, slots: dict[str, int], seed: int, seasons: list[int]) -> League:
     rng = np.random.default_rng(seed)
     lg = League(d, slots, rng, bot_seat=int(rng.integers(0, d.teams)))
     order: list[int] | None = None
     for s in seasons:
-        bot = Bot(d, s)
+        bot = Bot(d, s, goal_for(lg, s))
         market = market_dollars(d, s)
         vals = lg.values(s, bot, market)
         if order is not None:
@@ -662,6 +714,15 @@ def roster_slots(positions: list[str]) -> dict[str, int]:
     return slots or {"QB": 1, "RB": 2, "WR": 3, "TE": 1, "FLEX": 1, "SUPER_FLEX": 1}
 
 
+def aging_history(weeks: pd.DataFrame, ids: pd.DataFrame, repl: dict[str, int], live_season: int, live_week: int) -> pd.DataFrame:
+    """Every player-season since HISTORY_FROM with points above replacement and age, for league_ai.aging."""
+    table = ds.season_table(weeks, repl, live_season, live_week)
+    idx = {p: i for i, p in enumerate(sorted(set(table.player_id)))}
+    born = birth_years(ids, idx, len(idx))
+    table["age"] = [s + 0.67 - born[idx[p]] for p, s in zip(table.player_id, table.season)]
+    return table[["player_id", "season", "position", "par", "age"]]
+
+
 def redact(obj: Any) -> Any:
     """Owner names stay out of the public Actions log (the committed results are encrypted and keep them)."""
     if isinstance(obj, dict):
@@ -685,7 +746,7 @@ def main() -> None:
     state = ds.get_json(f"{ds.SLEEPER}/state/nfl")
     live_season = int(state.get("season") or live.get("season"))
     frames = []
-    for y in range(FIRST - 1, live_season + 1):
+    for y in range(HISTORY_FROM, live_season + 1):
         try:
             w = pd.read_csv(io.BytesIO(ds.get_bytes(ds.STATS_URL.format(season=y))), low_memory=False)
         except Exception as e:
@@ -694,12 +755,14 @@ def main() -> None:
         w = w[(w.season_type == "REG") & w.position.isin(POS)].copy()
         w["pts"] = ds.week_points(w, scoring)
         frames.append(w[["player_id", "player_display_name", "position", "season", "week", "pts"]])
-    weeks = pd.concat(frames)
+    every = pd.concat(frames)
+    weeks = every[every.season >= FIRST - 1]
     live_week = int(weeks[weeks.season == live_season].week.max()) if (weeks.season == live_season).any() else 1
     ecr = pd.read_parquet(io.BytesIO(ds.get_bytes(ds.ECR_URL)))
     ecr["scrape_date"] = pd.to_datetime(ecr.scrape_date)
     ids = pd.read_csv(io.BytesIO(ds.get_bytes(ds.IDS_URL)), low_memory=False)
     d = Data(weeks, ecr, ids, teams, superflex, live_season, live_week)
+    d.history = aging_history(every, ids, d.repl, live_season, live_week)
     owners: dict[str, Any] = {"used": False}
     if os.environ.get("SUPABASE_URL") and os.environ.get("SUPABASE_SERVICE_ROLE_KEY"):
         try:
