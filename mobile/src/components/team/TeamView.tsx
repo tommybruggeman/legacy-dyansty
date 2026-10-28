@@ -6,7 +6,7 @@ import type { Pick, Player, TeamPage } from '../../lib/api';
 import { POS_COLORS, teamColors } from '../../lib/nflColors';
 import { colors } from '../../lib/theme';
 import { initialsOf } from '../Pictures';
-import { Bar, Card, Note, Pill, Pos, Row, Segmented, SwipeTabs, Tile, Tiles, Title, money, ordinal, record, ui } from '../ui';
+import { Card, Note, Pill, Pos, Row, Segmented, SwipeTabs, Tile, Tiles, Title, money, ordinal, record, ui } from '../ui';
 
 const TABS = ['Roster', 'Contracts', 'Picks', 'Activity'] as const;
 
@@ -63,21 +63,62 @@ export function TeamView({ team, eyebrow }: { team: TeamPage; eyebrow?: string }
 // Short injury labels so the tag doesn't crowd the name.
 const INJURY_SHORT: Record<string, string> = { questionable: 'Q', doubtful: 'D', out: 'OUT', ir: 'IR', pup: 'PUP', sus: 'SUS' };
 
+// Player circle in their NFL team's colors with a position badge.
+function Face({ p, label, hurt }: { p: Player; label: string; hurt?: boolean }) {
+  const [fill, ring] = teamColors(p.nfl_team);
+  return (
+    <View style={styles.face}>
+      <View style={[styles.circle, { backgroundColor: fill, borderColor: ring }]}>
+        <Text style={styles.initials}>{initialsOf(p.name)}</Text>
+      </View>
+      <Text style={[styles.badge, { backgroundColor: POS_COLORS[label] ?? colors.muted }]}>{label || '—'}</Text>
+      {hurt ? <View style={styles.hurt} /> : null}
+    </View>
+  );
+}
+
+// Cap used for one season as a ring of ticks, with space left in the middle.
+const TICKS = 48;
+function CapRing({ season, used, space, cap }: { season: number; used: number; space: number; cap: number }) {
+  const filled = Math.round(Math.max(0, Math.min(1, used / cap)) * TICKS);
+  return (
+    <View style={styles.ringWrap}>
+      <View style={styles.ring}>
+        {Array.from({ length: TICKS }, (_, i) => (
+          <View
+            key={i}
+            style={[styles.tick, { transform: [{ rotate: `${(i * 360) / TICKS}deg` }, { translateY: -RING / 2 + 6 }] }, i < filled && styles.tickOn, space < 0 && i < filled && { backgroundColor: colors.danger }]}
+          />
+        ))}
+        <Text style={[styles.ringValue, space < 0 && { color: colors.danger }]}>{money(space)}</Text>
+        <Text style={styles.ringLeft}>left</Text>
+      </View>
+      <Text style={styles.ringYear}>{season}</Text>
+    </View>
+  );
+}
+
+function ContractRow({ p, first, sub }: { p: Player; first?: boolean; sub: string }) {
+  return (
+    <Row first={first} onPress={() => go(`/player/${p.player_id}`)}>
+      <Face p={p} label={p.pos} />
+      <View style={ui.flex}>
+        <Text style={ui.name} numberOfLines={1}>{p.name}</Text>
+        <Text style={[ui.sub, styles.subGap]}>{sub}</Text>
+      </View>
+      <Text style={styles.bigSalary}>{money(p.contract_salary)}</Text>
+    </Row>
+  );
+}
+
 function PlayerRow({ p, first, showSlot }: { p: Player; first?: boolean; showSlot?: boolean }) {
   const injury = p.injury ? INJURY_SHORT[p.injury.toLowerCase()] ?? p.injury.toUpperCase() : null;
   const tag = injury ? <Pill label={injury} tone="out" /> : p.is_rookie ? <Pill label="ROOKIE" tone="gold" /> : null;
   const label = showSlot && p.slot ? p.slot : p.pos;
-  const [fill, ring] = teamColors(p.nfl_team);
   const years = p.no_contract ? 0 : p.years_left;
   return (
     <Row first={first} onPress={() => go(`/player/${p.player_id}`)}>
-      <View style={styles.face}>
-        <View style={[styles.circle, { backgroundColor: fill, borderColor: ring }]}>
-          <Text style={styles.initials}>{initialsOf(p.name)}</Text>
-        </View>
-        <Text style={[styles.badge, { backgroundColor: POS_COLORS[label] ?? colors.muted }]}>{label || '—'}</Text>
-        {injury ? <View style={styles.hurt} /> : null}
-      </View>
+      <Face p={p} label={label} hurt={!!injury} />
       <View style={ui.flex}>
         <View style={styles.nameLine}>
           <Text style={[ui.name, styles.shrink]} numberOfLines={1}>{p.name}</Text>
@@ -164,7 +205,10 @@ function RosterTab({ team }: { team: TeamPage }) {
 }
 
 function ContractsTab({ team }: { team: TeamPage }) {
-  const { biggest, dead_cap } = team.contracts;
+  const { biggest, expiring, dead_cap } = team.contracts;
+  // Every deal ending this season, then the biggest deals that run longer.
+  const soon = expiring.filter((p) => !p.no_contract).sort((a, b) => b.contract_salary - a.contract_salary);
+  const locked = biggest.filter((p) => p.years_left > 1);
   return (
     <>
       <Card
@@ -175,29 +219,30 @@ function ContractsTab({ team }: { team: TeamPage }) {
           </Pressable>
         }
       >
-        {team.cap.by_year.map((y, i) => (
-          <Row key={y.season} first={i === 0}>
-            <Text style={[ui.value, styles.year]}>{y.season}</Text>
-            <View style={ui.flex}><Bar fraction={y.used / team.salary_cap} /></View>
-            <Text style={[ui.value, styles.left, y.space < 0 && { color: colors.danger }]}>{money(y.space)} left</Text>
-          </Row>
-        ))}
+        <View style={styles.rings}>
+          {team.cap.by_year.slice(0, 3).map((y) => (
+            <CapRing key={y.season} season={y.season} used={y.used} space={y.space} cap={team.salary_cap} />
+          ))}
+        </View>
       </Card>
-      <Card title="Biggest contracts" right="yrs left · salary">
-        {biggest.map((p, i) => (
-          <Row key={p.player_id} first={i === 0} onPress={() => go(`/player/${p.player_id}`)}>
-            <Pos label={p.pos} />
-            <View style={ui.flex}>
-              <View style={styles.nameLine}>
-                <Text style={ui.name} numberOfLines={1}>{p.name}</Text>
-                {p.years_left <= 1 ? <Pill label="EXPIRING" tone="warn" /> : null}
-              </View>
-              <Text style={ui.sub}>{p.years_left <= 1 ? `expires after ${team.season}` : `through ${p.through}`}</Text>
-            </View>
-            <Text style={ui.value}>{p.years_left} · {money(p.contract_salary)}</Text>
-          </Row>
-        ))}
-      </Card>
+      {soon.length ? (
+        <Card style={styles.expiringCard}>
+          <View style={styles.groupHead}>
+            <Text style={[styles.groupTitle, { color: '#E3C47A' }]}>EXPIRING AFTER {team.season}</Text>
+            <Text style={ui.sub}>{money(soon.reduce((s, p) => s + p.contract_salary, 0))} frees up</Text>
+          </View>
+          {soon.map((p, i) => <ContractRow key={p.player_id} p={p} first={i === 0} sub={`${p.nfl_team || 'FA'} · ${p.pos}`} />)}
+        </Card>
+      ) : null}
+      {locked.length ? (
+        <Card>
+          <View style={styles.groupHead}>
+            <Text style={[styles.groupTitle, { color: colors.gold }]}>LOCKED IN</Text>
+            <Text style={ui.sub}>{money(locked.reduce((s, p) => s + p.contract_salary, 0))}</Text>
+          </View>
+          {locked.map((p, i) => <ContractRow key={p.player_id} p={p} first={i === 0} sub={`${p.nfl_team || 'FA'} · ${p.pos} · through ${p.through}`} />)}
+        </Card>
+      ) : null}
       {dead_cap.length ? (
         <Card title="Dead cap" right={<Text style={[ui.value, ui.gold]}>{money(dead_cap.reduce((s, d) => s + d.amount, 0))}</Text>}>
           {dead_cap.map((d, i) => (
@@ -276,9 +321,24 @@ function ActivityTab({ team }: { team: TeamPage }) {
   );
 }
 
+const RING = 84;
+
 const styles = StyleSheet.create({
   nameLine: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   shrink: { flexShrink: 1 },
+  subGap: { marginTop: 3 },
+  bigSalary: { color: colors.gold, fontSize: 18, fontWeight: '800' },
+  rings: { flexDirection: 'row', justifyContent: 'space-around', paddingTop: 6 },
+  ringWrap: { alignItems: 'center' },
+  ring: { width: RING, height: RING, alignItems: 'center', justifyContent: 'center' },
+  tick: { position: 'absolute', left: RING / 2 - 2, top: RING / 2 - 5, width: 4, height: 10, borderRadius: 2, backgroundColor: colors.card },
+  tickOn: { backgroundColor: colors.gold },
+  ringValue: { color: colors.gold, fontSize: 15, fontWeight: '800' },
+  ringLeft: { color: colors.muted, fontSize: 10 },
+  ringYear: { color: colors.text, fontSize: 12, fontWeight: '700', marginTop: 6 },
+  expiringCard: { borderColor: '#6B5524', backgroundColor: '#17190F' },
+  groupHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 },
+  groupTitle: { fontSize: 11, fontWeight: '800', letterSpacing: 1.6 },
   face: { width: 44, height: 44 },
   circle: { width: 44, height: 44, borderRadius: 22, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
   initials: { color: '#FFFFFF', fontSize: 15, fontWeight: '800' },
