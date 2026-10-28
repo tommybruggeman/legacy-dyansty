@@ -13,7 +13,6 @@ import { colors } from '../../lib/theme';
 // play", the bracket in the playoffs, rookie-deal decisions until the June 30
 // rollover, then draft prep. Pictures, badges and tables over sentences.
 const ROUND = ['', '1st', '2nd', '3rd', '4th', '5th'];
-const DAY = (iso: string) => new Date(`${iso}T12:00:00`).toLocaleDateString(undefined, { weekday: 'long' });
 const SHORT = (iso: string) => new Date(iso.length > 10 ? iso : `${iso}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 const KICK = (iso: string | null) => {
   if (!iso) return '';
@@ -46,16 +45,16 @@ export default function Home() {
   if (error && !data) return <ErrorState message={error} onRetry={reload} />;
   if (!data) return null;
 
-  const eyebrow = data.phase === 'decisions' || data.phase === 'draft_prep'
+  // The day still picks which Home shows (recap, game day...), it just isn't printed.
+  const heading = data.phase === 'decisions' || data.phase === 'draft_prep'
     ? `${data.season + (data.phase === 'draft_prep' ? 0 : 1)} offseason`
-    : data.phase === 'playoffs' ? `Playoffs · Week ${data.week}` : `Week ${data.week} · ${DAY(data.today)}`;
+    : data.phase === 'playoffs' ? `Playoffs · Week ${data.week}` : `Week ${data.week}`;
 
   return (
     <Screen loading={loading} onRefresh={reload}>
       <View style={styles.top}>
         <View style={ui.flex}>
-          <Text style={styles.eyebrow}>{eyebrow}</Text>
-          <Text style={styles.hey}>Hey, {firstName(data.owner_name) || 'there'}</Text>
+          <Text style={styles.hey}>{heading}</Text>
         </View>
         <Pressable onPress={() => router.push('/settings')} hitSlop={8}>
           <View style={styles.meBadge}><Text style={styles.meText}>{initials(data.owner_name)}</Text></View>
