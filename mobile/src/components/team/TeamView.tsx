@@ -195,10 +195,10 @@ function RosterTab({ team }: { team: TeamPage }) {
   );
 }
 
-// Every contract ranked by value (PPG per cap dollar), best first.
+// Every contract, biggest salary first, with its value (PPG per cap dollar).
 function ContractsTab({ team }: { team: TeamPage }) {
   const { dead_cap } = team.contracts;
-  const all = team.contracts.all ?? [];
+  const all = [...(team.contracts.all ?? [])].sort((a, b) => b.contract_salary - a.contract_salary);
   return (
     <>
       <Card
