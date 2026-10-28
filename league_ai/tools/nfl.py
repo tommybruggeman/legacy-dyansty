@@ -865,6 +865,13 @@ def tool_compare_players(data: NflData, names: list[str], seasons: list[int] | N
             if str(p.get("sleeper_id")) in proj:
                 by_pos.setdefault(str(p.get("position") or "?"), []).append((p.get("full_name") or "", proj[str(p["sleeper_id"])]))
         out["projection_order"] = {pos: [f"{n} {v:g}" for n, v in sorted(rows, key=lambda r: -r[1])] for pos, rows in by_pos.items()}
+        picks = {}
+        for pos, rows in by_pos.items():
+            if len(rows) >= 2:
+                (a, pa), (b, pb) = sorted(rows, key=lambda r: -r[1])[:2]
+                picks[pos] = f"start {a} over {b}: {pa:g} vs {pb:g}" + (" (close: within 10%, matchup and news can decide it)" if pb >= 0.9 * pa else "")
+        if picks:
+            out["engine_pick"] = picks
         out["how_to_read_projections"] = PROJECTION_NOTE
     return out
 

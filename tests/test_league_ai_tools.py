@@ -169,6 +169,7 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(out["Bijan Robinson"]["this_week_projection"], 14.2)
         self.assertEqual(out["projection_order"]["RB"], ["Bijan Robinson 14.2", "Free Agent Back 9.1"])
         self.assertIn("70%", out["how_to_read_projections"])
+        self.assertEqual(out["engine_pick"]["RB"], "start Bijan Robinson over Free Agent Back: 14.2 vs 9.1")
         plain = json.loads(build_registry(FakeClient(), league_state=fixture_state()).call("compare_players", {"names": ["Bijan Robinson"]}))
         self.assertNotIn("projection_order", plain)
 
