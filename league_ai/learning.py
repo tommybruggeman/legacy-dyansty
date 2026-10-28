@@ -105,9 +105,11 @@ class Ledger:
             partner = self._partner(picks)
             if partner:
                 row["partner"] = partner
+        self._reversed: str | None = None  # set by _previous_call when this call flips an open one
         replaced = self._previous_call(row)
         if replaced == "duplicate":
             return {"logged": False, "note": "this exact call is already logged for that week; nothing added"}
+        reversal = self._reversed if replaced == "replaced" else None
         try:
             self.client.table("league_ai_predictions").insert(row).execute()
         except Exception as exc:
@@ -118,6 +120,10 @@ class Ledger:
             except Exception as exc2:
                 return {"error": f"could not log the call: {type(exc2).__name__}"}
         out: dict[str, Any] = {"logged": True, "grades_after_week": row["week"] + row["horizon_weeks"] - 1}
+        if reversal:
+            out["changed_earlier_call"] = (f"Earlier you told this owner: {reversal}. This call reverses it and is now the one graded. "
+                                           "Tell the owner plainly that you're changing your earlier advice and what new information changed it; "
+                                           "if nothing new changed, keep the earlier call instead and log it again.")
         if unresolved:
             out["warning"] = "could not match these names to NFL players, so they can't be graded: " + ", ".join(unresolved)
         return out
@@ -201,6 +207,7 @@ class Ledger:
             if e_pick == pick and e_over == over and (e.get("verdict") or None) == row.get("verdict"):
                 return "duplicate"
             if (e_pick == over and e_over == pick) or (e_pick == pick and e_over & over):  # changed its mind or restated it: the newest call counts
+                self._reversed = _call_text({**e, "kind": row["kind"]}) if e_pick == over and e_over == pick else None
                 try:
                     self.client.table("league_ai_predictions").update({"status": "void"}).eq("id", e["id"]).execute()
                 except Exception:
@@ -370,7 +377,26 @@ def learning_pack_lines(client: Any, league_id: str, user_id: str, season: int) 
         mine = []
     if mine:
         lines.append("Your calls for this owner this season: " + "; ".join(f"{k} {v}" for k, v in record_by(mine, lambda r: r.get("kind")).items()) + ".")
+    lines += open_call_lines(client, league_id, user_id, season)
     return lines
+
+
+def open_call_lines(client: Any, league_id: str, user_id: str, season: int) -> list[str]:
+    """This week's start/sit and pickup calls already given to this owner, so a later answer (a win-odds question, a
+    rephrased start/sit) doesn't quietly flip them."""
+    try:
+        rows = (client.table("league_ai_predictions").select("kind, week, pick, over, confidence, rationale").eq("league_id", league_id).eq("user_id", user_id)
+                .eq("season", season).eq("status", "open").in_("kind", ["start_sit", "pickup"]).order("week", desc=True).limit(20).execute().data or [])
+    except Exception:
+        return []
+    if not rows:
+        return []
+    week = max(int(r.get("week") or 0) for r in rows)
+    calls = [r for r in rows if int(r.get("week") or 0) == week][:8]
+    text = "; ".join(_call_text(r) + (f" ({round(100 * float(r['confidence']))}%)" if r.get("confidence") is not None else "") for r in calls)
+    return [f"Calls you already gave this owner for week {week}: {text}. Any answer about these players (start/sit, win odds, lineup) "
+            "starts from these calls. Change one only for new information (injury news, weather, a role change) and then say plainly "
+            "that you're changing your earlier call and why; otherwise keep it, even if the question is worded differently."]
 
 
 # ---- grading (job side, pure) ----------------------------------------------------------
