@@ -248,8 +248,12 @@ class ClaudeClient:
                 if trace.rounds > limit + 2:
                     ended_on_tools = True
                     break
-            if (ended_on_tools or not best_text) and len(best_text) < KEEP_TEXT_CHARS and trace.stop_reason != "max_tokens":
-                # the model stopped on a tool round or with no answer: one more call, tools off, to get the answer
+            researched = sum(1 for name in trace.tool_calls if name not in SILENT_TOOLS) >= RESEARCHED_LOOKUPS
+            if ((ended_on_tools or not best_text) and len(best_text) < KEEP_TEXT_CHARS or researched and len(best_text) < THIN_ANSWER_CHARS) \
+                    and trace.stop_reason != "max_tokens":
+                # the model stopped on a tool round or with no answer, or did real research and then wrote one line
+                # ("I'd hold him. I logged this as a hold call."; the reasons stayed in its thinking, which the owner
+                # never sees): one more call, tools off, to get the full answer
                 response = self._final_answer(client, kwargs, history, content, on_event)
                 trace.rounds += 1
                 _usage(trace, response)
@@ -283,6 +287,8 @@ class ClaudeClient:
 PER_MESSAGE_EFFORT_BETA = "mid-conversation-output-config-2026-07-01"
 SHORT_ANSWER_CHARS = 60
 ACK_CHARS = 25  # a closing line this short after a full answer is an acknowledgement ("Logged.")
+THIN_ANSWER_CHARS = 100  # after real research, an answer shorter than this left its reasons in the model's thinking
+RESEARCHED_LOOKUPS = 2  # lookups (not bookkeeping calls like log_prediction) that count as real research
 KEEP_TEXT_CHARS = 150  # text at least this long before a lookup is reasoning, not a "let me check" preamble
 # Tools that only record something; text written alongside them is part of the answer, not a preamble.
 SILENT_TOOLS = frozenset({"log_prediction", "record_trade_response", "remember", "forget"})
