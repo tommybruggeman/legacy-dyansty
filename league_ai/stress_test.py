@@ -366,6 +366,77 @@ def rosters(client: Any) -> int:
     return 0
 
 
+def contracts(client: Any) -> int:
+    """Free check: full contract and Sleeper history for every rostered player without a live contract (saved encrypted)."""
+    import requests
+
+    from services.team_roster_state import state_roster
+
+    get = lambda url: requests.get(url, timeout=20).json()
+    league = next(iter(client.table("leagues").select("id, sleeper_league_id").not_.is_("sleeper_league_id", "null").limit(1).execute().data or []))
+    lid, sl_id = str(league["id"]), str(league["sleeper_league_id"])
+    season = int(os.environ.get("STRESS_SEASON") or get("https://api.sleeper.app/v1/state/nfl")["season"])
+    roster = state_roster(league_state(client, lid, season))
+    teams = client.table("league_teams").select("id, owner_name, sleeper_roster_id").eq("league_id", lid).execute().data or []
+    owner_of = {str(t["id"]): t["owner_name"] for t in teams}
+    owner_by_roster = {t.get("sleeper_roster_id"): t["owner_name"] for t in teams}
+    have = {str(r.get("sleeper_id")) for r in roster}
+    now = get(f"https://api.sleeper.app/v1/league/{sl_id}/rosters")
+    missing = {str(p): owner_by_roster.get(r["roster_id"]) for r in now for k in ("players", "taxi", "reserve") for p in (r.get(k) or []) if str(p) not in have}
+    # Sleeper history: this league and the one before it
+    leagues, cur = [], sl_id
+    while cur and len(leagues) < 3:
+        info = get(f"https://api.sleeper.app/v1/league/{cur}")
+        leagues.append((cur, info.get("season")))
+        cur = info.get("previous_league_id") if info.get("previous_league_id") not in (None, "0") else None
+    sleeper_tx: dict = {p: [] for p in missing}
+    end_of_season: dict = {}
+    for l, yr in leagues:
+        for wk in range(0, 19):
+            for t in get(f"https://api.sleeper.app/v1/league/{l}/transactions/{wk}") or []:
+                for p in set((t.get("adds") or {}) | (t.get("drops") or {})) & set(missing):
+                    sleeper_tx[p].append({"season": yr, "week": wk, "type": t.get("type"), "status": t.get("status"), "created": t.get("created"),
+                                          "added_to": owner_by_roster.get((t.get("adds") or {}).get(p)), "dropped_by": owner_by_roster.get((t.get("drops") or {}).get(p)),
+                                          "faab": (t.get("settings") or {}).get("waiver_bid")})
+        if l != sl_id:
+            for r in get(f"https://api.sleeper.app/v1/league/{l}/rosters") or []:
+                for p in r.get("players") or []:
+                    if str(p) in missing:
+                        end_of_season[str(p)] = {"season": yr, "roster_id": r["roster_id"], "owner_now_on_that_roster": owner_by_roster.get(r["roster_id"])}
+        for d in get(f"https://api.sleeper.app/v1/league/{l}/drafts") or []:
+            for pick in get(f"https://api.sleeper.app/v1/draft/{d['draft_id']}/picks") or []:
+                if str(pick.get("player_id")) in missing:
+                    sleeper_tx[str(pick["player_id"])].append({"season": d.get("season"), "type": "draft", "round": pick.get("round"), "pick": pick.get("pick_no"),
+                                                                "added_to": owner_by_roster.get(pick.get("roster_id"))})
+    rollover = []
+    for tbl in ("rollover_owner_decisions", "rollover_executions", "contract_transition_executions"):
+        try:
+            rollover.append({"table": tbl, "rows": client.table(tbl).select("*").eq("league_id", lid).execute().data or []})
+        except Exception as exc:
+            rollover.append({"table": tbl, "error": str(exc)[:200]})
+    out = []
+    for pid, owner in sorted(missing.items()):
+        p = (client.table("nfl_players").select("*").eq("sleeper_id", pid).limit(1).execute().data or [{}])[0]
+        agreements = client.table("contract_agreements").select("*").eq("league_id", lid).eq("sleeper_player_id", pid).execute().data or []
+        ids = [a["id"] for a in agreements]
+        seasons = client.table("contract_seasons").select("contract_id, season, salary, cap_hit, obligation_status, is_option_year, option_type, source, league_team_id").in_("contract_id", ids).execute().data if ids else []
+        events = client.table("contract_events").select("contract_id, event_type, effective_season, effective_at, source, previous_values, new_values, metadata, league_team_id").in_("contract_id", ids).execute().data if ids else []
+        try:
+            legacy = client.table("contracts").select("*").eq("league_id", lid).eq("sleeper_player_id", pid).execute().data or []
+        except Exception as exc:
+            legacy = [{"error": str(exc)[:200]}]
+        for row in [*agreements, *(seasons or []), *(events or [])]:
+            if row.get("league_team_id"):
+                row["owner"] = owner_of.get(str(row["league_team_id"]))
+        out.append({"sleeper_id": pid, "player": p.get("full_name") or pid, "pos": p.get("position"), "years_exp": p.get("years_exp"), "owner_now": owner,
+                    "agreements": agreements, "seasons": seasons, "events": events, "legacy_contracts": legacy,
+                    "sleeper": sorted(sleeper_tx[pid], key=lambda t: (str(t.get("season")), t.get("week") or -1)), "end_of_last_season": end_of_season.get(pid)})
+    print(f"players {len(out)}  leagues {[y for _, y in leagues]}  with legacy rows {sum(1 for o in out if o['legacy_contracts'])}  with sleeper moves {sum(1 for o in out if o['sleeper'])}")
+    with open("stress_results.json", "w") as f:  # committed encrypted like the test results
+        json.dump({"contracts": out, "rollover": rollover}, f, default=str)
+    return 0
+
+
 def main() -> int:
     from supabase import create_client
 
@@ -373,6 +444,8 @@ def main() -> int:
     mode = sys.argv[1] if len(sys.argv) > 1 else "ask"
     if mode == "rosters":
         return rosters(client)
+    if mode == "contracts":
+        return contracts(client)
     if mode == "grade":
         return grade_saved(client, sys.argv[2] if len(sys.argv) > 2 else "stress/grading-input.json")
     return ask(client)
