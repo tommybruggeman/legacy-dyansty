@@ -168,7 +168,16 @@ def ask(session: Session, question: str, conversation_id: str | None, on_event: 
     except Exception as exc:
         print(f"APP_FRONT_OFFICE_ERROR {type(exc).__name__}: {exc}", flush=True)
         fo = None
-    tools = runtime.chat_tools(client, o, state=session.state(), rules=session.rules(), league=session.league, week=session.week(),
+    state = session.state()
+    if session.sleeper_id:
+        # Players on a Sleeper roster without a contract row yet (fresh rookie picks) aren't free agents.
+        try:
+            from api import league as league_api
+            names = league_api.roster_names(client, o.league_id, session.sleeper_id)
+            state = {**state, "sleeper_rostered": {pid: names.get(rid, f"Roster {rid}") for pid, rid in league_api.sleeper_owners(session.sleeper_id).items()}}
+        except Exception:
+            pass
+    tools = runtime.chat_tools(client, o, state=state, rules=session.rules(), league=session.league, week=session.week(),
                                positions=session.positions, playoff_week=session.playoff_start,
                                question=lambda: question, conversation_id=lambda: conversation_id)
     turn = runtime.chat_turn(client, o, question=question, history=history, conversation_id=conversation_id, pack=session.pack(), tools=tools,

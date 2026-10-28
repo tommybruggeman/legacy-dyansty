@@ -185,6 +185,11 @@ class NflData:
     def league_contract(self, sleeper_id: str | None, name: str | None = None) -> dict[str, Any] | None:
         rows = self._rosters().get(str(sleeper_id or ""), []) or (self._rosters().get("name:" + normalize_name(name), []) if name else [])
         if not rows:
+            owner = (self.league_state.get("sleeper_rostered") or {}).get(str(sleeper_id or ""))
+            if owner:  # on a Sleeper roster before a contract was entered (e.g. a fresh rookie pick)
+                return {"league_team": owner, "owner": owner, "cap_hit": 0.0, "salary": 0.0, "years_left": None,
+                        "contract_type": None, "designation": None, "acquired_via": None, "if_dropped": None,
+                        "note": "on this owner's Sleeper roster; contract not entered in the app yet"}
             return None
         r = rows[0]
         return {
@@ -500,7 +505,7 @@ class NflData:
                 "positional_rank": f"{r.get('position')}{pr}" if pr else None,
                 "tier": positional_tier(r.get("position"), pos_rank),
                 "rank_in_this_list": i,
-                "league_status": (f"{c['owner']} · ${c['cap_hit']:g} x {c['years_left']}yr" if c else "free agent in this league"),
+                "league_status": ((f"{c['owner']} · no contract entered yet" if c.get("note") else f"{c['owner']} · ${c['cap_hit']:g} x {c['years_left']}yr") if c else "free agent in this league"),
             })
         return out
 
@@ -858,7 +863,7 @@ def tool_search_players(data: NflData, position: str | None = None, nfl_team: st
         c = data.league_contract(r.get("sleeper_id"), r.get("full_name"))
         if league_free_agents_only and c:
             continue
-        r["league_status"] = (f"{c['owner']} · ${c['cap_hit']:g} x {c['years_left']}yr" if c else "free agent in this league")
+        r["league_status"] = ((f"{c['owner']} · no contract entered yet" if c.get("note") else f"{c['owner']} · ${c['cap_hit']:g} x {c['years_left']}yr") if c else "free agent in this league")
         r["bye_week"] = data.bye_week(r.get("team"))
         out.append(r)
         if len(out) >= limit:

@@ -227,6 +227,7 @@ export type Player = {
   salary: number;
   contract_salary: number;
   years_left: number;
+  no_contract?: boolean;
   designation: 'taxi' | 'ir' | null;
   is_rookie: boolean;
   ppg: number | null;
@@ -295,6 +296,7 @@ export type PlayerPage = {
     is_rookie: boolean;
   } | null;
   is_mine: boolean;
+  rostered_by?: { roster_id: number; owner_name: string; team_id: string | null } | null;
   bye_week: number | null;
   nfl_season: {
     games: number;

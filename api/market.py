@@ -7,7 +7,7 @@ page (services.free_agents.load_ranking_ppg).
 from __future__ import annotations
 
 import time
-from typing import Any, Callable
+from typing import Any, Iterable, Callable
 
 from services.free_agents import load_ranking_ppg
 
@@ -71,9 +71,10 @@ def free_agents(
     state: dict[str, Any],
     ppg: Any,
     limit: int = LIST_SIZE,
+    rostered: Iterable[str] = (),
 ) -> dict[str, Any]:
-    """Everyone in the player pool who isn't under contract in this league."""
-    signed = {_text(r.get("sleeper_player_id")) for r in state.get("roster", [])}
+    """Everyone in the player pool who isn't under contract or on a Sleeper roster in this league."""
+    signed = {_text(r.get("sleeper_player_id")) for r in state.get("roster", [])} | {_text(p) for p in rostered}
     rows = []
     for player in pool:
         pid = _text(player.get("sleeper_id"))

@@ -210,6 +210,28 @@ def roster_rows(
             "ppg": ppg.get(pid),
         }
 
+    # On the Sleeper roster but no contract row yet (e.g. a fresh rookie pick): still his player.
+    sleeper_taxi = {_text(p) for p in lineup.get("taxi") or []}
+    sleeper_ir = {_text(p) for p in lineup.get("reserve") or []}
+    for pid in [_text(p) for p in (lineup.get("players") or [])]:
+        if not pid or pid in contracts:
+            continue
+        meta = info.get(pid, {})
+        contracts[pid] = {
+            "player_id": pid,
+            "name": _text(meta.get("full_name")) or pid,
+            "pos": _text(meta.get("position")),
+            "nfl_team": _text(meta.get("team")) or "FA",
+            "injury": _text(meta.get("injury_status")) or None,
+            "salary": 0.0,
+            "contract_salary": 0.0,
+            "years_left": 0,
+            "designation": "taxi" if pid in sleeper_taxi else "ir" if pid in sleeper_ir else None,
+            "is_rookie": meta.get("years_exp") == 0,
+            "ppg": ppg.get(pid),
+            "no_contract": True,
+        }
+
     starter_ids = [_text(p) for p in lineup.get("starters") or []]
     lineup_slots = [s for s in slots if s in LINEUP_SLOTS]
     starters = []
@@ -229,10 +251,11 @@ def roster_rows(
         (p for p in others if not p["designation"]),
         key=lambda p: (order.get(p["pos"], 9), -(p["ppg"] or 0), p["name"]),
     )
-    return {"starters": starters, "bench": bench, "taxi": taxi, "ir": ir, "count": len(contracts)}
+    return {"starters": starters, "bench": bench, "taxi": taxi, "ir": ir, "count": sum(1 for p in contracts.values() if not p.get("no_contract"))}
 
 
 def contracts_view(players: list[dict[str, Any]], state: dict[str, Any], team_id: str) -> dict[str, Any]:
+    players = [p for p in players if not p.get("no_contract")]
     biggest = sorted(players, key=lambda p: -p["contract_salary"])[:8]
     season = int(state["season"])
     dead = [
