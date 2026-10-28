@@ -1,5 +1,5 @@
 import { router } from 'expo-router';
-import { useMemo, useRef, type ReactNode } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Animated, Dimensions, Easing, PanResponder, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -53,48 +53,80 @@ export function Segmented<T extends string>({ options, value, onChange }: { opti
   );
 }
 
-// The content under a Segmented switcher: swipe left for the next option,
-// right for the previous one. Only clearly sideways drags count, so scrolling
-// the page up and down is untouched.
-// Swipe left or right to change tabs. The page follows your finger, then glides off and the next one
-// glides in; past the first or last tab it only gives a little, like iOS lists.
-export function SwipeTabs<T extends string>({ options, value, onChange, children }: { options: readonly T[]; value: T; onChange: (v: T) => void; children: ReactNode }) {
-  const shift = useRef(new Animated.Value(0)).current;
-  const latest = useRef({ options, value, onChange });
-  latest.current = { options, value, onChange };
+// The content under a Segmented switcher. Swipe left or right to change tabs: the page follows your
+// finger with the neighbouring tab sliding in beside it, then glides the rest of the way on release.
+// Only clearly sideways drags count, so scrolling the page up and down is untouched. Past the first or
+// last tab it only gives a little, like iOS lists.
+export function SwipeTabs<T extends string>({ options, value, onChange, render }: { options: readonly T[]; value: T; onChange: (v: T) => void; render: (v: T) => ReactNode }) {
+  // Tabs sit side by side, one screen width apart (the side margins keep the next one just off screen),
+  // each moved by `shift`, which rests at -index * page. Swiping moves them all, so the tab that slides in
+  // is already in place when it becomes the current one: nothing has to jump. Only the tabs move, not the
+  // container, so the current tab always stays inside it and keeps receiving taps.
+  const page = Dimensions.get('window').width;
+  const index = options.indexOf(value);
+  const shift = useRef(new Animated.Value(-index * page)).current;
+  const [width, setWidth] = useState(page - 36);
+  const [live, setLive] = useState(false); // neighbours are only rendered while a swipe is in play
+  const latest = useRef({ options, value, onChange, width });
+  latest.current = { options, value, onChange, width };
+  const place = useMemo(() => options.map((_, k) => Animated.add(shift, k * page)), [options, shift, page]);
+
+  // Tapping the switcher changes the tab without a swipe: move the strip under it.
+  useLayoutEffect(() => {
+    shift.stopAnimation();
+    shift.setValue(-index * page);
+    setLive(false);
+  }, [index, page, shift]);
+
   const responder = useMemo(() => {
-    const width = Dimensions.get('window').width;
-    const settle = () => Animated.spring(shift, { toValue: 0, useNativeDriver: true, damping: 24, stiffness: 170, mass: 0.9 }).start();
+    const at = () => -latest.current.options.indexOf(latest.current.value) * page;
+    const settle = () =>
+      Animated.spring(shift, { toValue: at(), useNativeDriver: true, damping: 24, stiffness: 170, mass: 0.9 }).start(({ finished }) => finished && setLive(false));
     return PanResponder.create({
       onMoveShouldSetPanResponderCapture: (_, g) => Math.abs(g.dx) > 14 && Math.abs(g.dx) > Math.abs(g.dy) * 2,
       onPanResponderTerminationRequest: () => false,
-      onPanResponderGrant: () => shift.stopAnimation(),
+      onPanResponderGrant: () => {
+        shift.stopAnimation();
+        setLive(true);
+      },
       onPanResponderMove: (_, g) => {
         const { options: opts, value: current } = latest.current;
         const i = opts.indexOf(current);
         const edge = (g.dx > 0 && i === 0) || (g.dx < 0 && i === opts.length - 1);
-        shift.setValue(edge ? g.dx * 0.2 : g.dx);
+        shift.setValue(at() + (edge ? g.dx * 0.2 : g.dx));
       },
       onPanResponderRelease: (_, g) => {
-        const { options: opts, value: current, onChange: change } = latest.current;
+        const { options: opts, value: current, onChange: change, width: w } = latest.current;
         const i = opts.indexOf(current);
-        const step = g.dx < -width * 0.25 || g.vx < -0.4 ? 1 : g.dx > width * 0.25 || g.vx > 0.4 ? -1 : 0;
-        const next = opts[i + step];
-        if (!step || !next) return settle();
-        Animated.timing(shift, { toValue: -step * width, duration: 190, easing: Easing.out(Easing.quad), useNativeDriver: true }).start(() => {
-          change(next);
-          shift.setValue(step * width * 0.6);
-          Animated.timing(shift, { toValue: 0, duration: 360, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+        const dir = g.dx < -w * 0.25 || g.vx < -0.4 ? 1 : g.dx > w * 0.25 || g.vx > 0.4 ? -1 : 0;
+        const next = opts[i + dir];
+        if (!dir || !next) return settle();
+        Animated.timing(shift, { toValue: -(i + dir) * page, duration: 320, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start(({ finished }) => {
+          if (finished) change(next);
         });
       },
       onPanResponderTerminate: settle,
     });
-  }, [shift]);
-  const opacity = shift.interpolate({ inputRange: [-400, 0, 400], outputRange: [0.4, 1, 0.4], extrapolate: 'clamp' });
+  }, [shift, page]);
+
   return (
-    <Animated.View {...responder.panHandlers} style={{ minHeight: 480, opacity, transform: [{ translateX: shift }] }}>
-      {children}
-    </Animated.View>
+    <View {...responder.panHandlers} onLayout={(e) => setWidth(e.nativeEvent.layout.width)} style={{ minHeight: 480 }}>
+      {options.map((o, k) => {
+        const offset = k - index;
+        if (offset !== 0 && !(live && Math.abs(offset) === 1)) return null;
+        // The current tab stays in the layout (it sets the height); its neighbours float beside it.
+        // Keyed by tab, so the one that slides in keeps its state when it becomes current.
+        return (
+          <Animated.View
+            key={o}
+            pointerEvents={offset ? 'none' : 'auto'}
+            style={[offset ? { position: 'absolute', top: 0, left: 0, width } : null, { transform: [{ translateX: place[k] }] }]}
+          >
+            {render(o)}
+          </Animated.View>
+        );
+      })}
+    </View>
   );
 }
 

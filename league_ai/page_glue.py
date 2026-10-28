@@ -13,6 +13,7 @@ from league_ai.service import AnswerResult, load_league_rules
 from league_ai.memory import Memory
 from league_ai.learning import Ledger
 from league_ai.usage import record as record_usage, row_from_trace
+from league_ai.sleeper_roster import fill_from_sleeper
 from services.team_roster_state import load_team_state
 from league_ai.tools import ToolRegistry
 
@@ -38,7 +39,9 @@ _standings_loader = runtime.standings_loader
 
 @st.cache_data(ttl=300, show_spinner=False)
 def _cached_state(league_id: str, season: int, user_id: str, epoch: int) -> dict:
-    return load_team_state(auth_client(), league_id, season)
+    client = auth_client()
+    # Sleeper-rostered players without a contract this season are added (at $0, flagged) so the GM sees whole rosters
+    return fill_from_sleeper(client, load_team_state(client, league_id, season), runtime.league_row(client, league_id).get("sleeper_league_id"), league_id)
 
 
 @st.cache_data(ttl=300, show_spinner=False)

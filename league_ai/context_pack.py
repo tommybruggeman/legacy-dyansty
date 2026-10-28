@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, Iterable, Mapping
 
+from league_ai.sleeper_roster import is_no_contract
 from services.team_roster_state import (
     calculate_team_financials,
     state_cap_adjustments,
@@ -180,6 +181,10 @@ def _roster_table(rows: list[Mapping[str, Any]]) -> str:
             flags.append("rookie")
         acq = _text(r.get("initial_acquisition_type") or r.get("source"))
         ctype = _text(r.get("contract_type"))
+        if is_no_contract(r):
+            # on the Sleeper roster, but the app has no contract for him this season
+            lines.append(f"| {_text(r.get('player_name'))} | {_text(r.get('pos')) or '?'} | n/a | n/a | no contract in app | {' '.join(flags + ['NO CONTRACT'])} |")
+            continue
         lines.append(
             f"| {_text(r.get('player_name'))} | {_text(r.get('pos')) or '?'} | {_fmt_money(r.get('cap_hit'))} | "
             f"{r.get('contract_years_left', '?')} | {ctype or acq or ''} | {' '.join(flags)} |"
@@ -288,7 +293,10 @@ def build_league_pack(inputs: PackInputs) -> str:
     parts.append("\n".join(lines))
 
     # Rosters
-    parts.append("## Rosters and contracts (cap hit is this season's charge after retained salary)")
+    parts.append("## Rosters and contracts (cap hit is this season's charge after retained salary)\n"
+                 "Rows flagged NO CONTRACT are on the team's Sleeper roster, but the app has no contract for them this season (it ran out or was never "
+                 "entered). They are on the team: count them for lineups, depth and trades. Their salary is unknown and not in the cap figures, so "
+                 "say so when it matters, and suggest the owner or commissioner fix the contract in the app.")
     for s in sorted(summaries, key=lambda x: (x.league_team_id != asker.league_team_id, x.owner_name)):
         rows = [r for r in roster if _text(r.get("league_team_id")) == s.league_team_id]
         header = f"### {s.owner_name}" + (f" — {s.team_name}" if s.team_name != s.owner_name else "")

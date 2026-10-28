@@ -134,7 +134,7 @@ class OddsModel:
                                "change": {t: round(100 * (p - before[t])) for t, p in now.items() if t in before},
                                "weeks_left": len(self.remaining()), "spots": PLAYOFF_SPOTS}
         if self.week_wins:
-            out["this_week_win_odds"] = {t: f"{round(100 * w['win'])}% vs {w['opp']}" for t, w in self.week_wins.items()}
+            out["this_week_win_odds"] = {t: f"{round(100 * w['win'])}% to win this week's game vs {w['opp']} (not playoff odds)" for t, w in self.week_wins.items()}
         return out
 
 

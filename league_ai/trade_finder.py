@@ -15,6 +15,7 @@ from typing import Any, Callable, Iterable, Mapping
 
 from league_ai.power import PlayerStrength, compute_power, fill_lineup
 from league_ai.playoff_odds import pickup_odds
+from league_ai.sleeper_roster import is_no_contract
 from league_ai.tools import ToolSpec
 from league_ai.trade_value import WINDOWS, Valuer, market_value, nearest_pick, team_windows
 
@@ -150,8 +151,8 @@ def find_trades(*, league: League, asker_team_id: str, cap_space: Mapping[str, f
         if not their_needs and their_window != "rebuilding":
             continue
         # what the asker can offer: players at the partner's weak spots (rebuilders take value anywhere), never the asker's own need position
-        pool = [p for p in my_roster if p.position != want and (p.position in their_needs or their_window == "rebuilding")]
-        for target in (p for p in league.by_team.get(tid, []) if p.position == want and p.available):
+        pool = [p for p in my_roster if p.position != want and (p.position in their_needs or their_window == "rebuilding") and not _no_contract(p)]
+        for target in (p for p in league.by_team.get(tid, []) if p.position == want and p.available and not _no_contract(p)):
             their_out, my_in = v.value_to(tid, target), v.value_to(asker, target)
             if their_out <= 0:
                 continue
@@ -215,6 +216,70 @@ def find_trades(*, league: League, asker_team_id: str, cap_space: Mapping[str, f
         "ideas": best,
         "how_to_use": HOW_TO_PITCH,
     }
+
+
+def price_target(*, league: League, asker_team_id: str, cap_space: Mapping[str, float], target: str, partner: str | None = None,
+                 goal: str | None = None, limit: int = 3) -> dict[str, Any]:
+    """What it takes to get one named player: the cheapest packages of up to three of this owner's players that the other owner
+    should take by their own goals, cap-legal for both. Unlike find_trades it doesn't need the player to fill a weak spot or the
+    other team to need what comes back, because the owner already chose the target. When nothing reaches a fair deal it says so
+    and shows the closest tries, so the answer starts from real numbers instead of a guess."""
+    asker = str(asker_team_id)
+    v = league.valuer
+    team_hint = league.team_id(partner) if partner else None
+    player = league.find_player(target, team_hint) or league.find_player(target)
+    if player is None:
+        return {"error": f"couldn't find {target} on a roster in this league"}
+    tid = player.team_id
+    if tid == asker:
+        return {"error": f"{player.name} is already on your roster"}
+    if _no_contract(player):
+        return {"error": f"{player.name} has no contract in the app this season, so his salary is unknown; build the offer by hand with evaluate_trade and simulate_trade"}
+    rebuilding = goal in ("future", "dynasty", "rebuild") or (not goal and league.window(asker) == "rebuilding")
+    key = "dynasty" if rebuilding else "now"
+    their_out, my_in = v.value_to(tid, player), v.value_to(asker, player)
+    if their_out <= 0:
+        return {"error": f"{player.name} has no value on the model yet (no stats or market price)"}
+    my_starters = league.starters(asker)
+    # the 12 pieces worth most to the other owner, so three-player packages stay quick to check
+    pool = sorted((p for p in league.by_team.get(asker, []) if p.position in POSITIONS and not _no_contract(p)), key=lambda p: -v.value_to(tid, p))[:12]
+    options = []
+    for size in (1, 2, 3):
+        for package in combinations(pool, size):
+            sends = list(package)
+            their_in, my_out = v.package(tid, sends), v.package(asker, sends)
+            cap_me = cap_space.get(asker, 0.0) - _cap(player) + sum(_cap(p) for p in sends)
+            cap_them = cap_space.get(tid, 0.0) - sum(_cap(p) for p in sends) + _cap(player)
+            if cap_me < 0 or cap_them < 0:
+                continue
+            options.append({"sends": sends, "their_share": their_in / their_out, "my_out": my_out, "my_gain": league.gain(asker, sends, [player], key),
+                            "their_gain": league.gain(tid, [player], sends, league.mode(tid)), "cap": (cap_me, cap_them)})
+    team = league.teams.get(tid) or {}
+    base = {"target": _label(player), "partner": team.get("owner_name"), "partner_window": league.window(tid), "your_window": league.window(asker),
+            "players": [v.explain(tid, player)], "how_to_use": HOW_TO_PITCH}
+    fair = sorted((o for o in options if o["their_share"] >= CLOSE_SHARE and o["my_out"] <= WALK_AWAY_SHARE * my_in), key=lambda o: o["my_out"])
+    if not fair:
+        closest = sorted(options, key=lambda o: -o["their_share"])[:limit]
+        return {**base, "fair_deal_found": False,
+                "note": ("nothing you can send gets to a deal they should take without paying more than he's worth to you"
+                         if options else "no package is cap-legal for both teams"),
+                "closest_tries": [{"you_send": [_label(p) for p in o["sends"]], "they_get_back": f"{round(100 * o['their_share'])}% of what they give up",
+                                   "your_lineup_gain": o["my_gain"], "you_lose_a_starter": any(p.sleeper_id in my_starters for p in o["sends"]),
+                                   "market_view": _market_view(league, [player], o["sends"])} for o in closest]}
+    opening = next((o for o in sorted(options, key=lambda o: o["my_out"]) if o["their_share"] >= OPEN_SHARE), fair[0])
+    closing, walk = fair[0], fair[-1]
+    ranks = league.position_ranks(key)
+    alternatives = [{"you_send": [_label(p) for p in o["sends"]], "you_lose_a_starter": any(p.sleeper_id in my_starters for p in o["sends"]),
+                     "your_lineup_gain": o["my_gain"]} for o in fair[1:limit + 1]]
+    return {**base, "fair_deal_found": True, **_ladder(opening, closing, walk),
+            "by_their_goals": f"they get back {round(100 * closing['their_share'])}% of what they give up, valued their way ({_WINDOW_NOTE[league.window(tid)]})",
+            "by_your_goals": f"you pay {round(100 * closing['my_out'] / my_in)}% of what he's worth to you ({_WINDOW_NOTE[league.window(asker)]})" if my_in else None,
+            "market_view": _market_view(league, [player], closing["sends"]),
+            "why_they_say_yes": _why(league, tid, league.window(tid), closing["sends"], ranks, player),
+            "your_lineup_gain": closing["my_gain"], "their_lineup_gain": closing["their_gain"],
+            "cap_after": {"you": round(closing["cap"][0], 2), "them": round(closing["cap"][1], 2)},
+            "you_lose_a_starter": any(p.sleeper_id in my_starters for p in closing["sends"]),
+            "other_fair_packages": alternatives}
 
 
 def evaluate_trade(league: League, asker_team_id: str, partner: str, you_get: list[str], you_send: list[str],
@@ -327,6 +392,11 @@ def _norm(s: Any) -> str:
     return "".join(ch for ch in str(s or "").casefold() if ch.isalnum())
 
 
+def _no_contract(p: PlayerStrength) -> bool:
+    """On a Sleeper roster with no contract in the app: his salary is unknown, so the finder doesn't build deals around him."""
+    return bool(getattr(p, "no_contract", False))
+
+
 def _cap(p: PlayerStrength) -> float:
     return float(getattr(p, "cap_hit", 0.0) or 0.0)
 
@@ -384,8 +454,15 @@ def trade_finder_tools(load: Callable[[], tuple[League, Mapping[str, float], str
         return cache["league"]
 
     def run(position: str | None = None, goal: str | None = None, partner: str | None = None, limit: int = 4,
-            windows: Mapping[str, str] | None = None) -> dict[str, Any]:
+            windows: Mapping[str, str] | None = None, target: str | None = None) -> dict[str, Any]:
         lg = league(windows)
+        if target:
+            out = price_target(league=lg, asker_team_id=cache["asker"], cap_space=cache["cap"], target=target, partner=partner, goal=goal,
+                               limit=max(1, min(int(limit or 3), 5)))
+            p = profiles().get(str(out.get("partner"))) if history is not None and "error" not in out else None
+            if p:
+                out["partner_style"] = f"{p['trades']} trades here; {p['style']}"
+            return out
         out = find_trades(league=lg, asker_team_id=cache["asker"], cap_space=cache["cap"], want_position=position, goal=goal,
                           partner=partner, limit=max(1, min(int(limit or 4), 8)))
         if history is not None and out.get("ideas"):
@@ -461,11 +538,14 @@ def trade_finder_tools(load: Callable[[], tuple[League, Mapping[str, float], str
         "Shortlist trades for this owner that the other owner has a reason to take: each team valued its own way (contenders weigh this season, rebuilders the "
         "dynasty market, contracts count), cap-legal for both, and better for this owner's lineup. Each idea is a ladder: open_with (cheapest they might take), "
         "likely_close, walk_away_after (the most to pay), plus the market view and why they say yes. Use it first for any 'find me a trade' or 'who can I get at X' "
-        "question. position defaults to this owner's weakest; goal 'now' (default) or 'future'; partner limits to one owner.",
+        "question. position defaults to this owner's weakest; goal 'now' (default) or 'future'; partner limits to one owner. "
+        "When the owner names the player they want ('what would it take to get X'), pass target: it prices that one player with packages of up "
+        "to three of this owner's players, or says nothing fair exists and shows the closest tries.",
         {"type": "object", "properties": {
             "position": {"type": "string", "enum": list(POSITIONS)},
             "goal": {"type": "string", "enum": ["now", "future"]},
             "partner": {"type": "string", "description": "owner or team name, to look at one team only"},
+            "target": {"type": "string", "description": "a named player this owner wants: price just him"},
             "limit": {"type": "integer", "minimum": 1, "maximum": 8},
             "windows": windows_schema,
         }},
@@ -574,11 +654,13 @@ def load_league(client: Any, state: Mapping[str, Any], season: int, roster_posit
     adjustments = state_cap_adjustments(state)
     players = build_strengths(client, state, season)
     hits = {str(r.get("sleeper_player_id") or r.get("player_id") or ""): float(r.get("cap_hit") or r.get("salary") or 0) for r in roster}
+    no_contract = {str(r.get("sleeper_player_id") or "") for r in roster if is_no_contract(r)}
     values = _market_values(client, [p.sleeper_id for p in players])
     from league_ai.team_context import attach_schedules
     attach_schedules(players, client, season, playoff_start=playoff_start)
     for p in players:
         p.cap_hit = hits.get(p.sleeper_id, 0.0)  # type: ignore[attr-defined]
+        p.no_contract = p.sleeper_id in no_contract  # type: ignore[attr-defined]  # on Sleeper, but the app has no salary for him
         if p.sleeper_id in values:
             p.market_value = values[p.sleeper_id]  # type: ignore[attr-defined]  # superflex dynasty market
     teams = list(state.get("teams", []))

@@ -84,6 +84,9 @@ class Ledger:
             return {"error": "pick needs at least one player"}
         if kind in ("start_sit", "pickup") and not overs:
             return {"error": "name the player(s) you passed on in 'over' so the call can be graded"}
+        if {p["sleeper_id"] or p["name"] for p in picks} & {p["sleeper_id"] or p["name"] for p in overs}:
+            # "hold McMillan" logged as McMillan for McMillan can't be graded and skews the record
+            return {"error": "the same player is in pick and over; hold or keep calls have nothing to grade against, so don't log them"}
         if kind == "trade" and str(verdict or "").lower() not in ("accept", "decline"):
             return {"error": "trade calls need verdict 'accept' or 'decline'"}
         clean_factors = {str(k): str(v).lower() for k, v in (factors or {}).items() if str(k) in FACTORS and str(v).lower() in WEIGHTS}
@@ -228,7 +231,7 @@ class Ledger:
                 "log_prediction",
                 "Log a call the games will settle so it can be graded against real results: start/sit (who to start over whom, this week), "
                 "pickup (add X over Y, graded over the next 3 weeks) or trade (accept/decline, graded on the next 4 weeks of points). "
-                "Call it once per call you make, after deciding. factors maps each factor that drove the call to 'major' or 'minor' "
+                "Call it once per call you make, after deciding. Don't log hold or keep calls (nothing to grade them against). factors maps each factor that drove the call to 'major' or 'minor' "
                 f"(factors: {', '.join(FACTORS)}). confidence is your honest probability the pick outscores the alternative.",
                 {"type": "object", "properties": {
                     "kind": {"type": "string", "enum": list(KINDS)},

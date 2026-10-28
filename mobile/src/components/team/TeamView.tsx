@@ -46,12 +46,14 @@ export function TeamView({ team, eyebrow }: { team: TeamPage; eyebrow?: string }
         />
       </Tiles>
       <Segmented options={TABS} value={tab} onChange={setTab} />
-      <SwipeTabs options={TABS} value={tab} onChange={setTab}>
-        {tab === 'Roster' ? <RosterTab team={team} /> : null}
-        {tab === 'Contracts' ? <ContractsTab team={team} /> : null}
-        {tab === 'Picks' ? <PicksTab team={team} /> : null}
-        {tab === 'Activity' ? <ActivityTab team={team} /> : null}
-      </SwipeTabs>
+      <SwipeTabs
+        options={TABS}
+        value={tab}
+        onChange={setTab}
+        render={(t) =>
+          t === 'Roster' ? <RosterTab team={team} /> : t === 'Contracts' ? <ContractsTab team={team} /> : t === 'Picks' ? <PicksTab team={team} /> : <ActivityTab team={team} />
+        }
+      />
     </>
   );
 }

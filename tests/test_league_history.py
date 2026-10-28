@@ -113,5 +113,40 @@ class HistoryToolTests(unittest.TestCase):
         self.assertEqual(names, ["get_league_history", "get_waiver_prices", "get_trade_tendencies", "get_matchup_history"])
 
 
+class PastSeasonContractTests(unittest.TestCase):
+    """Last season's contracts live under last season's league row; history should show what was paid then."""
+    OLD, NEW = "old-league", "new-league"
+    TABLES = {
+        "contract_agreements": [
+            {"id": "a-old", "league_id": "old-league", "sleeper_player_id": "p1", "status": "expired", "created_at": "2025-01-01"},
+            {"id": "a-new", "league_id": "new-league", "sleeper_player_id": "p1", "status": "active", "created_at": "2026-07-01"},
+            {"id": "b-new", "league_id": "new-league", "sleeper_player_id": "p2", "status": "active", "created_at": "2026-07-01"},
+        ],
+        "contract_seasons": [
+            {"contract_id": "a-old", "season": 2025, "salary": 2, "obligation_status": "satisfied"},
+            {"contract_id": "a-new", "season": 2026, "salary": 14, "obligation_status": "active"},
+            {"contract_id": "a-new", "season": 2027, "salary": 14, "obligation_status": "scheduled"},
+            {"contract_id": "b-new", "season": 2026, "salary": 5, "obligation_status": "active"},
+        ],
+    }
+
+    def _client(self):
+        tables = self.TABLES
+        class C:
+            def table(self, name): return FakeQuery(tables[name])
+        return C()
+
+    def test_salary_is_the_one_paid_that_season(self):
+        from pipeline.league_history.run import contract_map
+        old = contract_map(self._client(), [self.OLD, self.NEW], 2025)
+        self.assertEqual(old, {"p1": {"salary": 2, "years": 1}})  # p2 had no 2025 contract: left blank, not today's $5
+        new = contract_map(self._client(), ["", self.NEW], 2026)
+        self.assertEqual(new["p1"], {"salary": 14, "years": 2})
+
+    def test_without_a_season_keeps_the_old_behaviour(self):
+        from pipeline.league_history.run import contract_map
+        self.assertEqual(contract_map(self._client(), [self.NEW])["p1"], {"salary": 14, "years": 2})
+
+
 if __name__ == "__main__":
     unittest.main()
