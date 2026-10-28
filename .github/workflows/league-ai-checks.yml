@@ -8,7 +8,7 @@ on:
       check:
         description: Which check to run
         type: choice
-        options: [odds_backtest, odds_trial, odds_grade, stress_test, stress_grade, stress_rosters, stress_contracts, stress_league_link, stress_history, stress_ping, draft_study, league_sim, trade_backtest, tendencies]
+        options: [odds_backtest, odds_trial, odds_grade, stress_test, stress_grade, stress_rosters, stress_contracts, stress_league_link, stress_history, stress_ping, draft_study, league_sim, trade_backtest, tendencies, start_sit_grade]
         default: odds_backtest
       budget:
         description: "stress_test only: stop before spending more than this many dollars"
@@ -36,7 +36,7 @@ jobs:
         with:
           python-version: "3.13"
       - run: pip install supabase requests pandas anthropic pyarrow numpy
-      - if: startsWith(inputs.check, 'stress')
+      - if: startsWith(inputs.check, 'stress') || inputs.check == 'start_sit_grade'
         run: pip install -r api/requirements.txt
       - name: Run
         env:
@@ -63,6 +63,7 @@ jobs:
             draft_study) python -m league_ai.draft_study ;;
             trade_backtest) python -m league_ai.trade_backtest ;;
             tendencies) python -m league_ai.tendency_check ;;
+            start_sit_grade) python -m league_ai.start_sit_grade ;;
             league_sim) SIM_LEAGUES=${{ inputs.questions }} python -m league_ai.league_sim ;;
             stress_grade) python -m league_ai.stress_test grade stress/grading-input.json ;;
             *) python -m league_ai.playoff_odds ;;
