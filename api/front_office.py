@@ -16,7 +16,8 @@ from zoneinfo import ZoneInfo
 
 from league_ai import runtime
 from league_ai.config import load_config
-from league_ai.front_office import load_brief, merge_brief, rotating_prompts, week_context
+from league_ai import odds_trial, playoff_odds
+from league_ai.front_office import lineup_moves, load_brief, merge_brief, rotating_prompts, week_context
 from league_ai.learning import Ledger
 from league_ai.service import load_league_rules
 from services.team_roster_state import load_team_state
@@ -110,6 +111,48 @@ class Session:
         o = self.owner
         return _cached(("fo", o.user_id, o.season), 600, lambda: runtime.front_office_data(self.client, o, self.league, self.loaders()))
 
+    def odds_model(self, fo: dict[str, Any] | None = None) -> playoff_odds.OddsModel | None:
+        """Results so far, the rest of the schedule and each team's expected points, shared by the page and the GM."""
+        o, sid = self.owner, self.sleeper_id
+        fo = fo or self.front_office()
+        week, start = int(fo.get("week") or 0), int(fo.get("playoff_start_week") or 15)
+        if not sid or not week or not fo.get("rankings"):
+            return None
+        means = {str(r["owner"]): float(r.get("now_score") or 0) for r in fo["rankings"]}
+        owners = dict(fo.get("roster_to_owner") or {})
+
+        def build() -> playoff_odds.OddsModel:
+            schedule = lambda weeks: _cached(("schedule", sid, weeks.start, weeks.stop), 12 * 3600,  # noqa: E731
+                                             lambda: playoff_odds.sleeper_schedule(sid, weeks, owners))
+            return playoff_odds.OddsModel(playoff_odds.load_rows(self.client, o.league_id, o.season), means, week, start, schedule)
+        return _cached(("odds_model", o.league_id, o.season, week), 1800, build)
+
+    def odds_summary(self, fo: dict[str, Any] | None = None) -> dict[str, Any] | None:
+        o = self.owner
+        fo = fo or self.front_office()
+        try:
+            model = self.odds_model(fo)
+            return _cached(("odds", o.league_id, o.season, fo.get("week")), 1800, model.summary) if model else None
+        except Exception as exc:
+            print(f"APP_PLAYOFF_ODDS_ERROR {type(exc).__name__}: {exc}", flush=True)
+            return None
+
+    def moves(self, fo: dict[str, Any]) -> list[dict[str, str]]:
+        """This week's lineup changes: the app's best lineup against the starters set in Sleeper now."""
+        o, sid, week, rid = self.owner, self.sleeper_id, fo.get("week"), fo.get("my_roster_id")
+        mine = next((r for r in fo.get("rankings") or [] if str(r.get("team_id")) == o.league_team_id), None)
+        if not sid or not week or rid is None or not mine or "week_lineup" not in mine:
+            return []
+        from api import sleeper
+        try:
+            rows = sleeper.get(f"league/{sid}/matchups/{week}", ttl=300) or []
+        except Exception:
+            return []
+        current = next((r.get("starters") for r in rows if r.get("roster_id") == rid), None)
+        from services.team_roster_state import state_roster
+        names = {str(r.get("sleeper_player_id") or r.get("player_id") or ""): str(r.get("player_name") or "") for r in state_roster(self.state())}
+        return lineup_moves(mine["week_lineup"], current, on_bye=mine.get("on_bye_ids") or [], names=names)
+
 
 def report_card(client: Any, owner: runtime.Owner, week: int) -> dict[str, Any]:
     ledger = Ledger(client, league_id=owner.league_id, user_id=owner.user_id, league_team_id=owner.league_team_id, season=owner.season, week=week)
@@ -133,18 +176,45 @@ def greeting(owner_name: str, now: datetime | None = None) -> str:
     return f"{part}, {(owner_name or '').split(' ')[0] or 'there'}."
 
 
+def _pct_word(note: str | None) -> str:
+    """'-35% vs league median' -> '-35%'; anything without a percentage -> ''."""
+    first = (note or "").split(" ")[0]
+    return first if first.endswith("%") else ""
+
+
+def _my_odds(odds: dict[str, Any] | None, owner: str) -> dict[str, Any] | None:
+    name = next((t for t in (odds or {}).get("odds", {}) if t.casefold() == owner.casefold()), None)
+    if not odds or name is None:
+        return None
+    return {"pct": odds["odds"][name], "change": odds["change"].get(name), "weeks_left": odds["weeks_left"], "spots": odds["spots"]}
+
+
 def home(session: Session) -> dict[str, Any]:
     """The Front Office screen before you ask anything: tiles, this week's brief, starters and the report card."""
     o = session.owner
     fo = session.front_office()
     week = int(fo.get("week") or 0)
     saved = load_brief(session.client, o.league_id, o.user_id, o.season, week)
+    mine = next((r for r in fo.get("rankings") or [] if str(r.get("team_id")) == o.league_team_id), None)
+    odds = session.odds_summary(fo)
+    try:
+        moves = session.moves(fo)
+    except Exception as exc:
+        print(f"APP_MOVES_ERROR {type(exc).__name__}: {exc}", flush=True)
+        moves = []
     return {
         "greeting": greeting(o.owner_name),
         "ai_ready": ai_ready(),
         "week": week,
         "season": o.season,
         "tiles": fo.get("tiles") or [],
+        # The three tiles on the Front Office screen: weakest spot, playoff odds, power rank.
+        "header": {
+            "weakest": {"slot": mine.get("weakest_slot"), "note": _pct_word(mine.get("weakest_note"))} if mine and mine.get("weakest_slot") else None,
+            "odds": _my_odds(odds, o.owner_name),
+            "power": {"rank": mine.get("now_rank"), "move": fo.get("power_movement")} if mine else None,
+        },
+        "moves": moves,
         "brief": merge_brief(fo.get("data_brief") or {}, saved),
         "prompts": rotating_prompts(week=week),
         "report_card": report_card(session.client, o, week),
@@ -179,9 +249,14 @@ def ask(session: Session, question: str, conversation_id: str | None, on_event: 
             pass
     tools = runtime.chat_tools(client, o, state=state, rules=session.rules(), league=session.league, week=session.week(),
                                positions=session.positions, playoff_week=session.playoff_start,
-                               question=lambda: question, conversation_id=lambda: conversation_id)
+                               question=lambda: question, conversation_id=lambda: conversation_id,
+                               odds=(lambda: session.odds_model(fo)) if fo else None)
+    seen = odds_trial.watch(tools)
     turn = runtime.chat_turn(client, o, question=question, history=history, conversation_id=conversation_id, pack=session.pack(), tools=tools,
                              on_event=on_event, week_context=week_context(fo, o.owner_name))
+    if turn.result.ok:
+        odds_trial.maybe_run(client, league_id=o.league_id, user_id=o.user_id, conversation_id=turn.conversation_id, question=question,
+                             answer=turn.result.text, seen=seen, sdk_factory=lambda: runtime.ClaudeClient()._client())
     if turn.notes_changed:
         session.forget_pack()  # new notes show up in the next answer
     result = turn.result

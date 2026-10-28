@@ -79,6 +79,7 @@ class TeamPower:
     strongest_slot: str | None = None
     week_starters: list[PlayerStrength] = field(default_factory=list)  # best lineup this week: byes benched, ordered by matchup-adjusted score
     week_bench: list[PlayerStrength] = field(default_factory=list)
+    week_slots: list[str] = field(default_factory=list)  # the lineup slot each week_starters player fills, in the same order
     on_bye: list[PlayerStrength] = field(default_factory=list)
     bye_next: list[PlayerStrength] = field(default_factory=list)
 
@@ -173,7 +174,7 @@ def compute_power(players: list[PlayerStrength], teams: list[Mapping[str, Any]],
         bye_ids = {p.sleeper_id for p in on_bye}
         week_lineup, week_bench = fill_lineup([p for p in roster if p.sleeper_id not in bye_ids], slots, "week_now")
         out.append(TeamPower(team_id=tid, owner=str(t.get("owner_name") or ""), now_score=round(now_score, 1), dynasty_score=round(dynasty_score, 1),
-                             starters=[p for _, p in lineup], slot_scores=avg_slots, week_starters=[p for _, p in week_lineup], week_bench=[p for p in week_bench if p.position in FIXED][:6], on_bye=on_bye, bye_next=bye_next))
+                             starters=[p for _, p in lineup], slot_scores=avg_slots, week_starters=[p for _, p in week_lineup], week_slots=[s for s, _ in week_lineup], week_bench=[p for p in week_bench if p.position in FIXED][:6], on_bye=on_bye, bye_next=bye_next))
     # ranks
     for i, tp in enumerate(sorted(out, key=lambda x: -x.now_score), start=1):
         tp.now_rank = i

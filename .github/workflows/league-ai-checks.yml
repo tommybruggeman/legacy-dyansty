@@ -1,0 +1,29 @@
+name: League AI checks
+
+# Run by hand: how accurate the playoff odds are on past seasons, and how the 20-answer playoff-odds trial is going.
+on:
+  workflow_dispatch:
+    inputs:
+      check:
+        description: Which check to run
+        type: choice
+        options: [odds_backtest, odds_trial]
+        default: odds_backtest
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install supabase requests
+      - name: Run
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          REPORT_DETAIL: ${{ vars.REPORT_DETAIL }}
+        run: |
+          if [ "${{ inputs.check }}" = "odds_trial" ]; then python -m league_ai.odds_trial; else python -m league_ai.playoff_odds; fi

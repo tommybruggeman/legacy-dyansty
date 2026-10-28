@@ -341,9 +341,11 @@ def _why(league: League, team_id: str, window: str, sends: list[PlayerStrength],
 
 
 def trade_finder_tools(load: Callable[[], tuple[League, Mapping[str, float], str]], history: Any | None = None,
-                       outcomes: Callable[..., list[Mapping[str, Any]]] | None = None, current_season: int | None = None) -> list[ToolSpec]:
+                       outcomes: Callable[..., list[Mapping[str, Any]]] | None = None, current_season: int | None = None,
+                       odds: Callable[[], Any] | None = None) -> list[ToolSpec]:
     """load() -> (League, cap space by team id, asker team id); called once per answer that needs it.
-    history: LeagueHistory for completed trades; outcomes(partner=None) -> this owner's recorded trade outcomes."""
+    history: LeagueHistory for completed trades; outcomes(partner=None) -> this owner's recorded trade outcomes.
+    odds() -> a playoff_odds.OddsModel (or None), so a judged trade comes with both teams' playoff odds before and after."""
     cache: dict[str, Any] = {}
 
     def profiles() -> dict[str, dict[str, Any]]:
@@ -394,7 +396,17 @@ def trade_finder_tools(load: Callable[[], tuple[League, Mapping[str, float], str
                 out["partner_style"] = f"{p['trades']} trades here; {p['style']}"
             if my_pitches().get(str(out.get("partner"))):
                 out["your_past_pitches_to_them"] = my_pitches()[str(out["partner"])]
+        if "error" not in out and odds is not None:
+            out["playoff_odds"] = trade_playoff_odds(lg, cache["asker"], str(out["partner"]), you_get or [], you_send or [], odds)
         return out
+
+    def playoffs() -> dict[str, Any]:
+        model = odds() if odds is not None else None
+        if model is None:
+            return {"error": "playoff odds aren't available right now (no schedule or power rankings yet)"}
+        out = model.summary()
+        return {**out, "how_to_use": f"Each team's chance (percent) to finish top {out['spots']} over {SIMS_NOTE}, and the change since last week. "
+                                     "It plays out the remaining schedule using each team's expected weekly points from the power rankings."}
 
     def profile(owner: str) -> dict[str, Any]:
         prof = profiles()
@@ -444,7 +456,32 @@ def trade_finder_tools(load: Callable[[], tuple[League, Mapping[str, float], str
         "Use before pitching or pricing a trade with that owner.",
         {"type": "object", "properties": {"owner": {"type": "string"}}, "required": ["owner"]},
         profile,
-    )]
+    )] + ([ToolSpec(
+        "get_playoff_odds",
+        "Every team's playoff odds: the remaining regular season played out thousands of times with each team's expected weekly points, scored the "
+        "league's way (2 per win, 1 for a top-5 week, then points for). Also the change since last week and weeks left. Use for 'will I make the "
+        "playoffs', 'am I a contender' or buy/sell questions. evaluate_trade already includes the odds before and after for both teams.",
+        {"type": "object", "properties": {}},
+        playoffs,
+    )] if odds is not None else [])
+
+
+SIMS_NOTE = "5,000 simulated rest-of-seasons"
+
+
+def trade_playoff_odds(league: League, asker_team_id: str, partner: str, you_get: list[str], you_send: list[str], odds: Callable[[], Any]) -> dict[str, Any]:
+    """Both teams' playoff odds with and without the trade, from the change in each starting lineup's weekly points."""
+    from league_ai.playoff_odds import trade_odds
+
+    model = odds()
+    tid = league.team_id(partner)
+    if model is None or not tid:
+        return {"note": "playoff odds unavailable"}
+    gets = [p for p in (league.find_player(n, tid) for n in you_get) if p]
+    sends = [p for p in (league.find_player(n, asker_team_id) for n in you_send) if p]
+    me = str(league.teams[asker_team_id].get("owner_name") or "")
+    them = str(league.teams[tid].get("owner_name") or partner)
+    return trade_odds(model, model.name(me), model.name(them), league.gain(asker_team_id, sends, gets, "now"), league.gain(tid, gets, sends, "now"))
 
 
 def _load_profiles(history: Any, current_season: int | None) -> dict[str, dict[str, Any]]:
