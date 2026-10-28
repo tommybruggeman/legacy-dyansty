@@ -1,13 +1,14 @@
 name: League AI checks
 
-# Run by hand: how accurate the playoff odds are on past seasons, and how the 20-answer playoff-odds trial is going.
+# Run by hand: how accurate the playoff odds are on past seasons, how the 20-answer playoff-odds trial is going,
+# start/sit graded on every saved lineup, and the free pre-deploy practice test.
 on:
   workflow_dispatch:
     inputs:
       check:
         description: Which check to run
         type: choice
-        options: [odds_backtest, odds_trial, odds_grade]
+        options: [odds_backtest, odds_trial, odds_grade, start_sit_grade, practice_test]
         default: odds_backtest
 
 jobs:
@@ -20,14 +21,19 @@ jobs:
         with:
           python-version: "3.13"
       - run: pip install supabase requests
+      - if: inputs.check == 'start_sit_grade' || inputs.check == 'practice_test'
+        run: pip install -r api/requirements.txt
       - name: Run
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           REPORT_DETAIL: ${{ vars.REPORT_DETAIL }}
+          LEAGUE_AI_IDEA_LOG: "off"
         run: |
           case "${{ inputs.check }}" in
             odds_trial) python -m league_ai.odds_trial ;;
             odds_grade) python -m league_ai.matchup_odds ;;
+            start_sit_grade) python -m league_ai.start_sit_grade ;;
+            practice_test) python -m league_ai.practice_test ;;
             *) python -m league_ai.playoff_odds ;;
           esac

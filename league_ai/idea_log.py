@@ -9,6 +9,7 @@ The weekly report counts them. Trades made in the app land in the same history t
 """
 from __future__ import annotations
 
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Mapping
 
@@ -38,7 +39,7 @@ def compact(out: Mapping[str, Any]) -> list[dict[str, Any]]:
 
 def log(client: Any, *, league_id: str, user_id: str | None, conversation_id: str | None, question: str | None, out: Mapping[str, Any]) -> bool:
     ideas = compact(out)
-    if not ideas or client is None:
+    if not ideas or client is None or os.environ.get("LEAGUE_AI_IDEA_LOG") == "off":   # off in the practice test and stress runs
         return False
     try:
         client.table("league_ai_experiments").insert({
