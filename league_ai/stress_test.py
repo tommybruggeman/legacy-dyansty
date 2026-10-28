@@ -275,6 +275,10 @@ def ask(client: Any) -> int:
             item = {"n": n, "kind": kind, "owner": o.owner_name, "question": q["q"], "ok": False, "error": f"{type(exc).__name__}: {str(exc)[:300]}",
                     "tool_calls": rec.calls, "cost": 0.0}
         spent += cost
+        if item.get("error") == "bad_request" and not item.get("answer") and n > 1 and all(i.get("error") == "bad_request" for i in results["items"][-2:]):
+            results["stopped_early"] = "three requests refused in a row (check the Anthropic credit balance)"
+            print(f"stopping at question {n}: {results['stopped_early']}", flush=True)
+            break
         results["items"].append(item)
         results["spent"] = round(spent, 4)
         print(f"{n:>2}. {kind:<12} {o.owner_name:<14} ok={item['ok']} ${cost:.3f} total ${spent:.2f} tools={len(rec.calls)} {item.get('seconds', 0)}s", flush=True)
