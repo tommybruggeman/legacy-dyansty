@@ -1,6 +1,7 @@
 import { fetch as streamingFetch } from 'expo/fetch';
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppState } from 'react-native';
 
 import { supabase } from './supabase';
@@ -68,17 +69,62 @@ export async function apiStream<E>(path: string, body: unknown, onEvent: (event:
   }
 }
 
+// Pages open instantly with what was last loaded (kept in memory and on the
+// phone), then refresh quietly in the background. Cleared on sign out.
+const CACHE_PREFIX = 'api:';
+const memory = new Map<string, unknown>();
+
+function remember(path: string, value: unknown) {
+  memory.set(path, value);
+  AsyncStorage.setItem(CACHE_PREFIX + path, JSON.stringify(value)).catch(() => undefined);
+}
+
+async function recall<T>(path: string): Promise<T | null> {
+  if (memory.has(path)) return memory.get(path) as T;
+  try {
+    const saved = await AsyncStorage.getItem(CACHE_PREFIX + path);
+    if (saved) {
+      const value = JSON.parse(saved) as T;
+      memory.set(path, value);
+      return value;
+    }
+  } catch {
+    // A bad saved copy just means a normal load.
+  }
+  return null;
+}
+
+export async function clearApiCache() {
+  memory.clear();
+  const keys = await AsyncStorage.getAllKeys().catch(() => [] as readonly string[]);
+  await AsyncStorage.multiRemove(keys.filter((k) => k.startsWith(CACHE_PREFIX))).catch(() => undefined);
+}
+
+// Whoever signs in next on this phone never sees the last owner's pages.
+supabase.auth.onAuthStateChange((event) => {
+  if (event === 'SIGNED_OUT') clearApiCache();
+});
+
+// Loads pages in the background so the first tap on them is instant.
+export function prefetch(paths: string[]) {
+  for (const path of paths) {
+    apiGet(path).then((value) => remember(path, value)).catch(() => undefined);
+  }
+}
+
 // refreshEvery (ms) quietly re-fetches while the screen is open and the app
 // is in front, e.g. live scores. Pass 0 to stop.
 export function useApi<T>(path: string, refreshEvery = 0) {
-  const [data, setData] = useState<T | null>(null);
+  const [data, setData] = useState<T | null>(() => (memory.get(path) as T | undefined) ?? null);
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!memory.has(path));
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
     try {
-      setData(await apiGet<T>(path));
+      const value = await apiGet<T>(path);
+      remember(path, value);
+      setData(value);
       setError(null);
     } catch (e: any) {
       if (!quiet) setError(e?.message ?? 'Something went wrong.');
@@ -87,7 +133,20 @@ export function useApi<T>(path: string, refreshEvery = 0) {
     }
   }, [path]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    let live = true;
+    recall<T>(path).then((saved) => {
+      if (!live) return;
+      if (saved) {
+        setData(saved);
+        setLoading(false);
+      } else {
+        setData(null);
+      }
+      load(!!saved);
+    });
+    return () => { live = false; };
+  }, [path, load]);
 
   useFocusEffect(
     useCallback(() => {
@@ -100,9 +159,11 @@ export function useApi<T>(path: string, refreshEvery = 0) {
   );
 
   // Stable across renders, so screens can list it in effect dependencies.
+  // reload shows the spinner (pull to refresh); refresh is silent.
   const reload = useCallback(() => load(), [load]);
+  const refresh = useCallback(() => load(true), [load]);
 
-  return { data, error, loading, reload };
+  return { data, error, loading, reload, refresh };
 }
 
 export type StandingsRow = {

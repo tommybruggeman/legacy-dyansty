@@ -5,7 +5,7 @@ import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-nativ
 import { Avatar, Headshot, type Ring } from '../../components/Pictures';
 import { ErrorState, Loading } from '../../components/ScreenState';
 import { Bar, Card, Pill, Screen, firstName, money, ordinal, record, ui } from '../../components/ui';
-import { type HomeData, type HomeSide, type LivePlayer, type RaceRow, type RookieDeal, type TableRow, apiSend, useApi } from '../../lib/api';
+import { type HomeData, type HomeSide, type LivePlayer, type RaceRow, type RookieDeal, type TableRow, apiSend, prefetch, useApi } from '../../lib/api';
 import { colors } from '../../lib/theme';
 
 // Home changes with the calendar: last week's recap (Tue-Wed), a preview
@@ -25,15 +25,22 @@ const pts = (n: number) => n.toFixed(1);
 export default function Home() {
   const [live, setLive] = useState(false);
   // Game days refresh every minute while Home is open.
-  const { data, error, loading, reload } = useApi<HomeData>('/home', live ? 60_000 : 0);
+  const { data, error, loading, reload, refresh } = useApi<HomeData>('/home', live ? 60_000 : 0);
   const isLive = data?.phase === 'game_day' || data?.phase === 'playoffs';
   useEffect(() => setLive(isLive), [isLive]);
+  // Once Home is up, warm the other tabs so they open instantly.
+  const warmed = useRef(false);
+  useEffect(() => {
+    if (!data || warmed.current) return;
+    warmed.current = true;
+    prefetch(['/my-team', '/standings', '/matchups', '/teams', '/front-office', '/market/free-agents', '/market/expiring']);
+  }, [data]);
 
   const seen = useRef(false);
   useFocusEffect(useCallback(() => {
-    if (seen.current) reload();
+    if (seen.current) refresh();
     seen.current = true;
-  }, [reload]));
+  }, [refresh]));
 
   if (loading && !data) return <Loading />;
   if (error && !data) return <ErrorState message={error} onRetry={reload} />;

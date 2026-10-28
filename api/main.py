@@ -16,7 +16,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from supabase import Client, create_client
 
-from api import front_office, home, league, market, teams
+from api import cache, front_office, home, league, market, teams
 from season_engine import SeasonResolver
 from services.season_rollover_owner_ui import OwnerRolloverDecisionError, OwnerRolloverDecisionService
 
@@ -37,8 +37,10 @@ def owner_client(authorization: str = Header(default="")) -> tuple[Client, Any]:
         raise HTTPException(status_code=401, detail="Sign in required.")
 
     client = create_client(_env("SUPABASE_URL"), _env("SUPABASE_ANON_KEY"))
+    # Checking a token is a round trip to Supabase Auth; a checked token is
+    # trusted for a minute (tokens live an hour and the app refreshes them).
     try:
-        user = client.auth.get_user(token).user
+        user = cache.cached(("user", cache.token_key(token)), 60, lambda: client.auth.get_user(token).user)
     except Exception:
         user = None
     if user is None:
@@ -64,6 +66,10 @@ def health() -> dict[str, str]:
 
 def resolve_team(client: Client, user: Any) -> dict[str, Any]:
     """The owner's league and team, resolved like services/app_context.resolve_my_team."""
+    return cache.cached(("team", user.id), 600, lambda: _resolve_team(client, user))
+
+
+def _resolve_team(client: Client, user: Any) -> dict[str, Any]:
     membership = _first(
         client.table("league_memberships").select("*").eq("user_id", user.id).limit(1).execute().data
     )
@@ -109,13 +115,13 @@ def _league_context(client: Client, user: Any) -> tuple[str, dict[int, str], int
         sleeper_id = league.sleeper_league_id(client, team["league_id"])
     except LookupError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
-    return sleeper_id, league.roster_names(client, team["league_id"], sleeper_id), team["sleeper_roster_id"]
+    return sleeper_id, _roster_names(client, team["league_id"], sleeper_id), team["sleeper_roster_id"]
 
 
 def _team_ids(client: Client, user: Any) -> dict[int, str]:
     """roster id -> league team id, so the app can open a team page from any row."""
     team = resolve_team(client, user)
-    return {t["roster_id"]: t["team_id"] for t in teams.league_teams(client, team["league_id"])}
+    return {t["roster_id"]: t["team_id"] for t in _league_team_rows(client, team["league_id"])}
 
 
 @app.get("/standings")
@@ -142,7 +148,7 @@ def matchups(
 def _season_context(client: Client, user: Any) -> dict[str, Any]:
     """Everything the team pages share: who I am, the season, and Sleeper ids."""
     team = resolve_team(client, user)
-    season = SeasonResolver(client).get_active_season(team["league_id"])
+    season = cache.cached(("season", team["league_id"]), 600, lambda: SeasonResolver(client).get_active_season(team["league_id"]))
     if not season.sleeper_league_id:
         raise HTTPException(status_code=409, detail="The active season isn't linked to a Sleeper league yet.")
     sleeper_id = season.sleeper_league_id
@@ -151,22 +157,40 @@ def _season_context(client: Client, user: Any) -> dict[str, Any]:
         "season": int(season.season),
         "season_id": season.id,
         "sleeper_id": sleeper_id,
-        "names": league.roster_names(client, team["league_id"], sleeper_id),
+        "names": _roster_names(client, team["league_id"], sleeper_id),
         "slots": (league.sleeper.get(f"league/{sleeper_id}") or {}).get("roster_positions") or [],
     }
 
 
+def _roster_names(client: Client, league_id: str, sleeper_id: str) -> dict[int, str]:
+    return cache.cached(("names", league_id, sleeper_id), 600, lambda: league.roster_names(client, league_id, sleeper_id))
+
+
+def _league_team_rows(client: Client, league_id: str) -> list[dict[str, Any]]:
+    return cache.cached(("league_teams", league_id), 600, lambda: teams.league_teams(client, league_id))
+
+
+def _seasons_state(client: Client, league_id: str, season: int) -> list[dict[str, Any]]:
+    """Contracts for this season and the next two, shared by the league for a minute."""
+    return cache.cached(("state", league_id, season), 60, lambda: teams.seasons_state(client, league_id, season))
+
+
 def _league_teams(client: Client, ctx: dict[str, Any]) -> tuple[list[dict], list[dict], list[dict], float]:
-    standings_rows = league.standings(ctx["sleeper_id"], ctx["names"], ctx["sleeper_roster_id"])["rows"]
-    cap = teams.salary_cap(client, ctx["league_id"])
+    lid = ctx["league_id"]
+    # These reads don't depend on each other, so they run side by side.
+    jobs = {
+        "standings": cache.pool.submit(league.standings, ctx["sleeper_id"], ctx["names"], ctx["sleeper_roster_id"]),
+        "cap": cache.pool.submit(cache.cached, ("cap", lid), 600, lambda: teams.salary_cap(client, lid)),
+        "states": cache.pool.submit(_seasons_state, client, lid, ctx["season"]),
+        "teams": cache.pool.submit(_league_team_rows, client, lid),
+        "leans": cache.pool.submit(cache.cached, ("leans", lid), 600, lambda: teams.team_leans(client, lid)),
+    }
     try:
-        states = teams.seasons_state(client, ctx["league_id"], ctx["season"])
+        states = jobs["states"].result()
     except Exception:
         raise HTTPException(status_code=502, detail="Couldn't load league contracts. Try again.")
-    rows = teams.summaries(
-        teams.league_teams(client, ctx["league_id"]), states, cap, standings_rows,
-        teams.team_leans(client, ctx["league_id"]),
-    )
+    standings_rows, cap = jobs["standings"].result()["rows"], jobs["cap"].result()
+    rows = teams.summaries(jobs["teams"].result(), states, cap, standings_rows, jobs["leans"].result())
     return rows, states, standings_rows, cap
 
 
@@ -222,7 +246,7 @@ def player_page(player_id: str, owner: tuple[Client, Any] = Depends(owner_client
     client, user = owner
     ctx = _season_context(client, user)
     try:
-        state = teams.load_team_state(client, ctx["league_id"], ctx["season"])
+        state = _seasons_state(client, ctx["league_id"], ctx["season"])[0]
     except Exception:
         raise HTTPException(status_code=502, detail="Couldn't load league contracts. Try again.")
     weeks = league.last_scored_week(ctx["sleeper_id"])
@@ -269,6 +293,7 @@ def place_on_ir(body: IrRequest, owner: tuple[Client, Any] = Depends(owner_clien
         }}).execute()
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"IR move was not saved: {exc}")
+    cache.forget("state", ctx["league_id"])
     return {"ok": True}
 
 
@@ -288,6 +313,7 @@ def remove_from_ir(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[st
     )
     if not deleted:
         raise HTTPException(status_code=403, detail="IR player was not removed.")
+    cache.forget("state", ctx["league_id"])
     return {"ok": True}
 
 
@@ -307,7 +333,7 @@ def box_score(
     result = teams.box_score(ctx["sleeper_id"], week, matchup_id, ctx["names"], ctx["slots"], teams.player_info(client, ids), ttl)
     if result is None:
         raise HTTPException(status_code=404, detail="Game not found.")
-    teams_by_roster = {t["roster_id"]: t["team_id"] for t in teams.league_teams(client, ctx["league_id"])}
+    teams_by_roster = {t["roster_id"]: t["team_id"] for t in _league_team_rows(client, ctx["league_id"])}
     for side in result["teams"]:
         side["team_id"] = teams_by_roster.get(side["roster_id"])
     result["my_roster_id"] = ctx["sleeper_roster_id"]
@@ -317,7 +343,7 @@ def box_score(
 
 def _season_state(client: Client, ctx: dict[str, Any]) -> dict[str, Any]:
     try:
-        return teams.load_team_state(client, ctx["league_id"], ctx["season"])
+        return _seasons_state(client, ctx["league_id"], ctx["season"])[0]
     except Exception:
         raise HTTPException(status_code=502, detail="Couldn't load league contracts. Try again.")
 
@@ -453,7 +479,7 @@ def home_page(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, An
         "me": {k: me.get(k) for k in ("rank", "wins", "losses", "ties", "standing_points", "cap_space", "cap_by_year", "team_id")},
         "teams_count": len(rows),
         "playoff_teams": league.PLAYOFF_TEAMS,
-        "front_office": {"line": _brief_line(client, ctx, user, week), "prompts": front_office.rotating_prompts(week=week)},
+        "front_office": {"line": cache.cached(("brief", user.id, week), 300, lambda: _brief_line(client, ctx, user, week)), "prompts": front_office.rotating_prompts(week=week)},
     }
 
     pics: dict[int, str | None] = {}
@@ -484,7 +510,8 @@ def home_page(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, An
             ids = [p for r in (mine, theirs) if r for p in (r.get("starters") or [])]
             info = teams.player_info(client, ids)
             try:
-                nfl = client.table("nfl_games").select("gameday,gametime,home_team,away_team").eq("season", ctx["season"]).eq("week", wk).execute().data or []
+                nfl = cache.cached(("nfl_games", ctx["season"], wk), 600, lambda: client.table("nfl_games").select("gameday,gametime,home_team,away_team")
+                                   .eq("season", ctx["season"]).eq("week", wk).execute().data or [])
             except Exception:
                 nfl = []
             now = datetime.now(front_office.LEAGUE_TZ)

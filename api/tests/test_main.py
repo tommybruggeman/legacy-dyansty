@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
-from api import main
+from api import cache, main
 
 
 class FakeQuery:
@@ -41,6 +41,7 @@ def _app_with(tables):
 
 def teardown_function():
     main.app.dependency_overrides.clear()
+    cache.clear()
 
 
 def test_health():
