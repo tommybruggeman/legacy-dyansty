@@ -178,3 +178,14 @@ class InjuryTiltTest(unittest.TestCase):
             self.assertLess(v.base(hurt, "rebuilding"), v.base(healthy, "rebuilding"))
         finally:
             trade_value.INJURY_TILT = False
+
+
+class HabitFitTest(unittest.TestCase):
+    def test_package_with_their_favorite_faab_position_is_flagged(self):
+        from types import SimpleNamespace
+        from league_ai.trade_finder import _habit_fit
+
+        lg = SimpleNamespace(habits={"Bo": {"faab_by_position": {"RB": 0.6, "WR": 0.3}}})
+        self.assertIn("RB", _habit_fit(lg, "Bo", [_p("A", "r", "RB", 10.0)]))
+        self.assertIsNone(_habit_fit(lg, "Bo", [_p("A", "w", "WR", 10.0)]))
+        self.assertIsNone(_habit_fit(lg, "Nobody", [_p("A", "r", "RB", 10.0)]))

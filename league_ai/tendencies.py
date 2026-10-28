@@ -13,6 +13,8 @@ from typing import Any, Iterable, Mapping
 
 RECENT_WEIGHT = 2.0   # this season and last count double
 MIN_CALLS = 6         # close start/sit calls needed before naming a lean
+LEAGUE_COMPARE = 4    # owners with a read needed to compare against the league instead of an even split
+LEAN_GAP = 0.08       # how far from the league's middle a lean has to be
 
 
 def _weight(season: int, current: int | None) -> float:
@@ -61,9 +63,17 @@ def lineup_habits(lineups: Iterable[Mapping[str, Any]], current: int | None = No
         if len(c) >= MIN_CALLS:
             share = sum(x * w for x, w in c) / sum(w for _, w in c)
             row["hot_hand_share"] = round(share, 2)
-            row["start_sit_lean"] = "starts the hot hand" if share >= 0.6 else "trusts season-long production" if share <= 0.4 else "no strong lean"
         row["close_calls"] = len(c)
         out[owner] = row
+    # leans are relative to the league: most owners side with season-long scoring on close calls, so "hot hand" means
+    # more often than the others (with too few owners to compare, against an even split)
+    shares = sorted(r["hot_hand_share"] for r in out.values() if "hot_hand_share" in r)
+    mid = shares[len(shares) // 2] if len(shares) >= LEAGUE_COMPARE else 0.5
+    for row in out.values():
+        if "hot_hand_share" in row:
+            gap = row["hot_hand_share"] - mid
+            row["start_sit_lean"] = ("starts the hot hand more than most" if gap >= LEAN_GAP else
+                                     "sticks with season-long production more than most" if gap <= -LEAN_GAP else "no strong lean")
     return out
 
 
