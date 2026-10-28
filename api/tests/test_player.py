@@ -90,3 +90,13 @@ def test_health_summary():
     assert h["healthy"] and h["status"] == "Healthy"
     assert h["this_week"]["practice"] == "Full practice"
     assert h["missed"] == [{"injury": "hamstring", "season": 2026, "games": 1, "back": True}]
+
+
+def test_active_counts_as_healthy_and_injury_estimate():
+    h = player.health({"injury_status": "Active"}, None, [], [], 2026)
+    assert h["healthy"] and h["status"] == "Healthy" and h["estimate"] is None
+    eps = [{"injury": "hamstring", "position": "WR", "games_missed": g, "returned": True, "pre_snap_pct": 0.8} for g in (1, 2, 2, 3, 5, 1, 2, 4)]
+    est = player.injury_estimate(eps, "WR", "hamstring")
+    assert est["median_games"] == 2 and est["text"].startswith("Hamstring: usually 2 games out")
+    hurt = player.health({"injury_status": "Questionable"}, None, [], [], 2026, est)
+    assert not hurt["healthy"] and hurt["estimate"]["median_games"] == 2

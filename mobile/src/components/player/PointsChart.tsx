@@ -41,7 +41,7 @@ export function PointsChart({ weeks, avg, onPress }: { weeks: GameLogRow[]; avg:
       </View>
       <View style={styles.cols}>
         {shown.map((w) => (
-          <View key={w.week} style={styles.col}>
+          <View key={w.week} style={styles.labelCol}>
             <Text style={styles.wk}>W{w.week}</Text>
             <Text style={styles.opp} numberOfLines={1}>{w.opp.replace('vs ', '').replace('at ', '@') || '—'}</Text>
           </View>
@@ -65,7 +65,8 @@ const styles = StyleSheet.create({
   avg: { position: 'absolute', left: 0, right: 0, borderTopWidth: 1.5, borderColor: '#6F8F7E', borderStyle: 'dashed' },
   base: { position: 'absolute', left: 0, right: 0, bottom: 0, borderTopWidth: 1, borderColor: '#2C5140' },
   cols: { flexDirection: 'row', gap: 8 },
-  col: { flex: 1, height: '100%', justifyContent: 'flex-end', alignItems: 'center' },
+  col: { flex: 1, height: PLOT, justifyContent: 'flex-end', alignItems: 'center' },
+  labelCol: { flex: 1, alignItems: 'center' },
   value: { color: colors.muted, fontSize: 10, fontWeight: '700', marginBottom: 3, backgroundColor: colors.card, paddingHorizontal: 2, zIndex: 1 },
   valueOn: { color: colors.text },
   bar: { width: '100%', borderRadius: 5, borderBottomLeftRadius: 2, borderBottomRightRadius: 2, borderWidth: 1.5, borderColor: colors.gold },

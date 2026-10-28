@@ -16,6 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 from api import cache, projections, sleeper
 from api.home import EASTERN
 from api.teams import _f, _text
+from league_ai import injury_outlook
 from league_ai.nfl_data import (
     add_weather,
     bye_weeks_from_games,
@@ -323,8 +324,17 @@ PRACTICE = {
 }
 
 
-def health(meta: dict[str, Any], espn: dict[str, Any] | None, practice: list[dict[str, Any]], episodes: list[dict[str, Any]], season: int) -> dict[str, Any]:
+# Statuses Sleeper and ESPN use for a player who is fine.
+HEALTHY = {"", "active", "healthy", "none", "na", "n/a"}
+
+
+def health(
+    meta: dict[str, Any], espn: dict[str, Any] | None, practice: list[dict[str, Any]], episodes: list[dict[str, Any]], season: int,
+    estimate: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     status = _text(meta.get("injury_status")) or _text((espn or {}).get("status"))
+    if status.lower() in HEALTHY:
+        status = ""
     latest = practice[0] if practice else None
     this_week = None
     if latest and int(latest.get("season") or 0) == season:
@@ -353,7 +363,38 @@ def health(meta: dict[str, Any], espn: dict[str, Any] | None, practice: list[dic
         "return": _text((espn or {}).get("return_date")) or None,
         "this_week": this_week,
         "missed": missed,
+        "estimate": estimate if status else None,
     }
+
+
+def injury_name(meta: dict[str, Any], espn: dict[str, Any] | None, practice: list[dict[str, Any]]) -> str | None:
+    """The body part to compare against past absences: this week's report first, then ESPN, then Sleeper."""
+    latest = practice[0] if practice else {}
+    return injury_outlook.injury_key(latest.get("report_injury") or latest.get("practice_injury")
+                                     or (espn or {}).get("injury_type") or meta.get("injury_body_part"))
+
+
+def injury_estimate(episodes: list[dict[str, Any]], pos: str, injury: str | None) -> dict[str, Any] | None:
+    """How long players with a real role usually miss with this injury, in plain words."""
+    typical = injury_outlook.typical_absence(episodes, pos, injury) if injury else None
+    if not typical:
+        return None
+    med = typical["median_games_missed"]
+    return {
+        "injury": injury,
+        "median_games": med,
+        "range": typical["middle_half"],
+        "absences": typical["absences"],
+        "scope": typical["scope"],
+        "text": f"{injury.capitalize()}: usually {med:g} game{'' if med == 1 else 's'} out ({typical['middle_half']}) across {typical['absences']} {typical['scope']}",
+    }
+
+
+def load_injury_episodes(client: Any, injury: str) -> list[dict[str, Any]]:
+    """Every past absence with this injury, shared by all players for 12 hours."""
+    def load() -> list[dict[str, Any]]:
+        return client.table("nfl_injury_episodes").select("injury,position,games_missed,returned,pre_snap_pct,pre_opps").eq("injury", injury).limit(3000).execute().data or []
+    return _safe(lambda: cache.cached(("injury_eps", injury), 43200, load), [])
 
 
 # ---- loaders: one read each, every one allowed to fail -----------------------
@@ -441,7 +482,12 @@ def page_extras(
     upcoming = _safe(lambda: next_game(games, season, team, pos, got["dvp"], bye), None)
     if upcoming and not upcoming.get("bye"):
         upcoming["projected"] = _safe(lambda: projections.week_projections(client, sleeper_id, season, upcoming["week"], [player_id], {player_id: pos}, {player_id: team}).get(player_id), None)
+    estimate = None
+    if _text(meta.get("injury_status")) or _text((got["espn"] or {}).get("status")):
+        injury = _safe(lambda: injury_name(meta, got["espn"], got["practice"] or []), None)
+        estimate = _safe(lambda: injury_estimate(load_injury_episodes(client, injury), pos, injury), None) if injury else None
     scored = [w["points"] for w in league_weeks if w.get("points")]
+    best = max((g for g in log if g.get("points") is not None and g["status"] in ("started", "bench")), key=lambda g: g["points"], default=None)
     ppg = sum(scored) / len(scored) if scored else None
     rank = (got["ranks"] or {}).get(player_id)
     started = sum(1 for g in log if g["status"] == "started")
@@ -456,10 +502,11 @@ def page_extras(
             "started": started,
             "played": played,
             "per_dollar": round(ppg / salary, 1) if ppg and salary else None,
+            "best": {"week": best["week"], "points": best["points"], "opp": best["opp"]} if best else None,
         },
         "game_log": log,
         "next_game": upcoming,
-        "health": health(meta, got["espn"], got["practice"] or [], got["episodes"] or [], season),
+        "health": health(meta, got["espn"], got["practice"] or [], got["episodes"] or [], season, estimate),
         "history": contract_history(got["history"] or [], years_left),
     }
 
