@@ -41,3 +41,12 @@ def test_cache_keeps_one_copy():
     assert market._cached("k", load) == "x" and market._cached("k", load) == "x"
     assert len(calls) == 1
     market.clear()
+
+
+def test_free_agents_skip_players_on_a_sleeper_roster_without_a_contract():
+    from types import SimpleNamespace
+    from api import market as m
+    pool = [{"sleeper_id": "1", "full_name": "Omar Cooper Jr.", "position": "WR"}, {"sleeper_id": "2", "full_name": "Real FA", "position": "WR"}]
+    ppg = SimpleNamespace(current_ppg={}, last_ppg={}, ranking_ppg={}, active_season=2026, last_season=2025, active_season_started=True)
+    out = m.free_agents(pool, {"roster": []}, ppg, rostered={"1": 6})
+    assert [p["name"] for p in out["players"]] == ["Real FA"]

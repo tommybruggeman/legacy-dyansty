@@ -211,6 +211,10 @@ def _team_page(client: Client, ctx: dict[str, Any], team_id: str) -> dict[str, A
     state = states[0]
     weeks = league.last_scored_week(ctx["sleeper_id"])
     ids = [r.get("sleeper_player_id") for r in state.get("roster", []) if str(r.get("league_team_id")) == team_id]
+    try:  # plus anyone on his Sleeper roster without a contract row yet
+        ids += [pid for pid, rid in league.sleeper_owners(ctx["sleeper_id"]).items() if rid == summary["roster_id"]]
+    except Exception:
+        pass
     standing = next((r for r in standings_rows if r["roster_id"] == summary["roster_id"]), None)
     detail = teams.team_detail(
         team={k: summary[k] for k in ("team_id", "owner_name", "team_name", "roster_id")},
@@ -262,6 +266,16 @@ def player_page(player_id: str, owner: tuple[Client, Any] = Depends(owner_client
         years_left={c["team_id"]: c["years_left"]} if c else {}, salary=c["salary"] if c else None,
         player_info=teams.player_info,
     )
+    if c is None:
+        # No contract row, but Sleeper may still have him on a roster (a new rookie pick, a pickup not synced yet).
+        try:
+            rid = league.sleeper_owners(ctx["sleeper_id"]).get(player_id)
+        except Exception:
+            rid = None
+        if rid is not None:
+            team_id = next((t["team_id"] for t in _league_team_rows(client, ctx["league_id"]) if t["roster_id"] == rid), None)
+            result["rostered_by"] = {"roster_id": rid, "owner_name": ctx["names"].get(rid, f"Roster {rid}"), "team_id": team_id}
+            result["is_mine"] = rid == ctx["sleeper_roster_id"]
     return {"season": ctx["season"], **result, **extras}
 
 
@@ -420,7 +434,11 @@ def free_agents(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, 
         ppg = market.ranking(client, ctx["season"])
     except Exception:
         raise HTTPException(status_code=502, detail="Couldn't load the player pool. Try again.")
-    return market.free_agents(pool, state, ppg)
+    try:
+        rostered = league.sleeper_owners(ctx["sleeper_id"])
+    except Exception:
+        rostered = {}
+    return market.free_agents(pool, state, ppg, rostered=rostered)
 
 
 EXPIRING_YEARS = 3

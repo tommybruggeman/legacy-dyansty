@@ -51,7 +51,7 @@ function PlayerRow({ p, first, showSlot }: { p: Player; first?: boolean; showSlo
           {p.nfl_team}{p.ppg != null ? ` · ${p.ppg.toFixed(1)} PPG` : ''}
         </Text>
       </View>
-      <Text style={ui.value}>{p.years_left} · {money(p.contract_salary)}</Text>
+      <Text style={ui.value}>{p.no_contract ? 'no contract' : `${p.years_left} · ${money(p.contract_salary)}`}</Text>
     </Row>
   );
 }

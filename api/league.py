@@ -156,3 +156,19 @@ def matchups(sleeper_id: str, names: dict[int, str], week: int, my_roster_id: in
         "games": games,
         "summary": summary,
     }
+
+
+def sleeper_owners(sleeper_id: str) -> dict[str, int]:
+    """player_id -> roster_id for everyone on a Sleeper roster, taxi and IR included.
+
+    Sleeper is the source of truth for who is rostered; a player can be there
+    before (or without) a contract row in the app, e.g. a fresh rookie pick.
+    """
+    out: dict[str, int] = {}
+    for roster in sleeper.get(f"league/{sleeper_id}/rosters") or []:
+        rid = roster.get("roster_id")
+        for key in ("players", "taxi", "reserve"):
+            for pid in roster.get(key) or []:
+                if pid and rid is not None:
+                    out[str(pid)] = int(rid)
+    return out

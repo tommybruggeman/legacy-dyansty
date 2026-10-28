@@ -83,3 +83,9 @@ def test_matchups_final_week():
     result = league.matchups("S", {}, week=1, my_roster_id=None)
     assert result["is_final"] is True
     assert len(result["games"]) == 2
+
+
+def test_sleeper_owners_include_taxi_and_ir(monkeypatch):
+    from api import league as lg
+    monkeypatch.setattr(lg.sleeper, "get", lambda path, ttl=300: [{"roster_id": 6, "players": ["1", "2"], "taxi": ["3"], "reserve": None}])
+    assert lg.sleeper_owners("S") == {"1": 6, "2": 6, "3": 6}

@@ -35,14 +35,20 @@ export default function Player() {
             <Text style={styles.eyebrow}>{eyebrow}</Text>
             <Text style={styles.name} numberOfLines={2}>{data.name}</Text>
             <View style={styles.pills}>
-              {data.is_mine ? <Text style={[styles.pill, styles.pillGold]}>YOURS</Text> : c ? <Text style={[styles.pill, styles.pillLine]}>{c.owner_name.split(' ')[0]}</Text> : <Text style={[styles.pill, styles.pillLine]}>FREE AGENT</Text>}
+              {data.is_mine ? (
+                <Text style={[styles.pill, styles.pillGold]}>YOURS</Text>
+              ) : c || data.rostered_by ? (
+                <Text style={[styles.pill, styles.pillLine]}>{(c?.owner_name ?? data.rostered_by!.owner_name).split(' ')[0].toUpperCase()}</Text>
+              ) : (
+                <Text style={[styles.pill, styles.pillLine]}>FREE AGENT</Text>
+              )}
               <Text style={[styles.pill, h.healthy ? styles.pillOk : styles.pillOut]}>{h.healthy ? 'Healthy' : h.status}</Text>
             </View>
           </View>
         </View>
 
         <View style={styles.tiles}>
-          <Tile label="SALARY" value={c ? money(c.salary) : 'FA'} sub={c ? `${c.years_left} yr${c.years_left === 1 ? '' : 's'} left` : 'not signed'} />
+          <Tile label="SALARY" value={c ? money(c.salary) : data.rostered_by ? '—' : 'FA'} sub={c ? `${c.years_left} yr${c.years_left === 1 ? '' : 's'} left` : data.rostered_by ? 'no contract yet' : 'not signed'} />
           <Tile label="PPG" value={ls.ppg != null ? ls.ppg.toFixed(1) : '—'} sub={ls.ppg_started != null ? `${ls.ppg_started.toFixed(1)} as starter` : 'this season'} />
           <Tile label={`${data.pos} RANK`} value={ls.rank ? `#${ls.rank.rank}` : '—'} sub="in this league" />
         </View>
@@ -96,6 +102,11 @@ export default function Player() {
               </Pressable>
             ))}
           </View>
+        ) : !c && data.rostered_by ? (
+          <Pressable style={styles.card} onPress={data.rostered_by.team_id ? () => router.push(`/team/${data.rostered_by!.team_id}`) : undefined}>
+            <Text style={styles.cardTitle}>Contract</Text>
+            <Text style={styles.small}>On {data.rostered_by.owner_name}'s roster in Sleeper · contract not entered yet</Text>
+          </Pressable>
         ) : c ? (
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Contract</Text>
