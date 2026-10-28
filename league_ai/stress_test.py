@@ -500,11 +500,29 @@ def history_check(client: Any) -> int:
     return 0
 
 
+def api_ping() -> int:
+    """One tiny Anthropic call (Haiku, a few tokens) that prints why a request is refused, if it is."""
+    import anthropic
+
+    from league_ai.config import load_config
+
+    c = anthropic.Anthropic()
+    for model in ("claude-haiku-5-5", load_config().model):
+        try:
+            r = c.messages.create(model=model, max_tokens=5, messages=[{"role": "user", "content": "Say ok"}])
+            print(f"{model}: ok ({r.usage.input_tokens} in / {r.usage.output_tokens} out)")
+        except Exception as exc:
+            print(f"{model}: {type(exc).__name__}: {str(exc)[:500]}")
+    return 0
+
+
 def main() -> int:
     from supabase import create_client
 
     client = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_ROLE_KEY"])
     mode = sys.argv[1] if len(sys.argv) > 1 else "ask"
+    if mode == "api_ping":
+        return api_ping()
     if mode == "rosters":
         return rosters(client)
     if mode == "history_check":

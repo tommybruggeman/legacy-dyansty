@@ -8,7 +8,7 @@ on:
       check:
         description: Which check to run
         type: choice
-        options: [odds_backtest, odds_trial, odds_grade, stress_test, stress_grade, stress_rosters, stress_contracts, stress_league_link, stress_history]
+        options: [odds_backtest, odds_trial, odds_grade, stress_test, stress_grade, stress_rosters, stress_contracts, stress_league_link, stress_history, stress_ping]
         default: odds_backtest
       budget:
         description: "stress_test only: stop before spending more than this many dollars"
@@ -37,7 +37,7 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           REPORT_DETAIL: ${{ vars.REPORT_DETAIL }}
-          ANTHROPIC_API_KEY: ${{ inputs.check == 'stress_test' && secrets.ANTHROPIC_API_KEY || '' }}
+          ANTHROPIC_API_KEY: ${{ (inputs.check == 'stress_test' || inputs.check == 'stress_ping') && secrets.ANTHROPIC_API_KEY || '' }}
           STRESS_BUDGET: ${{ inputs.budget }}
           STRESS_QUESTIONS: ${{ inputs.questions }}
           STRESS_MAX_ANSWER: "0.2"
@@ -47,6 +47,7 @@ jobs:
             odds_grade) python -m league_ai.matchup_odds ;;
             stress_test) python -m league_ai.stress_test ask ;;
             stress_rosters) python -m league_ai.stress_test rosters ;;
+            stress_ping) python -m league_ai.stress_test api_ping ;;
             stress_history) python -m league_ai.stress_test history_check ;;
             stress_league_link) python -m league_ai.stress_test league_link ;;
             stress_contracts) python -m league_ai.stress_test contracts ;;
