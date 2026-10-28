@@ -39,7 +39,7 @@ def asset_value(a: Mapping[str, Any], w: float, variant: str = "current") -> flo
     cap, fair = float(a.get("cap") or 0), float(a.get("fair") or 0)
     if "contract" in variant and cap > 0 and fair > 0:
         gap = max(-1.0, min(1.0, (fair - cap) / max(fair, cap)))
-        base += CONTRACT_WEIGHT * gap * min(int(a.get("years") or 1), 3) / 3 * base
+        base += CONTRACT_WEIGHT * (2 if variant.endswith("x2") else 1) * gap * min(int(a.get("years") or 1), 3) / 3 * base
     return base
 
 
@@ -93,7 +93,7 @@ def backtest(trades: list[Mapping[str, Any]]) -> dict[str, Any]:
     }
 
 
-VARIANTS = ("current", "picks", "injury", "both", "contract", "picks+contract")
+VARIANTS = ("current", "picks", "injury", "both", "contract", "picks+contract", "picks+contract x2")
 CONTRACT_WEIGHT = 0.5  # as in trade_value.Valuer.contract
 
 
@@ -175,6 +175,9 @@ def load_trades(client: Any, league_id: str) -> list[dict[str, Any]]:
     old_days = sorted({str(legs[0].get("occurred_at") or "")[:10] for legs in by_tid.values()} - {""})
     history = dp_history([d for d in old_days if not first_scrape or d < first_scrape])
     contracts = _contracts(client, league_id)
+    for r in rows:  # where the contract tables don't reach back, the deal on file when the trade was synced
+        if r.get("player_id") and r.get("contract_salary") and r.get("season"):
+            contracts.setdefault((str(r["player_id"]), int(r["season"])), (float(r["contract_salary"]), int(r.get("contract_years") or 1)))
     fair_cache: dict[tuple[int, str], dict[str, float]] = {}
 
     def fair_caps(season: int, when: str, snap: Mapping[str, Any] | None) -> dict[str, float]:
