@@ -3,7 +3,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type { Pick, Player, TeamPage } from '../../lib/api';
+import { POS_COLORS, teamColors } from '../../lib/nflColors';
 import { colors } from '../../lib/theme';
+import { initialsOf } from '../Pictures';
 import { Bar, Card, Note, Pill, Pos, Row, Segmented, SwipeTabs, Tile, Tiles, Title, money, ordinal, record, ui } from '../ui';
 
 const TABS = ['Roster', 'Contracts', 'Picks', 'Activity'] as const;
@@ -58,21 +60,52 @@ export function TeamView({ team, eyebrow }: { team: TeamPage; eyebrow?: string }
   );
 }
 
+// Short injury labels so the tag doesn't crowd the name.
+const INJURY_SHORT: Record<string, string> = { questionable: 'Q', doubtful: 'D', out: 'OUT', ir: 'IR', pup: 'PUP', sus: 'SUS' };
+
 function PlayerRow({ p, first, showSlot }: { p: Player; first?: boolean; showSlot?: boolean }) {
-  const tag = p.injury ? <Pill label={p.injury.toUpperCase()} tone="out" /> : p.is_rookie ? <Pill label="ROOKIE" tone="gold" /> : null;
+  const injury = p.injury ? INJURY_SHORT[p.injury.toLowerCase()] ?? p.injury.toUpperCase() : null;
+  const tag = injury ? <Pill label={injury} tone="out" /> : p.is_rookie ? <Pill label="ROOKIE" tone="gold" /> : null;
+  const label = showSlot && p.slot ? p.slot : p.pos;
+  const [fill, ring] = teamColors(p.nfl_team);
+  const years = p.no_contract ? 0 : p.years_left;
   return (
     <Row first={first} onPress={() => go(`/player/${p.player_id}`)}>
-      <Pos label={showSlot && p.slot ? p.slot : p.pos} />
+      <View style={styles.face}>
+        <View style={[styles.circle, { backgroundColor: fill, borderColor: ring }]}>
+          <Text style={styles.initials}>{initialsOf(p.name)}</Text>
+        </View>
+        <Text style={[styles.badge, { backgroundColor: POS_COLORS[label] ?? colors.muted }]}>{label || '—'}</Text>
+        {injury ? <View style={styles.hurt} /> : null}
+      </View>
       <View style={ui.flex}>
         <View style={styles.nameLine}>
-          <Text style={ui.name} numberOfLines={1}>{p.name}</Text>
+          <Text style={[ui.name, styles.shrink]} numberOfLines={1}>{p.name}</Text>
           {tag}
         </View>
-        <Text style={ui.sub}>
-          {p.nfl_team}{p.ppg != null ? ` · ${p.ppg.toFixed(1)} PPG` : ''}
-        </Text>
+        <View style={styles.subLine}>
+          <Text style={ui.sub}>{p.nfl_team || 'FA'}</Text>
+          {p.no_contract ? (
+            <Text style={ui.sub}>no contract</Text>
+          ) : (
+            <>
+              <View style={styles.pips}>
+                {Array.from({ length: Math.min(5, Math.max(3, years)) }, (_, i) => (
+                  <View key={i} style={[styles.pip, i < years && styles.pipOn]} />
+                ))}
+              </View>
+              <Text style={ui.sub}>{years} yr{years === 1 ? '' : 's'}</Text>
+            </>
+          )}
+        </View>
       </View>
-      <Text style={ui.value}>{p.no_contract ? 'no contract' : `${p.years_left} · ${money(p.contract_salary)}`}</Text>
+      <View style={ui.right}>
+        <Text style={styles.ppg}>
+          {p.ppg != null ? p.ppg.toFixed(1) : '—'}
+          <Text style={styles.ppgUnit}> PPG</Text>
+        </Text>
+        {p.no_contract ? null : <Text style={styles.salary}>{money(p.contract_salary)}</Text>}
+      </View>
     </Row>
   );
 }
@@ -82,7 +115,7 @@ function RosterTab({ team }: { team: TeamPage }) {
   const { starters, bench, taxi, ir } = team.roster;
   return (
     <>
-      <Card title="Starters" right="YRS · SALARY">
+      <Card title="Starters" right="PPG · SALARY">
         {starters.length ? starters.map((p, i) => <PlayerRow key={p.player_id} p={p} first={i === 0} showSlot />) : <Note>No lineup set in Sleeper.</Note>}
         {bench.length ? (
           <Pressable onPress={() => setShowBench(!showBench)} hitSlop={8}>
@@ -245,6 +278,22 @@ function ActivityTab({ team }: { team: TeamPage }) {
 
 const styles = StyleSheet.create({
   nameLine: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  shrink: { flexShrink: 1 },
+  face: { width: 44, height: 44 },
+  circle: { width: 44, height: 44, borderRadius: 22, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
+  initials: { color: '#FFFFFF', fontSize: 15, fontWeight: '800' },
+  badge: {
+    position: 'absolute', bottom: -5, alignSelf: 'center', color: colors.bg, fontSize: 9, fontWeight: '800',
+    borderRadius: 6, overflow: 'hidden', paddingHorizontal: 5, paddingVertical: 1,
+  },
+  hurt: { position: 'absolute', top: -1, right: -1, width: 12, height: 12, borderRadius: 6, backgroundColor: '#E66A6A', borderWidth: 2, borderColor: colors.row },
+  subLine: { flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 3 },
+  pips: { flexDirection: 'row', gap: 3 },
+  pip: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#33402F' },
+  pipOn: { backgroundColor: colors.gold },
+  ppg: { color: colors.text, fontSize: 19, fontWeight: '800' },
+  ppgUnit: { color: colors.muted, fontSize: 10, fontWeight: '600' },
+  salary: { color: colors.gold, fontSize: 13, fontWeight: '700', marginTop: 1 },
   center: { textAlign: 'center', marginTop: 10 },
   pair: { flexDirection: 'row', gap: 8 },
   half: { flex: 1 },
