@@ -143,6 +143,7 @@ def load_trades(client: Any, league_id: str) -> list[dict[str, Any]]:
     from league_ai.pick_values import PickBook
     books: dict[int, PickBook] = {}
     pick_rows = _pick_rows_raw(client)
+    first_scrape = min((h[0][0] for h in market.values() if h), default="")
     trades = []
     for tid, legs in by_tid.items():
         first = legs[0]
@@ -172,7 +173,8 @@ def load_trades(client: Any, league_id: str) -> list[dict[str, Any]]:
             if frm in sides:
                 sides[frm]["gives"].append(asset)
         if len(sides) >= 2 and all(s["gets"] and s["gives"] for s in sides.values()):
-            trades.append({"tid": tid, "season": season, "week": week, "date": when, "sides": sides})
+            trades.append({"tid": tid, "season": season, "week": week, "date": when, "sides": sides,
+                           "dated": bool(first_scrape) and when >= first_scrape, "faab": bool(details.get("faab"))})
     return sorted(trades, key=lambda t: t["date"])
 
 
@@ -338,6 +340,13 @@ def main() -> None:
         if trades:
             print(f"  hit rate by now weight: {backtest(trades)['hit_rate']}")
             print(f"  valuation changes: {compare_variants(trades)}")
+            dated = [t for t in trades if t.get("dated")]
+            print(f"  {len(dated)} trades after the first market scrape, {sum(1 for t in trades if t.get('faab'))} include FAAB/cap")
+            if dated:
+                print(f"  valuation changes, those trades only: {compare_variants(dated)}")
+            clean = [t for t in dated if not t.get("faab")]
+            if clean and len(clean) < len(dated):
+                print(f"  valuation changes, those without FAAB: {compare_variants(clean)}")
 
 
 if __name__ == "__main__":
