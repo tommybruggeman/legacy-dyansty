@@ -127,7 +127,7 @@ def owner_tendencies(client: Any, league_id: str, current_season: int | None = N
     while True:
         try:
             page = (client.table("league_history_events").select("kind, season, week, owner_name, player_id, position, faab_bid, details")
-                    .eq("league_id", league_id).in_("kind", ["lineup", "waiver", "add", "drop", "draft_pick"])
+                    .eq("league_id", league_id).in_("kind", ["lineup", "waiver", "add", "drop", "draft_pick"]).order("event_id")
                     .range(start, start + 999).execute().data or [])
         except Exception:
             break
