@@ -42,6 +42,9 @@ AUCTION_FILL = 20                          # roster spots filled at each auction
 ROSTER_MAX = 24
 RETENTION_PRIOR = {"QB": 0.85, "RB": 0.6, "WR": 0.8, "TE": 0.8}  # year-over-year value kept, before there's data to fit
 NOISE_MARKET = 0.25                        # each market owner's valuation noise (lognormal sd)
+BENCH_DEPTH = {"QB": 1, "RB": 3, "WR": 3, "TE": 1}  # backups the bot keeps per position beyond its starters
+BEYOND_NEED = 0.2                          # a player the bot has no lineup spot for is worth this share of his value
+LINEUP_AWARE = os.environ.get("SIM_LINEUP_AWARE", "1") == "1"
 
 
 # ---- data ----------------------------------------------------------------------------------------------------
@@ -307,6 +310,11 @@ class League:
         self.picks: list[dict[str, Any]] = []
         self.results: list[dict[str, Any]] = []
         self.noise = rng.lognormal(0, NOISE_MARKET, size=(self.T, d.n))  # each owner's lasting opinion of each player
+        starters = {p: slots.get(p, 0) for p in POS}
+        starters["QB"] += slots.get("SUPER_FLEX", 0)
+        for p in ("RB", "WR"):
+            starters[p] += slots.get("FLEX", 0)
+        self.need_cap = np.array([starters[p] + BENCH_DEPTH[p] for p in POS])
 
     def roster(self, team: int) -> np.ndarray:
         return np.flatnonzero(self.owner == team)
@@ -341,6 +349,8 @@ class League:
                     if i not in offers:
                         offers[i] = bot.offer(i)
                     sal, yrs = offers[i]
+                    if LINEUP_AWARE and (self.d.pos[self.roster(t)] == self.d.pos[i]).sum() >= self.need_cap[self.d.pos[i]]:
+                        sal = max(MIN_SALARY, sal * BEYOND_NEED)   # no lineup spot left at his position: bench value only
                 else:
                     sal = values[t, i]
                     yrs = int(self.rng.choice([1, 2, 3, 4], p=owner_years(sal)))
