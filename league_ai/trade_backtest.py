@@ -127,6 +127,14 @@ def compare_variants(trades: list[Mapping[str, Any]]) -> dict[str, Any]:
                 pick_n += 1
                 pick_low += sh[has.index(True)] < sh[has.index(False)]
     out["pick_buyer_short"] = f"{pick_low}/{pick_n}"
+    lows = sorted(min(x for x in (side_share(sd, 0.0) for sd in t["sides"].values()) if x is not None) for t in trades
+                  if all(side_share(sd, 0.0) is not None for sd in t["sides"].values()))
+    out["market_low_share_bins"] = {b: sum(1 for x in lows if lo <= x < hi) for b, lo, hi in
+                                    (("<0.4", 0, 0.4), ("0.4-0.6", 0.4, 0.6), ("0.6-0.85", 0.6, 0.85), (">=0.85", 0.85, 99))}
+    shapes: dict[str, int] = defaultdict(int)
+    for t in trades:
+        shapes["-".join(sorted(f"{len(sd['gets'])}" for sd in t["sides"].values()))] += 1
+    out["shapes"] = dict(shapes)
     out["assets_with_contract"] = sum(1 for a in assets if a.get("cap"))
     out["assets_without_market"] = sum(1 for a in assets if not a.get("market"))
     out["assets"] = len(assets)
