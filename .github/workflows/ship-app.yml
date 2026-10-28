@@ -1,0 +1,71 @@
+# Ships the iOS app's server and/or a TestFlight build from main, with no Mac.
+# Run by hand (Actions tab, or the GitHub API) after a merge.
+#
+# Secrets (one-time setup):
+#   GCP_SA_KEY  - JSON key for the github-deploy service account in legacy-dynasty-25024
+#   EXPO_TOKEN  - Expo access token for the tbrugge account
+name: Ship app
+
+on:
+  workflow_dispatch:
+    inputs:
+      server:
+        description: Deploy the API server to Cloud Run
+        type: boolean
+        default: true
+      ios:
+        description: Build on Expo and submit to TestFlight (uses ios.buildNumber in mobile/app.json)
+        type: boolean
+        default: true
+
+concurrency:
+  group: ship-app
+  cancel-in-progress: false
+
+jobs:
+  server:
+    if: ${{ inputs.server }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PROJECT: legacy-dynasty-25024
+      REGION: us-central1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Build image
+        run: |
+          IMG="$REGION-docker.pkg.dev/$PROJECT/legacy/legacy-api:${GITHUB_SHA::7}"
+          echo "IMG=$IMG" >> "$GITHUB_ENV"
+          cp api/Dockerfile Dockerfile
+          gcloud builds submit --project "$PROJECT" --tag "$IMG" --suppress-logs
+      - name: Deploy
+        # No min-instances: the server must stay on the free tier.
+        run: |
+          gcloud run deploy legacy-api --project "$PROJECT" --region "$REGION" --image "$IMG" --cpu-boost --quiet
+          URL=$(gcloud run services describe legacy-api --project "$PROJECT" --region "$REGION" --format 'value(status.url)')
+          curl -fsS "$URL/health"
+
+  ios:
+    if: ${{ inputs.ios }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - run: npm ci
+      - name: Build on Expo and submit to TestFlight
+        # --no-wait: Expo builds and submits on its own machines, so this job doesn't sit idle.
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: npx -y eas-cli@latest build -p ios --profile production --auto-submit --non-interactive --no-wait

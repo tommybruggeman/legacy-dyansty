@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { ErrorState, Loading } from '../../components/ScreenState';
-import { Card, Note, Pill, Pos, Row, Screen, Segmented, Title, money, ui } from '../../components/ui';
+import { Card, Note, Pill, Pos, Row, Screen, Segmented, SwipeTabs, Title, money, ui } from '../../components/ui';
 import { type Expiring, type FreeAgents, useApi } from '../../lib/api';
 import { colors } from '../../lib/theme';
 
@@ -17,7 +17,9 @@ export default function Market() {
     <Screen>
       <Title>Market</Title>
       <Segmented options={VIEWS} value={view} onChange={setView} />
-      {view === 'Free Agents' ? <FreeAgentList /> : <ExpiringList />}
+      <SwipeTabs options={VIEWS} value={view} onChange={setView}>
+        {view === 'Free Agents' ? <FreeAgentList /> : <ExpiringList />}
+      </SwipeTabs>
     </Screen>
   );
 }

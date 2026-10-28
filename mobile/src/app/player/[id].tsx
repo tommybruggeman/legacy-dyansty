@@ -81,6 +81,30 @@ export default function Player() {
           </View>
         ) : null}
 
+        {ls.played || ls.rank ? (
+          <View style={styles.card}>
+            <Text style={styles.label}>IN LEGACY · {data.season}</Text>
+            <View style={styles.statRow}>
+              <View style={styles.stat}>
+                <Text style={styles.statValue}>{ls.started}/{ls.played}</Text>
+                <Text style={styles.statLabel}>weeks started</Text>
+              </View>
+              <View style={styles.stat}>
+                <Text style={styles.statValue} numberOfLines={1} adjustsFontSizeToFit>{ls.rank ? ls.rank.total.toFixed(0) : '—'}</Text>
+                <Text style={styles.statLabel}>total points</Text>
+              </View>
+              <View style={styles.stat}>
+                <Text style={styles.statValue}>{ls.per_dollar != null ? ls.per_dollar.toFixed(1) : '—'}</Text>
+                <Text style={styles.statLabel}>pts per $1</Text>
+              </View>
+              <View style={styles.stat}>
+                <Text style={styles.statValue}>{ls.best ? ls.best.points.toFixed(1) : '—'}</Text>
+                <Text style={styles.statLabel}>{ls.best ? `best · W${ls.best.week}` : 'best week'}</Text>
+              </View>
+            </View>
+          </View>
+        ) : null}
+
         {log.length ? (
           <PointsChart weeks={log} avg={ls.ppg} onPress={() => router.push(`/player-games/${data.player_id}`)} />
         ) : null}
@@ -130,6 +154,7 @@ export default function Player() {
           {h.this_week?.practice || h.this_week?.game_status ? (
             <Text style={styles.small}>Week {h.this_week.week}: {[h.this_week.practice, h.this_week.game_status].filter(Boolean).join(' · ')}</Text>
           ) : null}
+          {h.estimate ? <Text style={[styles.small, styles.estimate]}>{h.estimate.text}</Text> : null}
           {h.update ? <Text style={styles.small}>{h.update}</Text> : null}
           {h.return ? <Text style={styles.small}>Expected back {h.return}</Text> : null}
           {missed.length ? (
@@ -245,6 +270,7 @@ const styles = StyleSheet.create({
   tiles: { flexDirection: 'row', gap: 8 },
   tile: { flex: 1, backgroundColor: colors.card, borderRadius: 14, padding: 12 },
   label: { color: colors.muted, fontSize: 10, fontWeight: '700', letterSpacing: 1 },
+  estimate: { color: colors.text },
   tileValue: { color: colors.text, fontSize: 22, fontWeight: '800', marginTop: 4 },
   tileSub: { color: colors.muted, fontSize: 11 },
   card: { backgroundColor: colors.card, borderRadius: 16, padding: 16, gap: 10 },

@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
-import type { ReactNode } from 'react';
-import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import { useMemo, useRef, type ReactNode } from 'react';
+import { Animated, PanResponder, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { colors } from '../lib/theme';
@@ -50,6 +50,37 @@ export function Segmented<T extends string>({ options, value, onChange }: { opti
         </Pressable>
       ))}
     </View>
+  );
+}
+
+// The content under a Segmented switcher: swipe left for the next option,
+// right for the previous one. Only clearly sideways drags count, so scrolling
+// the page up and down is untouched.
+export function SwipeTabs<T extends string>({ options, value, onChange, children }: { options: readonly T[]; value: T; onChange: (v: T) => void; children: ReactNode }) {
+  const shift = useRef(new Animated.Value(0)).current;
+  const latest = useRef({ options, value, onChange });
+  latest.current = { options, value, onChange };
+  const responder = useMemo(() => PanResponder.create({
+    onMoveShouldSetPanResponderCapture: (_, g) => Math.abs(g.dx) > 14 && Math.abs(g.dx) > Math.abs(g.dy) * 2,
+    onPanResponderTerminationRequest: () => false,
+    onPanResponderMove: (_, g) => shift.setValue(g.dx * 0.25),
+    onPanResponderRelease: (_, g) => {
+      const { options: opts, value: current, onChange: change } = latest.current;
+      const i = opts.indexOf(current);
+      const step = g.dx < -50 || g.vx < -0.5 ? 1 : g.dx > 50 || g.vx > 0.5 ? -1 : 0;
+      const next = opts[i + step];
+      if (step && next) {
+        change(next);
+        shift.setValue(step * 40);
+      }
+      Animated.spring(shift, { toValue: 0, useNativeDriver: true, bounciness: 0, speed: 20 }).start();
+    },
+    onPanResponderTerminate: () => Animated.spring(shift, { toValue: 0, useNativeDriver: true }).start(),
+  }), [shift]);
+  return (
+    <Animated.View {...responder.panHandlers} style={{ minHeight: 480, transform: [{ translateX: shift }] }}>
+      {children}
+    </Animated.View>
   );
 }
 

@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { MatchupsView } from '../../components/league/MatchupsView';
 import { StandingsView } from '../../components/league/StandingsView';
 import { TeamsView } from '../../components/league/TeamsView';
-import { Screen, Segmented, Title } from '../../components/ui';
+import { Screen, Segmented, SwipeTabs, Title } from '../../components/ui';
 
 const VIEWS = ['Standings', 'Matchups', 'Teams'] as const;
 
@@ -22,7 +22,9 @@ export default function League() {
     <Screen>
       <Title>League</Title>
       <Segmented options={VIEWS} value={view} onChange={setView} />
-      {view === 'Standings' ? <StandingsView /> : view === 'Matchups' ? <MatchupsView /> : <TeamsView />}
+      <SwipeTabs options={VIEWS} value={view} onChange={setView}>
+        {view === 'Standings' ? <StandingsView /> : view === 'Matchups' ? <MatchupsView /> : <TeamsView />}
+      </SwipeTabs>
     </Screen>
   );
 }
