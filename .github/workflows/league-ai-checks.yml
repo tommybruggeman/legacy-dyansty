@@ -17,6 +17,9 @@ on:
         description: "stress_test only: how many questions"
         default: "50"
 
+permissions:
+  contents: write  # the stress test saves its results (encrypted) to its own branch
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -46,6 +49,17 @@ jobs:
             stress_grade) python -m league_ai.stress_test grade stress/stress_results.json ;;
             *) python -m league_ai.playoff_odds ;;
           esac
+      - name: Commit the stress test results to this branch, encrypted
+        # The repo is public and the answers name owners' rosters and plans, so only an encrypted copy is committed.
+        # It opens with the private key kept in the project files (stress/results-key.pub.pem is its public half).
+        if: always() && inputs.check == 'stress_test' && github.ref_name != 'main'
+        run: |
+          [ -f stress_results.json ] || exit 0
+          KEY=$(openssl rand -hex 32)
+          gzip -c stress_results.json | openssl enc -aes-256-cbc -pbkdf2 -salt -pass "pass:$KEY" -out stress/results.json.gz.enc
+          printf %s "$KEY" | openssl pkeyutl -encrypt -pubin -inkey stress/results-key.pub.pem -pkeyopt rsa_padding_mode:oaep -out stress/results.key.enc
+          git config user.name "github-actions[bot]" && git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add stress/results.json.gz.enc stress/results.key.enc && git commit -qm "Stress test results (encrypted)" && git push origin HEAD:${{ github.ref_name }}
       - name: Save the stress test results
         if: always() && startsWith(inputs.check, 'stress')
         uses: actions/upload-artifact@v4
@@ -53,4 +67,4 @@ jobs:
           name: ${{ inputs.check }}-results
           path: stress_*.json
           if-no-files-found: ignore
-          retention-days: 30
+          retention-days: 7
