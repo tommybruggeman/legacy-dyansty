@@ -8,7 +8,7 @@ on:
       check:
         description: Which check to run
         type: choice
-        options: [odds_backtest, odds_trial, odds_grade, stress_test, stress_grade]
+        options: [odds_backtest, odds_trial, odds_grade, stress_test, stress_grade, stress_rosters]
         default: odds_backtest
       budget:
         description: "stress_test only: stop before spending more than this many dollars"
@@ -46,6 +46,7 @@ jobs:
             odds_trial) python -m league_ai.odds_trial ;;
             odds_grade) python -m league_ai.matchup_odds ;;
             stress_test) python -m league_ai.stress_test ask ;;
+            stress_rosters) python -m league_ai.stress_test rosters ;;
             stress_grade) python -m league_ai.stress_test grade stress/stress_results.json ;;
             *) python -m league_ai.playoff_odds ;;
           esac

@@ -15,6 +15,7 @@ import json
 import os
 import sys
 import time
+import uuid
 from typing import Any, Mapping
 
 RESULTS = os.environ.get("STRESS_RESULTS", "stress_results.json")
@@ -161,7 +162,10 @@ def _owners(client: Any, league_id: str, season: int) -> list[Any]:
             continue
         m = by_team.get(str(t["id"])) or {}
         name = t.get("owner_name") or m.get("owner_name") or "Owner"
-        out.append(runtime.Owner(user_id=str(m.get("user_id") or FAKE_USER), league_id=league_id, league_team_id=str(t["id"]), season=season,
+        # owners without an app account get their own stand-in id: the app caches each owner's pack and
+        # Front Office data by user id, so a shared stand-in would answer everyone with one owner's roster
+        stand_in = str(uuid.uuid5(uuid.UUID(FAKE_USER), str(t["id"])))
+        out.append(runtime.Owner(user_id=str(m.get("user_id") or stand_in), league_id=league_id, league_team_id=str(t["id"]), season=season,
                                  owner_name=name, team_name=t.get("team_name") or name, role="owner"))
     return out
 
@@ -317,11 +321,35 @@ def grade_saved(client: Any, path: str) -> int:
     return 0
 
 
+def rosters(client: Any) -> int:
+    """Free check: players per team in the app's league state vs on Sleeper (counts only, safe for a public log)."""
+    import requests
+
+    from services.team_roster_state import state_roster
+
+    league = next(iter(client.table("leagues").select("id, sleeper_league_id").not_.is_("sleeper_league_id", "null").limit(1).execute().data or []))
+    season = int(os.environ.get("STRESS_SEASON") or requests.get("https://api.sleeper.app/v1/state/nfl", timeout=15).json()["season"])
+    state = league_state(client, str(league["id"]), season)
+    roster = state_roster(state)
+    teams = client.table("league_teams").select("id, owner_name, sleeper_roster_id").eq("league_id", league["id"]).execute().data or []
+    sleeper = {r["roster_id"]: r for r in requests.get(f"https://api.sleeper.app/v1/league/{league['sleeper_league_id']}/rosters", timeout=15).json()}
+    print(f"state season {state.get('season')} roster rows {len(roster)} keys {sorted(state.keys())}")
+    for t in teams:
+        mine = [r for r in roster if str(r.get("league_team_id")) == str(t["id"])]
+        ids = {str(r.get("sleeper_id")) for r in mine}
+        sr = sleeper.get(t.get("sleeper_roster_id")) or {}
+        sl = {str(p) for k in ("players", "taxi", "reserve") for p in (sr.get(k) or [])}
+        print(f"{t['owner_name']:<16} app {len(mine):>2}  sleeper {len(sl):>2}  on Sleeper but not in app {len(sl - ids):>2}  in app not on Sleeper {len(ids - sl):>2}")
+    return 0
+
+
 def main() -> int:
     from supabase import create_client
 
     client = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_ROLE_KEY"])
     mode = sys.argv[1] if len(sys.argv) > 1 else "ask"
+    if mode == "rosters":
+        return rosters(client)
     if mode == "grade":
         return grade_saved(client, sys.argv[2] if len(sys.argv) > 2 else "stress/stress_results.json")
     return ask(client)
