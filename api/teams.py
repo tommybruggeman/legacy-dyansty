@@ -267,7 +267,44 @@ def _dead_key(r: dict[str, Any]) -> tuple[str, str]:
     return who, _text(r.get("adjustment_type"))
 
 
-def contracts_view(players: list[dict[str, Any]], state: dict[str, Any], team_id: str, later: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+# A contract's value is points per game per cap dollar, graded against every
+# contract in the league: the top third are bargains, the bottom third overpaid.
+MIN_VALUE_SALARY = 1.0
+
+
+def _per_dollar(ppg: float | None, salary: float) -> float | None:
+    return None if ppg is None else round(ppg / max(salary, MIN_VALUE_SALARY), 2)
+
+
+def league_value_cuts(state: dict[str, Any], ppg: dict[str, float]) -> tuple[float, float] | None:
+    """PPG-per-dollar marks for the top and bottom thirds of the league's contracts."""
+    values = sorted(
+        v for r in state.get("roster", [])
+        if (v := _per_dollar(ppg.get(_text(r.get("sleeper_player_id"))), _f(r.get("contract_cap_hit") or r.get("cap_hit")))) is not None
+    )
+    if len(values) < 6:
+        return None
+    return values[len(values) * 2 // 3], values[len(values) // 3]
+
+
+def value_board(players: list[dict[str, Any]], cuts: tuple[float, float] | None, season: int) -> list[dict[str, Any]]:
+    """Every contract, best value first; players without games yet go last."""
+    out = []
+    for p in players:
+        value = _per_dollar(p.get("ppg"), p["contract_salary"])
+        if value is None:
+            grade = "stash" if p.get("designation") == "taxi" or p.get("is_rookie") else None
+        elif cuts is None:
+            grade = None
+        else:
+            grade = "bargain" if value >= cuts[0] else "overpaid" if value < cuts[1] else "fair"
+        out.append({**p, "through": season + max(p["years_left"], 1) - 1, "per_dollar": value, "grade": grade})
+    out.sort(key=lambda p: (p["per_dollar"] is None, -(p["per_dollar"] or 0), -p["contract_salary"]))
+    return out
+
+
+def contracts_view(players: list[dict[str, Any]], state: dict[str, Any], team_id: str, later: list[dict[str, Any]] | None = None,
+                   cuts: tuple[float, float] | None = None) -> dict[str, Any]:
     """`later` is the team state for the seasons after this one, used to count how long each dead cap charge runs."""
     players = [p for p in players if not p.get("no_contract")]
     biggest = sorted(players, key=lambda p: -p["contract_salary"])[:8]
@@ -287,6 +324,7 @@ def contracts_view(players: list[dict[str, Any]], state: dict[str, Any], team_id
         })
     return {
         "biggest": [{**p, "through": season + max(p["years_left"], 1) - 1} for p in biggest],
+        "all": value_board(players, cuts, season),
         "expiring": [p for p in players if p["years_left"] <= 1],
         "dead_cap": dead,
     }
@@ -347,6 +385,37 @@ def head_to_head(sleeper_id: str, weeks: int, me: int | None, them: int | None) 
     return {"wins": wins, "losses": losses, "ties": ties, "last": last}
 
 
+TRADE_TYPES = {"trade"}
+
+
+def moves(sleeper_id: str, roster_id: int | None, weeks: int) -> dict[str, int]:
+    """Completed Sleeper transactions this season that involve this roster: all moves, and trades."""
+    if roster_id is None:
+        return {"moves": 0, "trades": 0}
+    seen: set[str] = set()
+    total = trades = 0
+    with ThreadPoolExecutor(max_workers=8) as pool:  # one call per week, cached for an hour
+        weekly = list(pool.map(lambda w: sleeper.get(f"league/{sleeper_id}/transactions/{w}", ttl=3600) or [], range(0, max(weeks, 0) + 1)))
+    for rows in weekly:
+        for tx in rows:
+            tid = str(tx.get("transaction_id") or "")
+            if tx.get("status") != "complete" or roster_id not in (tx.get("roster_ids") or []) or tid in seen:
+                continue
+            seen.add(tid)
+            total += 1
+            trades += tx.get("type") in TRADE_TYPES
+    return {"moves": total, "trades": trades}
+
+
+def faab(sleeper_id: str, lineup: dict[str, Any]) -> dict[str, Any] | None:
+    """Sleeper FAAB left this season: the league's waiver budget minus what this roster has spent."""
+    budget = _f(((sleeper.get(f"league/{sleeper_id}") or {}).get("settings") or {}).get("waiver_budget"))
+    if not budget or not lineup:
+        return None
+    used = _f((lineup.get("settings") or {}).get("waiver_budget_used"))
+    return {"left": round(budget - used, 2), "budget": budget}
+
+
 def team_detail(
     *,
     team: dict[str, Any],
@@ -359,8 +428,11 @@ def team_detail(
     ppg: dict[str, float],
     h2h: dict[str, Any] | None,
     later: list[dict[str, Any]] | None = None,
+    weeks: int = 0,
+    win_odds: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    roster = roster_rows(state, team["team_id"], _sleeper_roster(sleeper_id, team["roster_id"]), slots, info, ppg)
+    lineup = _sleeper_roster(sleeper_id, team["roster_id"])
+    roster = roster_rows(state, team["team_id"], lineup, slots, info, ppg)
     everyone = roster["starters"] + roster["bench"] + roster["taxi"] + roster["ir"]
     return {
         **team,
@@ -373,9 +445,12 @@ def team_detail(
         },
         "cap": {"space": summary["cap_space"], "by_year": summary["cap_by_year"]},
         "roster": roster,
-        "contracts": contracts_view(everyone, state, team["team_id"], later),
+        "contracts": contracts_view(everyone, state, team["team_id"], later, league_value_cuts(state, ppg)),
         "picks": picks_view(state, team["team_id"]),
         "activity": activity_view(state, team["team_id"]),
+        "moves": moves(sleeper_id, team["roster_id"], weeks),
+        "faab": faab(sleeper_id, lineup),
+        "win_odds": win_odds,
         "head_to_head": h2h,
     }
 

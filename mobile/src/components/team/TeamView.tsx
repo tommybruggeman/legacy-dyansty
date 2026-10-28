@@ -30,22 +30,10 @@ export function TeamView({ team, eyebrow }: { team: TeamPage; eyebrow?: string }
     return () => { opened.current = openedHere; openedHere = false; };
   }, []));
   useEffect(() => setTab('Roster'), [team.team_id]);
-  const next = team.cap.by_year[1];
-  const r = team.record;
-
   return (
     <>
       <Title eyebrow={eyebrow ?? team.owner_name.toUpperCase()}>{team.team_name}</Title>
-      <Tiles>
-        <Tile label="RECORD" value={record(r.wins, r.losses, r.ties)} sub={`${ordinal(r.rank)} · ${r.standing_points} SP`} />
-        <Tile label="PPG" value={r.pf_per_game != null ? r.pf_per_game.toFixed(1) : '—'} sub="avg / game" />
-        <Tile
-          label="CAP SPACE"
-          value={money(team.cap.space)}
-          tone={team.cap.space < 0 ? 'red' : undefined}
-          sub={next ? `${money(next.space)} in ${next.season}` : undefined}
-        />
-      </Tiles>
+      <TopTiles team={team} tab={tab} />
       <Segmented options={TABS} value={tab} onChange={setTab} />
       <SwipeTabs
         options={TABS}
@@ -59,6 +47,53 @@ export function TeamView({ team, eyebrow }: { team: TeamPage; eyebrow?: string }
   );
 }
 
+// The three boxes on top change with the tab: each tab's first two, then one that fits it.
+function TopTiles({ team, tab }: { team: TeamPage; tab: (typeof TABS)[number] }) {
+  const r = team.record;
+  if (tab === 'Contracts') {
+    const label = ['THIS SEASON', 'NEXT SEASON'];
+    return (
+      <Tiles>
+        {team.cap.by_year.slice(0, 3).map((y, i) => (
+          <Tile key={y.season} label={label[i] ?? String(y.season)} value={money(y.space)} tone={y.space < 0 ? 'red' : undefined} sub={i < 2 ? `${y.season} space` : "cap space"} />
+        ))}
+      </Tiles>
+    );
+  }
+  if (tab === 'Picks') {
+    const owned = team.picks.owned;
+    const drafts = [...new Set(owned.map((p) => p.year))];
+    const first = owned[0];
+    const firsts = owned.filter((p) => p.round === 1);
+    const firstYears = [...new Set(firsts.map((p) => p.year))];
+    return (
+      <Tiles>
+        <Tile label="PICKS" value={String(owned.length)} sub={`next ${drafts.length || 0} draft${drafts.length === 1 ? '' : 's'}`} />
+        <Tile label="FIRST" value={first ? ROUND[first.round] ?? `R${first.round}` : '—'} sub={first ? `${first.year} draft` : 'no picks'} />
+        <Tile label="1STS" value={String(firsts.length)} sub={firstYears.length ? firstYears.join(' + ') : 'none owned'} />
+      </Tiles>
+    );
+  }
+  if (tab === 'Activity') {
+    const m = team.moves ?? { moves: team.activity.length, trades: 0 };
+    return (
+      <Tiles>
+        <Tile label="MOVES" value={String(m.moves)} sub="this season" />
+        <Tile label="TRADES" value={String(m.trades)} sub="this season" />
+        <Tile label="FAAB" value={team.faab ? money(team.faab.left) : '—'} sub={team.faab ? 'left to bid' : 'not set in Sleeper'} />
+      </Tiles>
+    );
+  }
+  const odds = team.win_odds;
+  return (
+    <Tiles>
+      <Tile label="RECORD" value={record(r.wins, r.losses, r.ties)} sub={`${ordinal(r.rank)} · ${r.standing_points} SP`} />
+      <Tile label="PPG" value={r.pf_per_game != null ? r.pf_per_game.toFixed(1) : '—'} sub="avg / game" />
+      <Tile label="THIS WEEK" value={odds ? `${Math.round(odds.pct)}%` : '—'} sub={odds?.opp ? `win odds vs ${odds.opp.split(' ')[0]}` : 'win odds'} />
+    </Tiles>
+  );
+}
+
 // Short injury labels so the tag doesn't crowd the name.
 const INJURY_SHORT: Record<string, string> = { questionable: 'Q', doubtful: 'D', out: 'OUT', ir: 'IR', pup: 'PUP', sus: 'SUS' };
 
@@ -66,39 +101,6 @@ function Face({ p, label, hurt }: { p: Player; label: string; hurt?: boolean }) 
   return <PlayerFace name={p.name} team={p.nfl_team} pos={label} hurt={hurt} />;
 }
 
-// Cap used for one season as a ring of ticks, with space left in the middle.
-const TICKS = 48;
-function CapRing({ season, used, space, cap }: { season: number; used: number; space: number; cap: number }) {
-  const filled = Math.round(Math.max(0, Math.min(1, used / cap)) * TICKS);
-  return (
-    <View style={styles.ringWrap}>
-      <View style={styles.ring}>
-        {Array.from({ length: TICKS }, (_, i) => (
-          <View
-            key={i}
-            style={[styles.tick, { transform: [{ rotate: `${(i * 360) / TICKS}deg` }, { translateY: -RING / 2 + 6 }] }, i < filled && styles.tickOn, space < 0 && i < filled && { backgroundColor: colors.danger }]}
-          />
-        ))}
-        <Text style={[styles.ringValue, space < 0 && { color: colors.danger }]}>{money(space)}</Text>
-        <Text style={styles.ringLeft}>left</Text>
-      </View>
-      <Text style={styles.ringYear}>{season}</Text>
-    </View>
-  );
-}
-
-function ContractRow({ p, first, sub }: { p: Player; first?: boolean; sub: string }) {
-  return (
-    <Row first={first} onPress={() => go(`/player/${p.player_id}`)}>
-      <Face p={p} label={p.pos} />
-      <View style={ui.flex}>
-        <Text style={ui.name} numberOfLines={1}>{p.name}</Text>
-        <Text style={[ui.sub, styles.subGap]}>{sub}</Text>
-      </View>
-      <Text style={styles.bigSalary}>{money(p.contract_salary)}</Text>
-    </Row>
-  );
-}
 
 function PlayerRow({ p, first, showSlot }: { p: Player; first?: boolean; showSlot?: boolean }) {
   const injury = p.injury ? INJURY_SHORT[p.injury.toLowerCase()] ?? p.injury.toUpperCase() : null;
@@ -193,45 +195,50 @@ function RosterTab({ team }: { team: TeamPage }) {
   );
 }
 
+const GRADE: Record<string, { label: string; tone: 'live' | 'muted' | 'out' | 'gold' }> = {
+  bargain: { label: 'BARGAIN', tone: 'live' }, fair: { label: 'FAIR', tone: 'muted' },
+  overpaid: { label: 'OVERPAID', tone: 'out' }, stash: { label: 'STASH', tone: 'gold' },
+};
+
+// Every contract ranked by value (PPG per cap dollar), best first, graded against the whole league.
 function ContractsTab({ team }: { team: TeamPage }) {
-  const { biggest, expiring, dead_cap } = team.contracts;
-  // Every deal ending this season, then the biggest deals that run longer.
-  const soon = expiring.filter((p) => !p.no_contract).sort((a, b) => b.contract_salary - a.contract_salary);
-  const locked = biggest.filter((p) => p.years_left > 1);
+  const { dead_cap } = team.contracts;
+  const all = team.contracts.all ?? [];
   return (
     <>
       <Card
-        title="Cap by year"
+        title="Your contracts"
         right={
           <Pressable onPress={() => go('/league-cap')} hitSlop={8}>
             <Text style={ui.link}>Whole league ›</Text>
           </Pressable>
         }
       >
-        <View style={styles.rings}>
-          {team.cap.by_year.slice(0, 3).map((y) => (
-            <CapRing key={y.season} season={y.season} used={y.used} space={y.space} cap={team.salary_cap} />
-          ))}
-        </View>
+        {all.length === 0 ? <Note>No contracts yet.</Note> : null}
+        {all.map((p, i) => {
+          const grade = p.grade ? GRADE[p.grade] : null;
+          const tag = p.designation === 'taxi' ? 'TAXI' : p.designation === 'ir' ? 'IR' : p.is_rookie ? 'ROOKIE' : null;
+          const years = Math.max(p.years_left, 1);
+          return (
+            <Row key={p.player_id} first={i === 0} onPress={() => go(`/player/${p.player_id}`)}>
+              <Face p={p} label={p.pos} />
+              <View style={ui.flex}>
+                <View style={styles.nameLine}>
+                  <Text style={[ui.name, styles.shrink]} numberOfLines={1}>{p.name}</Text>
+                  {tag ? <Pill label={tag} tone={tag === 'IR' ? 'out' : 'gold'} /> : null}
+                </View>
+                <Text style={[ui.sub, styles.subGap]}>
+                  {money(p.contract_salary)} · {years} yr{years === 1 ? '' : 's'} · {p.ppg != null ? `${p.ppg.toFixed(1)} PPG` : 'no games'}
+                </Text>
+              </View>
+              <View style={styles.valueRight}>
+                {grade ? <Pill label={grade.label} tone={grade.tone} /> : null}
+                <Text style={styles.perDollar}>{p.per_dollar != null ? `${p.per_dollar.toFixed(2)} PPG / $` : '— PPG / $'}</Text>
+              </View>
+            </Row>
+          );
+        })}
       </Card>
-      {soon.length ? (
-        <Card style={styles.expiringCard}>
-          <View style={styles.groupHead}>
-            <Text style={[styles.groupTitle, { color: '#E3C47A' }]}>EXPIRING AFTER {team.season}</Text>
-            <Text style={ui.sub}>{money(soon.reduce((s, p) => s + p.contract_salary, 0))} frees up</Text>
-          </View>
-          {soon.map((p, i) => <ContractRow key={p.player_id} p={p} first={i === 0} sub={`${p.nfl_team || 'FA'} · ${p.pos}`} />)}
-        </Card>
-      ) : null}
-      {locked.length ? (
-        <Card>
-          <View style={styles.groupHead}>
-            <Text style={[styles.groupTitle, { color: colors.gold }]}>LOCKED IN</Text>
-            <Text style={ui.sub}>{money(locked.reduce((s, p) => s + p.contract_salary, 0))}</Text>
-          </View>
-          {locked.map((p, i) => <ContractRow key={p.player_id} p={p} first={i === 0} sub={`${p.nfl_team || 'FA'} · ${p.pos} · through ${p.through}`} />)}
-        </Card>
-      ) : null}
       {dead_cap.length ? (
         <Card title="Dead cap" right={<Text style={[ui.value, ui.gold]}>{money(dead_cap.reduce((s, d) => s + d.amount, 0))}</Text>}>
           {dead_cap.map((d, i) => (
@@ -242,6 +249,7 @@ function ContractsTab({ team }: { team: TeamPage }) {
           ))}
         </Card>
       ) : null}
+      <Note>Bargain, fair and overpaid compare each deal&apos;s points per dollar with every contract in the league.</Note>
     </>
   );
 }
@@ -310,24 +318,13 @@ function ActivityTab({ team }: { team: TeamPage }) {
   );
 }
 
-const RING = 84;
-
 const styles = StyleSheet.create({
   nameLine: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   shrink: { flexShrink: 1 },
   subGap: { marginTop: 3 },
   bigSalary: { color: colors.gold, fontSize: 18, fontWeight: '800' },
-  rings: { flexDirection: 'row', justifyContent: 'space-around', paddingTop: 6 },
-  ringWrap: { alignItems: 'center' },
-  ring: { width: RING, height: RING, alignItems: 'center', justifyContent: 'center' },
-  tick: { position: 'absolute', left: RING / 2 - 2, top: RING / 2 - 5, width: 4, height: 10, borderRadius: 2, backgroundColor: colors.card },
-  tickOn: { backgroundColor: colors.gold },
-  ringValue: { color: colors.gold, fontSize: 15, fontWeight: '800' },
-  ringLeft: { color: colors.muted, fontSize: 10 },
-  ringYear: { color: colors.text, fontSize: 12, fontWeight: '700', marginTop: 6 },
-  expiringCard: { borderColor: '#6B5524', backgroundColor: '#17190F' },
-  groupHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 },
-  groupTitle: { fontSize: 11, fontWeight: '800', letterSpacing: 1.6 },
+  valueRight: { alignItems: 'flex-end', gap: 5 },
+  perDollar: { color: colors.muted, fontSize: 11 },
   subLine: { flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 3 },
   pips: { flexDirection: 'row', gap: 3 },
   pip: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#33402F' },

@@ -202,6 +202,21 @@ def team_list(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, An
     return {"season": ctx["season"], "salary_cap": cap, "my_team_id": ctx["team_id"], "teams": rows}
 
 
+def _saved_win_odds(client: Client, ctx: dict[str, Any], owner_name: str) -> dict[str, Any] | None:
+    """This week's win odds as the Front Office saved them (no model run here), or None before it has."""
+    week = league.current_week()
+
+    def load() -> dict[str, dict[str, Any]]:
+        rows = (client.table("league_ai_odds_history").select("owner_name,win_pct,opp_owner")
+                .eq("league_id", ctx["league_id"]).eq("season", ctx["season"]).eq("week", week).execute().data or [])
+        return {r["owner_name"]: r for r in rows if r.get("win_pct") is not None}
+    try:
+        row = cache.cached(("win_odds", ctx["league_id"], ctx["season"], week), 600, load).get(owner_name)
+    except Exception:
+        return None
+    return {"pct": row["win_pct"], "opp": row.get("opp_owner"), "week": week} if row else None
+
+
 def _team_page(client: Client, ctx: dict[str, Any], team_id: str) -> dict[str, Any]:
     rows, states, standings_rows, cap = _league_teams(client, ctx)
     summary = next((t for t in rows if t["team_id"] == team_id), None)
@@ -227,6 +242,8 @@ def _team_page(client: Client, ctx: dict[str, Any], team_id: str) -> dict[str, A
         ppg=teams.player_ppg(ctx["sleeper_id"], weeks),
         h2h=teams.head_to_head(ctx["sleeper_id"], weeks, ctx["sleeper_roster_id"], summary["roster_id"]),
         later=states[1:],
+        weeks=league.current_week(),
+        win_odds=_saved_win_odds(client, ctx, summary["owner_name"]),
     )
     return {"season": ctx["season"], "salary_cap": cap, "sleeper_league_id": ctx["sleeper_id"], **detail}
 
