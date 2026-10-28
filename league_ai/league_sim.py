@@ -27,7 +27,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from league_ai import aging
+from league_ai import aging, injuries
 from league_ai import draft_study as ds
 
 FIRST, SIMS_DEFAULT = 2020, 1000
@@ -53,6 +53,13 @@ GOAL_WEIGHTS = {                           # how much each season's value counts
     "rebuild": (0.75, 1.05, 1.1, 1.1),      # later years matter most: young, cheap, long contracts
 }
 BOT_GOALS = os.environ.get("SIM_BOT_GOALS", "0") == "1"   # bot picks contend/rebuild from last season's finish
+REAL_LINEUPS = os.environ.get("SIM_REAL_LINEUPS", "1") == "1"   # start players on what was known before kickoff
+WAIVERS = os.environ.get("SIM_WAIVERS", "1") == "1"
+WAIVER_WEEKS = (7, 13)                     # pickup windows (each team one move per window)
+WAIVER_GAIN, WAIVER_DROP_MAX = 3.0, 3.0    # points a game the pickup must add; only players paid this much or less get cut
+PRIOR_PPG, PRIOR_GAMES = 5.0, 3.0          # a player's expected points before he's played: last season's average, 3 games' weight
+INJURY_AWARE = os.environ.get("SIM_INJURY_AWARE", "1") == "1"   # tilt for last season's injury (league_ai.injuries)
+MARKET_BLEND = float(os.environ.get("SIM_MARKET_BLEND", "0.4"))   # share of this season's price taken from the market
 AGE_AWARE = os.environ.get("SIM_AGE_AWARE", "1") == "1"     # tilt later-year values for age (league_ai.aging)
 SMART_OWNERS = os.environ.get("SIM_SMART_OWNERS", "1") == "1"  # the other owners also buy for need, learn and draft off a board
 OWNER_SKILL = (0.3, 0.9)                   # how far each other owner leans on learned values over the market price
@@ -98,6 +105,7 @@ class Data:
                 self.draft_year[self.idx[gs]] = y
         self.born = birth_years(ids, self.idx, self.n)
         self.history = pd.DataFrame(columns=["player_id", "season", "position", "par", "age"])   # long history for aging
+        self.injury_lines = pd.DataFrame()                                                       # league_ai.injuries.season_lines
         ecr = ecr.copy()
         ecr["gsis"] = ecr.id.astype(str).map(fp2gsis)
         ecr = ecr[ecr.gsis.isin(self.idx) & ecr.pos.isin(POS)]
@@ -176,11 +184,31 @@ def _aging_for(d: Data, season: int) -> dict[str, dict[int, np.ndarray]]:
     return _AGING[season]
 
 
+_INJURY: dict[int, tuple[np.ndarray, np.ndarray]] = {}
+
+
+def _injury_tilts(d: Data, season: int) -> tuple[np.ndarray, np.ndarray]:
+    """Per player: multipliers on this season and next for the injury he had last season (fit on earlier years only)."""
+    if season not in _INJURY:
+        one, two = np.ones(d.n), np.ones(d.n)
+        lines = d.injury_lines
+        if INJURY_AWARE and len(lines):
+            fit = injuries.effects(lines, season - 1)
+            last = lines[(lines.season == season - 1) & lines.injury.notna()]
+            for r in last.itertuples():
+                e = injuries.player_effect(fit, r.injury, r.missed)
+                if e and r.player_id in d.idx:
+                    one[d.idx[r.player_id]], two[d.idx[r.player_id]] = e["e1"], e["e2"]
+        _INJURY[season] = (one, two)
+    return _INJURY[season]
+
+
 class Bot:
     """Preseason price and contract length for every player, from earlier seasons only."""
 
-    def __init__(self, d: Data, season: int, goal: str = "balanced"):
-        self.d, self.t, self.goal = d, season, goal
+    def __init__(self, d: Data, season: int, goal: str = "balanced", market: np.ndarray | None = None):
+        self.d, self.t, self.goal, self.market = d, season, goal, market
+        self.injury = _injury_tilts(d, season)
         past = [s for s in d.seasons if FIRST <= s < season and s in d.rp]
         self.k_dollar = float(np.mean([d.k_dollar[s] for s in d.seasons if s < season] or [d.k_dollar[min(d.seasons)]]))
         self.yr1: dict[int, np.ndarray] = {}
@@ -214,15 +242,20 @@ class Bot:
         r0 = d.rp.get(self.t, np.full(d.n, np.nan))[i]
         rd = d.dp.get(self.t, np.full(d.n, np.nan))[i]
         y0 = self.yr1[p][int(min(r0, MAX_RANK))] if not np.isnan(r0) else 0.0
+        y0 *= self.injury[0][i]
         out = [y0]
         for k in (1, 2, 3):
             base = self.later[(p, k)][int(min(rd, MAX_RANK))] if not np.isnan(rd) else y0 * RETENTION_PRIOR[POS[p]] ** k
+            base *= self.injury[1][i] if k == 1 else 1.0
             out.append(base * aging.age_tilt(self.aging, POS[p], float(self.age[i]), k) if AGE_AWARE else base)
         return out
 
     def dollars_by_year(self, i: int) -> list[float]:
         w = GOAL_WEIGHTS[self.goal]
-        return [MIN_SALARY + max(0.0, v) * self.k_dollar * w[k] for k, v in enumerate(self.par_by_year(i))]
+        own = [MIN_SALARY + max(0.0, v) * self.k_dollar for v in self.par_by_year(i)]
+        if self.market is not None and MARKET_BLEND:
+            own[0] = (1 - MARKET_BLEND) * own[0] + MARKET_BLEND * float(self.market[i])   # the market orders players better
+        return [MIN_SALARY + (v - MIN_SALARY) * w[k] for k, v in enumerate(own)]
 
     def offer(self, i: int) -> tuple[float, int]:
         """(top annual salary, years) that gives the strongest bid under the league's year discount without overpaying."""
@@ -372,28 +405,61 @@ def load_owner_market(client: Any, d: Data, sleeper_to_gsis: dict[str, str]) -> 
 
 # ---- one league --------------------------------------------------------------------------------------------
 
-def lineup_points(M: np.ndarray, pos: np.ndarray, slots: dict[str, int]) -> float:
-    """Season total of the best lineup each week. M = players x weeks."""
+def lineup_points(M: np.ndarray, pos: np.ndarray, slots: dict[str, int], S: np.ndarray | None = None) -> float:
+    """Season total of each week's lineup. M = players x weeks of real points; S = what the owner expected before
+    kickoff (starters are picked by S, scored by M). Without S the lineup is the hindsight-best one."""
     if M.shape[0] == 0:
         return 0.0
-    left = []
+    S = M if S is None else S
+
+    def take(ss: np.ndarray, mm: np.ndarray, c: int) -> tuple[float, np.ndarray, np.ndarray]:
+        order = np.argsort(-ss, axis=0, kind="stable")
+        ss, mm = np.take_along_axis(ss, order, 0), np.take_along_axis(mm, order, 0)
+        return float(mm[:c].sum()), ss[c:], mm[c:]
+
     total = 0.0
+    left = []
     for p, name in enumerate(POS):
-        S = -np.sort(-M[pos == p], axis=0) if (pos == p).any() else np.zeros((0, M.shape[1]))
-        c = slots.get(name, 0)
-        total += S[:c].sum()
-        left.append(S[c:])
-    flex = np.concatenate(left[1:], axis=0) if slots.get("FLEX") else np.zeros((0, M.shape[1]))
-    rest = [left[0]] + ([] if slots.get("FLEX") else left[1:])
-    if slots.get("FLEX") and flex.shape[0]:
-        flex = -np.sort(-flex, axis=0)
-        total += flex[:slots["FLEX"]].sum()
-        rest.append(flex[slots["FLEX"]:])
+        got, ls_, lm = take(S[pos == p], M[pos == p], slots.get(name, 0))
+        total += got
+        left.append((ls_, lm))
+    pool = [left[0]]
+    if slots.get("FLEX"):
+        got, fs, fm = take(np.concatenate([x[0] for x in left[1:]]), np.concatenate([x[1] for x in left[1:]]), slots["FLEX"])
+        total += got
+        pool.append((fs, fm))
+    else:
+        pool += left[1:]
     if slots.get("SUPER_FLEX"):
-        sf = np.concatenate([r for r in rest if r.shape[0]], axis=0) if any(r.shape[0] for r in rest) else np.zeros((0, M.shape[1]))
-        if sf.shape[0]:
-            total += (-np.sort(-sf, axis=0))[:slots["SUPER_FLEX"]].sum()
-    return float(total)
+        got, _, _ = take(np.concatenate([x[0] for x in pool]), np.concatenate([x[1] for x in pool]), slots["SUPER_FLEX"])
+        total += got
+    return total
+
+
+def weekly_expectations(d: Data, season: int) -> np.ndarray:
+    """players x weeks: what an owner would expect before each kickoff. His average so far this season, padded with
+    3 games at last season's average; -1 when he didn't play (bye or ruled out, which owners know before kickoff)."""
+    W = d.W[season]
+    prev = d.W.get(season - 1)
+    if prev is not None:
+        g = (prev != 0).sum(1)
+        prior = np.where(g > 0, prev.sum(1) / np.maximum(g, 1), PRIOR_PPG)
+    else:
+        prior = np.full(d.n, PRIOR_PPG)
+    played = (W != 0).astype(float)
+    pts_before = np.cumsum(W, 1) - W
+    games_before = np.cumsum(played, 1) - played
+    exp = (pts_before + PRIOR_GAMES * prior[:, None]) / (games_before + PRIOR_GAMES)
+    return np.where(W != 0, exp, -1.0)
+
+
+_EXPECT: dict[int, np.ndarray] = {}
+
+
+def _expectations(d: Data, season: int) -> np.ndarray:
+    if season not in _EXPECT:
+        _EXPECT[season] = weekly_expectations(d, season)
+    return _EXPECT[season]
 
 
 class League:
@@ -532,11 +598,43 @@ class League:
                 self.owner[i], self.salary[i], self.years[i] = -1, 0.0, 0
 
     def play(self, season: int) -> np.ndarray:
-        pts = np.array([lineup_points(self.d.W[season][self.roster(t)], self.d.pos[self.roster(t)], self.slots) for t in range(self.T)])
+        W = self.d.W[season]
+        S = _expectations(self.d, season) if REAL_LINEUPS else W
+        pts = np.zeros(self.T)
+        cuts = [1] + ([w for w in WAIVER_WEEKS] if WAIVERS else []) + [W.shape[1]]
+        for a, b in zip(cuts[:-1], cuts[1:]):
+            if a > 1:
+                self.waivers(season, a, pts)
+            for t in range(self.T):
+                r = self.roster(t)
+                pts[t] += lineup_points(W[r, a:b], self.d.pos[r], self.slots, S[r, a:b])
         rank = (-pts).argsort().argsort() + 1
         for t in range(self.T):
             self.results.append({"season": season, "team": t, "points": float(pts[t]), "rank": int(rank[t])})
         return pts
+
+    def waivers(self, season: int, week: int, pts: np.ndarray) -> None:
+        """Mid-season pickups: worst record first, each team may swap its weakest cheap player for the best free agent
+        on form so far (2+ games), when the free agent averages 3+ points a game more. $1 for the rest of the season."""
+        W = self.d.W[season][:, 1:week]
+        g = (W != 0).sum(1)
+        form = np.where(g >= 2, W.sum(1) / np.maximum(g, 1), 0.0)
+        free = (self.owner < 0) & (g >= 2)
+        for t in np.argsort(pts):
+            r = self.roster(t)
+            cheap = r[(self.salary[r] <= WAIVER_DROP_MAX) & (self.rookie_round[r] == 0)]   # rookies are stashed, not cut
+            if not len(cheap) or self.committed(t) + MIN_SALARY > CAP:
+                continue
+            drop = cheap[np.argmin(form[cheap])]
+            pool = np.flatnonzero(free)
+            if not len(pool):
+                return
+            add = pool[np.argmax(form[pool])]
+            if form[add] - form[drop] < WAIVER_GAIN:
+                continue
+            self.owner[drop], self.salary[drop], self.years[drop], self.rookie_round[drop] = -1, 0.0, 0, 0
+            self.sign(int(add), int(t), MIN_SALARY, 1, season, "waiver")
+            free[add] = False
 
     def roll(self, season: int, values_next: np.ndarray) -> None:
         """End of season: a year off every contract; expired rookies keep their option if the owner thinks he's worth it."""
@@ -586,8 +684,8 @@ def run_league(d: Data, slots: dict[str, int], seed: int, seasons: list[int]) ->
     lg = League(d, slots, rng, bot_seat=int(rng.integers(0, d.teams)))
     order: list[int] | None = None
     for s in seasons:
-        bot = Bot(d, s, goal_for(lg, s))
         market = market_dollars(d, s)
+        bot = Bot(d, s, goal_for(lg, s), market)
         vals = lg.values(s, bot, market)
         if order is not None:
             lg.rookie_draft(s, order, bot_rookie_board(d, s))
@@ -596,7 +694,8 @@ def run_league(d: Data, slots: dict[str, int], seed: int, seasons: list[int]) ->
         pts = lg.play(s)
         order = list(np.argsort(pts))           # worst finish picks first, every round
         if s + 1 in d.seasons:
-            nb, nm = Bot(d, s + 1), market_dollars(d, s + 1)
+            nm = market_dollars(d, s + 1)
+            nb = Bot(d, s + 1, market=nm)
             lg.roll(s, lg.values(s + 1, nb, nm))
     return lg
 
@@ -612,7 +711,8 @@ def price_accuracy(d: Data) -> dict[str, Any]:
     out: dict[str, Any] = {"by_season": {}, "by_position": {}, "multi_year": {}}
     rows = []
     for s in [x for x in d.seasons if x >= FIRST and x in d.rp]:
-        bot, market = Bot(d, s), market_dollars(d, s)
+        market = market_dollars(d, s)
+        bot = Bot(d, s, market=market)
         ranked = np.flatnonzero(~np.isnan(d.rp[s]))
         for i in ranked:
             dollars = bot.dollars_by_year(i)
@@ -720,7 +820,7 @@ def aging_history(weeks: pd.DataFrame, ids: pd.DataFrame, repl: dict[str, int], 
     idx = {p: i for i, p in enumerate(sorted(set(table.player_id)))}
     born = birth_years(ids, idx, len(idx))
     table["age"] = [s + 0.67 - born[idx[p]] for p, s in zip(table.player_id, table.season)]
-    return table[["player_id", "season", "position", "par", "age"]]
+    return table[["player_id", "season", "position", "par", "age", "ppg", "g"]]
 
 
 def redact(obj: Any) -> Any:
@@ -763,6 +863,14 @@ def main() -> None:
     ids = pd.read_csv(io.BytesIO(ds.get_bytes(ds.IDS_URL)), low_memory=False)
     d = Data(weeks, ecr, ids, teams, superflex, live_season, live_week)
     d.history = aging_history(every, ids, d.repl, live_season, live_week)
+    reports = []
+    for y in range(HISTORY_FROM, live_season + 1):
+        try:
+            reports.append(pd.read_csv(io.BytesIO(ds.get_bytes(injuries.INJURY_URL.format(season=y))), low_memory=False))
+        except Exception as e:
+            print(f"no injury reports for {y}: {e}")
+    if reports:
+        d.injury_lines = injuries.season_lines(d.history, injuries.main_injuries(pd.concat(reports)))
     owners: dict[str, Any] = {"used": False}
     if os.environ.get("SUPABASE_URL") and os.environ.get("SUPABASE_SERVICE_ROLE_KEY"):
         try:
