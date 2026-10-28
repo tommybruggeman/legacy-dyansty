@@ -21,6 +21,7 @@ export default function FrontOfficeScreen() {
   const [draft, setDraft] = useState('');
   const [thinking, setThinking] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  const [typing, setTyping] = useState(false);
   const scroll = useRef<ScrollViewInstance>(null);
   const insets = useSafeAreaInsets();
 
@@ -60,6 +61,9 @@ export default function FrontOfficeScreen() {
   if (error && !data) return <ErrorState message={error} onRetry={reload} />;
   if (!data) return null;
 
+  // Once you tap the box (or the chat has started) the tiles, brief and
+  // starter chips step aside and it's just you and the GM.
+  const focused = typing || messages.length > 0 || thinking;
   const sleeper = data.sleeper_league_id ? `https://sleeper.com/leagues/${data.sleeper_league_id}` : null;
   const lastQuestion = [...messages].reverse().find((m) => m.role === 'user')?.content ?? '';
 
@@ -79,7 +83,7 @@ export default function FrontOfficeScreen() {
           </Pressable>
         </View>
 
-        {messages.length === 0 ? (
+        {!focused ? (
           <>
             <Text style={styles.greeting}>{data.greeting} What are we working on?</Text>
             <Tiles tiles={data.tiles} />
@@ -91,6 +95,8 @@ export default function FrontOfficeScreen() {
               </Text>
             </Pressable>
           </>
+        ) : messages.length === 0 ? (
+          <Text style={styles.hint}>Ask anything about your team, another team, a player, a trade or the draft.</Text>
         ) : null}
 
         {messages.map((m, i) => (
@@ -119,9 +125,9 @@ export default function FrontOfficeScreen() {
         {problem ? <Text style={styles.problem}>{problem}</Text> : null}
       </ScrollView>
 
-      {messages.length === 0 || !thinking ? (
+      {!focused ? (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipsBar} contentContainerStyle={styles.chips} keyboardShouldPersistTaps="handled">
-          {(messages.length === 0 ? data.prompts : ['Tell me more', 'What would you offer?']).map((p) => (
+          {data.prompts.map((p) => (
             <Pressable key={p} onPress={() => send(p)} style={styles.chip}>
               <Text style={styles.chipText}>{p}</Text>
             </Pressable>
@@ -133,6 +139,8 @@ export default function FrontOfficeScreen() {
         <TextInput
           value={draft}
           onChangeText={setDraft}
+          onFocus={() => setTyping(true)}
+          onBlur={() => setTyping(!!draft.trim())}
           placeholder={data.ai_ready ? 'Ask your assistant GM…' : 'The Assistant GM is off for now'}
           placeholderTextColor={colors.muted}
           editable={data.ai_ready && !thinking}
@@ -200,6 +208,7 @@ const styles = StyleSheet.create({
   menu: { marginLeft: 'auto', width: 34, height: 34, borderRadius: 17, backgroundColor: colors.card, alignItems: 'center', justifyContent: 'center' },
   menuText: { color: colors.gold, fontSize: 16 },
   greeting: { color: colors.muted, fontSize: 14, marginBottom: 12 },
+  hint: { color: colors.muted, fontSize: 14, textAlign: 'center', marginTop: 40, paddingHorizontal: 24 },
   tiles: { flexDirection: 'row', gap: 8, marginBottom: 12 },
   tile: { flex: 1, backgroundColor: colors.row, borderWidth: 1, borderColor: colors.line, borderRadius: 14, paddingVertical: 10, paddingHorizontal: 6, alignItems: 'center' },
   tileWarn: { borderColor: '#5A2E2A' },
