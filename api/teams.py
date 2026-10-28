@@ -210,7 +210,8 @@ def roster_rows(
     starters = []
     for index, pid in enumerate(starter_ids):
         player = contracts.get(pid)
-        if player:
+        # The app's Taxi and IR designations win over a stale Sleeper lineup.
+        if player and not player["designation"]:
             slot = lineup_slots[index] if index < len(lineup_slots) else player["pos"]
             starters.append({**player, "slot": "FLX" if "FLEX" in slot else slot})
 
@@ -369,3 +370,59 @@ def box_score(
 def starter_ids(sleeper_id: str, week: int, matchup_id: int, ttl: int = 60) -> list[str]:
     rows = sleeper.get(f"league/{sleeper_id}/matchups/{week}", ttl=ttl) or []
     return [_text(p) for r in rows if r.get("matchup_id") == matchup_id for p in (r.get("starters") or [])]
+
+
+def ir_rows(state: dict[str, Any], team_id: str) -> list[dict[str, Any]]:
+    """The team's IR designation rows (one at most, by league rule)."""
+    return [
+        r for r in state.get("cap_adjustments", [])
+        if r.get("adjustment_type") == "ir_adjustment" and _text(r.get("league_team_id")) == team_id and r.get("id")
+    ]
+
+
+def weekly_points(sleeper_id: str, weeks: int, player_id: str) -> list[dict[str, Any]]:
+    out = []
+    for week in range(1, weeks + 1):
+        rows = sleeper.get(f"league/{sleeper_id}/matchups/{week}", ttl=86400) or []
+        row = next((r for r in rows if player_id in (r.get("players") or []) or player_id in (r.get("players_points") or {})), None)
+        points = (row or {}).get("players_points", {}).get(player_id)
+        started = bool(row) and player_id in (row.get("starters") or [])
+        out.append({"week": week, "points": _f(points) if points is not None else None, "started": started})
+    return out
+
+
+def player_detail(
+    player_id: str,
+    state: dict[str, Any],
+    meta: dict[str, Any],
+    weeks: list[dict[str, Any]],
+    my_team_id: str | None,
+) -> dict[str, Any] | None:
+    contract = next((r for r in state.get("roster", []) if _text(r.get("sleeper_player_id")) == player_id), None)
+    if contract is None and not meta:
+        return None
+    scored = [w["points"] for w in weeks if w["points"]]
+    years = int((contract or {}).get("contract_years_left") or 0)
+    season = int(state.get("season") or 0)
+    return {
+        "player_id": player_id,
+        "name": _text((contract or {}).get("player_name")) or _text(meta.get("full_name")) or player_id,
+        "pos": _text((contract or {}).get("pos")) or _text(meta.get("position")),
+        "nfl_team": _text(meta.get("team")) or "FA",
+        "age": meta.get("age"),
+        "injury": _text(meta.get("injury_status")) or None,
+        "injury_detail": _text(meta.get("injury_body_part")) or None,
+        "ppg": round(sum(scored) / len(scored), 1) if scored else None,
+        "weeks": weeks[-8:],
+        "contract": None if contract is None else {
+            "team_id": _text(contract.get("league_team_id")),
+            "owner_name": _text(contract.get("owner_name")),
+            "salary": _f(contract.get("contract_cap_hit") or contract.get("cap_hit")),
+            "cap_hit": _f(contract.get("cap_hit")),
+            "years_left": years,
+            "through": season + max(years, 1) - 1,
+            "designation": roster_designation(contract),
+            "is_rookie": bool(contract.get("is_rookie")),
+        },
+        "is_mine": bool(contract) and _text(contract.get("league_team_id")) == _text(my_team_id),
+    }

@@ -17,6 +17,22 @@ export async function apiGet<T>(path: string): Promise<T> {
   return body as T;
 }
 
+// Sends a change (POST or DELETE) as the signed-in owner.
+export async function apiSend<T>(method: 'POST' | 'DELETE', path: string, body?: unknown): Promise<T> {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error('Sign in required.');
+
+  const response = await fetch(`${API_URL}${path}`, {
+    method,
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const result = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(result?.detail ?? `Request failed (${response.status}).`);
+  return result as T;
+}
+
 export function useApi<T>(path: string) {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -133,4 +149,28 @@ export type BoxScore = {
   matchup_id: number;
   my_roster_id: number | null;
   teams: { roster_id: number; team_id: string | null; name: string; score: number; players: BoxPlayer[] }[];
+};
+
+export type PlayerPage = {
+  season: number;
+  player_id: string;
+  name: string;
+  pos: string;
+  nfl_team: string;
+  age: number | null;
+  injury: string | null;
+  injury_detail: string | null;
+  ppg: number | null;
+  weeks: { week: number; points: number | null; started: boolean }[];
+  contract: {
+    team_id: string;
+    owner_name: string;
+    salary: number;
+    cap_hit: number;
+    years_left: number;
+    through: number;
+    designation: 'taxi' | 'ir' | null;
+    is_rookie: boolean;
+  } | null;
+  is_mine: boolean;
 };

@@ -14,6 +14,9 @@ function RootStack() {
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="team/[id]" />
         <Stack.Screen name="game/[week]/[matchup]" />
+        <Stack.Screen name="player/[id]" />
+        <Stack.Screen name="league-cap" />
+        <Stack.Screen name="ir" />
       </Stack.Protected>
       <Stack.Protected guard={!session}>
         <Stack.Screen name="sign-in" />

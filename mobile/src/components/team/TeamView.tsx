@@ -1,3 +1,4 @@
+import { router } from 'expo-router';
 import { useState } from 'react';
 import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
@@ -49,7 +50,7 @@ export function TeamView({ team, eyebrow }: { team: TeamPage; eyebrow?: string }
 function PlayerRow({ p, first, showSlot }: { p: Player; first?: boolean; showSlot?: boolean }) {
   const tag = p.injury ? <Pill label={p.injury.toUpperCase()} tone="out" /> : p.is_rookie ? <Pill label="ROOKIE" tone="gold" /> : null;
   return (
-    <Row first={first}>
+    <Row first={first} onPress={() => router.push(`/player/${p.player_id}`)}>
       <Pos label={showSlot && p.slot ? p.slot : p.pos} />
       <View style={ui.flex}>
         <View style={styles.nameLine}>
@@ -101,6 +102,11 @@ function RosterTab({ team }: { team: TeamPage }) {
               <Text style={ui.sub}>{p.pos} · {money(p.salary)}</Text>
             </View>
           )) : <Text style={ui.sub}>1 spot open</Text>}
+          {team.is_me ? (
+            <Pressable onPress={() => router.push('/ir')} hitSlop={8}>
+              <Text style={[ui.link, styles.manage]}>{ir.length ? 'Remove / swap ›' : 'Move a player ›'}</Text>
+            </Pressable>
+          ) : null}
         </Card>
       </View>
       <Note>{team.roster.count} players under contract</Note>
@@ -117,7 +123,14 @@ function ContractsTab({ team }: { team: TeamPage }) {
   const { biggest, dead_cap } = team.contracts;
   return (
     <>
-      <Card title="Cap by year" right={`cap ${money(team.salary_cap)}`}>
+      <Card
+        title="Cap by year"
+        right={
+          <Pressable onPress={() => router.push('/league-cap')} hitSlop={8}>
+            <Text style={ui.link}>Whole league ›</Text>
+          </Pressable>
+        }
+      >
         {team.cap.by_year.map((y, i) => (
           <Row key={y.season} first={i === 0}>
             <Text style={[ui.value, styles.year]}>{y.season}</Text>
@@ -128,7 +141,7 @@ function ContractsTab({ team }: { team: TeamPage }) {
       </Card>
       <Card title="Biggest contracts" right="yrs left · salary">
         {biggest.map((p, i) => (
-          <Row key={p.player_id} first={i === 0}>
+          <Row key={p.player_id} first={i === 0} onPress={() => router.push(`/player/${p.player_id}`)}>
             <Pos label={p.pos} />
             <View style={ui.flex}>
               <View style={styles.nameLine}>
@@ -221,6 +234,7 @@ const styles = StyleSheet.create({
   half: { flex: 1 },
   eyebrow: { color: colors.gold, fontSize: 11, fontWeight: '800', letterSpacing: 1.2, marginBottom: 6 },
   mini: { marginTop: 2, marginBottom: 4 },
+  manage: { marginTop: 6, fontSize: 12 },
   year: { width: 44 },
   left: { width: 84, textAlign: 'right' },
   button: { marginTop: 12, borderWidth: 1, borderColor: colors.gold, borderRadius: 14, padding: 14, alignItems: 'center' },

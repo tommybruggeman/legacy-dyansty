@@ -105,3 +105,30 @@ def test_head_to_head_and_box_score():
     assert tommy["name"] == "Tommy" and tommy["score"] == 120.0
     assert [(p["name"], p["slot"], p["points"]) for p in tommy["players"]][0] == ("Josh Allen", "QB", 30.0)
     assert tommy["players"][2]["slot"] == "FLX"
+
+
+def test_ir_rows_only_for_this_team():
+    state = {"cap_adjustments": [
+        {"id": "a", "league_team_id": T1, "adjustment_type": "ir_adjustment"},
+        {"id": "b", "league_team_id": T2, "adjustment_type": "ir_adjustment"},
+        {"id": "c", "league_team_id": T1, "adjustment_type": "trade_carryover"},
+    ]}
+    assert [r["id"] for r in teams.ir_rows(state, T1)] == ["a"]
+
+
+def test_player_detail_has_contract_and_recent_weeks():
+    weeks = teams.weekly_points("S", 2, "10")
+    assert weeks == [{"week": 1, "points": 30.0, "started": True}, {"week": 2, "points": 20.0, "started": False}]
+    detail = teams.player_detail("10", STATE, {"team": "BUF", "age": 30}, weeks, T1)
+    assert detail["name"] == "Josh Allen" and detail["nfl_team"] == "BUF" and detail["ppg"] == 25.0
+    assert detail["contract"]["salary"] == 45.0 and detail["contract"]["through"] == 2028
+    assert detail["is_mine"]
+    assert teams.player_detail("999", STATE, {}, [], T1) is None
+    free_agent = teams.player_detail("999", STATE, {"full_name": "Tyjae Spears", "position": "RB"}, [], T1)
+    assert free_agent["contract"] is None and free_agent["name"] == "Tyjae Spears"
+
+
+def test_designated_players_never_show_as_starters():
+    roster = teams.roster_rows(STATE, T1, {"starters": ["10", "13"]}, ["QB", "WR"], {}, {})
+    assert [p["name"] for p in roster["starters"]] == ["Josh Allen"]
+    assert [p["name"] for p in roster["ir"]] == ["Davante Adams"]
