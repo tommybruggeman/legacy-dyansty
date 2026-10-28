@@ -53,7 +53,7 @@ jobs:
       - name: Commit the stress test results to this branch, encrypted
         # The repo is public and the answers name owners' rosters and plans, so only an encrypted copy is committed.
         # It opens with the private key kept in the project files (stress/results-key.pub.pem is its public half).
-        if: always() && inputs.check == 'stress_test' && github.ref_name != 'main'
+        if: always() && (inputs.check == 'stress_test' || inputs.check == 'stress_rosters') && github.ref_name != 'main'
         run: |
           [ -f stress_results.json ] || exit 0
           KEY=$(openssl rand -hex 32)

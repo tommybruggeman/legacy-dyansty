@@ -353,12 +353,16 @@ def rosters(client: Any) -> int:
             seasons += [f"{c['season']}:{c.get('obligation_status')}" for c in client.table("contract_seasons").select("season, obligation_status").eq("contract_id", r["id"]).execute().data or []]
         key = "no contract row" if not rows else ",".join(sorted({f"{r['status']}{'(superseded)' if r.get('superseded_by_contract_id') else ''}{'' if str(r['league_team_id']) == str(team_id) else '(other team)'}" for r in rows})) + " | seasons " + ",".join(sorted(set(seasons)))
         why[key] += 1
-        if len(sample) < 25:
-            p = (client.table("nfl_players").select("full_name, position").eq("sleeper_id", pid).limit(1).execute().data or [{}])[0]
-            sample.append(f"{p.get('full_name') or pid} ({p.get('position')}): {key}")
+        p = (client.table("nfl_players").select("full_name, position, team").eq("sleeper_id", pid).limit(1).execute().data or [{}])[0]
+        owner = next((t["owner_name"] for t in teams if str(t["id"]) == str(team_id)), "")
+        sr = next((r for r in sleeper.values() if any(str(x) == pid for x in (r.get("taxi") or []))), None)
+        ir = next((r for r in sleeper.values() if any(str(x) == pid for x in (r.get("reserve") or []))), None)
+        sample.append({"owner": owner, "player": p.get("full_name") or pid, "pos": p.get("position"), "nfl_team": p.get("team"), "sleeper_id": pid,
+                       "slot": "taxi" if sr else "IR" if ir else "active", "app_contract": key})
     for k, v in why.most_common():
         print(f"{v:>3}  {k}")
-    print("\n".join(sample))
+    with open("stress_results.json", "w") as f:  # committed encrypted like the test results
+        json.dump({"missing": sample}, f)
     return 0
 
 
