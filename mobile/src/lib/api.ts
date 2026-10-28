@@ -66,7 +66,10 @@ export function useApi<T>(path: string, refreshEvery = 0) {
     }, [load, refreshEvery]),
   );
 
-  return { data, error, loading, reload: () => load() };
+  // Stable across renders, so screens can list it in effect dependencies.
+  const reload = useCallback(() => load(), [load]);
+
+  return { data, error, loading, reload };
 }
 
 export type StandingsRow = {
