@@ -106,6 +106,13 @@ def check_tools(client: Any, league: Mapping[str, Any], season: int) -> list[str
     shared = fill_from_sleeper(client, _state(client, lid, season), sid, lid)
     teams = client.table("league_teams").select("id, owner_name, team_name, sleeper_roster_id").eq("league_id", lid).execute().data or []
     counts = {"owners": 0, "idea_lists": 0, "ideas": 0, "ladders": 0, "targets_priced": 0, "roster_plans": 0, "odds": 0}
+    from bisect import bisect_right
+
+    from league_ai.acceptance import accepted_shares
+    from league_ai.trade_backtest import load_trades
+
+    accepted = accepted_shares(load_trades(client, lid))   # what real accepted sides got, to see where the ladder rungs sit
+    rung_pct: dict[str, list[float]] = {"open": [], "close": []}
     fails: list[str] = []
     for n, t in enumerate([t for t in teams if t.get("sleeper_roster_id") is not None], start=1):
         o = runtime.Owner(user_id=str(uuid.uuid5(uuid.UUID(STAND_IN), str(t["id"]))), league_id=lid, league_team_id=str(t["id"]), season=season,
@@ -136,6 +143,10 @@ def check_tools(client: Any, league: Mapping[str, Any], season: int) -> list[str
                 cap = idea.get("cap_after") or {}
                 if min(cap.get("you", 0), cap.get("them", 0)) < 0:
                     fails.append(f"team {n}: an idea breaks the cap")
+                for rung in rung_pct:
+                    v = (idea.get("their_share") or {}).get(rung)
+                    if v is not None and accepted:
+                        rung_pct[rung].append(bisect_right(accepted, v) / len(accepted))
                 if str(idea.get("partner")) == str(o.owner_name):
                     fails.append(f"team {n}: an idea trades with itself")
             first = next(iter(ideas.get("ideas") or []), None)
@@ -160,6 +171,13 @@ def check_tools(client: Any, league: Mapping[str, Any], season: int) -> list[str
                 fails.append(f"team {n}: playoff odds add up to {total}%, expected about {100 * spots}%")
             counts["odds"] += 1
     print(f"tools: {counts}", flush=True)
+    if accepted:
+        lows = [x for x in accepted if x < 1]
+        print(f"real accepted sides: {len(accepted)}, median share {accepted[len(accepted) // 2]:.2f}, {len(lows)} under 1.0", flush=True)
+        for rung, pcts in rung_pct.items():
+            if pcts:
+                print(f"  {rung} rung: on average {sum(pcts) / len(pcts):.0%} of real accepted sides got that share or less "
+                      f"({sum(1 for x in pcts if x < 0.2)} of {len(pcts)} ideas below the bottom 20%)", flush=True)
     if counts["owners"] and counts["idea_lists"] < counts["owners"]:
         fails.append(f"trade finder answered for {counts['idea_lists']} of {counts['owners']} owners")
     return fails
