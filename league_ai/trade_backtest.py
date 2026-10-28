@@ -15,6 +15,7 @@ production from that season's games before the trade week.
 from __future__ import annotations
 
 import math
+import re
 from bisect import bisect_right
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -144,12 +145,16 @@ def load_trades(client: Any, league_id: str) -> list[dict[str, Any]]:
     books: dict[int, PickBook] = {}
     pick_rows = _pick_rows_raw(client)
     first_scrape = min((h[0][0] for h in market.values() if h), default="")
+    # trades before our own scrapes began are priced from the DynastyProcess file as it stood that week
+    old_days = sorted({str(legs[0].get("occurred_at") or "")[:10] for legs in by_tid.values()} - {""})
+    history = dp_history([d for d in old_days if not first_scrape or d < first_scrape])
     trades = []
     for tid, legs in by_tid.items():
         first = legs[0]
         season, week = int(first.get("season") or 0), int(first.get("week") or 0)
         when = str(first.get("occurred_at") or "")[:10]
         details = first.get("details") or {}
+        snap = history.get(when)
         sides: dict[str, dict[str, list[dict[str, Any]]]] = {o: {"gets": [], "gives": []} for o in details.get("participants") or []}
         movers = {(p.get("player"), p.get("to")): p.get("from") for p in details.get("players") or []}
         for r in legs:
@@ -157,16 +162,19 @@ def load_trades(client: Any, league_id: str) -> list[dict[str, Any]]:
             if r.get("position") == "PICK":
                 label = str(r.get("player_name") or "")
                 frm = next((p.get("from") for p in details.get("picks") or [] if label.startswith(str(p.get("pick"))) and p.get("to") == to), None)
-                if season not in books:
-                    books[season] = PickBook(pick_rows, teams=10, rounds=3, season=season)
-                book = books[season]
-                asset = {"pick": 1.0, "market": _pick_value(picks, label, season), "book": book.value(label)[0], "name": label}
+                key = when if snap else str(season)
+                if key not in books:
+                    books[key] = PickBook(snap["pick_rows"] if snap else pick_rows, teams=10, rounds=3, season=season)
+                market_v = _pick_value(snap["picks"], label, season) if snap else _pick_value(picks, label, season)
+                asset = {"pick": 1.0, "market": market_v, "book": books[key].value(label)[0], "name": label}
             else:
                 pid = str(r.get("player_id") or "")
                 frm = movers.get((r.get("player_name"), to))
                 pos = positions.get(pid) or r.get("position")
                 ppg = _ppg(production.get(season, {}), pid, week) or _ppg(production.get(season - 1, {}), pid, 99)
-                asset = {"market": _value_at(market.get(pid, []), when), "now": _now_value(curves, pos, ppg, production.get(season, {}), positions, week),
+                mv = snap["players"].get(pid) if snap else None
+                asset = {"market": mv if mv is not None else _value_at(market.get(pid, []), when),
+                         "now": _now_value(snap["curves"] if snap else curves, pos, ppg, production.get(season, {}), positions, week),
                          "name": r.get("player_name"), "inj": _injury_mult(episodes.get(pid, []), season, week)}
             if to in sides:
                 sides[to]["gets"].append(asset)
@@ -174,8 +182,68 @@ def load_trades(client: Any, league_id: str) -> list[dict[str, Any]]:
                 sides[frm]["gives"].append(asset)
         if len(sides) >= 2 and all(s["gets"] and s["gives"] for s in sides.values()):
             trades.append({"tid": tid, "season": season, "week": week, "date": when, "sides": sides,
-                           "dated": bool(first_scrape) and when >= first_scrape, "faab": bool(details.get("faab"))})
+                           "dated": bool(snap) or (bool(first_scrape) and when >= first_scrape), "faab": bool(details.get("faab"))})
     return sorted(trades, key=lambda t: t["date"])
+
+
+DP_REPO = "https://github.com/dynastyprocess/data.git"
+_PICK_TIER = re.compile(r"^(20\d\d) (?:(Early|Mid|Late) )?(\d)(?:st|nd|rd|th)$")
+
+
+def dp_history(days: list[str]) -> dict[str, dict[str, Any]]:
+    """day -> the DynastyProcess values file as of that day (its git history is weekly back to 2019):
+    {"players": {sleeper_id: value_2qb}, "curves": {pos: values best first}, "picks": [(year, round, value)],
+    "pick_rows": rows shaped like nfl_pick_values}. Empty when git or the network isn't there."""
+    import csv
+    import io
+    import subprocess
+    import tempfile
+
+    if not days:
+        return {}
+    d = tempfile.mkdtemp(prefix="dp-")
+    try:
+        subprocess.run(["git", "clone", "-q", "--filter=blob:none", "--no-checkout", DP_REPO, d], check=True, timeout=300)
+        log = subprocess.run(["git", "-C", d, "log", "--format=%H %ad", "--date=short", "--", "files/values.csv"],
+                             check=True, capture_output=True, text=True).stdout.split("\n")
+        commits = sorted((ln.split()[1], ln.split()[0]) for ln in log if ln.strip())
+        ids = subprocess.run(["git", "-C", d, "show", "HEAD:files/db_playerids.csv"], check=True, capture_output=True, text=True).stdout
+    except Exception:
+        return {}
+    fp_to_sleeper = {r["fantasypros_id"]: r["sleeper_id"] for r in csv.DictReader(io.StringIO(ids))
+                     if r.get("fantasypros_id") not in (None, "", "NA") and r.get("sleeper_id") not in (None, "", "NA")}
+    dates = [c[0] for c in commits]
+    out: dict[str, dict[str, Any]] = {}
+    cache: dict[str, dict[str, Any]] = {}
+    for day in days:
+        i = bisect_right(dates, day)
+        if not i:
+            continue
+        sha = commits[i - 1][1]
+        if sha not in cache:
+            try:
+                text = subprocess.run(["git", "-C", d, "show", f"{sha}:files/values.csv"], check=True, capture_output=True, text=True).stdout
+            except Exception:
+                continue
+            players, curves, picks, rows = {}, defaultdict(list), [], []
+            for r in csv.DictReader(io.StringIO(text)):
+                try:
+                    v = float(r.get("value_2qb") or "")
+                except ValueError:
+                    continue
+                if r.get("pos") == "PICK":
+                    m = _PICK_TIER.match(str(r.get("player") or ""))
+                    if m:
+                        picks.append((int(m.group(1)), int(m.group(3)), v))
+                        rows.append({"pick_label": r["player"], "draft_year": int(m.group(1)), "round": int(m.group(3)), "value_2qb": v})
+                    continue
+                sid = fp_to_sleeper.get(str(r.get("fp_id") or ""))
+                if sid:
+                    players[str(sid)] = v
+                curves[str(r.get("pos"))].append(v)
+            cache[sha] = {"players": players, "curves": {k: sorted(x, reverse=True) for k, x in curves.items()}, "picks": picks, "pick_rows": rows}
+        out[day] = cache[sha]
+    return out
 
 
 def _injury_episodes(client: Any, pids: list[str]) -> dict[str, list[dict[str, Any]]]:
