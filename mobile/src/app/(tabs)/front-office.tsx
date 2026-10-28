@@ -14,7 +14,7 @@ import { colors } from '../../lib/theme';
 // The Assistant GM: this week's tiles and brief, starter questions, then the
 // chat. Trades are made in Sleeper, so trade answers link straight there.
 export default function FrontOfficeScreen() {
-  const { c } = useLocalSearchParams<{ c?: string }>();
+  const { c, q, at } = useLocalSearchParams<{ c?: string; q?: string; at?: string }>();
   const { data, error, loading, reload } = useApi<FrontOffice>('/front-office');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
@@ -42,7 +42,7 @@ export default function FrontOfficeScreen() {
       .catch((e) => setProblem(e?.message ?? 'Couldn’t open that chat.'));
   }, [c]);
 
-  const send = async (input: string) => {
+  const send = async (input: string, convo: string | null = conversationId) => {
     const question = input.trim();
     if (!question || thinking) return;
     setDraft('');
@@ -53,7 +53,7 @@ export default function FrontOfficeScreen() {
     setPartial('');
     let answer = '';
     try {
-      await apiStream<ChatEvent>('/front-office/chat/stream', { question, conversation_id: conversationId }, (event) => {
+      await apiStream<ChatEvent>('/front-office/chat/stream', { question, conversation_id: convo }, (event) => {
         if (event.e === 'status') {
           setStatus(event.text);
           setPartial('');
@@ -78,6 +78,18 @@ export default function FrontOfficeScreen() {
       setPartial('');
     }
   };
+
+  // A question typed on Home (q) starts a fresh chat and sends right away;
+  // `at` makes asking the same question twice still count.
+  const asked = useRef<string | null>(null);
+  useEffect(() => {
+    if (!q || asked.current === `${at}:${q}`) return;
+    asked.current = `${at}:${q}`;
+    setMessages([]);
+    setConversationId(null);
+    send(q, null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q, at]);
 
   if (loading && !data) return <Loading />;
   if (error && !data) return <ErrorState message={error} onRetry={reload} />;

@@ -275,3 +275,34 @@ export type ChatEvent =
   | ({ e: 'done' } & ChatReply);
 export type Conversations = { conversations: { id: string; title: string; updated_at: string | null }[] };
 export type Conversation = { id: string; title: string; messages: ChatMessage[] };
+
+export type HomeSide = { roster_id: number; name: string; score: number; rank?: number; top5?: boolean };
+export type HomeGame = { matchup_id?: number; me?: HomeSide; them?: HomeSide | null };
+export type BracketSide = { roster_id: number; name: string; score: number | null } | null;
+export type RookieDeal = {
+  decision_id: string | null; player_id: string; name: string; pos: string; salary: number; ppg: number | null;
+  choice: 'keep' | 'walk' | 'review' | null; open: boolean; status: string;
+};
+export type HomeData = {
+  phase: 'game_day' | 'recap' | 'playoffs' | 'decisions' | 'draft_prep';
+  season: number;
+  week: number;
+  today: string;
+  owner_name: string;
+  salary_cap: number;
+  me: { rank: number | null; wins: number; losses: number; ties: number; standing_points: number; cap_space: number; cap_by_year: CapYear[]; team_id: string };
+  teams_count: number;
+  playoff_teams: number;
+  front_office: { line: string; prompts: string[] };
+  game?: HomeGame & { week: number; is_final: boolean };
+  recap?: { week: number; game: HomeGame | null; summary: { high: HomeSide; cut: HomeSide } | null };
+  picture?: { rank: number; name: string; standing_points: number; is_me: boolean; in: boolean; team_id: string | null }[];
+  weeks_left?: number;
+  bracket?: { round: number; week: number; label: string; games: { a: BracketSide; b: BracketSide; winner: number | null }[] }[];
+  decisions?: { window_open: boolean; deadline: string; players: RookieDeal[] };
+  picks?: { year: number | null; picks: Pick[] };
+  who_has_money?: { name: string; space: number; is_me: boolean; team_id: string | null }[];
+  roster_count?: number;
+  roster_max?: number;
+  coming_off?: { total: number; players: { name: string; salary: number }[] };
+};
