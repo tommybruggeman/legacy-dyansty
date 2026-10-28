@@ -8,11 +8,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Markdown } from '../../components/frontoffice/Markdown';
 import { ErrorState, Loading } from '../../components/ScreenState';
 import { Pill } from '../../components/ui';
-import { type ChatEvent, type ChatMessage, type Conversation, type FoTile, type FrontOffice, apiGet, apiStream, useApi } from '../../lib/api';
+import { type ChatEvent, type ChatMessage, type Conversation, type FoHeader, type FoMove, type FrontOffice, apiGet, apiStream, useApi } from '../../lib/api';
 import { colors } from '../../lib/theme';
 
-// The Assistant GM: this week's tiles and brief, starter questions, then the
-// chat. Trades are made in Sleeper, so trade answers link straight there.
+// The Assistant GM: three tiles, this week's lineup moves and the report card,
+// starter questions, then the chat. Trades are made in Sleeper, so trade answers link straight there.
 export default function FrontOfficeScreen() {
   const { c, q, at } = useLocalSearchParams<{ c?: string; q?: string; at?: string }>();
   const { data, error, loading, reload } = useApi<FrontOffice>('/front-office');
@@ -110,7 +110,7 @@ export default function FrontOfficeScreen() {
       >
         <View style={styles.header}>
           <Text style={styles.title}>Front Office</Text>
-          <Pill label="ASSISTANT GM" tone="gold" />
+          <Pill label="GM" tone="gold" />
           <Pressable onPress={() => router.push('/chats')} hitSlop={10} style={styles.menu}>
             <Text style={styles.menuText}>☰</Text>
           </Pressable>
@@ -118,14 +118,17 @@ export default function FrontOfficeScreen() {
 
         {!focused ? (
           <>
-            <Text style={styles.greeting}>{data.greeting} What are we working on?</Text>
-            <Tiles tiles={data.tiles} />
-            <Brief data={data} />
-            <Pressable onPress={() => router.push('/report-card')} style={styles.cardRow}>
-              <Text style={styles.cardRowText}>GM report card</Text>
-              <Text style={styles.cardRowSub}>
-                {Object.entries(data.report_card.record).map(([k, v]) => `${k.replace('_', '/')} ${v}`).join(' · ') || 'No graded calls yet'} ›
-              </Text>
+            <Tiles header={data.header} />
+            <Moves week={data.week} moves={data.moves ?? []} onAsk={send} />
+            <Pressable onPress={() => router.push('/report-card')} style={styles.card}>
+              <ReportRing record={Object.values(data.report_card.record)[0]} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.cardRowText}>GM report card</Text>
+                <Text style={styles.cardRowSub}>
+                  {Object.entries(data.report_card.record).map(([k, v]) => `${v} on ${k.replace('_', '/')}`).join(' · ') || 'No graded calls yet'}
+                </Text>
+              </View>
+              <Text style={styles.chev}>›</Text>
             </Pressable>
           </>
         ) : messages.length === 0 ? (
@@ -196,44 +199,76 @@ export default function FrontOfficeScreen() {
   );
 }
 
-// Weakest spot, opponent and power: the three tiles from the design.
-const PICK = ['Weakest spot', 'Opponent', 'Power'];
-
-function Tiles({ tiles }: { tiles: FoTile[] }) {
-  const shown = PICK.map((name) => tiles.find((t) => t.label.startsWith(name))).filter(Boolean) as FoTile[];
-  if (!shown.length) return null;
+// Change on top, the number in the middle, what it is underneath.
+function Tile({ top, topTone, value, valueTone, label }: { top: string; topTone?: 'up' | 'down'; value: string; valueTone?: 'warn'; label: string }) {
   return (
-    <View style={styles.tiles}>
-      {shown.map((t) => {
-        const [name, ...rest] = t.label.split(' · ');
-        return (
-          <View key={name} style={[styles.tile, t.tone === 'warn' && styles.tileWarn]}>
-            <Text style={styles.tileLabel}>{name.replace(' spot', '').toUpperCase()}</Text>
-            <Text style={[styles.tileValue, t.tone === 'warn' && { color: '#F3A79F' }]} numberOfLines={1}>{t.value.startsWith('vs ') ? t.value.slice(3).split(' ')[0] : t.value}</Text>
-            {rest.length ? <Text style={styles.tileSub} numberOfLines={1}>{rest.join(' · ').replace('Head to head ', 'H2H ')}</Text> : null}
-          </View>
-        );
-      })}
+    <View style={styles.tile}>
+      <Text style={[styles.tileTop, topTone === 'up' && styles.up, topTone === 'down' && styles.down]} numberOfLines={1}>{top}</Text>
+      <Text style={[styles.tileValue, valueTone === 'warn' && styles.down]} numberOfLines={1}>{value}</Text>
+      <Text style={styles.tileLabel} numberOfLines={1}>{label}</Text>
     </View>
   );
 }
 
-function Brief({ data }: { data: FrontOffice }) {
-  const { injuries, matchup } = data.brief;
-  const call = injuries.call || matchup.stakes;
-  const items = injuries.items.slice(0, 3);
-  if (!call && !items.length && !matchup.lines.length) return null;
+const arrow = (n: number | null | undefined, unit = '') =>
+  n ? { top: `${n > 0 ? '▲' : '▼'} ${Math.abs(n)}${unit}`, tone: (n > 0 ? 'up' : 'down') as 'up' | 'down' } : { top: '–', tone: undefined };
+
+function Tiles({ header }: { header?: FoHeader }) {
+  const w = header?.weakest, o = header?.odds, p = header?.power;
+  const odds = arrow(o?.change, '%'), power = arrow(p?.move);
   return (
-    <View style={styles.brief}>
-      <View style={styles.briefTop}>
-        <Text style={styles.eyebrow}>THIS WEEK'S BRIEF</Text>
-        <Text style={styles.small}>Week {data.week}</Text>
+    <View style={styles.tiles}>
+      <Tile top={w?.note || '–'} topTone={w?.note?.startsWith('-') ? 'down' : undefined} value={w?.slot ?? '—'} valueTone={w ? 'warn' : undefined} label="WEAKEST" />
+      <Tile top={odds.top} topTone={odds.tone} value={o ? `${o.pct}%` : '—'} label="PLAYOFF ODDS" />
+      <Tile top={power.top} topTone={power.tone} value={p ? `#${p.rank}` : '—'} label="POWER RANK" />
+    </View>
+  );
+}
+
+const initials = (name: string) => name.split(' ').filter(Boolean).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
+
+// The changes to make in Sleeper this week. Tapping one asks the GM why.
+function Moves({ week, moves, onAsk }: { week: number; moves: FoMove[]; onAsk: (q: string) => void }) {
+  return (
+    <>
+      <View style={styles.movesHead}>
+        <Text style={styles.eyebrow}>WEEK {week} MOVES</Text>
+        {moves.length ? <Text style={styles.small}>{moves.length}</Text> : null}
       </View>
-      {call ? <Text style={styles.briefText}><Text style={styles.gold}>Call: </Text>{call}</Text> : null}
-      {items.length ? (
-        <Text style={styles.briefText}>{items.map((i) => `${i.player} (${i.status})`).join(', ')}</Text>
-      ) : null}
-      {!call && matchup.lines[0] ? <Text style={styles.briefText}>{matchup.headline}: {matchup.lines[0]}</Text> : null}
+      <View style={styles.card2}>
+        {moves.length ? moves.map((m, i) => {
+          const start = m.action === 'start';
+          return (
+            <Pressable key={`${m.action}-${m.player}`} onPress={() => onAsk(`Why ${start ? 'start' : 'sit'} ${m.player} this week?`)}
+              style={[styles.move, i < moves.length - 1 && styles.moveLine]}>
+              <View style={[styles.avatar, !start && styles.avatarSit]}>
+                <Text style={[styles.avatarText, !start && styles.avatarSitText]}>{initials(m.player)}</Text>
+              </View>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={styles.moveName} numberOfLines={1}>{m.player}</Text>
+                {m.note ? <Text style={styles.moveNote} numberOfLines={1}>{m.note}</Text> : null}
+              </View>
+              <Text style={[styles.tag, start ? styles.tagStart : styles.tagSit]}>{start ? (m.slot === 'FLEX' ? 'FLEX' : `START ${m.slot}`.trim()) : 'SIT'}</Text>
+            </Pressable>
+          );
+        }) : (
+          <View style={styles.move}>
+            <View style={styles.avatar}><Text style={styles.avatarText}>✓</Text></View>
+            <Text style={styles.moveName}>Lineup looks set</Text>
+          </View>
+        )}
+      </View>
+    </>
+  );
+}
+
+// '3-2' as a ring: the share of graded calls the GM got right.
+function ReportRing({ record }: { record?: string }) {
+  const [w, l] = (record ?? '').split('-').map(Number);
+  const pct = w + l > 0 ? Math.round((100 * w) / (w + l)) : null;
+  return (
+    <View style={[styles.ring, pct !== null && pct >= 50 && styles.ringGood]}>
+      <Text style={styles.ringText}>{pct === null ? '–' : `${pct}%`}</Text>
     </View>
   );
 }
@@ -245,23 +280,36 @@ const styles = StyleSheet.create({
   title: { color: colors.text, fontSize: 26, fontWeight: '800' },
   menu: { marginLeft: 'auto', width: 34, height: 34, borderRadius: 17, backgroundColor: colors.card, alignItems: 'center', justifyContent: 'center' },
   menuText: { color: colors.gold, fontSize: 16 },
-  greeting: { color: colors.muted, fontSize: 14, marginBottom: 12 },
   hint: { color: colors.muted, fontSize: 14, textAlign: 'center', marginTop: 40, paddingHorizontal: 24 },
-  tiles: { flexDirection: 'row', gap: 8, marginBottom: 12 },
-  tile: { flex: 1, backgroundColor: colors.row, borderWidth: 1, borderColor: colors.line, borderRadius: 14, paddingVertical: 10, paddingHorizontal: 6, alignItems: 'center' },
-  tileWarn: { borderColor: '#5A2E2A' },
-  tileLabel: { color: colors.muted, fontSize: 10, fontWeight: '700', letterSpacing: 1 },
-  tileValue: { color: colors.gold, fontSize: 19, fontWeight: '800', marginTop: 3 },
-  tileSub: { color: colors.muted, fontSize: 11, marginTop: 2 },
-  brief: { backgroundColor: colors.row, borderWidth: 1, borderColor: colors.line, borderRadius: 16, padding: 14, marginBottom: 12, gap: 4 },
-  briefTop: { flexDirection: 'row', justifyContent: 'space-between' },
-  eyebrow: { color: colors.gold, fontSize: 11, fontWeight: '800', letterSpacing: 1.2 },
+  tiles: { flexDirection: 'row', gap: 8, marginBottom: 16, marginTop: 6 },
+  tile: { flex: 1, backgroundColor: colors.card, borderRadius: 14, paddingVertical: 12, paddingHorizontal: 6, alignItems: 'center', gap: 3 },
+  tileTop: { color: colors.muted, fontSize: 12, fontWeight: '700' },
+  tileValue: { color: colors.gold, fontSize: 24, fontWeight: '800' },
+  tileLabel: { color: colors.muted, fontSize: 10, fontWeight: '700', letterSpacing: 1.2 },
+  up: { color: colors.live },
+  down: { color: '#E08A8A' },
+  movesHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 },
+  eyebrow: { color: colors.gold, fontSize: 12, fontWeight: '800', letterSpacing: 1.5 },
   small: { color: colors.muted, fontSize: 12 },
-  briefText: { color: colors.text, fontSize: 14, lineHeight: 20 },
-  gold: { color: colors.gold },
-  cardRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderWidth: 1, borderColor: colors.line, borderRadius: 14, padding: 12, marginBottom: 12 },
-  cardRowText: { color: colors.text, fontWeight: '700', fontSize: 14 },
-  cardRowSub: { color: colors.muted, fontSize: 12 },
+  card2: { backgroundColor: colors.card, borderRadius: 16, overflow: 'hidden', marginBottom: 12 },
+  move: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, paddingHorizontal: 14 },
+  moveLine: { borderBottomWidth: 1, borderBottomColor: '#1E3A2D' },
+  avatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: colors.green, alignItems: 'center', justifyContent: 'center' },
+  avatarSit: { backgroundColor: colors.line },
+  avatarText: { color: colors.bg, fontWeight: '800', fontSize: 13 },
+  avatarSitText: { color: colors.muted },
+  moveName: { color: colors.text, fontSize: 15, fontWeight: '700' },
+  moveNote: { color: colors.muted, fontSize: 12, marginTop: 1 },
+  tag: { fontSize: 11, fontWeight: '800', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 5, overflow: 'hidden' },
+  tagStart: { color: colors.live, backgroundColor: '#10352A' },
+  tagSit: { color: '#E08A8A', backgroundColor: '#3A1E1E' },
+  card: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: colors.card, borderRadius: 16, padding: 12, marginBottom: 12 },
+  ring: { width: 42, height: 42, borderRadius: 21, borderWidth: 4, borderColor: colors.line, alignItems: 'center', justifyContent: 'center' },
+  ringGood: { borderColor: colors.gold },
+  ringText: { color: colors.text, fontSize: 11, fontWeight: '800' },
+  cardRowText: { color: colors.text, fontWeight: '700', fontSize: 15 },
+  cardRowSub: { color: colors.muted, fontSize: 12, marginTop: 1 },
+  chev: { color: colors.gold, fontSize: 20 },
   mine: { alignSelf: 'flex-end', maxWidth: '85%', backgroundColor: colors.gold, borderRadius: 16, padding: 12, marginBottom: 10 },
   mineText: { color: colors.bg, fontSize: 15, lineHeight: 21 },
   theirs: { backgroundColor: colors.row, borderRadius: 16, padding: 12, marginBottom: 10 },

@@ -73,7 +73,7 @@ export async function apiStream<E>(path: string, body: unknown, onEvent: (event:
 // phone), then refresh quietly in the background. Cleared on sign out.
 // Bump CACHE_VERSION when a response changes shape, so an app update never
 // draws an old saved copy with the new screen.
-const CACHE_VERSION = 'v2';
+const CACHE_VERSION = 'v3';
 const CACHE_PREFIX = 'api:';
 const memory = new Map<string, unknown>();
 
@@ -391,12 +391,20 @@ export type ReportCard = {
   recent: { when: string; call: string; right: boolean; points: string; why: string | null }[];
   lessons: { lesson: string; seen: number }[];
 };
+export type FoMove = { action: 'start' | 'sit'; player: string; slot: string; note: string };
+export type FoHeader = {
+  weakest: { slot: string; note: string } | null;
+  odds: { pct: number; change: number | null; weeks_left: number; spots: number } | null;
+  power: { rank: number; move: number | null } | null;
+};
 export type FrontOffice = {
   greeting: string;
   ai_ready: boolean;
   week: number;
   season: number;
   tiles: FoTile[];
+  header?: FoHeader;
+  moves?: FoMove[];
   brief: {
     injuries: { items: { player: string; status: string }[]; call?: string };
     matchup: { headline: string; lines: string[]; stakes?: string };
