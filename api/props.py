@@ -72,7 +72,12 @@ def game_lines(event: str) -> dict[str, dict[str, float]]:
     def load() -> dict[str, dict[str, float]]:
         items: list[dict[str, Any]] = []
         for page in range(1, 6):
-            data = fetch(PROP_BETS.format(event=event, provider=DRAFTKINGS), {"limit": 1000, "page": page})
+            try:
+                data = fetch(PROP_BETS.format(event=event, provider=DRAFTKINGS), {"limit": 1000, "page": page})
+            except requests.HTTPError as exc:
+                if exc.response is not None and exc.response.status_code == 404:
+                    break  # lines for this game aren't posted yet
+                raise
             items.extend(data.get("items") or [])
             if page >= int(data.get("pageCount") or 1):
                 break

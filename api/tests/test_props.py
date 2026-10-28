@@ -44,3 +44,17 @@ def test_yards_line_end_to_end(monkeypatch):
     assert props.yards_line("5850", "TE", "PIT", 2026, 9) == {"label": "VEGAS REC YDS", "line": 31.5}
     assert len(calls) == 2  # cached the second time
     assert props.yards_line("999", "TE", "PIT", 2026, 9) is None
+
+
+def test_game_without_lines_yet_is_empty(monkeypatch):
+    import requests
+
+    cache._cache.clear()
+    resp = requests.Response()
+    resp.status_code = 404
+
+    def fake(url, params=None):
+        raise requests.HTTPError(response=resp)
+
+    monkeypatch.setattr(props, "fetch", fake)
+    assert props.game_lines("1") == {}
