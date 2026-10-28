@@ -191,6 +191,67 @@ def wr_variants(client: Any, week_lines: Callable[[int, int], Mapping[str, Mappi
     return {"wr_model_50": make(0.5, True), "wr_model_100": make(1.0, True), "wr_model_100_no_injuries": make(1.0, False)}
 
 
+def _signal_rows(client: Any, season: int) -> list[dict[str, Any]]:
+    from league_ai.position_signals import COLUMNS
+
+    rows: list[dict[str, Any]] = []
+    for start in range(0, 30000, 1000):
+        chunk = (client.table("nfl_player_stats").select(COLUMNS).eq("season", season).eq("season_type", "REG")
+                 .order("gsis_id").order("week").range(start, start + 999).execute().data or [])
+        rows += chunk
+        if len(chunk) < 1000:
+            break
+    return rows
+
+
+def signal_variants(client: Any, week_lines: Callable[[int, int], Mapping[str, Mapping[str, Any]]],
+                    games_for: Callable[[int, int], Mapping[str, Any]]) -> dict[str, Callable[[int, int, str, float], float | None]]:
+    """league_ai.position_signals as grader variants on top of the engine's number. Each touches only its positions
+    (the rest keep the engine's number), so the per-position buckets show what it does there."""
+    from league_ai.nfl_data import team_code
+    from league_ai.position_signals import Signals
+
+    season_rows: dict[int, list[dict[str, Any]]] = {}
+    built: dict[tuple[int, int], Signals] = {}
+
+    def sig(season: int, week: int) -> Signals:
+        if season not in season_rows:
+            try:
+                season_rows[season] = [{**r, "opponent": team_code(r.get("opponent")) if r.get("opponent") else None} for r in _signal_rows(client, season)]
+            except Exception:
+                season_rows[season] = []
+        if (season, week) not in built:
+            built[(season, week)] = Signals([r for r in season_rows[season] if int(r.get("week") or 0) < week])
+        return built[(season, week)]
+
+    def make(positions: tuple[str, ...], f: Callable[[Signals, str, str, float], float]) -> Callable[[int, int, str, float], float | None]:
+        def fn(season: int, week: int, pid: str, live: float) -> float | None:
+            line = week_lines(season, week).get(pid) or {}
+            if line.get("pos") not in positions:
+                return live
+            game = games_for(season, week).get(team_code(line.get("team"))) or {}
+            return f(sig(season, week), pid, str(game.get("opponent") or ""), live)
+        return fn
+
+    def floor(c: float) -> Callable[[Signals, str, str, float], float]:
+        return lambda s, pid, opp, live: live - c * (s.spread(pid) or 0.0)
+
+    return {
+        "qb_rush_25": make(("QB",), lambda s, pid, opp, live: live + 0.25 * s.qb_rush(pid)),
+        "qb_rush_50": make(("QB",), lambda s, pid, opp, live: live + 0.5 * s.qb_rush(pid)),
+        "qb_pressure": make(("QB",), lambda s, pid, opp, live: live * s.qb_pressure(opp)),
+        "qb_pass_d": make(("QB",), lambda s, pid, opp, live: live * s.qb_pass_d(opp)),
+        "qb_pressure_pass_d": make(("QB",), lambda s, pid, opp, live: live * s.qb_pressure(opp) * s.qb_pass_d(opp)),
+        "role_50": make(("TE", "WR"), lambda s, pid, opp, live: live * (1 + 0.5 * (s.role_trend(pid) - 1))),
+        "role_100": make(("TE", "WR"), lambda s, pid, opp, live: live * s.role_trend(pid)),
+        "snaps_50": make(("TE", "RB"), lambda s, pid, opp, live: live * (1 + 0.5 * (s.role_trend(pid, "snaps") - 1))),
+        "floor_10": make(SKILL, floor(0.1)),
+        "floor_20": make(SKILL, floor(0.2)),
+        "form_25": make(SKILL, lambda s, pid, opp, live: live * (1 + 0.25 * (s.form(pid) - 1))),
+        "form_50": make(SKILL, lambda s, pid, opp, live: live * (1 + 0.5 * (s.form(pid) - 1))),
+    }
+
+
 def run_league(client: Any, league_id: str, sleeper_league_id: str) -> dict[str, Any]:
     from api.projections import score
     from league_ai.nfl_data import defense_vs_position_from_stats, season_games, season_stat_rows, team_code, total_multiplier, week_matchups
@@ -230,7 +291,8 @@ def run_league(client: Any, league_id: str, sleeper_league_id: str) -> dict[str,
         game = games.get(team_code(line.get("team")))
         return total_multiplier(pos, game, dvp.get((game["opponent"], pos)) if game else None, weights)
 
-    variants = wr_variants(client, week_lines, lambda season, week: dvp_cache.get((season, week), (None, {}))[1] or week_matchups(season_games(client, season), week))
+    games_for = lambda season, week: dvp_cache.get((season, week), (None, {}))[1] or week_matchups(season_games(client, season), week)
+    variants = {**wr_variants(client, week_lines, games_for), **signal_variants(client, week_lines, games_for)}
     out = grade(rows, projections, lambda s, w, pid: tilt(s, w, pid, {}), lambda s, w, pid: tilt(s, w, pid), variants)
     out["lineups"] = len(rows)
     out["seasons"] = sorted({int(r["season"]) for r in rows})
