@@ -211,8 +211,13 @@ def _odds_trial(client: Any, league_id: str) -> dict[str, Any] | None:
 def _trade_ideas(client: Any, league_id: str) -> dict[str, Any] | None:
     from league_ai import idea_log
 
+    from league_ai.acceptance import settled_by_share
+
     rows = idea_log.load(client, league_id)
-    return idea_log.summarize(rows) if rows else None
+    if not rows:
+        return None
+    by_share = settled_by_share(rows)
+    return {**idea_log.summarize(rows), **({"settled_by_closing_share": by_share} if by_share else {})}
 
 
 def _odds_grade(client: Any, league_id: str) -> dict[str, Any] | None:
