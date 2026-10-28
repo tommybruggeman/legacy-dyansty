@@ -166,6 +166,18 @@ def _owners(client: Any, league_id: str, season: int) -> list[Any]:
     return out
 
 
+def league_state(client: Any, league_id: str, season: int) -> dict[str, Any]:
+    """The canonical team state through read_canonical_team_state_for_jobs (service key only), with the app's normalisation."""
+    from services.team_roster_state import load_team_state
+
+    class Jobs:
+        def rpc(self, name: str, params: Mapping[str, Any]) -> Any:
+            req = params["p_request"]
+            return client.rpc("read_canonical_team_state_for_jobs", {"p_league_id": req["league_id"], "p_season": int(req["season"])})
+
+    return load_team_state(Jobs(), league_id, season)
+
+
 def ask(client: Any) -> int:
     import requests
 
@@ -188,9 +200,11 @@ def ask(client: Any) -> int:
     print(f"League {league['name']} season {season} week {state_nfl.get('week')} model {config.model} budget ${BUDGET:.2f}", flush=True)
 
     sessions, per_team = {}, []
+    shared = league_state(client, str(league["id"]), season)
     for o in _owners(client, str(league["id"]), season):
         try:
             s = fo_api.Session(client, o, sid)
+            s.state = lambda: shared
             fo = s.front_office()
             mine = next((r for r in fo.get("rankings") or [] if str(r.get("team_id")) == o.league_team_id), None)
             if not mine:
