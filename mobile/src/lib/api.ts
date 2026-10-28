@@ -73,7 +73,7 @@ export async function apiStream<E>(path: string, body: unknown, onEvent: (event:
 // phone), then refresh quietly in the background. Cleared on sign out.
 // Bump CACHE_VERSION when a response changes shape, so an app update never
 // draws an old saved copy with the new screen.
-const CACHE_VERSION = 'v5';
+const CACHE_VERSION = 'v6';
 const CACHE_PREFIX = 'api:';
 const memory = new Map<string, unknown>();
 
@@ -330,6 +330,7 @@ export type PlayerPage = {
     home?: boolean;
     kickoff?: string | null;
     team_total?: number | null;
+    yards_line?: { label: string; line: number } | null;
     projected?: number | null;
     weather?: string | null;
     vs_pos?: { label: 'tough' | 'soft' | 'neutral' | null; text: string; allowed: number | null } | null;

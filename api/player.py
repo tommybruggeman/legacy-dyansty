@@ -13,7 +13,7 @@ from typing import Any, Iterable
 
 from concurrent.futures import ThreadPoolExecutor
 
-from api import cache, projections, sleeper
+from api import cache, projections, props, sleeper
 from api.home import EASTERN
 from api.teams import _f, _text
 from league_ai import injury_outlook
@@ -482,6 +482,7 @@ def page_extras(
     upcoming = _safe(lambda: next_game(games, season, team, pos, got["dvp"], bye), None)
     if upcoming and not upcoming.get("bye"):
         upcoming["projected"] = _safe(lambda: projections.week_projections(client, sleeper_id, season, upcoming["week"], [player_id], {player_id: pos}, {player_id: team}).get(player_id), None)
+        upcoming["yards_line"] = _safe(lambda: props.yards_line(player_id, pos, team, season, upcoming["week"]), None)
     estimate = None
     if _text(meta.get("injury_status")) or _text((got["espn"] or {}).get("status")):
         injury = _safe(lambda: injury_name(meta, got["espn"], got["practice"] or []), None)

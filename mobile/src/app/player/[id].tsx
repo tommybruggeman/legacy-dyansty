@@ -231,7 +231,9 @@ function NextGame({ game, pos }: { game: NonNullable<PlayerPage['next_game']>; p
       </View>
       <View style={styles.facts}>
         {vs ? <Fact label={`VS ${pos}s`} value={vs.text} style={tone} /> : null}
-        {game.team_total != null ? <Fact label="TEAM TOTAL" value={`${game.team_total} pts`} /> : null}
+        {game.yards_line ? (
+          <Fact label={game.yards_line.label} value={`O/U ${game.yards_line.line}`} />
+        ) : game.team_total != null ? <Fact label="TEAM TOTAL" value={`${game.team_total} pts`} /> : null}
         {game.weather ? <Fact label="WEATHER" value={game.weather} /> : null}
       </View>
     </View>
