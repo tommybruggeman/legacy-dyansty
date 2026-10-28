@@ -1,33 +1,55 @@
 name: League AI checks
 
-# Run by hand: how accurate the playoff odds are on past seasons, and how the 20-answer playoff-odds trial is going.
+# Run by hand: how accurate the playoff odds are on past seasons, how the 20-answer playoff-odds trial is going,
+# and the Assistant GM stress test (stress_test asks the questions under a budget; stress_grade scores them once games are final).
 on:
   workflow_dispatch:
     inputs:
       check:
         description: Which check to run
         type: choice
-        options: [odds_backtest, odds_trial, odds_grade]
+        options: [odds_backtest, odds_trial, odds_grade, stress_test, stress_grade]
         default: odds_backtest
+      budget:
+        description: "stress_test only: stop before spending more than this many dollars"
+        default: "5"
+      questions:
+        description: "stress_test only: how many questions"
+        default: "50"
 
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - run: pip install supabase requests
+      - run: pip install supabase requests pandas anthropic
+      - if: startsWith(inputs.check, 'stress')
+        run: pip install -r api/requirements.txt
       - name: Run
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           REPORT_DETAIL: ${{ vars.REPORT_DETAIL }}
+          ANTHROPIC_API_KEY: ${{ inputs.check == 'stress_test' && secrets.ANTHROPIC_API_KEY || '' }}
+          STRESS_BUDGET: ${{ inputs.budget }}
+          STRESS_QUESTIONS: ${{ inputs.questions }}
         run: |
           case "${{ inputs.check }}" in
             odds_trial) python -m league_ai.odds_trial ;;
             odds_grade) python -m league_ai.matchup_odds ;;
+            stress_test) python -m league_ai.stress_test ask ;;
+            stress_grade) python -m league_ai.stress_test grade stress/stress_results.json ;;
             *) python -m league_ai.playoff_odds ;;
           esac
+      - name: Save the stress test results
+        if: always() && startsWith(inputs.check, 'stress')
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.check }}-results
+          path: stress_*.json
+          if-no-files-found: ignore
+          retention-days: 30
