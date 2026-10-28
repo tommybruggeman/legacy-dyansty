@@ -12,6 +12,7 @@ the games are final (start/sit after this week, pickups and trades over their ho
 from __future__ import annotations
 
 import json
+from collections import defaultdict
 import os
 import sys
 import time
@@ -51,7 +52,7 @@ def candidates(mine: Mapping[str, Any], rankings: list[Mapping[str, Any]]) -> di
     lineup = [dict(p) for p in mine.get("week_lineup") or []]
     bench = [dict(p) for p in mine.get("week_bench_detail") or [] if (p.get("pts") or 0) > 0]
     weak = str(mine.get("weakest_slot") or "RB")
-    out: dict[str, list[dict[str, Any]]] = {k: [] for k in MIX}
+    out: dict[str, list[dict[str, Any]]] = defaultdict(list)  # every kind, even ones STRESS_ONLY leaves out
 
     pairs = []
     for b in bench:
@@ -237,7 +238,7 @@ def ask(client: Any) -> int:
             sessions[o.league_team_id] = (s, fo)
             per_team.append((o, candidates(mine, fo.get("rankings") or [])))
         except Exception as exc:
-            print(f"skip {o.owner_name}: {type(exc).__name__}: {exc}", flush=True)
+            print(f"skip an owner: {type(exc).__name__}", flush=True)  # no names in public logs
     queue = plan(per_team, QUESTIONS)
     print(f"{len(per_team)} owners, {len(queue)} questions planned", flush=True)
 
@@ -287,7 +288,7 @@ def ask(client: Any) -> int:
             break
         results["items"].append(item)
         results["spent"] = round(spent, 4)
-        print(f"{n:>2}. {kind:<12} {o.owner_name:<14} ok={item['ok']} ${cost:.3f} total ${spent:.2f} tools={len(rec.calls)} {item.get('seconds', 0)}s", flush=True)
+        print(f"{n:>2}. {kind:<12} ok={item['ok']} ${cost:.3f} total ${spent:.2f} tools={len(rec.calls)} {item.get('seconds', 0)}s", flush=True)
         with open(RESULTS, "w") as f:
             json.dump(results, f, default=str)
 
@@ -363,12 +364,12 @@ def rosters(client: Any) -> int:
     sleeper = {r["roster_id"]: r for r in requests.get(f"https://api.sleeper.app/v1/league/{league['sleeper_league_id']}/rosters", timeout=15).json()}
     missing: set = set()
     print(f"state season {state.get('season')} roster rows {len(roster)} keys {sorted(state.keys())}")
-    for t in teams:
+    for i, t in enumerate(teams):
         mine = [r for r in roster if str(r.get("league_team_id")) == str(t["id"])]
         ids = {str(r.get("sleeper_id")) for r in mine}
         sr = sleeper.get(t.get("sleeper_roster_id")) or {}
         sl = {str(p) for k in ("players", "taxi", "reserve") for p in (sr.get(k) or [])}
-        print(f"{t['owner_name']:<16} app {len(mine):>2}  sleeper {len(sl):>2}  on Sleeper but not in app {len(sl - ids):>2}  in app not on Sleeper {len(ids - sl):>2}")
+        print(f"team {i + 1:<3} app {len(mine):>2}  sleeper {len(sl):>2}  on Sleeper but not in app {len(sl - ids):>2}  in app not on Sleeper {len(ids - sl):>2}")
         missing |= {(p, t["id"]) for p in sl - ids}
     # why they're missing: any contract rows at all, and in what state
     from collections import Counter
