@@ -6,8 +6,9 @@ have started, using only what was known before kickoff, and check it against who
 
 - owner: what the owner started
 - projection: Sleeper's projection in league scoring
-- projection_matchup (and _half_: half the tilt): the projection tilted by the same matchup context the app uses (defense vs position as of that
+- projection_matchup: the projection tilted by the same matchup context the app uses (defense vs position as of that
   week, Vegas implied points, game weather, rest), capped at +/-20%
+- engine_live: what the app does now (the tilt weighted by position, nfl_data.TILT_WEIGHT)
 - season_avg / recent: points per game so far this season / over the last two games
 
 Prints rates only (the repo and its Actions logs are public).
@@ -21,7 +22,7 @@ from typing import Any, Callable, Iterable, Mapping
 MIN_PROJECTED = 3.0   # a bench player projected under this wasn't a real option (out, inactive, deep backup)
 CLOSE_SHARE = 0.25    # a "close" call: the two projections within 25% of each other
 EARLY_WEEKS = 5
-METHODS = ("owner", "projection", "projection_matchup", "projection_half_matchup", "season_avg", "recent")
+METHODS = ("owner", "projection", "projection_matchup", "engine_live", "season_avg", "recent")
 SKILL = ("QB", "RB", "WR", "TE")
 
 
@@ -39,8 +40,9 @@ def calls(lineup: Mapping[str, Any], proj: Mapping[str, float]) -> list[tuple[Ma
 
 
 def grade(lineups: Iterable[Mapping[str, Any]], projections: Callable[[int, int], Mapping[str, float]],
-          tilt: Callable[[int, int, str], float] | None = None) -> dict[str, Any]:
-    """projections(season, week) -> player id -> projected league points; tilt(season, week, player id) -> matchup multiplier."""
+          tilt: Callable[[int, int, str], float] | None = None, live_tilt: Callable[[int, int, str], float] | None = None) -> dict[str, Any]:
+    """projections(season, week) -> player id -> projected league points; tilt(season, week, player id) -> full matchup multiplier;
+    live_tilt -> the multiplier the app uses now (per-position weights), defaulting to tilt."""
     lineups = sorted(lineups, key=lambda r: (int(r.get("season") or 0), int(r.get("week") or 0)))
     by_week: dict[tuple[int, int], list[Mapping[str, Any]]] = defaultdict(list)
     for r in lineups:
@@ -59,11 +61,12 @@ def grade(lineups: Iterable[Mapping[str, Any]], projections: Callable[[int, int]
                     continue
                 hs, hb = history[(season, sid)], history[(season, bid)]
                 k = (lambda pid: tilt(season, week, pid)) if tilt else (lambda pid: 1.0)
+                kl = (lambda pid: live_tilt(season, week, pid)) if live_tilt else k
                 score = {
                     "owner": (1.0, 0.0),
                     "projection": (proj[sid], proj[bid]),
                     "projection_matchup": (proj[sid] * k(sid), proj[bid] * k(bid)),
-                    "projection_half_matchup": (proj[sid] * k(sid) ** 0.5, proj[bid] * k(bid) ** 0.5),
+                    "engine_live": (proj[sid] * kl(sid), proj[bid] * kl(bid)),
                     "season_avg": (sum(hs) / len(hs) if hs else None, sum(hb) / len(hb) if hb else None),
                     "recent": (sum(hs[-2:]) / len(hs[-2:]) if hs else None, sum(hb[-2:]) / len(hb[-2:]) if hb else None),
                 }
@@ -80,7 +83,7 @@ def grade(lineups: Iterable[Mapping[str, Any]], projections: Callable[[int, int]
                         t[0] += right
                         t[1] += 1
                         t[2] += gained
-                eng = score["projection_matchup"]
+                eng = score["engine_live"]
                 if eng[0] != eng[1] and eng[0] < eng[1]:   # the engine would have benched the owner's starter
                     disagree["calls"] += 1
                     disagree["engine_right"] += pb > ps
@@ -146,7 +149,7 @@ def run_league(client: Any, league_id: str, sleeper_league_id: str) -> dict[str,
 
     dvp_cache: dict[tuple[int, int], Any] = {}
 
-    def tilt(season: int, week: int, pid: str) -> float:
+    def tilt(season: int, week: int, pid: str, weights: Any = None) -> float:
         line = week_lines(season, week).get(pid) or {}
         pos = line.get("pos") or ""
         if pos not in SKILL:
@@ -156,9 +159,9 @@ def run_league(client: Any, league_id: str, sleeper_league_id: str) -> dict[str,
             dvp_cache[(season, week)] = (defense_vs_position_from_stats(stats), week_matchups(season_games(client, season), week))
         dvp, games = dvp_cache[(season, week)]
         game = games.get(team_code(line.get("team")))
-        return total_multiplier(pos, game, dvp.get((game["opponent"], pos)) if game else None)
+        return total_multiplier(pos, game, dvp.get((game["opponent"], pos)) if game else None, weights)
 
-    out = grade(rows, projections, tilt)
+    out = grade(rows, projections, lambda s, w, pid: tilt(s, w, pid, {}), lambda s, w, pid: tilt(s, w, pid))
     out["lineups"] = len(rows)
     out["seasons"] = sorted({int(r["season"]) for r in rows})
     return out
