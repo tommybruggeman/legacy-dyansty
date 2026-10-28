@@ -204,5 +204,6 @@ export type FreeAgent = {
 export type FreeAgents = { season: number; last_season: number; season_started: boolean; players: FreeAgent[] };
 export type Expiring = {
   season: number;
+  years: number[];
   players: { player_id: string; name: string; pos: string; owner_name: string; team_id: string; salary: number; is_mine: boolean }[];
 };

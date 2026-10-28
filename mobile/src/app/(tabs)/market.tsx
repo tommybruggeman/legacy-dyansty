@@ -87,7 +87,8 @@ function FreeAgentList() {
 }
 
 function ExpiringList() {
-  const { data, error, loading, reload } = useApi<Expiring>('/market/expiring');
+  const [year, setYear] = useState<string | null>(null);
+  const { data, error, loading, reload } = useApi<Expiring>(year ? `/market/expiring?year=${year}` : '/market/expiring');
   const [pos, setPos] = useState<string>('All');
   const options = ['All', 'QB', 'RB', 'WR', 'TE', 'Mine'] as const;
 
@@ -97,10 +98,13 @@ function ExpiringList() {
 
   const rows = data.players.filter((p) => pos === 'All' || (pos === 'Mine' ? p.is_mine : p.pos === pos));
 
+  const years = data.years.map(String);
+
   return (
     <>
+      <Segmented options={years} value={String(data.season)} onChange={setYear} />
       <Chips options={options} value={pos as (typeof options)[number]} onChange={setPos} />
-      <Card title={`Contracts ending after ${data.season}`} right="owner · salary">
+      <Card title={`Free agents after ${data.season}`} right="owner · salary">
         {rows.length === 0 ? <Note>Nothing expiring here.</Note> : null}
         {rows.map((p, i) => (
           <Row key={p.player_id} first={i === 0} onPress={() => router.push(`/player/${p.player_id}`)}>
@@ -116,7 +120,7 @@ function ExpiringList() {
           </Row>
         ))}
       </Card>
-      <Note>These hit free agency at rollover unless their owner extends them.</Note>
+      <Note>These hit free agency at the {data.season} rollover unless their owner extends them.</Note>
     </>
   );
 }

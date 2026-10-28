@@ -332,8 +332,15 @@ def free_agents(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, 
     return market.free_agents(pool, state, ppg)
 
 
+EXPIRING_YEARS = 3
+
+
 @app.get("/market/expiring")
-def expiring(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+def expiring(year: int | None = None, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """Contracts ending after `year` (this season by default, up to two seasons ahead)."""
     client, user = owner
     ctx = _season_context(client, user)
-    return {"season": ctx["season"], "players": market.expiring(_season_state(client, ctx), ctx["team_id"])}
+    years = [ctx["season"] + i for i in range(EXPIRING_YEARS)]
+    year = year if year in years else years[0]
+    players = market.expiring(_season_state(client, ctx), ctx["team_id"], year - ctx["season"])
+    return {"season": year, "years": years, "players": players}

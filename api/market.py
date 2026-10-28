@@ -99,11 +99,15 @@ def free_agents(
     }
 
 
-def expiring(state: dict[str, Any], my_team_id: str | None) -> list[dict[str, Any]]:
-    """Contracts in their last year, biggest first. These hit free agency at rollover."""
+def expiring(state: dict[str, Any], my_team_id: str | None, years_out: int = 0) -> list[dict[str, Any]]:
+    """Contracts ending after this season (years_out=0) or a later one, biggest first.
+
+    These players hit free agency at that season's rollover unless extended.
+    """
     rows = []
     for r in state.get("roster", []):
-        if int(r.get("contract_years_left") or 0) > 1:
+        left = int(r.get("contract_years_left") or 0)
+        if left != years_out + 1 and not (years_out == 0 and left < 1):
             continue
         team_id = _text(r.get("league_team_id"))
         rows.append({

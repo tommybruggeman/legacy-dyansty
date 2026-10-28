@@ -29,6 +29,11 @@ def test_expiring_lists_last_year_contracts_biggest_first():
     assert [(r["name"], r["salary"], r["is_mine"]) for r in rows] == [("Derrick Henry", 31.0, False), ("Davante Adams", 14.0, True)]
 
 
+def test_expiring_in_a_later_season():
+    assert [r["name"] for r in market.expiring(STATE, "t2", years_out=2)] == ["Josh Allen"]
+    assert market.expiring(STATE, "t2", years_out=1) == []
+
+
 def test_cache_keeps_one_copy():
     market.clear()
     calls = []
