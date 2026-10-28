@@ -73,7 +73,7 @@ export async function apiStream<E>(path: string, body: unknown, onEvent: (event:
 // phone), then refresh quietly in the background. Cleared on sign out.
 // Bump CACHE_VERSION when a response changes shape, so an app update never
 // draws an old saved copy with the new screen.
-const CACHE_VERSION = 'v3';
+const CACHE_VERSION = 'v4';
 const CACHE_PREFIX = 'api:';
 const memory = new Map<string, unknown>();
 
@@ -376,12 +376,28 @@ export type FreeAgent = {
   ppg: number | null;
   last_ppg: number | null;
   rank_ppg: number | null;
+  points: number | null;
 };
 export type FreeAgents = { season: number; last_season: number; season_started: boolean; players: FreeAgent[] };
+export type ExpiringPlayer = {
+  player_id: string; name: string; pos: string; nfl_team: string; owner_name: string; team_id: string; salary: number;
+  is_mine: boolean; rank_ppg: number | null; points: number | null;
+};
+export type Target = {
+  player_id: string; name: string; pos: string; nfl_team: string; owner_name: string | null; team_id: string | null;
+  salary: number | null; years_left: number | null; is_mine: boolean; rank_ppg: number | null; points: number | null;
+};
 export type Expiring = {
   season: number;
   years: number[];
-  players: { player_id: string; name: string; pos: string; owner_name: string; team_id: string; salary: number; is_mine: boolean }[];
+  players: ExpiringPlayer[];
+  sleeper_league_id: string;
+  offseason: boolean;
+  // Only between the final game and the June 30 rollover.
+  calls: { window_open: boolean; deadline: string; players: (RookieDeal & { nfl_team: string })[] } | null;
+  targets: Target[];
+  targets_ready: boolean;
+  plan_question: string;
 };
 
 export type FoTile = { value: string; label: string; tone: 'good' | 'warn' | null };

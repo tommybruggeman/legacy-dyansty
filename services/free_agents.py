@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping, Sequence
 
 from services.rookie_prospects import (
@@ -83,6 +83,8 @@ class PpgRankingState:
     current_ppg: Mapping[str, float]
     last_ppg: Mapping[str, float]
     ranking_ppg: Mapping[str, float]
+    # Games played in the ranking season, so callers can show season totals.
+    ranking_games: Mapping[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -319,12 +321,16 @@ def load_ranking_ppg(
 
     last_season = season - 1
 
+    weekly_games: dict[int, dict[str, int]] = {}
+    table_games: dict[int, dict[str, int]] = {}
+
     weekly_ppg = _weekly_ppg_by_season(
         sb,
         (
             last_season,
             season,
         ),
+        games_out=weekly_games,
     )
 
     season_table_ppg = _season_table_ppg_by_season(
@@ -333,6 +339,7 @@ def load_ranking_ppg(
             last_season,
             season,
         ),
+        games_out=table_games,
     )
 
     current_ppg: dict[
@@ -361,6 +368,17 @@ def load_ranking_ppg(
         else last_ppg
     )
 
+    ranking_season = (
+        season
+        if active_season_started
+        else last_season
+    )
+
+    ranking_games = {
+        **table_games.get(ranking_season, {}),
+        **weekly_games.get(ranking_season, {}),
+    }
+
     return PpgRankingState(
         active_season=season,
         last_season=last_season,
@@ -368,6 +386,7 @@ def load_ranking_ppg(
         current_ppg=current_ppg,
         last_ppg=last_ppg,
         ranking_ppg=ranking_ppg,
+        ranking_games=ranking_games,
     )
 
 
@@ -376,6 +395,7 @@ def _weekly_ppg_by_season(
     seasons: Sequence[int],
     *,
     page_size: int = 1000,
+    games_out: dict[int, dict[str, int]] | None = None,
 ) -> dict[int, dict[str, float]]:
     """
     Regular-season PPR points per game played, from
@@ -498,12 +518,16 @@ def _weekly_ppg_by_season(
             3,
         )
 
+        if games_out is not None:
+            games_out.setdefault(season, {})[player_id] = games
+
     return ppg
 
 
 def _season_table_ppg_by_season(
     sb: Any,
     seasons: Sequence[int],
+    games_out: dict[int, dict[str, int]] | None = None,
 ) -> dict[int, dict[str, float]]:
 
     try:
@@ -572,6 +596,9 @@ def _season_table_ppg_by_season(
             row_season,
             {},
         )[player_id] = value
+
+        if games_out is not None:
+            games_out.setdefault(row_season, {})[player_id] = games
 
     return ppg
 

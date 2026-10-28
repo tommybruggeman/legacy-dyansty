@@ -489,6 +489,7 @@ class FreeAgentServiceTest(unittest.TestCase):
         self.assertEqual(ppg.current_ppg, {"p-1": 15.0, "p-2": 30.0})
         self.assertEqual(ppg.last_ppg, {"p-1": 12.0, "p-2": 8.0})
         self.assertEqual(ppg.ranking_ppg, ppg.current_ppg)
+        self.assertEqual(ppg.ranking_games, {"p-1": 2, "p-2": 1})
         result = build_free_agent_results(
             [player("p-1", "Two Games"), player("p-2", "One Big Game")],
             state(), active_season=2026,
