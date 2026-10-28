@@ -71,3 +71,15 @@ class PickBookTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_class_strength_moves_a_deep_class_half_way():
+    from league_ai.pick_values import PickBook, class_strength
+
+    strength = class_strength({2027: [100.0] * 30, 2028: [50.0] * 30})
+    assert round(strength[2027], 3) == 1.333 and round(strength[2028], 3) == 0.667
+    flat = PickBook(None, teams=10, rounds=3, season=2026)
+    deep = PickBook(None, teams=10, rounds=3, season=2026, class_strength=strength)
+    assert abs(deep.slot_value(2027, 1, 1) / flat.slot_value(2027, 1, 1) - (1 + 0.5 * (strength[2027] - 1))) < 1e-9
+    assert deep.slot_value(2028, 1, 1) < flat.slot_value(2028, 1, 1)
+    assert deep.slot_value(2029, 1, 1) == flat.slot_value(2029, 1, 1)

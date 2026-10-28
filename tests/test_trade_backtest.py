@@ -51,3 +51,20 @@ class LeaningTests(unittest.TestCase):
         self.assertEqual(base["C"], "middle")
         self.assertEqual(team_windows([], teams, ranks, ranks, leanings={"C": "contending"})["C"], "middle")  # history alone isn't enough
         self.assertEqual(team_windows([], teams, ranks, ranks, records={"B": (4, 2)}, leanings={"B": "contending"})["B"], "contending")
+
+
+def test_compare_variants_uses_pick_book_and_injury_tilt():
+    from league_ai.trade_backtest import compare_variants
+
+    trade = {"sides": {
+        "A": {"gets": [{"pick": 1.0, "market": 1000.0, "book": 3000.0}], "gives": [{"market": 3000.0, "now": 3000.0, "inj": 1.0}]},
+        "B": {"gets": [{"market": 3000.0, "now": 3000.0, "inj": 1.0}], "gives": [{"pick": 1.0, "market": 1000.0, "book": 3000.0}]},
+    }}
+    hurt = {"sides": {
+        "A": {"gets": [{"market": 4000.0, "now": 1000.0, "inj": 0.5}], "gives": [{"market": 2500.0, "now": 2500.0, "inj": 1.0}]},
+        "B": {"gets": [{"market": 2500.0, "now": 2500.0, "inj": 1.0}], "gives": [{"market": 4000.0, "now": 1000.0, "inj": 0.5}]},
+    }}
+    out = compare_variants([trade, hurt])
+    assert out["picks"]["imbalance"] < out["current"]["imbalance"]
+    assert out["trades_with_picks"] == 1 and out["trades_with_injured"] == 1
+    assert out["both"]["graded"] == 2

@@ -15,6 +15,7 @@ production from that season's games before the trade week.
 from __future__ import annotations
 
 import math
+import re
 from bisect import bisect_right
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -27,15 +28,24 @@ DEFAULT_WEIGHT = 0.5
 PICK_NOW_SHARE = {0.0: 1.0}  # picks don't score this season: they count (1 - 0.6 * w) of market
 
 
-def asset_value(a: Mapping[str, float], w: float) -> float:
+def asset_value(a: Mapping[str, Any], w: float, variant: str = "current") -> float:
+    """variant: "current" = the engine as it was; "picks" = picks priced by PickBook (market blended with what slots
+    really became); "injury" = dynasty value tilted for a recent injury; "both"."""
     if a.get("pick"):
-        return float(a.get("market") or 0) * (1 - 0.6 * w)
-    return w * float(a.get("now") or 0) + (1 - w) * float(a.get("market") or 0)
+        market = float((a.get("book") if variant in ("picks", "both", "picks+contract") and a.get("book") else a.get("market")) or 0)
+        return market * (1 - 0.6 * w)
+    market = float(a.get("market") or 0) * (float(a.get("inj") or 1.0) if variant in ("injury", "both") else 1.0)
+    base = w * float(a.get("now") or 0) + (1 - w) * market
+    cap, fair = float(a.get("cap") or 0), float(a.get("fair") or 0)
+    if "contract" in variant and cap > 0 and fair > 0:
+        gap = max(-1.0, min(1.0, (fair - cap) / max(fair, cap)))
+        base += CONTRACT_WEIGHT * (2 if variant.endswith("x2") else 1) * gap * min(int(a.get("years") or 1), 3) / 3 * base
+    return base
 
 
-def side_share(side: Mapping[str, list[Mapping[str, float]]], w: float) -> float | None:
-    gives = sum(asset_value(a, w) for a in side.get("gives") or [])
-    gets = sum(asset_value(a, w) for a in side.get("gets") or [])
+def side_share(side: Mapping[str, list[Mapping[str, Any]]], w: float, variant: str = "current") -> float | None:
+    gives = sum(asset_value(a, w, variant) for a in side.get("gives") or [])
+    gets = sum(asset_value(a, w, variant) for a in side.get("gets") or [])
     if gives <= 0:
         return None if gets <= 0 else 9.99
     return gets / gives
@@ -83,6 +93,56 @@ def backtest(trades: list[Mapping[str, Any]]) -> dict[str, Any]:
     }
 
 
+VARIANTS = ("current", "picks", "injury", "both", "contract", "picks+contract", "picks+contract x2")
+CONTRACT_WEIGHT = 0.5  # as in trade_value.Valuer.contract
+
+
+def compare_variants(trades: list[Mapping[str, Any]]) -> dict[str, Any]:
+    """Each valuation change against the current engine on every completed trade: hit rate (both sides at or above
+    OPEN_SHARE, default now weight) and how far the two sides' shares sit apart (a fair trade has them near equal;
+    lower is better)."""
+    out: dict[str, Any] = {}
+    for v in VARIANTS:
+        hits, gaps, lows = [], [], []
+        for t in trades:
+            shares = [side_share(sd, DEFAULT_WEIGHT, v) for sd in t["sides"].values()]
+            if not shares or any(x is None for x in shares):
+                continue
+            hits.append(all(x >= OPEN_SHARE for x in shares))
+            logs = [math.log(max(0.2, min(x, 5.0))) for x in shares]
+            gaps.append(max(logs) - min(logs))
+            lows.append(min(shares))
+        out[v] = {"graded": len(hits), "hit_rate": round(sum(hits) / len(hits), 3) if hits else None,
+                  "imbalance": round(sum(gaps) / len(gaps), 3) if gaps else None,
+                  "median_low_share": round(sorted(lows)[len(lows) // 2], 3) if lows else None}
+    assets = [a for t in trades for sd in t["sides"].values() for a in sd["gets"]]
+    # direction: in trades where one side got the picks, how often did the market say that side came out short?
+    pick_low = pick_n = 0
+    for t in trades:
+        sd = list(t["sides"].values())
+        has = [any(a.get("pick") for a in x["gets"]) for x in sd]
+        if len(sd) == 2 and sum(has) == 1:
+            sh = [side_share(x, DEFAULT_WEIGHT) for x in sd]
+            if None not in sh:
+                pick_n += 1
+                pick_low += sh[has.index(True)] < sh[has.index(False)]
+    out["pick_buyer_short"] = f"{pick_low}/{pick_n}"
+    lows = sorted(min(x for x in (side_share(sd, 0.0) for sd in t["sides"].values()) if x is not None) for t in trades
+                  if all(side_share(sd, 0.0) is not None for sd in t["sides"].values()))
+    out["market_low_share_bins"] = {b: sum(1 for x in lows if lo <= x < hi) for b, lo, hi in
+                                    (("<0.4", 0, 0.4), ("0.4-0.6", 0.4, 0.6), ("0.6-0.85", 0.6, 0.85), (">=0.85", 0.85, 99))}
+    shapes: dict[str, int] = defaultdict(int)
+    for t in trades:
+        shapes["-".join(sorted(f"{len(sd['gets'])}" for sd in t["sides"].values()))] += 1
+    out["shapes"] = dict(shapes)
+    out["assets_with_contract"] = sum(1 for a in assets if a.get("cap"))
+    out["assets_without_market"] = sum(1 for a in assets if not a.get("market"))
+    out["assets"] = len(assets)
+    out["trades_with_picks"] = sum(1 for t in trades if any(a.get("pick") for sd in t["sides"].values() for a in sd["gets"]))
+    out["trades_with_injured"] = sum(1 for t in trades if any((a.get("inj") or 1.0) < 1.0 for sd in t["sides"].values() for a in sd["gets"]))
+    return out
+
+
 def lean_label(w: float | None) -> str | None:
     if w is None:
         return None
@@ -103,15 +163,40 @@ def load_trades(client: Any, league_id: str) -> list[dict[str, Any]]:
     market = _market_history(client, pids)
     positions = _positions(client, pids)
     seasons = sorted({int(r["season"]) for r in rows if r.get("season")})
-    production = {s: _season_weeks(client, s) for s in seasons}
+    production = {s: _season_weeks(client, s, positions) for s in seasons}
     curves = _now_curves(client)
     picks = _pick_values(client)
+    episodes = _injury_episodes(client, pids)
+    from league_ai.pick_values import PickBook
+    books: dict[int, PickBook] = {}
+    pick_rows = _pick_rows_raw(client)
+    first_scrape = min((h[0][0] for h in market.values() if h), default="")
+    # trades before our own scrapes began are priced from the DynastyProcess file as it stood that week
+    old_days = sorted({str(legs[0].get("occurred_at") or "")[:10] for legs in by_tid.values()} - {""})
+    history = dp_history([d for d in old_days if not first_scrape or d < first_scrape])
+    contracts = _contracts(client, league_id)
+    for r in rows:  # where the contract tables don't reach back, the deal on file when the trade was synced
+        if r.get("player_id") and r.get("contract_salary") and r.get("season"):
+            contracts.setdefault((str(r["player_id"]), int(r["season"])), (float(r["contract_salary"]), int(r.get("contract_years") or 1)))
+    fair_cache: dict[tuple[int, str], dict[str, float]] = {}
+
+    def fair_caps(season: int, when: str, snap: Mapping[str, Any] | None) -> dict[str, float]:
+        """Fair salary by value rank that season: the k-th most valuable contracted player should cost the k-th biggest cap hit."""
+        key = (season, when if snap else "")
+        if key not in fair_cache:
+            rows = {pid: c for (pid, s), c in contracts.items() if s == season}
+            val = {pid: (snap["players"].get(pid) if snap else None) or _value_at(market.get(pid, []), when) for pid in rows}
+            hits = sorted((c[0] for c in rows.values()), reverse=True)
+            fair_cache[key] = {pid: hits[i] for i, pid in enumerate(sorted(rows, key=lambda p: -val[p]))}
+        return fair_cache[key]
+
     trades = []
     for tid, legs in by_tid.items():
         first = legs[0]
         season, week = int(first.get("season") or 0), int(first.get("week") or 0)
         when = str(first.get("occurred_at") or "")[:10]
         details = first.get("details") or {}
+        snap = history.get(when)
         sides: dict[str, dict[str, list[dict[str, Any]]]] = {o: {"gets": [], "gives": []} for o in details.get("participants") or []}
         movers = {(p.get("player"), p.get("to")): p.get("from") for p in details.get("players") or []}
         for r in legs:
@@ -119,21 +204,143 @@ def load_trades(client: Any, league_id: str) -> list[dict[str, Any]]:
             if r.get("position") == "PICK":
                 label = str(r.get("player_name") or "")
                 frm = next((p.get("from") for p in details.get("picks") or [] if label.startswith(str(p.get("pick"))) and p.get("to") == to), None)
-                asset = {"pick": 1.0, "market": _pick_value(picks, label, season), "name": label}
+                key = when if snap else str(season)
+                if key not in books:
+                    books[key] = PickBook(snap["pick_rows"] if snap else pick_rows, teams=10, rounds=3, season=season)
+                market_v = _pick_value(snap["picks"], label, season) if snap else _pick_value(picks, label, season)
+                asset = {"pick": 1.0, "market": market_v, "book": books[key].value(label)[0], "name": label}
             else:
                 pid = str(r.get("player_id") or "")
                 frm = movers.get((r.get("player_name"), to))
                 pos = positions.get(pid) or r.get("position")
                 ppg = _ppg(production.get(season, {}), pid, week) or _ppg(production.get(season - 1, {}), pid, 99)
-                asset = {"market": _value_at(market.get(pid, []), when), "now": _now_value(curves, pos, ppg, production.get(season, {}), positions, week),
-                         "name": r.get("player_name")}
+                mv = snap["players"].get(pid) if snap else None
+                asset = {"market": mv if mv is not None else _value_at(market.get(pid, []), when),
+                         "now": _now_value(snap["curves"] if snap else curves, pos, ppg, production.get(season, {}), positions, week),
+                         "name": r.get("player_name"), "inj": _injury_mult(episodes.get(pid, []), season, week)}
+                c = contracts.get((pid, season))
+                if c:
+                    asset.update(cap=c[0], years=c[1], fair=fair_caps(season, when, snap).get(pid))
             if to in sides:
                 sides[to]["gets"].append(asset)
             if frm in sides:
                 sides[frm]["gives"].append(asset)
         if len(sides) >= 2 and all(s["gets"] and s["gives"] for s in sides.values()):
-            trades.append({"tid": tid, "season": season, "week": week, "date": when, "sides": sides})
+            trades.append({"tid": tid, "season": season, "week": week, "date": when, "sides": sides,
+                           "dated": bool(snap) or (bool(first_scrape) and when >= first_scrape), "faab": bool(details.get("faab"))})
     return sorted(trades, key=lambda t: t["date"])
+
+
+DP_REPO = "https://github.com/dynastyprocess/data.git"
+_PICK_TIER = re.compile(r"^(20\d\d) (?:(Early|Mid|Late) )?(\d)(?:st|nd|rd|th)$")
+
+
+def dp_history(days: list[str]) -> dict[str, dict[str, Any]]:
+    """day -> the DynastyProcess values file as of that day (its git history is weekly back to 2019):
+    {"players": {sleeper_id: value_2qb}, "curves": {pos: values best first}, "picks": [(year, round, value)],
+    "pick_rows": rows shaped like nfl_pick_values}. Empty when git or the network isn't there."""
+    import csv
+    import io
+    import subprocess
+    import tempfile
+
+    if not days:
+        return {}
+    d = tempfile.mkdtemp(prefix="dp-")
+    try:
+        subprocess.run(["git", "clone", "-q", "--filter=blob:none", "--no-checkout", DP_REPO, d], check=True, timeout=300)
+        log = subprocess.run(["git", "-C", d, "log", "--format=%H %ad", "--date=short", "--", "files/values.csv"],
+                             check=True, capture_output=True, text=True).stdout.split("\n")
+        commits = sorted((ln.split()[1], ln.split()[0]) for ln in log if ln.strip())
+        ids = subprocess.run(["git", "-C", d, "show", "HEAD:files/db_playerids.csv"], check=True, capture_output=True, text=True).stdout
+    except Exception:
+        return {}
+    fp_to_sleeper = {r["fantasypros_id"]: r["sleeper_id"] for r in csv.DictReader(io.StringIO(ids))
+                     if r.get("fantasypros_id") not in (None, "", "NA") and r.get("sleeper_id") not in (None, "", "NA")}
+    dates = [c[0] for c in commits]
+    out: dict[str, dict[str, Any]] = {}
+    cache: dict[str, dict[str, Any]] = {}
+    for day in days:
+        i = bisect_right(dates, day)
+        if not i:
+            continue
+        sha = commits[i - 1][1]
+        if sha not in cache:
+            try:
+                text = subprocess.run(["git", "-C", d, "show", f"{sha}:files/values.csv"], check=True, capture_output=True, text=True).stdout
+            except Exception:
+                continue
+            players, curves, picks, rows = {}, defaultdict(list), [], []
+            for r in csv.DictReader(io.StringIO(text)):
+                try:
+                    v = float(r.get("value_2qb") or "")
+                except ValueError:
+                    continue
+                if r.get("pos") == "PICK":
+                    m = _PICK_TIER.match(str(r.get("player") or ""))
+                    if m:
+                        picks.append((int(m.group(1)), int(m.group(3)), v))
+                        rows.append({"pick_label": r["player"], "draft_year": int(m.group(1)), "round": int(m.group(3)), "value_2qb": v})
+                    continue
+                sid = fp_to_sleeper.get(str(r.get("fp_id") or ""))
+                if sid:
+                    players[str(sid)] = v
+                curves[str(r.get("pos"))].append(v)
+            cache[sha] = {"players": players, "curves": {k: sorted(x, reverse=True) for k, x in curves.items()}, "picks": picks, "pick_rows": rows}
+        out[day] = cache[sha]
+    return out
+
+
+def _contracts(client: Any, league_id: str) -> dict[tuple[str, int], tuple[float, int]]:
+    """(player, season) -> (cap hit that season, seasons left on the deal counting that one)."""
+    rows, start = [], 0
+    while True:
+        try:
+            page = (client.table("contract_seasons").select("contract_id, player_id, season, cap_hit").eq("league_id", league_id)
+                    .range(start, start + 999).execute().data or [])
+        except Exception:
+            break
+        rows += page
+        if len(page) < 1000:
+            break
+        start += 1000
+    by_contract: dict[str, list[int]] = defaultdict(list)
+    for r in rows:
+        by_contract[str(r.get("contract_id"))].append(int(r.get("season") or 0))
+    out = {}
+    for r in rows:
+        s = int(r.get("season") or 0)
+        left = sum(1 for x in by_contract[str(r.get("contract_id"))] if x >= s)
+        if r.get("cap_hit") is not None:
+            out[(str(r.get("player_id")), s)] = (float(r["cap_hit"]), left)
+    return out
+
+
+def _injury_episodes(client: Any, pids: list[str]) -> dict[str, list[dict[str, Any]]]:
+    out: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for i in range(0, len(pids), 150):
+        try:
+            for r in (client.table("nfl_injury_episodes").select("sleeper_id, last_game_season, last_game_week, injury, games_missed")
+                      .in_("sleeper_id", pids[i:i + 150]).execute().data or []):
+                out[str(r["sleeper_id"])].append(r)
+        except Exception:
+            pass
+    return out
+
+
+def _injury_mult(episodes: list[dict[str, Any]], season: int, week: int) -> float:
+    """The injury tilt as it would have stood at the trade: only absences that had started before it."""
+    from league_ai.injuries import recent_injury
+
+    before = [e for e in episodes if (int(e.get("last_game_season") or 0), int(e.get("last_game_week") or 0)) < (season, week or 99)]
+    found = recent_injury(before, season)
+    return found[0] if found else 1.0
+
+
+def _pick_rows_raw(client: Any) -> list[dict[str, Any]]:
+    from league_ai.trade_finder import _pick_rows
+
+    return _pick_rows(client)
 
 
 def _market_history(client: Any, pids: list[str]) -> dict[str, list[tuple[str, float]]]:
@@ -169,18 +376,21 @@ def _positions(client: Any, pids: list[str]) -> dict[str, str]:
     return out
 
 
-def _season_weeks(client: Any, season: int) -> dict[str, list[tuple[int, float]]]:
-    """sleeper_id -> [(week, points)] for one regular season, paged."""
+def _season_weeks(client: Any, season: int, positions: dict[str, str] | None = None) -> dict[str, list[tuple[int, float]]]:
+    """sleeper_id -> [(week, points)] for one regular season, paged. Fills `positions` for every player with games, so a
+    traded player's production rank is taken among all players at his position, not only the other traded ones."""
     out: dict[str, list[tuple[int, float]]] = defaultdict(list)
     start = 0
     while True:
         try:
-            rows = (client.table("nfl_player_stats").select("sleeper_id, week, fantasy_points_ppr").eq("season", season).eq("season_type", "REG")
+            rows = (client.table("nfl_player_stats").select("sleeper_id, week, position, fantasy_points_ppr").eq("season", season).eq("season_type", "REG")
                     .range(start, start + 999).execute().data or [])
         except Exception:
             break
         for r in rows:
             out[str(r["sleeper_id"])].append((int(r.get("week") or 0), float(r.get("fantasy_points_ppr") or 0)))
+            if positions is not None and r.get("position"):
+                positions.setdefault(str(r["sleeper_id"]), str(r["position"]))
         if len(rows) < 1000:
             break
         start += 1000
@@ -253,3 +463,29 @@ def load_styles(client: Any, league_id: str) -> dict[str, str]:
     except Exception:
         return {}
     return {str(r["owner_name"]): str(r["lean"]) for r in rows if r.get("lean")}
+
+
+def main() -> None:
+    """Compare valuation changes on every league's completed trades. Prints counts and rates only (the repo is public)."""
+    import os
+
+    from supabase import create_client
+
+    client = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_ROLE_KEY"])
+    for n, lg in enumerate(client.table("leagues").select("id").execute().data or [], start=1):
+        trades = load_trades(client, lg["id"])
+        print(f"league {n}: {len(trades)} completed trades")
+        if trades:
+            print(f"  hit rate by now weight: {backtest(trades)['hit_rate']}")
+            print(f"  valuation changes: {compare_variants(trades)}")
+            dated = [t for t in trades if t.get("dated")]
+            print(f"  {len(dated)} trades after the first market scrape, {sum(1 for t in trades if t.get('faab'))} include FAAB/cap")
+            if dated:
+                print(f"  valuation changes, those trades only: {compare_variants(dated)}")
+            clean = [t for t in dated if not t.get("faab")]
+            if clean and len(clean) < len(dated):
+                print(f"  valuation changes, those without FAAB: {compare_variants(clean)}")
+
+
+if __name__ == "__main__":
+    main()
