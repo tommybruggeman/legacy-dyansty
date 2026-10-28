@@ -190,6 +190,7 @@ def build_report(client: Any, league_id: str, start: datetime, end: datetime, *,
         },
         "odds_trial": _odds_trial(client, league_id),
         "odds_grade": _odds_grade(client, league_id),
+        "trade_ideas": _trade_ideas(client, league_id),
         "autonomous": {
             "briefs_written": len(briefs), "brief_cost": round(sum(_num(r.get("cost_usd")) for r in briefs), 4),
             "grading_model_calls": len(grading_runs), "grading_cost": round(sum(_num(r.get("cost_usd")) for r in grading_runs), 4),
@@ -205,6 +206,13 @@ def _odds_trial(client: Any, league_id: str) -> dict[str, Any] | None:
 
     rows = odds_trial.load(client, league_id)
     return odds_trial.summarize(rows) if rows else None
+
+
+def _trade_ideas(client: Any, league_id: str) -> dict[str, Any] | None:
+    from league_ai import idea_log
+
+    rows = idea_log.load(client, league_id)
+    return idea_log.summarize(rows) if rows else None
 
 
 def _odds_grade(client: Any, league_id: str) -> dict[str, Any] | None:
@@ -288,6 +296,12 @@ def render_html(rep: Mapping[str, Any], league_name: str = "the league") -> str:
                      + (f" Playoff odds: {g['playoff_predictions']} predictions, Brier {g['playoff_brier']}." if g.get("playoff_predictions") else "") + "</p>")
         if g.get("weekly_calibration"):
             parts.append(_table(["Said", "Games", "Won"], [[_e(b["said"]), b["games"], _e(b["won"])] for b in g["weekly_calibration"]]))
+    ti = rep.get("trade_ideas")
+    if ti:
+        rungs = ", ".join(f"{k.replace('_', ' ')} {v}" for k, v in ti["closest_rung"].items())
+        parts.append(f"<h3>Trade ideas shown: {ti['ideas_shown']} in {ti['answers_logged']} answers</h3><p>{ti['happened']} turned into real trades, "
+                     f"{ti['not_made']} didn't happen within 30 days, {ti['still_open']} still open."
+                     + (f" Real deals landed closest to: {_e(rungs)}." if rungs else "") + "</p>")
     t = rep.get("odds_trial")
     if t:
         full = rep["detail"] == "full"

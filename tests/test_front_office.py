@@ -319,19 +319,20 @@ class MatchupTests(unittest.TestCase):
         from league_ai.front_office import apply_matchups
         from league_ai.power import PlayerStrength
 
+        # TE: the full matchup tilt applies (WR calls go on the projection alone, nfl_data.TILT_WEIGHT)
         def p(sid, pos, now, nfl):
             return PlayerStrength(sleeper_id=sid, name=sid, position=pos, team_id="a", owner="A", now=now, dynasty=now, available=True, nfl_team=nfl)
 
-        players = [p("Stud", "WR", 22, "DAL"), p("Close1", "WR", 14, "NYG"), p("Close2", "WR", 13.5, "SEA")]
+        players = [p("Stud", "TE", 22, "DAL"), p("Close1", "TE", 14, "NYG"), p("Close2", "TE", 13.5, "SEA")]
         games = {"DAL": {"opponent": "SF", "home": False, "implied_points": 20.5}, "NYG": {"opponent": "SF", "home": True, "implied_points": 18.0},
                  "SEA": {"opponent": "LAR", "home": True, "implied_points": 26.0}}
-        dvp = {("SF", "WR"): {"rank": 1, "teams": 32, "ppg_allowed": 25.0, "factor": 0.8, "games": 6}, ("LAR", "WR"): {"rank": 32, "teams": 32, "ppg_allowed": 45.0, "factor": 1.2, "games": 6}}
+        dvp = {("SF", "TE"): {"rank": 1, "teams": 32, "ppg_allowed": 25.0, "factor": 0.8, "games": 6}, ("LAR", "TE"): {"rank": 32, "teams": 32, "ppg_allowed": 45.0, "factor": 1.2, "games": 6}}
         apply_matchups(players, games, dvp)
-        tp = compute_power(players, [{"league_team_id": "a", "owner_name": "A"}], ["WR", "WR"], week=7)[0]
+        tp = compute_power(players, [{"league_team_id": "a", "owner_name": "A"}], ["TE", "TE"], week=7)[0]
         self.assertEqual([x.name for x in tp.week_starters], ["Stud", "Close2"])
         self.assertEqual([x.name for x in tp.starters], ["Stud", "Close1"])  # season view ignores the matchup
-        self.assertIn("@ SF, tough: SF allows 1st-fewest PPR to WR", players[0].matchup)
-        self.assertIn("soft: LAR allows 1st-most PPR to WR", players[2].matchup)
+        self.assertIn("@ SF, tough: SF allows 1st-fewest PPR to TE", players[0].matchup)
+        self.assertIn("soft: LAR allows 1st-most PPR to TE", players[2].matchup)
         self.assertIn("team implied 26.0 pts", players[2].matchup)
 
 
