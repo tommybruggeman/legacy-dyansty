@@ -174,3 +174,20 @@ export type PlayerPage = {
   } | null;
   is_mine: boolean;
 };
+
+export type FreeAgent = {
+  player_id: string;
+  name: string;
+  pos: string;
+  nfl_team: string;
+  injury: string | null;
+  rookie: boolean;
+  ppg: number | null;
+  last_ppg: number | null;
+  rank_ppg: number | null;
+};
+export type FreeAgents = { season: number; last_season: number; season_started: boolean; players: FreeAgent[] };
+export type Expiring = {
+  season: number;
+  players: { player_id: string; name: string; pos: string; owner_name: string; team_id: string; salary: number; is_mine: boolean }[];
+};
