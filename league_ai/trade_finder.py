@@ -350,7 +350,8 @@ _WINDOW_NOTE = {"contending": "contending: this season counts about 80%", "middl
 
 HOW_TO_PITCH = ("You work for this owner, and every other owner has their own AI too. Lead with the opening offer, say what it should close at, "
                 "and give the walk-away as the most to pay. Mention market fair value as context, not as the ask. Say in a clause why that owner says yes "
-                "in their own terms (their window, a player not producing for them). If no idea is listed, say so rather than forcing a deal.")
+                "in their own terms (their window, a player not producing for them). If vs_real_trades shows few real trades here got a share that low, "
+                "say the opener is a stretch. If no idea is listed, say so rather than forcing a deal.")
 
 
 def _ladder(opening: Mapping[str, Any], closing: Mapping[str, Any], walk: Mapping[str, Any]) -> dict[str, Any]:
@@ -359,6 +360,7 @@ def _ladder(opening: Mapping[str, Any], closing: Mapping[str, Any], walk: Mappin
         out["likely_close"] = [_label(p) for p in closing["sends"]]
     if walk is not closing:
         out["walk_away_after"] = [_label(p) for p in walk["sends"]]
+    out["their_share"] = {"open": round(opening["their_share"], 3), "close": round(closing["their_share"], 3), "walk": round(walk["their_share"], 3)}
     return out
 
 
@@ -479,6 +481,25 @@ def trade_finder_tools(load: Callable[[], tuple[League, Mapping[str, float], str
                 cache["habits"] = {}
         return cache["habits"]
 
+    def accepted() -> list[float]:
+        """Shares that sides of real trades here accepted (league_ai.acceptance), to put each offer next to them."""
+        if "accepted" not in cache:
+            try:
+                from league_ai.acceptance import load as load_accepted
+
+                cache["accepted"] = load_accepted(history.client, history.league_id) if history is not None else []
+            except Exception:
+                cache["accepted"] = []
+        return cache["accepted"]
+
+    def _vs_real(item: dict[str, Any]) -> None:
+        from league_ai.acceptance import compare
+
+        shares = item.get("their_share") or {}
+        notes = {rung: compare(accepted(), shares.get(rung)) for rung in ("open", "close")}
+        if any(notes.values()):
+            item["vs_real_trades"] = {k: v for k, v in notes.items() if v}
+
     def my_pitches() -> dict[str, dict[str, int]]:
         if "pitches" not in cache:
             try:
@@ -509,6 +530,8 @@ def trade_finder_tools(load: Callable[[], tuple[League, Mapping[str, float], str
             p = profiles().get(str(out.get("partner"))) if history is not None and "error" not in out else None
             if p:
                 out["partner_style"] = f"{p['trades']} trades here; {p['style']}"
+            if out.get("fair_deal_found"):
+                _vs_real(out)
             _log(out)
             return out
         out = find_trades(league=lg, asker_team_id=cache["asker"], cap_space=cache["cap"], want_position=position, goal=goal,
@@ -525,6 +548,7 @@ def trade_finder_tools(load: Callable[[], tuple[League, Mapping[str, float], str
                 h = habits().get(str(idea["partner"]))
                 if h and h.get("style") != "not enough activity yet":
                     idea["partner_habits"] = h["style"]
+                _vs_real(idea)
         _log(out)
         return out
 
