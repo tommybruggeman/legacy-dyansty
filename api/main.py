@@ -8,7 +8,7 @@ reads run as that owner so row-level security applies just like the website.
 from __future__ import annotations
 
 import os
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
@@ -202,6 +202,21 @@ def team_list(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, An
     return {"season": ctx["season"], "salary_cap": cap, "my_team_id": ctx["team_id"], "teams": rows}
 
 
+def _saved_win_odds(client: Client, ctx: dict[str, Any], owner_name: str) -> dict[str, Any] | None:
+    """This week's win odds as the Front Office saved them (no model run here), or None before it has."""
+    week = league.current_week()
+
+    def load() -> dict[str, dict[str, Any]]:
+        rows = (client.table("league_ai_odds_history").select("owner_name,win_pct,opp_owner")
+                .eq("league_id", ctx["league_id"]).eq("season", ctx["season"]).eq("week", week).execute().data or [])
+        return {r["owner_name"]: r for r in rows if r.get("win_pct") is not None}
+    try:
+        row = cache.cached(("win_odds", ctx["league_id"], ctx["season"], week), 600, load).get(owner_name)
+    except Exception:
+        return None
+    return {"pct": row["win_pct"], "opp": row.get("opp_owner"), "week": week} if row else None
+
+
 def _team_page(client: Client, ctx: dict[str, Any], team_id: str) -> dict[str, Any]:
     rows, states, standings_rows, cap = _league_teams(client, ctx)
     summary = next((t for t in rows if t["team_id"] == team_id), None)
@@ -227,6 +242,8 @@ def _team_page(client: Client, ctx: dict[str, Any], team_id: str) -> dict[str, A
         ppg=teams.player_ppg(ctx["sleeper_id"], weeks),
         h2h=teams.head_to_head(ctx["sleeper_id"], weeks, ctx["sleeper_roster_id"], summary["roster_id"]),
         later=states[1:],
+        weeks=league.current_week(),
+        win_odds=_saved_win_odds(client, ctx, summary["owner_name"]),
     )
     return {"season": ctx["season"], "salary_cap": cap, "sleeper_league_id": ctx["sleeper_id"], **detail}
 
@@ -433,16 +450,19 @@ def _season_state(client: Client, ctx: dict[str, Any]) -> dict[str, Any]:
         raise HTTPException(status_code=502, detail="Couldn't load league contracts. Try again.")
 
 
+def _market_ppg(client: Client, ctx: dict[str, Any]) -> tuple[list[dict[str, Any]], Any]:
+    try:
+        return market.player_pool(client), market.ranking(client, ctx["season"])
+    except Exception:
+        raise HTTPException(status_code=502, detail="Couldn't load the player pool. Try again.")
+
+
 @app.get("/market/free-agents")
 def free_agents(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
     client, user = owner
     ctx = _season_context(client, user)
     state = _season_state(client, ctx)
-    try:
-        pool = market.player_pool(client)
-        ppg = market.ranking(client, ctx["season"])
-    except Exception:
-        raise HTTPException(status_code=502, detail="Couldn't load the player pool. Try again.")
+    pool, ppg = _market_ppg(client, ctx)
     try:
         rostered = league.sleeper_owners(ctx["sleeper_id"])
     except Exception:
@@ -453,15 +473,94 @@ def free_agents(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, 
 EXPIRING_YEARS = 3
 
 
+def _league_phase(ctx: dict[str, Any]) -> tuple[str, date]:
+    """The same season phase Home uses: decisions runs from the final game to the June 30 rollover."""
+    sleeper_league = league.sleeper.get(f"league/{ctx['sleeper_id']}") or {}
+    playoff_start = int((sleeper_league.get("settings") or {}).get("playoff_week_start") or 15)
+    today = datetime.now(front_office.LEAGUE_TZ).date()
+    return home.phase(today, sleeper_league.get("status"), league.current_week(), playoff_start), today
+
+
+def _my_calls(client: Client, ctx: dict[str, Any], state: dict[str, Any], pool: list[dict[str, Any]], ppg: Any, today: date) -> dict[str, Any]:
+    """My keep-or-walk calls before the rollover, from the same rollover service as Home."""
+    rates = dict(ppg.ranking_ppg)
+    try:
+        loaded = OwnerRolloverDecisionService(client, ctx["league_id"]).load()
+    except OwnerRolloverDecisionError:
+        loaded = {"execution": None, "decisions": []}
+    execution = loaded.get("execution") or {}
+    players = (home.rookie_decisions(loaded.get("decisions") or [], state.get("roster", []), rates) if loaded.get("decisions")
+               else home.rookie_deals_ending(state.get("roster", []), ctx["team_id"], rates))
+    nfl = market.nfl_teams(pool)
+    for p in players:
+        p["nfl_team"] = nfl.get(p["player_id"], "FA")
+    return {
+        "window_open": execution.get("status") == "decision_window_open",
+        "deadline": execution.get("owner_deadline") or home.rollover_deadline(today).isoformat(),
+        "players": players,
+    }
+
+
+def _saved_ids(client: Client, league_id: str) -> list[str] | None:
+    """Saved targets, or None while the market_targets table hasn't been created."""
+    try:
+        return market.target_ids(client, league_id)
+    except Exception as exc:
+        print(f"APP_MARKET_TARGETS_ERROR {type(exc).__name__}: {exc}", flush=True)
+        return None
+
+
 @app.get("/market/expiring")
 def expiring(year: int | None = None, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
-    """Contracts ending after `year` (this season by default, up to two seasons ahead)."""
+    """Contracts ending after `year` (this season by default, up to two seasons ahead),
+    plus my calls before the rollover (offseason) or my saved transfer targets."""
     client, user = owner
     ctx = _season_context(client, user)
     years = [ctx["season"] + i for i in range(EXPIRING_YEARS)]
     year = year if year in years else years[0]
-    players = market.expiring(_season_state(client, ctx), ctx["team_id"], year - ctx["season"])
-    return {"season": year, "years": years, "players": players}
+    state = _season_state(client, ctx)
+    pool, ppg = _market_ppg(client, ctx)
+    players = market.expiring(state, ctx["team_id"], year - ctx["season"], pool=pool, ppg=ppg)
+    phase, today = _league_phase(ctx)
+    calls = _my_calls(client, ctx, state, pool, ppg, today) if phase == "decisions" and ctx.get("team_id") else None
+    ids = _saved_ids(client, ctx["league_id"])
+    saved = market.targets(ids or [], state, ctx["team_id"], pool, ppg)
+    return {
+        "season": year, "years": years, "players": players, "sleeper_league_id": ctx["sleeper_id"],
+        "offseason": phase in ("decisions", "draft_prep"),
+        "calls": calls,
+        "targets": saved,
+        "targets_ready": ids is not None,
+        "plan_question": market.strategy_question(saved, ctx["season"]),
+    }
+
+
+@app.get("/market/targets")
+def target_list(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    ids = _saved_ids(client, resolve_team(client, user)["league_id"])
+    return {"ids": ids or [], "ready": ids is not None}
+
+
+def _change_target(owner: tuple[Client, Any], player_id: str, save: bool) -> dict[str, Any]:
+    client, user = owner
+    league_id = resolve_team(client, user)["league_id"]
+    try:
+        (market.save_target if save else market.drop_target)(client, league_id, player_id.strip())
+    except Exception as exc:
+        print(f"APP_MARKET_TARGETS_ERROR {type(exc).__name__}: {exc}", flush=True)
+        raise HTTPException(status_code=503, detail="Saving targets isn't switched on yet. Try again later.")
+    return {"ids": market.target_ids(client, league_id), "ready": True}
+
+
+@app.post("/market/targets/{player_id}")
+def add_target(player_id: str, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    return _change_target(owner, player_id, True)
+
+
+@app.delete("/market/targets/{player_id}")
+def remove_target(player_id: str, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    return _change_target(owner, player_id, False)
 
 
 # ---- Front Office ------------------------------------------------------------------

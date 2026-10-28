@@ -7,6 +7,7 @@ import { ErrorState, Loading } from '../../components/ScreenState';
 import { Back, Screen, money } from '../../components/ui';
 import { type PlayerPage, useApi } from '../../lib/api';
 import { colors } from '../../lib/theme';
+import { useTargets } from '../../lib/targets';
 
 export { ScreenError as ErrorBoundary } from '../../components/ScreenState';
 
@@ -16,6 +17,7 @@ export { ScreenError as ErrorBoundary } from '../../components/ScreenState';
 export default function Player() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data, error, loading, reload } = useApi<PlayerPage>(`/players/${id}`);
+  const { isTarget, toggle } = useTargets();
 
   if (loading && !data) return <Loading />;
   if (error && !data) return <ErrorState message={error} onRetry={reload} />;
@@ -171,6 +173,12 @@ export default function Player() {
           <Text style={styles.askText}>Ask the Front Office about {name.split(' ').slice(-1)[0]}</Text>
         </Pressable>
 
+        {!data.is_mine && id ? (
+          <Pressable onPress={() => toggle(id)} style={[styles.button, isTarget(id) && styles.saved]}>
+            <Text style={[styles.buttonText, isTarget(id) && styles.savedText]}>{isTarget(id) ? '★ Saved as a transfer target' : '☆ Save as a transfer target'}</Text>
+          </Pressable>
+        ) : null}
+
         {data.is_mine ? (
           <Pressable onPress={() => router.push('/ir')} style={styles.button}>
             <Text style={styles.buttonText}>Manage IR</Text>
@@ -317,4 +325,6 @@ const styles = StyleSheet.create({
   askText: { color: colors.text, fontSize: 14 },
   button: { borderWidth: 1, borderColor: '#2C5140', borderRadius: 14, padding: 14, alignItems: 'center' },
   buttonText: { color: colors.text, fontWeight: '700', fontSize: 15 },
+  saved: { borderColor: colors.gold },
+  savedText: { color: colors.gold },
 });
