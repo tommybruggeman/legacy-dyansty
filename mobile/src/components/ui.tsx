@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import { useMemo, useRef, type ReactNode } from 'react';
-import { Animated, PanResponder, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Animated, Dimensions, Easing, PanResponder, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { colors } from '../lib/theme';
@@ -56,29 +56,43 @@ export function Segmented<T extends string>({ options, value, onChange }: { opti
 // The content under a Segmented switcher: swipe left for the next option,
 // right for the previous one. Only clearly sideways drags count, so scrolling
 // the page up and down is untouched.
+// Swipe left or right to change tabs. The page follows your finger, then glides off and the next one
+// glides in; past the first or last tab it only gives a little, like iOS lists.
 export function SwipeTabs<T extends string>({ options, value, onChange, children }: { options: readonly T[]; value: T; onChange: (v: T) => void; children: ReactNode }) {
   const shift = useRef(new Animated.Value(0)).current;
   const latest = useRef({ options, value, onChange });
   latest.current = { options, value, onChange };
-  const responder = useMemo(() => PanResponder.create({
-    onMoveShouldSetPanResponderCapture: (_, g) => Math.abs(g.dx) > 14 && Math.abs(g.dx) > Math.abs(g.dy) * 2,
-    onPanResponderTerminationRequest: () => false,
-    onPanResponderMove: (_, g) => shift.setValue(g.dx * 0.25),
-    onPanResponderRelease: (_, g) => {
-      const { options: opts, value: current, onChange: change } = latest.current;
-      const i = opts.indexOf(current);
-      const step = g.dx < -50 || g.vx < -0.5 ? 1 : g.dx > 50 || g.vx > 0.5 ? -1 : 0;
-      const next = opts[i + step];
-      if (step && next) {
-        change(next);
-        shift.setValue(step * 40);
-      }
-      Animated.spring(shift, { toValue: 0, useNativeDriver: true, bounciness: 0, speed: 20 }).start();
-    },
-    onPanResponderTerminate: () => Animated.spring(shift, { toValue: 0, useNativeDriver: true }).start(),
-  }), [shift]);
+  const responder = useMemo(() => {
+    const width = Dimensions.get('window').width;
+    const settle = () => Animated.spring(shift, { toValue: 0, useNativeDriver: true, damping: 22, stiffness: 220, mass: 0.9 }).start();
+    return PanResponder.create({
+      onMoveShouldSetPanResponderCapture: (_, g) => Math.abs(g.dx) > 14 && Math.abs(g.dx) > Math.abs(g.dy) * 2,
+      onPanResponderTerminationRequest: () => false,
+      onPanResponderGrant: () => shift.stopAnimation(),
+      onPanResponderMove: (_, g) => {
+        const { options: opts, value: current } = latest.current;
+        const i = opts.indexOf(current);
+        const edge = (g.dx > 0 && i === 0) || (g.dx < 0 && i === opts.length - 1);
+        shift.setValue(edge ? g.dx * 0.2 : g.dx);
+      },
+      onPanResponderRelease: (_, g) => {
+        const { options: opts, value: current, onChange: change } = latest.current;
+        const i = opts.indexOf(current);
+        const step = g.dx < -width * 0.25 || g.vx < -0.4 ? 1 : g.dx > width * 0.25 || g.vx > 0.4 ? -1 : 0;
+        const next = opts[i + step];
+        if (!step || !next) return settle();
+        Animated.timing(shift, { toValue: -step * width, duration: 140, easing: Easing.out(Easing.quad), useNativeDriver: true }).start(() => {
+          change(next);
+          shift.setValue(step * width * 0.6);
+          Animated.timing(shift, { toValue: 0, duration: 260, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+        });
+      },
+      onPanResponderTerminate: settle,
+    });
+  }, [shift]);
+  const opacity = shift.interpolate({ inputRange: [-400, 0, 400], outputRange: [0.4, 1, 0.4], extrapolate: 'clamp' });
   return (
-    <Animated.View {...responder.panHandlers} style={{ minHeight: 480, transform: [{ translateX: shift }] }}>
+    <Animated.View {...responder.panHandlers} style={{ minHeight: 480, opacity, transform: [{ translateX: shift }] }}>
       {children}
     </Animated.View>
   );
