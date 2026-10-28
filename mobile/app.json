@@ -38,6 +38,12 @@
       ]
     ],
     "scheme": "legacydynasty",
-    "backgroundColor": "#071A12"
+    "backgroundColor": "#071A12",
+    "owner": "tbrugge",
+    "extra": {
+      "eas": {
+        "projectId": "395b8a4c-b2b1-490c-9e64-9e8afcb02ff1"
+      }
+    }
   }
 }
