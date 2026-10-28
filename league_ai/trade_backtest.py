@@ -32,10 +32,15 @@ def asset_value(a: Mapping[str, Any], w: float, variant: str = "current") -> flo
     """variant: "current" = the engine as it was; "picks" = picks priced by PickBook (market blended with what slots
     really became); "injury" = dynasty value tilted for a recent injury; "both"."""
     if a.get("pick"):
-        market = float((a.get("book") if variant in ("picks", "both") and a.get("book") else a.get("market")) or 0)
+        market = float((a.get("book") if variant in ("picks", "both", "picks+contract") and a.get("book") else a.get("market")) or 0)
         return market * (1 - 0.6 * w)
     market = float(a.get("market") or 0) * (float(a.get("inj") or 1.0) if variant in ("injury", "both") else 1.0)
-    return w * float(a.get("now") or 0) + (1 - w) * market
+    base = w * float(a.get("now") or 0) + (1 - w) * market
+    cap, fair = float(a.get("cap") or 0), float(a.get("fair") or 0)
+    if "contract" in variant and cap > 0 and fair > 0:
+        gap = max(-1.0, min(1.0, (fair - cap) / max(fair, cap)))
+        base += CONTRACT_WEIGHT * gap * min(int(a.get("years") or 1), 3) / 3 * base
+    return base
 
 
 def side_share(side: Mapping[str, list[Mapping[str, Any]]], w: float, variant: str = "current") -> float | None:
@@ -88,7 +93,8 @@ def backtest(trades: list[Mapping[str, Any]]) -> dict[str, Any]:
     }
 
 
-VARIANTS = ("current", "picks", "injury", "both")
+VARIANTS = ("current", "picks", "injury", "both", "contract", "picks+contract")
+CONTRACT_WEIGHT = 0.5  # as in trade_value.Valuer.contract
 
 
 def compare_variants(trades: list[Mapping[str, Any]]) -> dict[str, Any]:
@@ -110,6 +116,18 @@ def compare_variants(trades: list[Mapping[str, Any]]) -> dict[str, Any]:
                   "imbalance": round(sum(gaps) / len(gaps), 3) if gaps else None,
                   "median_low_share": round(sorted(lows)[len(lows) // 2], 3) if lows else None}
     assets = [a for t in trades for sd in t["sides"].values() for a in sd["gets"]]
+    # direction: in trades where one side got the picks, how often did the market say that side came out short?
+    pick_low = pick_n = 0
+    for t in trades:
+        sd = list(t["sides"].values())
+        has = [any(a.get("pick") for a in x["gets"]) for x in sd]
+        if len(sd) == 2 and sum(has) == 1:
+            sh = [side_share(x, DEFAULT_WEIGHT) for x in sd]
+            if None not in sh:
+                pick_n += 1
+                pick_low += sh[has.index(True)] < sh[has.index(False)]
+    out["pick_buyer_short"] = f"{pick_low}/{pick_n}"
+    out["assets_with_contract"] = sum(1 for a in assets if a.get("cap"))
     out["assets_without_market"] = sum(1 for a in assets if not a.get("market"))
     out["assets"] = len(assets)
     out["trades_with_picks"] = sum(1 for t in trades if any(a.get("pick") for sd in t["sides"].values() for a in sd["gets"]))
@@ -148,6 +166,19 @@ def load_trades(client: Any, league_id: str) -> list[dict[str, Any]]:
     # trades before our own scrapes began are priced from the DynastyProcess file as it stood that week
     old_days = sorted({str(legs[0].get("occurred_at") or "")[:10] for legs in by_tid.values()} - {""})
     history = dp_history([d for d in old_days if not first_scrape or d < first_scrape])
+    contracts = _contracts(client, league_id)
+    fair_cache: dict[tuple[int, str], dict[str, float]] = {}
+
+    def fair_caps(season: int, when: str, snap: Mapping[str, Any] | None) -> dict[str, float]:
+        """Fair salary by value rank that season: the k-th most valuable contracted player should cost the k-th biggest cap hit."""
+        key = (season, when if snap else "")
+        if key not in fair_cache:
+            rows = {pid: c for (pid, s), c in contracts.items() if s == season}
+            val = {pid: (snap["players"].get(pid) if snap else None) or _value_at(market.get(pid, []), when) for pid in rows}
+            hits = sorted((c[0] for c in rows.values()), reverse=True)
+            fair_cache[key] = {pid: hits[i] for i, pid in enumerate(sorted(rows, key=lambda p: -val[p]))}
+        return fair_cache[key]
+
     trades = []
     for tid, legs in by_tid.items():
         first = legs[0]
@@ -176,6 +207,9 @@ def load_trades(client: Any, league_id: str) -> list[dict[str, Any]]:
                 asset = {"market": mv if mv is not None else _value_at(market.get(pid, []), when),
                          "now": _now_value(snap["curves"] if snap else curves, pos, ppg, production.get(season, {}), positions, week),
                          "name": r.get("player_name"), "inj": _injury_mult(episodes.get(pid, []), season, week)}
+                c = contracts.get((pid, season))
+                if c:
+                    asset.update(cap=c[0], years=c[1], fair=fair_caps(season, when, snap).get(pid))
             if to in sides:
                 sides[to]["gets"].append(asset)
             if frm in sides:
@@ -243,6 +277,31 @@ def dp_history(days: list[str]) -> dict[str, dict[str, Any]]:
                 curves[str(r.get("pos"))].append(v)
             cache[sha] = {"players": players, "curves": {k: sorted(x, reverse=True) for k, x in curves.items()}, "picks": picks, "pick_rows": rows}
         out[day] = cache[sha]
+    return out
+
+
+def _contracts(client: Any, league_id: str) -> dict[tuple[str, int], tuple[float, int]]:
+    """(player, season) -> (cap hit that season, seasons left on the deal counting that one)."""
+    rows, start = [], 0
+    while True:
+        try:
+            page = (client.table("contract_seasons").select("contract_id, player_id, season, cap_hit").eq("league_id", league_id)
+                    .range(start, start + 999).execute().data or [])
+        except Exception:
+            break
+        rows += page
+        if len(page) < 1000:
+            break
+        start += 1000
+    by_contract: dict[str, list[int]] = defaultdict(list)
+    for r in rows:
+        by_contract[str(r.get("contract_id"))].append(int(r.get("season") or 0))
+    out = {}
+    for r in rows:
+        s = int(r.get("season") or 0)
+        left = sum(1 for x in by_contract[str(r.get("contract_id"))] if x >= s)
+        if r.get("cap_hit") is not None:
+            out[(str(r.get("player_id")), s)] = (float(r["cap_hit"]), left)
     return out
 
 
