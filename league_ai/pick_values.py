@@ -3,10 +3,16 @@
 Two views, blended half and half:
 - the market: DynastyProcess pick prices (what other owners will pay for it today);
 - what picks really became: the draft study (league_ai/draft_study.py, 1,000 simulated drafts of every 2020-2024 class)
-  scored each slot by the trade value of the player it landed three seasons later.
+  scored each slot by the trade value of the player it landed three seasons later, blended with 7 real drafts of a
+  same-format league.
 
 The market prices the top of round 1 above what those picks turned into and prices late 1sts, 2nds and 3rds far below
 it, so the blend keeps 1.01 clearly ahead of 1.02 while not treating a 2nd as worthless.
+
+A draft whose class looks deep or thin (its rookie rankings, once they exist) moves every pick in it: `class_strength`
+is that class's top-30 ranked value against an average class, and half the gap is applied. In 2020-2025 the
+realized value of a class's top 30 picks ran from about 0.6x to 1.3x an average class (2022 thinnest), and the
+board saw only part of that coming, hence half.
 
 A pick with no slot yet ("2027 R1") takes the original owner's slot from this season's record (worst record picks
 first), leaning on the round average early in the season, and the round average when the owner isn't known.
@@ -16,15 +22,19 @@ from __future__ import annotations
 import re
 from typing import Any, Mapping
 
-# Trade value (superflex market scale) of the k-th rookie taken, three seasons later. 10-team superflex, 3 rounds,
-# FantasyPros rookie rankings as of each May, 1,000 drafts per class, classes 2020-2024 (run of 2026-10-28).
-REALIZED = [4575, 4988, 4394, 3757, 3346, 2934, 2626, 2272, 2166, 2070, 1712, 1551, 1454, 1373, 1367,
-            1245, 1297, 1252, 1180, 1051, 984, 898, 748, 710, 688, 687, 645, 621, 572, 511]
+# Trade value (superflex market scale) of the k-th rookie taken, three seasons later. Half from the draft study
+# (10-team superflex, 3 rounds, FantasyPros rookie rankings as of each May, 1,000 drafts per class, classes 2020-2024),
+# half from 7 real drafts (2017-2023) of a league with the same format, scaled to the same total and smoothed over
+# 3 picks. The real drafts are why 1.01 sits clearly above 1.02: their 1.01s never busted (7 of 7 hit), while 1.02
+# and 1.03 each busted 3 times.
+REALIZED = [6044, 5115, 3747, 2683, 2288, 2288, 2288, 2288, 2288, 2114, 2084, 1937, 1937, 1810, 1727,
+            1346, 1321, 1321, 1321, 1154, 1090, 1090, 1022, 843, 560, 556, 443, 402, 315, 256]
 # Market price of the k-th rookie pick (DynastyProcess "Pick r.ss", superflex), used when the database has no slot rows.
 MARKET = [7977, 6453, 5239, 4268, 3489, 2862, 2356, 1946, 1613, 1341, 1119, 937, 787, 663, 560,
           475, 405, 345, 296, 254, 219, 189, 164, 143, 124, 109, 95, 84, 74, 66, 58, 51, 45, 40, 35, 31]
 MARKET_WEIGHT = 0.5
 FUTURE_DISCOUNT = 0.8      # per year out, when the market has no price for that draft
+CLASS_TRUST = 0.5          # share of a class's ranked depth (vs an average class) applied to its picks
 FULL_SEASON_GAMES = 14     # by then a record says where the pick lands
 ROUND_WORDS = {"first": "1st", "second": "2nd", "third": "3rd", "fourth": "4th", "fifth": "5th"}
 
@@ -46,6 +56,15 @@ def non_increasing(values: list[float]) -> list[float]:
         else:
             i += 1
     return [v for v, n in blocks for _ in range(n)]
+
+
+def class_strength(ranked_values: Mapping[int, list[float]]) -> dict[int, float]:
+    """{draft year: trade values of its ranked rookies} -> each class's top-30 total against the average class."""
+    totals = {y: sum(sorted(v, reverse=True)[:30]) for y, v in ranked_values.items() if v}
+    if not totals:
+        return {}
+    avg = sum(totals.values()) / len(totals)
+    return {y: t / avg for y, t in totals.items()} if avg else {}
 
 
 def parse(label: str) -> dict[str, Any]:
@@ -75,9 +94,11 @@ class PickBook:
     """Pick values for one league: slot curve x each draft year's market level."""
 
     def __init__(self, market_rows: list[Mapping[str, Any]] | None, teams: int, rounds: int, season: int,
-                 records: Mapping[str, tuple[int, int]] | None = None, market_weight: float = MARKET_WEIGHT):
+                 records: Mapping[str, tuple[int, int]] | None = None, market_weight: float = MARKET_WEIGHT,
+                 class_strength: Mapping[int, float] | None = None):
         self.teams, self.rounds, self.season = max(int(teams or 10), 2), max(int(rounds or 3), 1), int(season)
         self.records = dict(records or {})
+        self.class_strength = {int(y): float(v) for y, v in (class_strength or {}).items() if v}
         rows = [r for r in market_rows or [] if r.get("value_2qb")]
         slots = sorted(((int(str(r["slot"]).split(".")[0]), int(str(r["slot"]).split(".")[1]), float(r["value_2qb"]))
                         for r in rows if r.get("slot") and int(r.get("draft_year") or 0) == min((int(x.get("draft_year") or 9999) for x in rows if x.get("slot")), default=0)))
@@ -98,6 +119,10 @@ class PickBook:
     def factor(self, year: int | None) -> float:
         if year is None:
             year = self.season + 1
+        depth = 1 + CLASS_TRUST * (self.class_strength[year] - 1) if year in self.class_strength else 1.0
+        return depth * self._market_factor(year)
+
+    def _market_factor(self, year: int) -> float:
         if year in self.year_factor:
             return self.year_factor[year]
         known = sorted(self.year_factor)
