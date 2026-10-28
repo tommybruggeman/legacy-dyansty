@@ -180,12 +180,12 @@ function AskBar({ placeholder }: { placeholder: string }) {
   );
 }
 
-function Table({ title, right, onRight, head, rows, cutAfter }: {
-  title: string; right?: string; onRight?: () => void; head: [string, string];
+function Table({ title, right, onRight, onPress, head, rows, cutAfter }: {
+  title: string; right?: string; onRight?: () => void; onPress?: () => void; head: [string, string];
   rows: { key: string; rank: number; name: string; avatar: string | null; me: boolean; a: string; b: string; teamId?: string | null }[];
   cutAfter?: number;
 }) {
-  return (
+  const body = (
     <Card>
       <Eyebrow right={right ? <Pressable onPress={onRight} hitSlop={8}><Text style={ui.link}>{right}</Text></Pressable> : undefined}>{title}</Eyebrow>
       <View style={styles.tHead}>
@@ -196,7 +196,7 @@ function Table({ title, right, onRight, head, rows, cutAfter }: {
       {rows.map((r, i) => (
         <Pressable
           key={r.key}
-          onPress={r.teamId ? () => router.push(`/team/${r.teamId}`) : undefined}
+          onPress={onPress ?? (r.teamId ? () => router.push(`/team/${r.teamId}`) : undefined)}
           style={[styles.tRow, i > 0 && cutAfter != null && rows[i - 1].rank <= cutAfter && r.rank > cutAfter && styles.tCut]}
         >
           <Text style={[styles.tRank, r.me && ui.gold]}>{r.rank}</Text>
@@ -210,14 +210,19 @@ function Table({ title, right, onRight, head, rows, cutAfter }: {
       ))}
     </Card>
   );
+  // A table with onPress opens its full page from anywhere inside the card.
+  return onPress ? <Pressable onPress={onPress}>{body}</Pressable> : body;
 }
+
+const openStandings = () => router.navigate({ pathname: '/league', params: { at: String(Date.now()) } });
 
 function Standings({ rows, playoffTeams }: { rows: TableRow[]; playoffTeams: number }) {
   return (
     <Table
       title="STANDINGS"
       right="All ›"
-      onRight={() => router.navigate('/league')}
+      onRight={openStandings}
+      onPress={openStandings}
       head={['W-L', 'SP']}
       cutAfter={playoffTeams}
       rows={rows.map((r) => ({
