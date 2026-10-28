@@ -8,7 +8,7 @@ on:
       check:
         description: Which check to run
         type: choice
-        options: [odds_backtest, odds_trial, odds_grade, stress_test, stress_grade, stress_rosters, stress_contracts, stress_league_link, stress_history, stress_ping]
+        options: [odds_backtest, odds_trial, odds_grade, stress_test, stress_grade, stress_rosters, stress_contracts, stress_league_link, stress_history, stress_ping, draft_study]
         default: odds_backtest
       budget:
         description: "stress_test only: stop before spending more than this many dollars"
@@ -19,6 +19,9 @@ on:
       skip:
         description: "stress_test only: skip the first N planned questions (resume a stopped run)"
         default: "0"
+      leagues:
+        description: "draft_study only: extra Sleeper league ids to score real rookie drafts from (comma-separated)"
+        default: ""
 
 permissions:
   contents: write  # the stress test saves its results (encrypted) to its own branch
@@ -32,7 +35,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - run: pip install supabase requests pandas anthropic
+      - run: pip install supabase requests pandas anthropic pyarrow numpy
       - if: startsWith(inputs.check, 'stress')
         run: pip install -r api/requirements.txt
       - name: Run
@@ -45,6 +48,7 @@ jobs:
           STRESS_QUESTIONS: ${{ inputs.questions }}
           STRESS_SKIP: ${{ inputs.skip }}
           STRESS_MAX_ANSWER: "0.2"
+          DRAFT_LEAGUES: ${{ inputs.leagues }}
         run: |
           case "${{ inputs.check }}" in
             odds_trial) python -m league_ai.odds_trial ;;
@@ -55,13 +59,14 @@ jobs:
             stress_history) python -m league_ai.stress_test history_check ;;
             stress_league_link) python -m league_ai.stress_test league_link ;;
             stress_contracts) python -m league_ai.stress_test contracts ;;
+            draft_study) python -m league_ai.draft_study ;;
             stress_grade) python -m league_ai.stress_test grade stress/grading-input.json ;;
             *) python -m league_ai.playoff_odds ;;
           esac
       - name: Commit the stress test results to this branch, encrypted
         # The repo is public and the answers name owners' rosters and plans, so only an encrypted copy is committed.
         # It opens with the private key kept in the project files (stress/results-key.pub.pem is its public half).
-        if: always() && (inputs.check == 'stress_test' || inputs.check == 'stress_rosters' || inputs.check == 'stress_contracts') && github.ref_name != 'main'
+        if: always() && (inputs.check == 'stress_test' || inputs.check == 'stress_rosters' || inputs.check == 'stress_contracts' || inputs.check == 'draft_study') && github.ref_name != 'main'
         run: |
           [ -f stress_results.json ] || exit 0
           KEY=$(openssl rand -hex 32)
@@ -70,7 +75,7 @@ jobs:
           git config user.name "github-actions[bot]" && git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
           git add stress/results.json.gz.enc stress/results.key.enc && git commit -qm "Stress test results (encrypted)" && git push origin HEAD:${{ github.ref_name }}
       - name: Save the stress test results
-        if: always() && startsWith(inputs.check, 'stress')
+        if: always() && (startsWith(inputs.check, 'stress') || inputs.check == 'draft_study')
         uses: actions/upload-artifact@v4
         with:
           name: ${{ inputs.check }}-results
