@@ -11,10 +11,11 @@ import os
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from supabase import Client, create_client
 
-from api import league, market, teams
+from api import front_office, league, market, teams
 from season_engine import SeasonResolver
 
 app = FastAPI(title="Legacy API")
@@ -344,3 +345,71 @@ def expiring(year: int | None = None, owner: tuple[Client, Any] = Depends(owner_
     year = year if year in years else years[0]
     players = market.expiring(_season_state(client, ctx), ctx["team_id"], year - ctx["season"])
     return {"season": year, "years": years, "players": players}
+
+
+# ---- Front Office ------------------------------------------------------------------
+
+
+class ChatRequest(BaseModel):
+    question: str
+    conversation_id: str | None = None
+
+
+def _front_office(client: Client, user: Any) -> front_office.Session:
+    ctx = _season_context(client, user)
+    if not ctx.get("team_id"):
+        raise HTTPException(status_code=404, detail="This account isn't linked to a team yet.")
+    return front_office.Session(client, front_office.owner_from(ctx, user), ctx["sleeper_id"])
+
+
+@app.get("/front-office")
+def front_office_home(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    session = _front_office(*owner)
+    try:
+        return front_office.home(session)
+    except Exception as exc:
+        print(f"APP_FRONT_OFFICE_ERROR {type(exc).__name__}: {exc}", flush=True)
+        raise HTTPException(status_code=502, detail="Couldn't load the Front Office. Try again.")
+
+
+def _chat_session(body: ChatRequest, client: Client, user: Any) -> tuple[front_office.Session, str]:
+    question = body.question.strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="Ask a question first.")
+    if len(question) > 2000:
+        raise HTTPException(status_code=400, detail="That question is too long. Keep it under 2,000 characters.")
+    if not front_office.ai_ready():
+        raise HTTPException(status_code=503, detail="The Assistant GM isn't switched on for the app yet.")
+    session = _front_office(client, user)
+    if not front_office.take_question(session.owner.user_id):
+        raise HTTPException(status_code=429, detail=f"That's {front_office.DAILY_QUESTIONS} questions today. The Assistant GM is back tomorrow.")
+    return session, question
+
+
+@app.post("/front-office/chat")
+def front_office_chat(body: ChatRequest, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    session, question = _chat_session(body, *owner)
+    return front_office.ask(session, question, body.conversation_id)
+
+
+@app.post("/front-office/chat/stream")
+def front_office_chat_stream(body: ChatRequest, owner: tuple[Client, Any] = Depends(owner_client)) -> StreamingResponse:
+    """The same answer as /front-office/chat, streamed: what the GM is checking, then the answer as it's written."""
+    session, question = _chat_session(body, *owner)
+    return StreamingResponse(front_office.ask_stream(session, question, body.conversation_id), media_type="application/x-ndjson",
+                             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+
+
+@app.get("/front-office/conversations")
+def front_office_conversations(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    session = _front_office(*owner)
+    return {"conversations": front_office.conversations(session.client, session.owner)}
+
+
+@app.get("/front-office/conversations/{conversation_id}")
+def front_office_conversation(conversation_id: str, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    session = _front_office(*owner)
+    result = front_office.conversation(session.client, session.owner, conversation_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Conversation not found.")
+    return result
