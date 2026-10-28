@@ -89,8 +89,10 @@ def season_table(weeks: pd.DataFrame, repl: Mapping[str, int], live_season: int,
 
 
 def outcome(seasons: pd.DataFrame, gsis: str | None, pos: str, draft_year: int, live_season: int) -> dict[str, Any]:
-    """Points above replacement over his first three seasons (unplayed years carry his latest season forward) and his tier."""
+    """Points above replacement over his first three seasons (unplayed years carry his latest season forward) and his tier.
+    He's only called a bust after two full seasons."""
     seen = min(3, live_season - draft_year + 1)
+    full = min(3, live_season - draft_year)
     s = seasons[(seasons.player_id == gsis) & seasons.season.between(draft_year, draft_year + 2)].sort_values("season") if gsis else seasons.iloc[0:0]
     par = float(s.par.sum())
     if seen < 3 and len(s):
@@ -101,37 +103,41 @@ def outcome(seasons: pd.DataFrame, gsis: str | None, pos: str, draft_year: int, 
     elif not np.isnan(best) and best <= STARTER.get(pos, 24):
         tier = "starter"
     else:
-        tier = "bust" if seen >= 2 else "too_early"
+        tier = "bust" if full >= 2 else "too_early"
     return {"par3": round(par, 1), "best_rank": None if np.isnan(best) else int(best), "tier": tier}
 
 
-def simulate(players: list[Mapping[str, Any]], slots: int, sims: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
-    """sims x slots arrays of the value / elite flag each slot got when managers draft off the board with the experts' spread as noise."""
+def simulate(players: list[Mapping[str, Any]], slots: int, sims: int, rng: np.random.Generator) -> dict[str, np.ndarray]:
+    """sims x slots arrays of what each slot got (points above replacement, later trade value, elite flag) when managers
+    draft off the board with the experts' own spread as the noise."""
     ecr = np.array([p["ecr"] for p in players], float)
     sd = np.array([max(float(p.get("sd") or 3), 1.0) for p in players])
-    par = np.array([p["par3"] for p in players], float)
-    elite = np.array([p["tier"] == "elite" for p in players], float)
+    cols = {"par": np.array([p["par3"] for p in players], float), "value": np.array([p.get("value_later") or 0 for p in players], float),
+            "elite": np.array([p["tier"] == "elite" for p in players], float)}
     n = min(slots, len(players))
-    out_par, out_el = np.zeros((sims, slots)), np.zeros((sims, slots))
+    out = {k: np.zeros((sims, slots)) for k in cols}
     for s in range(sims):
         order = np.argsort(ecr + rng.normal(0, sd))[:n]
-        out_par[s, :n], out_el[s, :n] = par[order], elite[order]
-    return out_par, out_el
+        for k, v in cols.items():
+            out[k][s, :n] = v[order]
+    return out
 
 
 def slot_label(k: int, teams: int) -> str:
     return f"{k // teams + 1}.{k % teams + 1:02d}"
 
 
-def slot_curve(par: np.ndarray, elite: np.ndarray, teams: int) -> list[dict[str, Any]]:
-    """Per slot: average value, median, chance of an elite player, value relative to 1.01, and chance he beats the next slot's pick."""
-    flat, fel = par.reshape(-1, par.shape[-1]), elite.reshape(-1, elite.shape[-1])
-    ev = flat.mean(0)
+def slot_curve(sims: Mapping[str, np.ndarray], teams: int) -> list[dict[str, Any]]:
+    """Per slot: average points above replacement, median, chance of an elite player / a useful one, the trade value the pick
+    turned into later, and both relative to 1.01."""
+    flat = {k: v.reshape(-1, v.shape[-1]) for k, v in sims.items()}
+    ev, val = flat["par"].mean(0), flat["value"].mean(0)
     rows = []
-    for k in range(flat.shape[1]):
-        rows.append({"slot": slot_label(k, teams), "ev_par": round(float(ev[k]), 1), "median_par": round(float(np.median(flat[:, k])), 1),
-                     "p_elite": round(float(fel[:, k].mean()), 3), "p_hit": round(float((flat[:, k] > 0).mean()), 3),
-                     "rel_to_101": round(float(ev[k] / ev[0]), 3) if ev[0] else None})
+    for k in range(ev.shape[0]):
+        rows.append({"slot": slot_label(k, teams), "ev_par": round(float(ev[k]), 1), "median_par": round(float(np.median(flat["par"][:, k])), 1),
+                     "p_elite": round(float(flat["elite"][:, k].mean()), 3), "p_hit": round(float((flat["par"][:, k] > 0).mean()), 3),
+                     "rel_to_101": round(float(ev[k] / ev[0]), 3) if ev[0] else None,
+                     "value_later": int(round(float(val[k]))), "value_rel_to_101": round(float(val[k] / val[0]), 3) if val[0] else None})
     return rows
 
 
@@ -151,9 +157,28 @@ def smooth_curve(ev: list[float]) -> list[float]:
 
 def elite_counts(classes: Mapping[int, Mapping[str, Any]]) -> dict[str, Any]:
     """How many elite players each class had, and how often there were at least 1, 2, 3 in the top 10 of the board."""
-    per = {y: sum(p["tier"] == "elite" for p in c["players"][:10]) for y, c in classes.items() if c["seasons_seen"] >= 2}
+    per = {y: sum(p["tier"] == "elite" for p in c["players"][:10]) for y, c in classes.items() if c["full_seasons"] >= 2}
     n = max(len(per), 1)
     return {"top10_elite_by_class": per, "share_at_least": {k: round(sum(v >= k for v in per.values()) / n, 2) for k in (1, 2, 3, 4)}}
+
+
+def ecr_to_value(ecr: float | None) -> int:
+    """DynastyProcess's value curve (same scale as the app's trade values): 10500 * e^(-0.0232 * ECR); unranked = 0."""
+    return 0 if ecr is None or pd.isna(ecr) else int(round(10500 * np.exp(-0.0232 * float(ecr))))
+
+
+def market_lookup(dsf: pd.DataFrame, when: str) -> tuple[str, dict[str, float]]:
+    """Superflex dynasty ECR by FantasyPros id from the last scrape on or before `when`."""
+    snap = dsf[dsf.scrape_date <= when]
+    if snap.empty:
+        return "", {}
+    snap = snap[snap.scrape_date == snap.scrape_date.max()]
+    return str(snap.scrape_date.max().date()), dict(zip(snap.id.astype(str), snap.ecr))
+
+
+def is_rookie_draft(picks: list[Mapping[str, Any]], total: int) -> bool:
+    """A rookie draft is (nearly) all rookies; a startup draft mixes in veterans."""
+    return total > 0 and len(picks) / total >= 0.7
 
 
 # ---- data loading ----------------------------------------------------------------------------------------
@@ -178,10 +203,13 @@ def rookie_picks(league: Mapping[str, Any], sleeper_draft_year: Mapping[str, int
     for d in get_json(f"{SLEEPER}/league/{league['league_id']}/drafts") or []:
         if d.get("status") != "complete":
             continue
-        for p in get_json(f"{SLEEPER}/draft/{d['draft_id']}/picks") or []:
+        all_picks = get_json(f"{SLEEPER}/draft/{d['draft_id']}/picks") or []
+        rookies = [p for p in all_picks if sleeper_draft_year.get(str(p.get("player_id") or "")) == season]
+        if not is_rookie_draft(rookies, len(all_picks)):
+            print(f"skipping {league.get('name')} {season} draft: {len(rookies)} rookies of {len(all_picks)} picks (startup)")
+            continue
+        for p in rookies:
             sid = str(p.get("player_id") or "")
-            if sleeper_draft_year.get(sid) != season:
-                continue
             meta = p.get("metadata") or {}
             out.append({"league": league.get("name"), "season": season, "teams": teams, "pick_no": int(p["pick_no"]), "round": int(p["round"]),
                         "sleeper_id": sid, "name": f"{meta.get('first_name', '')} {meta.get('last_name', '')}".strip(), "pos": meta.get("position"),
@@ -235,6 +263,7 @@ def main() -> None:
 
     ecr = pd.read_parquet(io.BytesIO(get_bytes(ECR_URL)))
     ecr["scrape_date"] = pd.to_datetime(ecr.scrape_date)
+    dsf = ecr[ecr.ecr_type == "dsf"]
     ecr = ecr[ecr.ecr_type.isin(["drk", "rookies"]) & ecr.pos.isin(POSITIONS)]
 
     classes: dict[int, dict[str, Any]] = {}
@@ -243,40 +272,45 @@ def main() -> None:
         if snap.empty:
             continue
         snap = snap[snap.scrape_date == snap.scrape_date.max()].sort_values("ecr").head(slots * 2)
+        later_date, later = market_lookup(dsf, f"{y + 3}-01-31")      # his trade value after three seasons (or today)
         players = []
         for r in snap.itertuples():
             gsis = fp2gsis.get(str(r.id))
             players.append({"name": r.player, "pos": r.pos, "ecr": float(r.ecr), "sd": float(r.sd) if not pd.isna(r.sd) else 3.0,
-                            "gsis": gsis, **outcome(seasons, gsis, r.pos, y, live_season)})
-        classes[y] = {"snapshot": str(snap.scrape_date.max().date()), "seasons_seen": min(3, live_season - y + 1), "players": players}
+                            "gsis": gsis, "fp_id": str(r.id), "value_later": ecr_to_value(later.get(str(r.id))),
+                            **outcome(seasons, gsis, r.pos, y, live_season)})
+        classes[y] = {"snapshot": str(snap.scrape_date.max().date()), "value_as_of": later_date, "seasons_seen": min(3, live_season - y + 1),
+                      "full_seasons": min(3, live_season - y), "players": players}
 
     # 1,000 drafts per class
     report: dict[str, Any] = {"league": {"teams": teams, "rounds": rounds, "superflex": superflex, "replacement": repl, "stats_through": f"{live_season} wk {live_week}"},
                               "classes": {}}
-    sim_par, sim_el, used = [], [], []
+    sims_kept: list[dict[str, np.ndarray]] = []
+    used = []
     for y, c in classes.items():
         P = c["players"]
-        par, el = simulate(P, slots, SIMS, rng)
+        sim = simulate(P, slots, SIMS, rng)
+        par = sim["par"]
         board = sorted(P, key=lambda p: p["ecr"])[:slots]
         cons = np.array([p["par3"] for p in board])
         best = np.sort([p["par3"] for p in P])[::-1][:slots]
         hind_rank = pd.Series(-cons).rank().to_numpy()
         rho = float(np.corrcoef(np.arange(len(cons)), hind_rank)[0, 1]) if cons.std() else None
         report["classes"][y] = {
-            "snapshot": c["snapshot"], "seasons_seen": c["seasons_seen"],
+            "snapshot": c["snapshot"], "value_as_of": c["value_as_of"], "seasons_seen": c["seasons_seen"], "full_seasons": c["full_seasons"],
             "elite_top10": sum(p["tier"] == "elite" for p in board[:10]), "elite_in_top60": sum(p["tier"] == "elite" for p in P),
             "tiers_drafted": dict(pd.Series([p["tier"] for p in board]).value_counts()),
             "board_order_vs_results": None if rho is None else round(rho, 3),
             "board_value_vs_perfect": round(float(cons.sum() / best.sum()), 3) if best.sum() else None,
             "sim_value_vs_perfect": round(float(par.sum(1).mean() / best.sum()), 3) if best.sum() else None,
             "round1_hits": sum(p["par3"] > 0 for p in board[:teams]),
-            "board_top10": [{k: p[k] for k in ("name", "pos", "ecr", "par3", "tier", "best_rank")} for p in board[:10]],
+            "board_top10": [{k: p[k] for k in ("name", "pos", "ecr", "par3", "tier", "best_rank", "value_later")} for p in board[:10]],
             "steals": [{k: p[k] for k in ("name", "pos", "ecr", "par3", "tier")} for p in sorted(P[teams:], key=lambda p: -p["par3"])[:5]],
             "busts": [{k: p[k] for k in ("name", "pos", "ecr", "par3")} for p in board[:teams] if p["tier"] == "bust"],
         }
-        if c["seasons_seen"] >= 2:
-            sim_par.append(par), sim_el.append(el), used.append(y)
-    curve = slot_curve(np.stack(sim_par), np.stack(sim_el), teams)
+        if c["full_seasons"] >= 2:
+            sims_kept.append(sim), used.append(y)
+    curve = slot_curve({k: np.stack([s[k] for s in sims_kept]) for k in sims_kept[0]}, teams)
     for row, v in zip(curve, smooth_curve([r["ev_par"] for r in curve])):
         row["smoothed"] = v
     report["slot_curve"] = {"classes_used": used, "rows": curve}
@@ -296,6 +330,7 @@ def main() -> None:
         r.update(o)
         board = {p["gsis"]: p["ecr"] for p in classes.get(r["season"], {}).get("players", [])}
         r["board_rank"] = board.get(sl2gsis.get(r["sleeper_id"]))
+        r["reach"] = round(r["rookie_pick"] - r["board_rank"], 1) if r["board_rank"] else None
     report["real_drafts"] = {"picks": real, "leagues": sorted({r["league"] for r in real if r["league"]}),
                              "seasons": sorted({r["season"] for r in real})}
     print(json.dumps({k: v for k, v in report.items() if k != "real_drafts"}, indent=1, default=str)[:20000])
