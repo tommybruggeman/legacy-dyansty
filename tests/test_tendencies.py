@@ -33,7 +33,7 @@ class LineupTest(unittest.TestCase):
             hot_y = wk >= 5
             rows.append(lineup("Ann", wk + 1, [("Y", y[wk])] if hot_y else [("X", x[wk])], [("X", x[wk])] if hot_y else [("Y", y[wk])]))
         out = lineup_habits(rows, 2026)
-        self.assertEqual(out["Ann"]["start_sit_lean"], "starts the hot hand")
+        self.assertEqual(out["Ann"]["start_sit_lean"], "starts the hot hand more than most")
 
 
 class MarketTest(unittest.TestCase):

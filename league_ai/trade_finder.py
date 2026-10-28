@@ -50,6 +50,7 @@ class League:
         self.pick_values = list(pick_values or (pick_book.labels() if pick_book is not None else []))
         self.leanings = dict(leanings or {})
         self.playoff_odds: dict[str, float] = {}
+        self.habits: dict[str, dict[str, Any]] = {}  # owner name -> league_ai.tendencies row (FAAB positions, start/sit lean...)
         self.set_windows(windows)
 
     def set_windows(self, overrides: Mapping[str, str] | None) -> None:
@@ -185,8 +186,9 @@ def find_trades(*, league: League, asker_team_id: str, cap_space: Mapping[str, f
                 continue  # nothing we'd pay gets to what they should take
             walk = max((o for o in options if o["their_share"] >= CLOSE_SHARE), key=lambda o: o["my_out"])
             surplus = (my_in - closing["my_out"]) / my_in if my_in else 0.0
+            fit = _habit_fit(league, str(team.get("owner_name") or ""), closing["sends"])
             ideas.append({
-                "score": round(closing["my_gain"] + 10 * surplus + 3 * min(closing["their_share"] - 1, 0.5), 2),
+                "score": round(closing["my_gain"] + 10 * surplus + 3 * min(closing["their_share"] - 1, 0.5) + (HABIT_FIT_BONUS if fit else 0.0), 2),
                 "partner": team.get("owner_name"),
                 "partner_window": their_window,
                 "you_get": [_label(target)],
@@ -201,6 +203,7 @@ def find_trades(*, league: League, asker_team_id: str, cap_space: Mapping[str, f
                 "their_lineup_gain": closing["their_gain"],
                 "cap_after": {"you": round(closing["cap"][0], 2), "them": round(closing["cap"][1], 2)},
                 "you_lose_a_starter": any(p.sleeper_id in my_starters for p in closing["sends"]),
+                **({"fits_their_habits": fit} if fit else {}),
             })
     ideas.sort(key=lambda x: -x["score"])
     seen: set[tuple[str, str]] = set()
@@ -405,6 +408,17 @@ def _pick_weight(window: str) -> float:
     return {"contending": 0.5, "middle": 0.8, "rebuilding": 1.0}.get(window, 0.8)
 
 
+HABIT_FIT_BONUS = 1.0  # tiebreak only: owners got their top FAAB position in a trade ~1.2x as often as chance (tendency_check)
+
+
+def _habit_fit(league: League, owner: str, sends: list[PlayerStrength]) -> str | None:
+    """Why this package suits the partner's habits, if it does: it hands them the position they spend the most FAAB on."""
+    favs = list((league.habits.get(owner) or {}).get("faab_by_position") or {})
+    if favs and any(p.position == favs[0] for p in sends):
+        return f"gives them a {favs[0]}, the position they spend the most FAAB on"
+    return None
+
+
 def _norm(s: Any) -> str:
     return "".join(ch for ch in str(s or "").casefold() if ch.isalnum())
 
@@ -478,6 +492,7 @@ def trade_finder_tools(load: Callable[[], tuple[League, Mapping[str, float], str
             model = odds() if odds is not None else None
             if model is not None and model.remaining():
                 cache["league"].set_playoff_odds(model.odds())
+            cache["league"].habits = habits()
         if windows:
             cache["windows"].update({str(k): str(v).lower() for k, v in windows.items()})
             cache["league"].set_windows(cache["windows"])
