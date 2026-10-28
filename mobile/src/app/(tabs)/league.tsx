@@ -22,9 +22,12 @@ export default function League() {
     <Screen>
       <Title>League</Title>
       <Segmented options={VIEWS} value={view} onChange={setView} />
-      <SwipeTabs options={VIEWS} value={view} onChange={setView}>
-        {view === 'Standings' ? <StandingsView /> : view === 'Matchups' ? <MatchupsView /> : <TeamsView />}
-      </SwipeTabs>
+      <SwipeTabs
+        options={VIEWS}
+        value={view}
+        onChange={setView}
+        render={(v) => (v === 'Standings' ? <StandingsView /> : v === 'Matchups' ? <MatchupsView /> : <TeamsView />)}
+      />
     </Screen>
   );
 }

@@ -17,9 +17,7 @@ export default function Market() {
     <Screen>
       <Title>Market</Title>
       <Segmented options={VIEWS} value={view} onChange={setView} />
-      <SwipeTabs options={VIEWS} value={view} onChange={setView}>
-        {view === 'Free Agents' ? <FreeAgentList /> : <ExpiringList />}
-      </SwipeTabs>
+      <SwipeTabs options={VIEWS} value={view} onChange={setView} render={(v) => (v === 'Free Agents' ? <FreeAgentList /> : <ExpiringList />)} />
     </Screen>
   );
 }
