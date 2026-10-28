@@ -4,6 +4,8 @@ import { StatusBar } from 'expo-status-bar';
 import { SessionProvider, useSession } from '../lib/session';
 import { colors } from '../lib/theme';
 
+export { ScreenError as ErrorBoundary } from '../components/ScreenState';
+
 function RootStack() {
   const { session, loading } = useSession();
   if (loading) return null;

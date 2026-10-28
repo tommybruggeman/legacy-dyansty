@@ -5,6 +5,8 @@ import { TeamView } from '../../components/team/TeamView';
 import { Back, Screen } from '../../components/ui';
 import { type TeamPage, useApi } from '../../lib/api';
 
+export { ScreenError as ErrorBoundary } from '../../components/ScreenState';
+
 export default function Team() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data, error, loading, reload } = useApi<TeamPage>(`/teams/${id}`);
