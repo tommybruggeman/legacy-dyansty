@@ -27,7 +27,8 @@ FAKE_USER = "00000000-0000-0000-0000-00000000beef"
 WRITE_TOOLS = ("remember", "forget", "record_trade_response", "log_prediction")
 
 # how many of each kind of question, out of QUESTIONS
-MIX = {"start_sit": 15, "win": 5, "pickup": 8, "trade_find": 6, "trade_target": 6, "buy_sell": 3, "playoffs": 5, "partner": 2}
+MIX = {"start_sit": 24, "win": 8, "pickup": 12, "trade_find": 10, "trade_target": 12, "buy_sell": 6, "playoffs": 8, "partner": 4,
+       "owner_style": 6, "contract": 6, "faab": 4}
 
 
 def current_league(client: Any, cols: str) -> dict | None:
@@ -66,6 +67,7 @@ def candidates(mine: Mapping[str, Any], rankings: list[Mapping[str, Any]]) -> di
 
     out["win"].append({"q": "What are my chances of winning this week, and is there any lineup change that gives me a better shot?"})
     out["pickup"].append({"q": f"Who is the best free agent I could pick up to help at {weak}, who would I drop, and how much FAAB should I bid?"})
+    out["pickup"].append({"q": "Is there a free agent worth stashing now for the fantasy playoffs? Who, and what would I drop?"})
     out["trade_find"].append({"q": f"Find me a trade that upgrades my {weak} without hurting my starting lineup. What should I offer first?"})
 
     wpos = weak.upper().replace("FLEX", "RB")
@@ -86,6 +88,13 @@ def candidates(mine: Mapping[str, Any], rankings: list[Mapping[str, Any]]) -> di
         out["buy_sell"].append({"q": f"Should I sell {p['name']} now or hold him? Is he worth more to me or on the trade market?",
                                 "players": [{"id": p["id"], "name": p["name"]}]})
     out["playoffs"].append({"q": "What are my playoff odds right now, and what do I need to do the rest of the season to make the playoffs?"})
+    others = [r for r in rankings if r.get("team_id") != mine.get("team_id")]
+    if others:
+        r = others[(len(str(mine.get("team_id"))) + len(others)) % len(others)]
+        out["owner_style"].append({"q": f"How does {r['owner']} usually trade, and what kind of players and contracts does he go after? How should I pitch him?",
+                                   "partner": r["owner"]})
+    out["contract"].append({"q": "Which of my contracts are the best and worst values, and who should I keep or let walk at rollover? How much cap room will I have next season?"})
+    out["faab"].append({"q": f"How much FAAB do owners in this league usually pay for a {wpos} who steps into a starting role, and how much do I have left?"})
     out["partner"].append({"q": "Which owner in the league is most likely to actually make a trade with me this season, and what would they want from my roster?"})
     return out
 
@@ -212,7 +221,8 @@ def ask(client: Any) -> int:
     print(f"League {league['name']} season {season} week {state_nfl.get('week')} model {config.model} budget ${BUDGET:.2f}", flush=True)
 
     sessions, per_team = {}, []
-    shared = league_state(client, str(league["id"]), season)
+    from league_ai.sleeper_roster import fill_from_sleeper
+    shared = fill_from_sleeper(client, league_state(client, str(league["id"]), season), sid, str(league["id"]))
     for o in _owners(client, str(league["id"]), season):
         try:
             s = fo_api.Session(client, o, sid)
