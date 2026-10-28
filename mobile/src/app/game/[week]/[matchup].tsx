@@ -51,12 +51,14 @@ export default function Game() {
             <Row key={i}>
               <Pressable style={styles.side} onPress={openPlayer(pa)}>
                 <Text style={styles.player} numberOfLines={1}>{pa?.name ?? ''}</Text>
-                <Text style={[styles.points, styles.gold]} numberOfLines={1}>{pa ? detail(pa) : ''}</Text>
+                <Text style={[styles.points, styles.gold]}>{pa ? pa.points.toFixed(1) : ''}</Text>
+                {pa && detail(pa) ? <Text style={styles.small} numberOfLines={1}>{detail(pa)}</Text> : null}
               </Pressable>
               <View style={styles.mid}><Pos label={pa?.slot || pb?.slot || ''} /></View>
               <Pressable style={styles.side} onPress={openPlayer(pb)}>
                 <Text style={[styles.player, styles.rightText]} numberOfLines={1}>{pb?.name ?? ''}</Text>
-                <Text style={[styles.points, styles.rightText]} numberOfLines={1}>{pb ? detail(pb) : ''}</Text>
+                <Text style={[styles.points, styles.rightText]}>{pb ? pb.points.toFixed(1) : ''}</Text>
+                {pb && detail(pb) ? <Text style={[styles.small, styles.rightText]} numberOfLines={1}>{detail(pb)}</Text> : null}
               </Pressable>
             </Row>
           );
@@ -67,14 +69,15 @@ export default function Game() {
   );
 }
 
-// "21.3 · RB4" once he's played, "8.2 · proj 14.1 · LIVE" mid-game, "proj 14.1" before kickoff.
+// The small line under each score: "proj 14.1" before kickoff, "proj 14.1 · LIVE"
+// mid-game, and his position rank that week ("RB4") once it's over.
 function detail(p: BoxPlayer) {
   if (!p.player_id || p.player_id === '0') return '';
   const proj = p.proj != null ? `proj ${p.proj.toFixed(1)}` : null;
-  if (p.status === 'waiting') return proj ?? '—';
   if (p.status === 'bye') return 'BYE';
-  if (p.status === 'playing') return [p.points.toFixed(1), proj, 'LIVE'].filter(Boolean).join(' · ');
-  return [p.points.toFixed(1), p.rank].filter(Boolean).join(' · ');
+  if (p.status === 'playing') return [proj, 'LIVE'].filter(Boolean).join(' · ');
+  if (p.status === 'final') return [p.rank, proj].filter(Boolean).join(' · ');
+  return proj ?? '';
 }
 
 const openPlayer = (p?: BoxPlayer) => (p?.player_id && p.player_id !== '0' ? () => router.push(`/player/${p.player_id}`) : undefined);
@@ -94,4 +97,5 @@ const styles = StyleSheet.create({
   rightText: { textAlign: 'right' },
   player: { color: colors.text, fontSize: 14, fontWeight: '700' },
   points: { color: colors.muted, fontSize: 12, marginTop: 1 },
+  small: { color: colors.muted, fontSize: 10, marginTop: 1, opacity: 0.8 },
 });
