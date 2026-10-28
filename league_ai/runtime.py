@@ -285,7 +285,20 @@ def chat_tools(client: Any, owner: Owner, *, state: Mapping[str, Any], rules: Ma
             "client": client, "league_id": owner.league_id, "user_id": owner.user_id, "conversation_id": conversation_id(),
             "question": question(), "out": out}).start(),
     )
+
+    def week_projection(players: list[Mapping[str, Any]]) -> dict[str, float]:
+        from api.projections import week_projections
+
+        sid = league.get("sleeper_league_id")
+        if not sid or not week:
+            return {}
+        ids = [str(p.get("sleeper_id")) for p in players if p.get("sleeper_id")]
+        return week_projections(client, str(sid), int(owner.season), int(week), ids,
+                                {str(p.get("sleeper_id")): str(p.get("position") or "") for p in players},
+                                {str(p.get("sleeper_id")): str(p.get("team") or "") for p in players})
+
     return build_registry(client, league_state=state, salary_cap=rules.get("salary_cap", 225), dead_cap_pct=float(rules.get("default_dead_cap_pct", 50) or 50),
+                          week_projection=week_projection,
                           extra=[*history_tools(client, owner.league_id), *owner.memory(client).tools(), *ledger.tools(), *finder, *(extra or [])])
 
 

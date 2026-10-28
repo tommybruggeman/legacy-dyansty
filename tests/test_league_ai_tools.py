@@ -162,6 +162,16 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(out["nfl_team"], "BUF")
         self.assertIn("error", json.loads(reg.call("get_player_stats", {})))  # bad args reported, not raised
 
+    def test_compare_players_carries_this_weeks_projection(self):
+        reg = build_registry(FakeClient(), league_state=fixture_state(),
+                             week_projection=lambda players: {"p2": 14.2, "p99": 9.1})
+        out = json.loads(reg.call("compare_players", {"names": ["Bijan Robinson", "Free Agent Back"]}))
+        self.assertEqual(out["Bijan Robinson"]["this_week_projection"], 14.2)
+        self.assertEqual(out["projection_order"]["RB"], ["Bijan Robinson 14.2", "Free Agent Back 9.1"])
+        self.assertIn("70%", out["how_to_read_projections"])
+        plain = json.loads(build_registry(FakeClient(), league_state=fixture_state()).call("compare_players", {"names": ["Bijan Robinson"]}))
+        self.assertNotIn("projection_order", plain)
+
 
 if __name__ == "__main__":
     unittest.main()
