@@ -195,12 +195,7 @@ function RosterTab({ team }: { team: TeamPage }) {
   );
 }
 
-const GRADE: Record<string, { label: string; tone: 'live' | 'muted' | 'out' | 'gold' }> = {
-  bargain: { label: 'BARGAIN', tone: 'live' }, fair: { label: 'FAIR', tone: 'muted' },
-  overpaid: { label: 'OVERPAID', tone: 'out' }, stash: { label: 'STASH', tone: 'gold' },
-};
-
-// Every contract ranked by value (PPG per cap dollar), best first, graded against the whole league.
+// Every contract ranked by value (PPG per cap dollar), best first.
 function ContractsTab({ team }: { team: TeamPage }) {
   const { dead_cap } = team.contracts;
   const all = team.contracts.all ?? [];
@@ -216,7 +211,6 @@ function ContractsTab({ team }: { team: TeamPage }) {
       >
         {all.length === 0 ? <Note>No contracts yet.</Note> : null}
         {all.map((p, i) => {
-          const grade = p.grade ? GRADE[p.grade] : null;
           const tag = p.designation === 'taxi' ? 'TAXI' : p.designation === 'ir' ? 'IR' : p.is_rookie ? 'ROOKIE' : null;
           const years = Math.max(p.years_left, 1);
           return (
@@ -231,10 +225,7 @@ function ContractsTab({ team }: { team: TeamPage }) {
                   {money(p.contract_salary)} · {years} yr{years === 1 ? '' : 's'} · {p.ppg != null ? `${p.ppg.toFixed(1)} PPG` : 'no games'}
                 </Text>
               </View>
-              <View style={styles.valueRight}>
-                {grade ? <Pill label={grade.label} tone={grade.tone} /> : null}
-                <Text style={styles.perDollar}>{p.per_dollar != null ? `${p.per_dollar.toFixed(2)} PPG / $` : '— PPG / $'}</Text>
-              </View>
+              <Text style={styles.perDollar}>{p.per_dollar != null ? `${p.per_dollar.toFixed(2)} PPG / $` : '— PPG / $'}</Text>
             </Row>
           );
         })}
@@ -249,7 +240,6 @@ function ContractsTab({ team }: { team: TeamPage }) {
           ))}
         </Card>
       ) : null}
-      <Note>Bargain, fair and overpaid compare each deal&apos;s points per dollar with every contract in the league.</Note>
     </>
   );
 }
@@ -323,7 +313,6 @@ const styles = StyleSheet.create({
   shrink: { flexShrink: 1 },
   subGap: { marginTop: 3 },
   bigSalary: { color: colors.gold, fontSize: 18, fontWeight: '800' },
-  valueRight: { alignItems: 'flex-end', gap: 5 },
   perDollar: { color: colors.muted, fontSize: 11 },
   subLine: { flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 3 },
   pips: { flexDirection: 'row', gap: 3 },
