@@ -461,6 +461,35 @@ def league_link(client: Any) -> int:
     return 0
 
 
+def history_check(client: Any) -> int:
+    """Free check: how much past-season context each league holds (counts only, safe for a public log)."""
+    from collections import Counter
+
+    def rows(table: str, cols: str, lid: str, **eq: Any) -> list:
+        out, start = [], 0
+        while True:
+            q = client.table(table).select(cols).eq("league_id", lid)
+            for k, v in eq.items():
+                q = q.eq(k, v)
+            page = q.range(start, start + 999).execute().data or []
+            out += page
+            if len(page) < 1000:
+                return out
+            start += 1000
+
+    for l in client.table("leagues").select("id, sleeper_league_id").execute().data or []:
+        lid = str(l["id"])
+        ev = rows("league_history_events", "season, kind, contract_salary", lid)
+        print(f"league {lid} sleeper {l.get('sleeper_league_id')}")
+        print("  history events by season/kind:", sorted(Counter((e["season"], e["kind"]) for e in ev).items()))
+        print("  events with a contract salary by season:", sorted(Counter(e["season"] for e in ev if e.get("contract_salary") is not None).items()))
+        print("  matchups by season:", sorted(Counter(m["season"] for m in rows("league_matchups", "season", lid)).items()))
+        print("  contract seasons by season/status:", sorted(Counter((c["season"], c["obligation_status"]) for c in rows("contract_seasons", "season, obligation_status", lid)).items()))
+        print("  contract events by type/season:", sorted(Counter((c["event_type"], c["effective_season"]) for c in rows("contract_events", "event_type, effective_season", lid)).items()))
+        print("  agreements by origin/status:", sorted(Counter((a["origin"], a["status"]) for a in rows("contract_agreements", "origin, status", lid)).items()))
+    return 0
+
+
 def main() -> int:
     from supabase import create_client
 
@@ -468,6 +497,8 @@ def main() -> int:
     mode = sys.argv[1] if len(sys.argv) > 1 else "ask"
     if mode == "rosters":
         return rosters(client)
+    if mode == "history_check":
+        return history_check(client)
     if mode == "league_link":
         return league_link(client)
     if mode == "contracts":
