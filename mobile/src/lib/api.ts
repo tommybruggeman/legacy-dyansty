@@ -1,4 +1,6 @@
+import { useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
+import { AppState } from 'react-native';
 
 import { supabase } from './supabase';
 
@@ -33,26 +35,38 @@ export async function apiSend<T>(method: 'POST' | 'DELETE', path: string, body?:
   return result as T;
 }
 
-export function useApi<T>(path: string) {
+// refreshEvery (ms) quietly re-fetches while the screen is open and the app
+// is in front, e.g. live scores. Pass 0 to stop.
+export function useApi<T>(path: string, refreshEvery = 0) {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (quiet = false) => {
+    if (!quiet) setLoading(true);
     try {
       setData(await apiGet<T>(path));
       setError(null);
     } catch (e: any) {
-      setError(e?.message ?? 'Something went wrong.');
+      if (!quiet) setError(e?.message ?? 'Something went wrong.');
     } finally {
-      setLoading(false);
+      if (!quiet) setLoading(false);
     }
   }, [path]);
 
   useEffect(() => { load(); }, [load]);
 
-  return { data, error, loading, reload: load };
+  useFocusEffect(
+    useCallback(() => {
+      if (!refreshEvery) return undefined;
+      const timer = setInterval(() => {
+        if (AppState.currentState === 'active') load(true);
+      }, refreshEvery);
+      return () => clearInterval(timer);
+    }, [load, refreshEvery]),
+  );
+
+  return { data, error, loading, reload: () => load() };
 }
 
 export type StandingsRow = {
@@ -146,6 +160,7 @@ export type TeamPage = {
 export type BoxPlayer = { player_id: string; name: string; slot: string; points: number };
 export type BoxScore = {
   week: number;
+  is_final: boolean;
   matchup_id: number;
   my_roster_id: number | null;
   teams: { roster_id: number; team_id: string | null; name: string; score: number; players: BoxPlayer[] }[];

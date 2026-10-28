@@ -298,7 +298,8 @@ def box_score(
     ctx = _season_context(client, user)
     if not 1 <= week <= 25:
         raise HTTPException(status_code=404, detail="No such week.")
-    ttl = 86400 if week <= league.last_scored_week(ctx["sleeper_id"]) else 60
+    final = week <= league.last_scored_week(ctx["sleeper_id"])
+    ttl = 86400 if final else league.LIVE_TTL
     ids = teams.starter_ids(ctx["sleeper_id"], week, matchup_id, ttl)
     result = teams.box_score(ctx["sleeper_id"], week, matchup_id, ctx["names"], ctx["slots"], teams.player_info(client, ids), ttl)
     if result is None:
@@ -307,6 +308,7 @@ def box_score(
     for side in result["teams"]:
         side["team_id"] = teams_by_roster.get(side["roster_id"])
     result["my_roster_id"] = ctx["sleeper_roster_id"]
+    result["is_final"] = final
     return result
 
 
