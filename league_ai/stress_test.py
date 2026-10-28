@@ -294,7 +294,7 @@ def grade_saved(client: Any, path: str) -> int:
     from league_ai.learning_job import WeeklyStats, completed_week, league_scoring, league_points
 
     data = json.load(open(path))
-    league = next(iter(client.table("leagues").select("id").eq("name", data["league"]).limit(1).execute().data or []), None)
+    league = next(iter(client.table("leagues").select("id").not_.is_("sleeper_league_id", "null").limit(1).execute().data or []), None)
     scoring = league_scoring(client, str(league["id"])) if league else {}
     season, done, stats = int(data["season"]), completed_week(client, int(data["season"])), WeeklyStats()
     horizon = {"start_sit": 1, "pickup": 3, "trade": 4}
@@ -351,7 +351,7 @@ def main() -> int:
     if mode == "rosters":
         return rosters(client)
     if mode == "grade":
-        return grade_saved(client, sys.argv[2] if len(sys.argv) > 2 else "stress/stress_results.json")
+        return grade_saved(client, sys.argv[2] if len(sys.argv) > 2 else "stress/grading-input.json")
     return ask(client)
 
 

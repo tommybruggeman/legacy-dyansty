@@ -47,7 +47,7 @@ jobs:
             odds_grade) python -m league_ai.matchup_odds ;;
             stress_test) python -m league_ai.stress_test ask ;;
             stress_rosters) python -m league_ai.stress_test rosters ;;
-            stress_grade) python -m league_ai.stress_test grade stress/stress_results.json ;;
+            stress_grade) python -m league_ai.stress_test grade stress/grading-input.json ;;
             *) python -m league_ai.playoff_odds ;;
           esac
       - name: Commit the stress test results to this branch, encrypted

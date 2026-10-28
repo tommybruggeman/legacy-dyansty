@@ -1,0 +1,972 @@
+{
+ "season": 2026,
+ "week": 8,
+ "items": [
+  {
+   "n": 1,
+   "kind": "logged",
+   "logged": [
+    {
+     "n": 1,
+     "mixed_up": false,
+     "kind": "start_sit",
+     "week": 8,
+     "verdict": null,
+     "confidence": 0.72,
+     "pick_ids": [
+      {
+       "name": "Josh Downs",
+       "sleeper_id": "9500",
+       "position": "WR"
+      }
+     ],
+     "over_ids": [
+      {
+       "name": "Tre' Harris",
+       "sleeper_id": "12509",
+       "position": "WR"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "n": 2,
+   "kind": "logged",
+   "logged": [
+    {
+     "n": 2,
+     "mixed_up": false,
+     "kind": "pickup",
+     "week": 8,
+     "verdict": null,
+     "confidence": 0.7,
+     "pick_ids": [
+      {
+       "name": "Carnell Tate",
+       "sleeper_id": "13279",
+       "position": "WR"
+      }
+     ],
+     "over_ids": [
+      {
+       "name": "Makai Lemon",
+       "sleeper_id": "13294",
+       "position": "WR"
+      },
+      {
+       "name": "KC Concepcion Jr.",
+       "sleeper_id": "13298",
+       "position": "WR"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "n": 3,
+   "kind": "logged",
+   "logged": [
+    {
+     "n": 3,
+     "mixed_up": false,
+     "kind": "trade",
+     "week": 8,
+     "verdict": "accept",
+     "confidence": 0.58,
+     "pick_ids": [
+      {
+       "name": "Puka Nacua",
+       "sleeper_id": "9493",
+       "position": "WR"
+      }
+     ],
+     "over_ids": [
+      {
+       "name": "Kenneth Walker III",
+       "sleeper_id": "8151",
+       "position": "RB"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "n": 5,
+   "kind": "logged",
+   "logged": [
+    {
+     "n": 5,
+     "mixed_up": false,
+     "kind": "start_sit",
+     "week": 8,
+     "verdict": null,
+     "confidence": 0.55,
+     "pick_ids": [
+      {
+       "name": "Kyler Murray",
+       "sleeper_id": "5849",
+       "position": "QB"
+      }
+     ],
+     "over_ids": [
+      {
+       "name": "Sam Darnold",
+       "sleeper_id": "4943",
+       "position": "QB"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "n": 6,
+   "kind": "logged",
+   "logged": [
+    {
+     "n": 6,
+     "mixed_up": false,
+     "kind": "pickup",
+     "week": 8,
+     "verdict": null,
+     "confidence": 0.6,
+     "pick_ids": [
+      {
+       "name": "Jeremiyah Love",
+       "sleeper_id": "13287",
+       "position": "RB"
+      }
+     ],
+     "over_ids": [
+      {
+       "name": "MarShawn Lloyd",
+       "sleeper_id": "11581",
+       "position": "RB"
+      },
+      {
+       "name": "Emmett Johnson",
+       "sleeper_id": "13337",
+       "position": "RB"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "n": 7,
+   "kind": "logged",
+   "logged": [
+    {
+     "n": 7,
+     "mixed_up": false,
+     "kind": "trade",
+     "week": 8,
+     "verdict": "accept",
+     "confidence": 0.7,
+     "pick_ids": [
+      {
+       "name": "Chase Brown",
+       "sleeper_id": "9224",
+       "position": "RB"
+      }
+     ],
+     "over_ids": [
+      {
+       "name": "Sam Darnold",
+       "sleeper_id": "4943",
+       "position": "QB"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "n": 10,
+   "kind": "logged",
+   "logged": [
+    {
+     "n": 10,
+     "mixed_up": false,
+     "kind": "start_sit",
+     "week": 8,
+     "verdict": null,
+     "confidence": 0.96,
+     "pick_ids": [
+      {
+       "name": "Brian Thomas Jr.",
+       "sleeper_id": "11631",
+       "position": "WR"
+      }
+     ],
+     "over_ids": [
+      {
+       "name": "Tyreek Hill",
+       "sleeper_id": "3321",
+       "position": "WR"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "n": 11,
+   "kind": "logged",
+   "logged": [
+    {
+     "n": 11,
+     "mixed_up": true,
+     "kind": "start_sit",
+     "week": 8,
+     "verdict": null,
+     "confidence": 0.85,
+     "pick_ids": [
+      {
+       "name": "Bo Nix",
+       "sleeper_id": "11563",
+       "position": "QB"
+      }
+     ],
+     "over_ids": [
+      {
+       "name": "Shedeur Sanders",
+       "sleeper_id": "12524",
+       "position": "QB"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "n": 12,
+   "kind": "logged",
+   "logged": [
+    {
+     "n": 12,
+     "mixed_up": true,
+     "kind": "start_sit",
+     "week": 8,
+     "verdict": null,
+     "confidence": 0.96,
+     "pick_ids": [
+      {
+       "name": "Matthew Stafford",
+       "sleeper_id": "421",
+       "position": "QB"
+      }
+     ],
+     "over_ids": [
+      {
+       "name": "Tua Tagovailoa",
+       "sleeper_id": "6768",
+       "position": "QB"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "n": 13,
+   "kind": "logged",
+   "logged": [
+    {
+     "n": 13,
+     "mixed_up": false,
+     "kind": "pickup",
+     "week": 8,
+     "verdict": null,
+     "confidence": 0.7,
+     "pick_ids": [
+      {
+       "name": "Carnell Tate",
+       "sleeper_id": "13279",
+       "position": "WR"
+      }
+     ],
+     "over_ids": [
+      {
+       "name": "Kenyon Sadiq",
+       "sleeper_id": "13330",
+       "position": "TE"
+      },
+      {
+       "name": "AJ Barner",
+       "sleeper_id": "11603",
+       "position": "TE"
+      },
+      {
+       "name": "MarShawn Lloyd",
+       "sleeper_id": "11581",
+       "position": "RB"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "n": 14,
+   "kind": "logged",
+   "logged": [
+    {
+     "n": 14,
+     "mixed_up": true,
+     "kind": "trade",
+     "week": 8,
+     "verdict": "accept",
+     "confidence": 0.6,
+     "pick_ids": [
+      {
+       "name": "Xavier Worthy",
+       "sleeper_id": "11624",
+       "position": "WR"
+      }
+     ],
+     "over_ids": [
+      {
+       "name": "Shedeur Sanders",
+       "sleeper_id": "12524",
+       "position": "QB"
+      },
+      {
+       "name": "Tua Tagovailoa",
+       "sleeper_id": "6768",
+       "position": "QB"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "n": 18,
+   "kind": "logged",
+   "logged": [
+    {
+     "n": 18,
+     "mixed_up": false,
+     "kind": "pickup",
+     "week": 8,
+     "verdict": null,
+     "confidence": 0.6,
+     "pick_ids": [
+      {
+       "name": "Jonah Coleman",
+       "sleeper_id": "13345",
+       "position": "RB"
+      },
+      {
+       "name": "MarShawn Lloyd",
+       "sleeper_id": "11581",
+       "position": "RB"
+      }
+     ],
+     "over_ids": [
+      {
+       "name": "Brian Thomas Jr.",
+       "sleeper_id": "11631",
+       "position": "WR"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "n": 19,
+   "kind": "logged",
+   "logged": [
+    {
+     "n": 19,
+     "mixed_up": false,
+     "kind": "pickup",
+     "week": 8,
+     "verdict": null,
+     "confidence": 0.6,
+     "pick_ids": [
+      {
+       "name": "Jeremiyah Love",
+       "sleeper_id": "13287",
+       "position": "RB"
+      }
+     ],
+     "over_ids": [
+      {
+       "name": "Malik Willis",
+       "sleeper_id": "8161",
+       "position": "QB"
+      },
+      {
+       "name": "MarShawn Lloyd",
+       "sleeper_id": "11581",
+       "position": "RB"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "n": 20,
+   "kind": "logged",
+   "logged": [
+    {
+     "n": 20,
+     "mixed_up": true,
+     "kind": "trade",
+     "week": 8,
+     "verdict": "accept",
+     "confidence": 0.6,
+     "pick_ids": [
+      {
+       "name": "Joe Burrow",
+       "sleeper_id": "6770",
+       "position": "QB"
+      }
+     ],
+     "over_ids": [
+      {
+       "name": "Stefon Diggs",
+       "sleeper_id": "2449",
+       "position": "WR"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "n": 21,
+   "kind": "logged",
+   "logged": [
+    {
+     "n": 21,
+     "mixed_up": true,
+     "kind": "start_sit",
+     "week": 8,
+     "verdict": null,
+     "confidence": 0.75,
+     "pick_ids": [
+      {
+       "name": "Michael Penix Jr.",
+       "sleeper_id": "11559",
+       "position": "QB"
+      }
+     ],
+     "over_ids": [
+      {
+       "name": "Cam Ward",
+       "sleeper_id": "12522",
+       "position": "QB"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "n": 22,
+   "kind": "logged",
+   "logged": [
+    {
+     "n": 22,
+     "mixed_up": false,
+     "kind": "pickup",
+     "week": 8,
+     "verdict": null,
+     "confidence": 0.65,
+     "pick_ids": [
+      {
+       "name": "Jonah Coleman",
+       "sleeper_id": "13345",
+       "position": "RB"
+      },
+      {
+       "name": "MarShawn Lloyd",
+       "sleeper_id": "11581",
+       "position": "RB"
+      }
+     ],
+     "over_ids": [
+      {
+       "name": "Brian Thomas Jr.",
+       "sleeper_id": "11631",
+       "position": "WR"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "n": 23,
+   "kind": "logged",
+   "logged": [
+    {
+     "n": 23,
+     "mixed_up": true,
+     "kind": "trade",
+     "week": 8,
+     "verdict": "accept",
+     "confidence": 0.6,
+     "pick_ids": [
+      {
+       "name": "Brock Bowers",
+       "sleeper_id": "11604",
+       "position": "TE"
+      }
+     ],
+     "over_ids": [
+      {
+       "name": "Colston Loveland",
+       "sleeper_id": "12517",
+       "position": "TE"
+      },
+      {
+       "name": "Stefon Diggs",
+       "sleeper_id": "2449",
+       "position": "WR"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "n": 24,
+   "kind": "logged",
+   "logged": [
+    {
+     "n": 24,
+     "mixed_up": false,
+     "kind": "trade",
+     "week": 8,
+     "verdict": "accept",
+     "confidence": 0.7,
+     "pick_ids": [
+      {
+       "name": "Trey McBride",
+       "sleeper_id": "8130",
+       "position": "TE"
+      }
+     ],
+     "over_ids": [
+      {
+       "name": "Michael Penix Jr.",
+       "sleeper_id": "11559",
+       "position": "QB"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "n": 25,
+   "kind": "logged",
+   "logged": [
+    {
+     "n": 25,
+     "mixed_up": true,
+     "kind": "start_sit",
+     "week": 8,
+     "verdict": null,
+     "confidence": 0.75,
+     "pick_ids": [
+      {
+       "name": "Michael Penix Jr.",
+       "sleeper_id": "11559",
+       "position": "QB"
+      }
+     ],
+     "over_ids": [
+      {
+       "name": "Cam Ward",
+       "sleeper_id": "12522",
+       "position": "QB"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "n": 28,
+   "kind": "logged",
+   "logged": [
+    {
+     "n": 28,
+     "mixed_up": false,
+     "kind": "pickup",
+     "week": 8,
+     "verdict": null,
+     "confidence": 0.7,
+     "pick_ids": [
+      {
+       "name": "Braelon Allen",
+       "sleeper_id": "11576",
+       "position": "RB"
+      }
+     ],
+     "over_ids": [
+      {
+       "name": "Mike Washington Jr.",
+       "sleeper_id": "13305",
+       "position": "RB"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "n": 28,
+   "kind": "logged",
+   "logged": [
+    {
+     "n": 28,
+     "mixed_up": false,
+     "kind": "start_sit",
+     "week": 8,
+     "verdict": null,
+     "confidence": 0.72,
+     "pick_ids": [
+      {
+       "name": "Michael Penix Jr.",
+       "sleeper_id": "11559",
+       "position": "QB"
+      }
+     ],
+     "over_ids": [
+      {
+       "name": "Cam Ward",
+       "sleeper_id": "12522",
+       "position": "QB"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "n": 29,
+   "kind": "logged",
+   "logged": [
+    {
+     "n": 29,
+     "mixed_up": false,
+     "kind": "pickup",
+     "week": 8,
+     "verdict": null,
+     "confidence": 0.62,
+     "pick_ids": [
+      {
+       "name": "Malik Willis",
+       "sleeper_id": "8161",
+       "position": "QB"
+      }
+     ],
+     "over_ids": [
+      {
+       "name": "Fernando Mendoza",
+       "sleeper_id": "13269",
+       "position": "QB"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "n": 32,
+   "kind": "logged",
+   "logged": [
+    {
+     "n": 32,
+     "mixed_up": false,
+     "kind": "pickup",
+     "week": 8,
+     "verdict": null,
+     "confidence": 0.65,
+     "pick_ids": [
+      {
+       "name": "AJ Barner",
+       "sleeper_id": "11603",
+       "position": "TE"
+      }
+     ],
+     "over_ids": [
+      {
+       "name": "Kenyon Sadiq",
+       "sleeper_id": "13330",
+       "position": "TE"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "n": 33,
+   "kind": "logged",
+   "logged": [
+    {
+     "n": 33,
+     "mixed_up": false,
+     "kind": "pickup",
+     "week": 8,
+     "verdict": null,
+     "confidence": 0.62,
+     "pick_ids": [
+      {
+       "name": "Malik Willis",
+       "sleeper_id": "8161",
+       "position": "QB"
+      }
+     ],
+     "over_ids": [
+      {
+       "name": "Anthony Richardson Sr.",
+       "sleeper_id": "9229",
+       "position": "QB"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "n": 34,
+   "kind": "logged",
+   "logged": [
+    {
+     "n": 34,
+     "mixed_up": false,
+     "kind": "trade",
+     "week": 8,
+     "verdict": "accept",
+     "confidence": 0.8,
+     "pick_ids": [
+      {
+       "name": "Josh Allen",
+       "sleeper_id": "4984",
+       "position": "QB"
+      }
+     ],
+     "over_ids": [
+      {
+       "name": "Jalen Hurts",
+       "sleeper_id": "6904",
+       "position": "QB"
+      },
+      {
+       "name": "Mason Taylor",
+       "sleeper_id": "12498",
+       "position": "TE"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "n": 35,
+   "kind": "logged",
+   "logged": [
+    {
+     "n": 35,
+     "mixed_up": false,
+     "kind": "trade",
+     "week": 8,
+     "verdict": "decline",
+     "confidence": 0.62,
+     "pick_ids": [
+      {
+       "name": "Tetairoa McMillan",
+       "sleeper_id": "12526",
+       "position": "WR"
+      }
+     ],
+     "over_ids": [
+      {
+       "name": "Tetairoa McMillan",
+       "sleeper_id": "12526",
+       "position": "WR"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "n": 36,
+   "kind": "logged",
+   "logged": [
+    {
+     "n": 36,
+     "mixed_up": true,
+     "kind": "start_sit",
+     "week": 8,
+     "verdict": null,
+     "confidence": 0.68,
+     "pick_ids": [
+      {
+       "name": "Jameson Williams",
+       "sleeper_id": "8148",
+       "position": "WR"
+      }
+     ],
+     "over_ids": [
+      {
+       "name": "Emeka Egbuka",
+       "sleeper_id": "12514",
+       "position": "WR"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "n": 37,
+   "kind": "logged",
+   "logged": [
+    {
+     "n": 37,
+     "mixed_up": true,
+     "kind": "start_sit",
+     "week": 8,
+     "verdict": null,
+     "confidence": 0.8,
+     "pick_ids": [
+      {
+       "name": "Chase Brown",
+       "sleeper_id": "9224",
+       "position": "RB"
+      }
+     ],
+     "over_ids": [
+      {
+       "name": "TreVeyon Henderson",
+       "sleeper_id": "12529",
+       "position": "RB"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "n": 39,
+   "kind": "logged",
+   "logged": [
+    {
+     "n": 39,
+     "mixed_up": false,
+     "kind": "pickup",
+     "week": 8,
+     "verdict": null,
+     "confidence": 0.55,
+     "pick_ids": [
+      {
+       "name": "Pat Freiermuth",
+       "sleeper_id": "7600",
+       "position": "TE"
+      }
+     ],
+     "over_ids": [
+      {
+       "name": "Kenyon Sadiq",
+       "sleeper_id": "13330",
+       "position": "TE"
+      },
+      {
+       "name": "AJ Barner",
+       "sleeper_id": "11603",
+       "position": "TE"
+      },
+      {
+       "name": "Gunnar Helm",
+       "sleeper_id": "12502",
+       "position": "TE"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "n": 42,
+   "kind": "logged",
+   "logged": [
+    {
+     "n": 42,
+     "mixed_up": false,
+     "kind": "start_sit",
+     "week": 8,
+     "verdict": null,
+     "confidence": 0.96,
+     "pick_ids": [
+      {
+       "name": "Bryce Young",
+       "sleeper_id": "9228",
+       "position": "QB"
+      }
+     ],
+     "over_ids": [
+      {
+       "name": "Jalen Milroe",
+       "sleeper_id": "12510",
+       "position": "QB"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "n": 43,
+   "kind": "logged",
+   "logged": [
+    {
+     "n": 43,
+     "mixed_up": false,
+     "kind": "start_sit",
+     "week": 8,
+     "verdict": null,
+     "confidence": 0.85,
+     "pick_ids": [
+      {
+       "name": "DK Metcalf",
+       "sleeper_id": "5846",
+       "position": "WR"
+      }
+     ],
+     "over_ids": [
+      {
+       "name": "Courtland Sutton",
+       "sleeper_id": "5045",
+       "position": "WR"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "n": 44,
+   "kind": "logged",
+   "logged": [
+    {
+     "n": 44,
+     "mixed_up": false,
+     "kind": "pickup",
+     "week": 8,
+     "verdict": null,
+     "confidence": 0.5,
+     "pick_ids": [
+      {
+       "name": "Greg Dulcich",
+       "sleeper_id": "8172",
+       "position": "TE"
+      }
+     ],
+     "over_ids": [
+      {
+       "name": "Pat Freiermuth",
+       "sleeper_id": "7600",
+       "position": "TE"
+      },
+      {
+       "name": "Kenyon Sadiq",
+       "sleeper_id": "13330",
+       "position": "TE"
+      },
+      {
+       "name": "AJ Barner",
+       "sleeper_id": "11603",
+       "position": "TE"
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
