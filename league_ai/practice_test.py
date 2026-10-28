@@ -30,9 +30,9 @@ def check_start_sit(client: Any, league: Mapping[str, Any]) -> list[str]:
     allc = res.get("all") or {}
     if not allc:
         return ["start/sit: no graded lineups"]
-    eng, own = allc["projection_matchup"], allc["owner"]
+    eng, own = allc["engine_live"], allc["owner"]
     print(f"start/sit: engine {eng['right']:.1%} vs owners {own['right']:.1%} over {eng['calls']} calls; close calls "
-          f"{(res.get('close') or {}).get('projection_matchup', {}).get('right', 0):.1%}; when they disagree {res['engine_vs_owner_when_they_disagree']}", flush=True)
+          f"{(res.get('close') or {}).get('engine_live', {}).get('right', 0):.1%}; when they disagree {res['engine_vs_owner_when_they_disagree']}", flush=True)
     fails = []
     if eng["right"] < START_SIT_FLOOR:
         fails.append(f"start/sit right {eng['right']:.1%} is under the {START_SIT_FLOOR:.0%} floor")
@@ -75,6 +75,17 @@ def _state(client: Any, league_id: str, season: int) -> dict[str, Any]:
     return load_team_state(Jobs(), league_id, season)
 
 
+def _redact(text: str, state: Mapping[str, Any], teams: list[Mapping[str, Any]]) -> str:
+    """An error message with every owner, team and rostered player name taken out, for the public log."""
+    from services.team_roster_state import state_roster
+
+    names = {str(t.get(k) or "") for t in teams for k in ("owner_name", "team_name")}
+    names |= {str(r.get(k) or "") for r in state_roster(state) for k in ("player_name", "full_name", "name")}
+    for name in sorted((n for n in names if len(n) > 2), key=len, reverse=True):
+        text = text.replace(name, "[name]")
+    return text[:300]
+
+
 def _call(tools: Any, name: str, **kw: Any) -> dict[str, Any] | None:
     spec = tools.tools.get(name)
     if spec is None:
@@ -113,7 +124,7 @@ def check_tools(client: Any, league: Mapping[str, Any], season: int) -> list[str
         counts["owners"] += 1
         ideas = _call(tools, "find_trade_targets") or {}
         if "error" in ideas:
-            fails.append(f"team {n}: find_trade_targets error")
+            fails.append(f"team {n}: find_trade_targets error: {_redact(str(ideas['error']), shared, teams)}")
         else:
             counts["idea_lists"] += 1
             for idea in ideas.get("ideas") or []:

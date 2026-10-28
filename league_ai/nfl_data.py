@@ -359,9 +359,19 @@ def weather_text(game: Mapping[str, Any] | None) -> str | None:
     return "outdoors, " + ", ".join(b for b in bits if b) + (" (forecast)" if wx.get("source") == "forecast" else "")
 
 
-def total_multiplier(position: str, game: Mapping[str, Any] | None, rating: Mapping[str, Any] | None) -> float:
-    """Defense matchup x game environment, capped at +/-20% so this week's context tilts calls without overriding talent."""
-    return max(0.8, min(1.2, matchup_multiplier(rating.get("factor") if rating else None) * game_multiplier(position, game)))
+# How much of the matchup tilt each position gets. Graded on every saved lineup 2024-26 (league_ai.start_sit_grade):
+# the full tilt helped QB (+1.1 pts of calls right), RB (+0.3) and TE (+3.3) but cost WR 0.6, so WR calls go on the
+# projection alone. The grader keeps scoring both, so this can be turned back on if WR starts to gain.
+TILT_WEIGHT = {"WR": 0.0}
+
+
+def total_multiplier(position: str, game: Mapping[str, Any] | None, rating: Mapping[str, Any] | None,
+                     weights: Mapping[str, float] | None = None) -> float:
+    """Defense matchup x game environment, capped at +/-20% so this week's context tilts calls without overriding talent.
+    weights: share of the tilt by position (TILT_WEIGHT when None; {} for the full tilt everywhere)."""
+    full = max(0.8, min(1.2, matchup_multiplier(rating.get("factor") if rating else None) * game_multiplier(position, game)))
+    w = (TILT_WEIGHT if weights is None else weights).get(str(position or "").upper(), 1.0)
+    return 1 + (full - 1) * w
 
 
 def matchup_multiplier(factor: float | None) -> float:
