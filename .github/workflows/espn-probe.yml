@@ -1,0 +1,10 @@
+name: ESPN probe
+on:
+  push:
+    branches: [claude/espn-probe]
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install requests && python scripts/espn_probe.py
