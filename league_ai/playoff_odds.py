@@ -17,15 +17,28 @@ from services.standings_rules import TOP_FIVE_COUNT, TOP_FIVE_POINTS, WIN_POINTS
 SIMS = 5000
 PLAYOFF_SPOTS = 4
 DEFAULT_SPREAD = 25.0  # points; used until the season has enough games to measure it
+# A team's expected points are themselves a guess, shakiest early in the season. Each simulated season draws a
+# season-long offset per team of MEAN_SD_K * spread / sqrt(games + MEAN_SD_GAMES), so early odds stay humble.
+# Tuned on the backtest (check odds_backtest); 0 turns it off.
+MEAN_SD_K = 0.5
+MEAN_SD_GAMES = 2.0
 SLEEPER = "https://api.sleeper.app/v1"
 
 Schedule = list[list[tuple[str, str]]]
 
 
+def mean_sd(spread: float, games: int, k: float | None = None, prior_games: float | None = None) -> float:
+    """How unsure a team's expected weekly points are after `games` games."""
+    k = MEAN_SD_K if k is None else k
+    prior_games = MEAN_SD_GAMES if prior_games is None else prior_games
+    return k * spread / (max(games, 0) + prior_games) ** 0.5
+
+
 def simulate(table: Mapping[str, tuple[float, float]], means: Mapping[str, float], schedule: Schedule, *, spread: float = DEFAULT_SPREAD,
-             spots: int = PLAYOFF_SPOTS, sims: int = SIMS, seed: int = 7) -> dict[str, float]:
+             spots: int = PLAYOFF_SPOTS, sims: int = SIMS, seed: int = 7, mean_spread: float = 0.0) -> dict[str, float]:
     """table: owner -> (standing points, points for) so far. means: owner -> expected weekly points.
-    schedule: one list of (owner, owner) games per remaining week. Returns owner -> playoff chance (0-1)."""
+    schedule: one list of (owner, owner) games per remaining week. mean_spread: sd of each team's season-long
+    offset from its expected points (see mean_sd). Returns owner -> playoff chance (0-1)."""
     teams = sorted(set(table) | set(means))
     if not teams:
         return {}
@@ -36,8 +49,9 @@ def simulate(table: Mapping[str, tuple[float, float]], means: Mapping[str, float
     for _ in range(sims):
         sp = {t: float(table.get(t, (0, 0))[0]) for t in teams}
         pf = {t: float(table.get(t, (0, 0))[1]) for t in teams}
+        season_mu = {t: mu[t] + rng.gauss(0.0, mean_spread) for t in teams} if mean_spread > 0 else mu
         for games in schedule:
-            scores = {t: rng.gauss(mu[t], spread) for t in teams}
+            scores = {t: rng.gauss(season_mu[t], spread) for t in teams}
             for a, b in games:
                 if a in scores and b in scores:
                     win = a if scores[a] > scores[b] else b
@@ -111,6 +125,7 @@ class OddsModel:
         # Weeks before the current NFL week are final; a week in progress is simulated from scratch.
         self.last_final = min(max(played, default=0), self.week - 1)
         self.full_schedule = [[(self.name(a), self.name(b)) for a, b in games] for games in schedule_for(range(max(1, self.last_final), self.playoff_start))]
+        self.mean_spread = mean_sd(self.spread, self.last_final)
 
     def remaining(self) -> Schedule:
         return self.full_schedule[1:] if self.last_final >= 1 else self.full_schedule
@@ -118,15 +133,16 @@ class OddsModel:
     def odds(self, means: Mapping[str, float] | None = None) -> dict[str, float]:
         if means is None:
             if self._odds is None:
-                self._odds = simulate(standings_through(self.rows, self.last_final), self.means, self.remaining(), spread=self.spread)
+                self._odds = simulate(standings_through(self.rows, self.last_final), self.means, self.remaining(), spread=self.spread, mean_spread=self.mean_spread)
             return self._odds
-        return simulate(standings_through(self.rows, self.last_final), means, self.remaining(), spread=self.spread)
+        return simulate(standings_through(self.rows, self.last_final), means, self.remaining(), spread=self.spread, mean_spread=self.mean_spread)
 
     def last_week_odds(self) -> dict[str, float]:
         """The odds as they stood before the last finished week, so the app can show the move."""
         if self.last_final < 1:
             return {}
-        return simulate(standings_through(self.rows, self.last_final - 1), self.means, self.full_schedule, spread=self.spread)
+        return simulate(standings_through(self.rows, self.last_final - 1), self.means, self.full_schedule, spread=self.spread,
+                        mean_spread=mean_sd(self.spread, self.last_final - 1))
 
     def summary(self) -> dict[str, Any]:
         now, before = self.odds(), self.last_week_odds()
@@ -182,7 +198,8 @@ def trade_odds(model: OddsModel, owner: str, partner: str, my_gain: float, their
 
 # ---- backtest: how accurate are the odds? ------------------------------------------
 
-def backtest_season(rows: list[Mapping[str, Any]], *, sims: int = 2000, shrink_games: float = 3.0) -> list[dict[str, Any]]:
+def backtest_season(rows: list[Mapping[str, Any]], *, sims: int = 2000, shrink_games: float = 3.0, k: float | None = None,
+                    prior_games: float | None = None) -> list[dict[str, Any]]:
     """Replay one finished season week by week: predict with only what was known then, then compare with who made it.
 
     Expected points for a team = its points per game so far, pulled toward the league average by shrink_games
@@ -208,7 +225,9 @@ def backtest_season(rows: list[Mapping[str, Any]], *, sims: int = 2000, shrink_g
         for r in played:
             pts.setdefault(str(r["owner_name"]), []).append(float(r.get("points") or 0))
         means = {t: (sum(p) + avg * shrink_games) / (len(p) + shrink_games) for t, p in pts.items()}
-        odds = simulate(table, means, [games.get(x, []) for x in range(w + 1, last + 1)], spread=week_spread(played), sims=sims, seed=w)
+        spread = week_spread(played)
+        odds = simulate(table, means, [games.get(x, []) for x in range(w + 1, last + 1)], spread=spread, sims=sims, seed=w,
+                        mean_spread=mean_sd(spread, w, k, prior_games))
         now_top = set(sorted(table, key=lambda t: table[t], reverse=True)[:PLAYOFF_SPOTS])
         out += [{"week": w, "team": t, "p": p, "made": t in made, "top_now": t in now_top} for t, p in odds.items()]
     return out
@@ -253,6 +272,18 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{league.get('name')} ALL SEASONS: {score_backtest(everything)}")
             for half, label in ((lambda w: w <= 5, "weeks 1-5"), (lambda w: w > 5, "week 6 on")):
                 print(f"  {label}: {score_backtest([p for p in everything if half(p['week'])])}")
+            # tuning grid for the early-season humility (MEAN_SD_K, MEAN_SD_GAMES) and the points-per-game shrink
+            done = [s for s in seasons if not (s == max(seasons) and not any(r.get("is_playoff") for r in rows if int(r["season"]) == s))]
+            for shrink in (3.0, 6.0):
+                for k in (0.0, 0.25, 0.5, 0.75, 1.0):
+                    for g in (1.0, 2.0, 4.0):
+                        if k == 0.0 and g != 2.0:
+                            continue
+                        preds = [p for s in done for p in backtest_season([r for r in rows if int(r["season"]) == s], sims=1000, shrink_games=shrink, k=k, prior_games=g)]
+                        early = score_backtest([p for p in preds if p["week"] <= 5])
+                        late = score_backtest([p for p in preds if p["week"] > 5])
+                        print(f"  grid shrink={shrink:g} k={k:g} games={g:g}: all {score_backtest(preds).get('brier')} early {early.get('brier')} "
+                              f"late {late.get('brier')} early calibration {early.get('calibration')}")
     return 0
 
 

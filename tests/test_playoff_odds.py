@@ -158,3 +158,17 @@ class PickupToolTests(unittest.TestCase):
         self.assertGreaterEqual(out["playoff_odds"]["after"], out["playoff_odds"]["before"])
         self.assertIn("odds_per_dollar", out)
         self.assertIn("error", tools["get_pickup_odds"].fn(player="Nobody"))
+
+
+class MeanSpreadTest(unittest.TestCase):
+    def test_unsure_means_pull_early_odds_toward_the_middle(self):
+        from league_ai.playoff_odds import mean_sd, simulate
+
+        teams = [f"t{i}" for i in range(8)]
+        means = {t: 100 + 6 * i for i, t in enumerate(teams)}
+        schedule = [[(teams[i], teams[(i + w + 1) % 8]) for i in range(0, 8, 2)] for w in range(12)]
+        sure = simulate({}, means, schedule, sims=1500)
+        humble = simulate({}, means, schedule, sims=1500, mean_spread=mean_sd(25.0, 1))
+        self.assertLess(humble["t7"], sure["t7"])
+        self.assertGreater(humble["t0"], sure["t0"])
+        self.assertLess(mean_sd(25.0, 10), mean_sd(25.0, 1))
