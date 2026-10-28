@@ -11,6 +11,7 @@ import os
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from pydantic import BaseModel
 from supabase import Client, create_client
 
 from api import league, teams
@@ -145,6 +146,7 @@ def _season_context(client: Client, user: Any) -> dict[str, Any]:
     return {
         **team,
         "season": int(season.season),
+        "season_id": season.id,
         "sleeper_id": sleeper_id,
         "names": league.roster_names(client, team["league_id"], sleeper_id),
         "slots": (league.sleeper.get(f"league/{sleeper_id}") or {}).get("roster_positions") or [],
@@ -173,10 +175,7 @@ def team_list(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, An
     return {"season": ctx["season"], "salary_cap": cap, "my_team_id": ctx["team_id"], "teams": rows}
 
 
-@app.get("/teams/{team_id}")
-def team_page(team_id: str, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
-    client, user = owner
-    ctx = _season_context(client, user)
+def _team_page(client: Client, ctx: dict[str, Any], team_id: str) -> dict[str, Any]:
     rows, states, standings_rows, cap = _league_teams(client, ctx)
     summary = next((t for t in rows if t["team_id"] == team_id), None)
     if summary is None:
@@ -198,6 +197,95 @@ def team_page(team_id: str, owner: tuple[Client, Any] = Depends(owner_client)) -
         h2h=teams.head_to_head(ctx["sleeper_id"], weeks, ctx["sleeper_roster_id"], summary["roster_id"]),
     )
     return {"season": ctx["season"], "salary_cap": cap, "sleeper_league_id": ctx["sleeper_id"], **detail}
+
+
+@app.get("/teams/{team_id}")
+def team_page(team_id: str, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    return _team_page(client, _season_context(client, user), team_id)
+
+
+@app.get("/my-team")
+def my_team(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    ctx = _season_context(client, user)
+    if not ctx["team_id"]:
+        raise HTTPException(status_code=404, detail="This account isn't linked to a team yet.")
+    return _team_page(client, ctx, ctx["team_id"])
+
+
+@app.get("/players/{player_id}")
+def player_page(player_id: str, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    ctx = _season_context(client, user)
+    try:
+        state = teams.load_team_state(client, ctx["league_id"], ctx["season"])
+    except Exception:
+        raise HTTPException(status_code=502, detail="Couldn't load league contracts. Try again.")
+    weeks = league.last_scored_week(ctx["sleeper_id"])
+    result = teams.player_detail(
+        player_id, state, teams.player_info(client, [player_id]).get(player_id, {}),
+        teams.weekly_points(ctx["sleeper_id"], weeks, player_id), ctx["team_id"],
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="Player not found.")
+    return {"season": ctx["season"], **result}
+
+
+class IrRequest(BaseModel):
+    player_id: str
+
+
+def _my_state(client: Client, ctx: dict[str, Any]) -> dict[str, Any]:
+    if not ctx["team_id"]:
+        raise HTTPException(status_code=404, detail="This account isn't linked to a team yet.")
+    try:
+        return teams.load_team_state(client, ctx["league_id"], ctx["season"], ctx["team_id"])
+    except Exception:
+        raise HTTPException(status_code=502, detail="Couldn't load your contracts. Try again.")
+
+
+@app.post("/my-team/ir")
+def place_on_ir(body: IrRequest, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """Move one of your players to IR, through the same checked database call the website uses."""
+    client, user = owner
+    ctx = _season_context(client, user)
+    state = _my_state(client, ctx)
+    if teams.ir_rows(state, ctx["team_id"]):
+        raise HTTPException(status_code=409, detail="Your IR spot is taken. Remove that player first.")
+    row = next((r for r in state.get("roster", []) if str(r.get("sleeper_player_id")) == body.player_id), None)
+    if row is None or teams.roster_designation(row):
+        raise HTTPException(status_code=400, detail="That player can't go on IR.")
+    try:
+        client.rpc("persist_injured_reserve_assignment_authenticated", {"p_request": {
+            "league_id": ctx["league_id"],
+            "player_id": body.player_id,
+            "league_team_id": ctx["team_id"],
+            "league_season_id": ctx["season_id"],
+            "normal_annual_charge": float(row.get("contract_cap_hit") or row.get("cap_hit") or 0),
+        }}).execute()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"IR move was not saved: {exc}")
+    return {"ok": True}
+
+
+@app.delete("/my-team/ir")
+def remove_from_ir(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    ctx = _season_context(client, user)
+    rows = teams.ir_rows(_my_state(client, ctx), ctx["team_id"])
+    if not rows:
+        raise HTTPException(status_code=404, detail="Nobody is on your IR.")
+    # Deleted as the owner, so the database's team check applies. A blocked
+    # delete removes nothing without an error, so confirm a row came back.
+    deleted = (
+        client.table("cap_adjustments").delete()
+        .eq("id", rows[0]["id"]).eq("adjustment_type", "ir_adjustment")
+        .execute().data or []
+    )
+    if not deleted:
+        raise HTTPException(status_code=403, detail="IR player was not removed.")
+    return {"ok": True}
 
 
 @app.get("/matchups/{week}/{matchup_id}")
