@@ -621,8 +621,8 @@ def _risers(client: Client, ctx: dict[str, Any], week: int) -> list[dict[str, An
     skill = [pid for pid, line in lines.items() if line.get("pos") in ("QB", "RB", "WR", "TE")
              and projections.score(line["stats"], scoring) >= home.RISER_MIN_PROJ * 0.8]
     proj = projections.week_projections(client, sid, season, week, skill, {p: lines[p]["pos"] for p in skill}, {p: lines[p]["team"] for p in skill})
-    ppg = market.ranking(client, season)
-    avg, games = dict(ppg.ranking_ppg), dict(getattr(ppg, "ranking_games", {}) or {})
+    # The average is in league scoring too (the market's PPG is full PPR, which made QBs look like risers).
+    avg, games = projections.season_averages(sid, season, week - 1) if week > 1 else ({}, {})
     near = [p for p, v in proj.items() if v >= home.RISER_MIN_PROJ and avg.get(p) is not None and v > avg[p]]
     info = teams.player_info(client, near)
     last_lines = projections.week_lines("stats", season, week - 1, 86400) if week > 1 else {}

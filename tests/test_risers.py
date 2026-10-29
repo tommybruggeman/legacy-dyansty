@@ -38,7 +38,7 @@ def test_log_saves_each_week_once():
     assert risers.log(client, league_id="L", sleeper_id="S", season=2026, week=8, rows=rows)
     assert not risers.log(client, league_id="L", sleeper_id="S", season=2026, week=8, rows=rows)
     saved = client.db["league_ai_experiments"]
-    assert len(saved) == 1 and saved[0]["experiment"] == "gm_risers_v1" and saved[0]["result"]["players"][1]["player_id"] == "b"
+    assert len(saved) == 1 and saved[0]["experiment"] == "gm_risers_v2" and saved[0]["result"]["players"][1]["player_id"] == "b"
 
 
 def test_settle_counts_hits_and_real_rise():
