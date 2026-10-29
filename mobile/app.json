@@ -12,7 +12,7 @@
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       },
-      "buildNumber": "19"
+      "buildNumber": "20"
     },
     "android": {
       "adaptiveIcon": {
@@ -31,8 +31,8 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/mark.png",
-          "imageWidth": 200,
+          "image": "./assets/splash-blank.png",
+          "imageWidth": 8,
           "resizeMode": "contain",
           "backgroundColor": "#071A12"
         }

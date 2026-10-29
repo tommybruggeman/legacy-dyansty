@@ -1,10 +1,16 @@
+import { useState } from 'react';
 import { Stack } from 'expo-router';
+import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 
+import { LaunchIntro } from '../components/LaunchIntro';
 import { SessionProvider, useSession } from '../lib/session';
 import { colors } from '../lib/theme';
 
 export { ScreenError as ErrorBoundary } from '../components/ScreenState';
+
+// The native splash is just the background color; the crest animation takes over from it.
+SplashScreen.preventAutoHideAsync().catch(() => {});
 
 function RootStack() {
   const { session, loading } = useSession();
@@ -32,10 +38,12 @@ function RootStack() {
 }
 
 export default function RootLayout() {
+  const [intro, setIntro] = useState(true);
   return (
     <SessionProvider>
       <StatusBar style="light" />
       <RootStack />
+      {intro ? <LaunchIntro onReady={() => SplashScreen.hideAsync().catch(() => {})} onDone={() => setIntro(false)} /> : null}
     </SessionProvider>
   );
 }
