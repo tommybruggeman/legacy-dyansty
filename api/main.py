@@ -126,6 +126,28 @@ def _team_ids(client: Client, user: Any) -> dict[int, str]:
     return {t["roster_id"]: t["team_id"] for t in _league_team_rows(client, team["league_id"])}
 
 
+class PushToken(BaseModel):
+    token: str
+    platform: str | None = None
+
+
+@app.post("/me/push-token")
+def save_push_token(body: PushToken, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """This phone's Expo push token, so league alerts (a completed trade) reach it."""
+    client, user = owner
+    token = body.token.strip()
+    if not token.startswith("ExponentPushToken[") and not token.startswith("ExpoPushToken["):
+        raise HTTPException(status_code=400, detail="Not an Expo push token.")
+    league_id = resolve_team(client, user)["league_id"]
+    try:
+        client.table("push_tokens").upsert({"token": token, "user_id": user.id, "league_id": league_id, "platform": body.platform,
+                                            "updated_at": datetime.now().astimezone().isoformat()}, on_conflict="token").execute()
+    except Exception as exc:
+        print(f"APP_PUSH_TOKEN_ERROR {type(exc).__name__}", flush=True)
+        raise HTTPException(status_code=503, detail="Alerts aren't switched on yet.")
+    return {"ok": True}
+
+
 @app.get("/standings")
 def standings(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
     sleeper_id, names, my_roster_id = _league_context(*owner)

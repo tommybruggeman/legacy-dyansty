@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 
 import { LaunchIntro } from '../components/LaunchIntro';
+import { listenForTaps, registerForPush } from '../lib/push';
 import { SessionProvider, useSession } from '../lib/session';
 import { colors } from '../lib/theme';
 
@@ -14,6 +15,12 @@ SplashScreen.preventAutoHideAsync().catch(() => {});
 
 function RootStack() {
   const { session, loading } = useSession();
+  const signedIn = !!session;
+  useEffect(() => {
+    if (!signedIn) return;
+    registerForPush();
+    return listenForTaps();
+  }, [signedIn]);
   if (loading) return null;
 
   return (
