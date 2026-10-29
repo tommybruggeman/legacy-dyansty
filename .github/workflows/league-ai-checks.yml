@@ -2,20 +2,24 @@ name: League AI checks
 
 # Run by hand: how accurate the playoff odds are on past seasons, how the 20-answer playoff-odds trial is going,
 # start/sit graded on every saved lineup, the free pre-deploy practice test,
-# and shadow scoring (our own scoring engine vs Sleeper's scores on every finished week).
+# shadow scoring (our own scoring engine vs Sleeper's scores on every finished week), and the live feed
+# probe (run during games: how far the free feeds trail real plays and what a game-day watcher costs).
 on:
   workflow_dispatch:
     inputs:
       check:
         description: Which check to run
         type: choice
-        options: [odds_backtest, odds_trial, odds_grade, start_sit_grade, practice_test, weekly_cards, shadow_scoring]
+        options: [odds_backtest, odds_trial, odds_grade, start_sit_grade, practice_test, weekly_cards, shadow_scoring, live_probe]
         default: odds_backtest
+      minutes:
+        description: live_probe only - how long to watch (minutes)
+        default: "30"
 
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: ${{ inputs.check == 'live_probe' && 200 || 20 }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -39,5 +43,6 @@ jobs:
             # the weekly start/sit scorecard and accepted-trade shares now, without waiting for Tuesday's learning job (no model calls)
             weekly_cards) python -m league_ai.scorecard ;;
             shadow_scoring) python -m scoring.shadow ;;
+            live_probe) python -m scoring.live_probe --minutes "${{ inputs.minutes }}" --every 5 --leagues 2 ;;
             *) python -m league_ai.playoff_odds ;;
           esac
