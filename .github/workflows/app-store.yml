@@ -1,0 +1,100 @@
+# App Store listing + submission, no Mac or website clicks needed (except App Privacy, which Apple keeps web-only).
+# 1. Creates/resets Apple's demo login and links it to the commissioner's team.
+# 2. Builds a simulator copy of the app and takes the five listing screenshots with Maestro.
+# 3. Uploads the listing text, review notes, demo login, age rating and screenshots with fastlane,
+#    and submits the chosen TestFlight build for review when "submit" is ticked.
+#
+# Secrets: ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8 (App Store Connect API key, App Manager role),
+#          EXPO_TOKEN, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
+name: App Store
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_number:
+        description: TestFlight build to submit (blank = ios.buildNumber in mobile/app.json)
+        required: false
+        default: ""
+      screenshots:
+        description: Retake the screenshots on the simulator
+        type: boolean
+        default: true
+      submit:
+        description: Submit for review after uploading the listing
+        type: boolean
+        default: false
+
+concurrency:
+  group: app-store
+  cancel-in-progress: false
+
+jobs:
+  listing:
+    runs-on: macos-latest
+    timeout-minutes: 90
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      LANG: en_US.UTF-8
+      LC_ALL: en_US.UTF-8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Demo login for App Review
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: pip install supabase && python scripts/app_review_login.py
+
+      - name: Which build
+        working-directory: mobile
+        run: |
+          BUILD="${{ inputs.build_number }}"
+          [ -n "$BUILD" ] || BUILD=$(node -p "require('./app.json').expo.ios.buildNumber")
+          echo "BUILD_NUMBER=$BUILD" >> "$GITHUB_ENV"
+          echo "APP_VERSION=$(node -p "require('./app.json').expo.version")" >> "$GITHUB_ENV"
+          echo "Submitting build $BUILD"
+
+      - name: Simulator build
+        if: ${{ inputs.screenshots }}
+        working-directory: mobile
+        run: |
+          npm ci
+          sudo xcode-select -s "$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)"
+          npx -y eas-cli@latest build -p ios --profile screenshots --local --non-interactive --output "$RUNNER_TEMP/sim.tar.gz"
+          mkdir -p "$RUNNER_TEMP/sim" && tar -xzf "$RUNNER_TEMP/sim.tar.gz" -C "$RUNNER_TEMP/sim"
+
+      - name: Take screenshots
+        if: ${{ inputs.screenshots }}
+        working-directory: mobile
+        run: |
+          brew tap mobile-dev-inc/tap && brew install mobile-dev-inc/tap/maestro
+          UDID=$(xcrun simctl list devices available -j | python3 -c "
+          import json, sys
+          devs = json.load(sys.stdin)['devices']
+          pro = [d for runtime, ds in devs.items() if 'iOS' in runtime for d in ds if 'Pro Max' in d['name']]
+          print(sorted(pro, key=lambda d: d['name'])[-1]['udid'])")
+          xcrun simctl boot "$UDID" && xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl status_bar "$UDID" override --time 9:41 --dataNetwork wifi --wifiBars 3 --cellularBars 4 --batteryState charged --batteryLevel 100
+          xcrun simctl install "$UDID" "$(find "$RUNNER_TEMP/sim" -maxdepth 3 -name '*.app' | head -1)"
+          mkdir -p store/screenshots/en-US && cd store/screenshots/en-US
+          maestro --device "$UDID" test -e REVIEW_EMAIL="$REVIEW_EMAIL" -e REVIEW_PASSWORD="$REVIEW_PASSWORD" ../../maestro/screenshots.yaml
+          ls -la
+
+      - name: Upload the listing to App Store Connect
+        working-directory: mobile
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          SUBMIT: ${{ inputs.submit }}
+        run: |
+          mkdir -p store/screenshots
+          fastlane listing
