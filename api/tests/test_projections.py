@@ -50,3 +50,18 @@ def test_breakdown_lists_scoring_stats_biggest_first():
     assert rows[0] == {"label": "rush yds", "value": 87, "points": 8.7}
     assert [r["label"] for r in rows] == ["rush yds", "rush TD", "rec yds", "fumbles lost", "catches"]
     assert projections.breakdown(None, {"rush_yd": 0.1}) == []
+
+
+def test_season_averages_use_league_scoring_and_games_played(monkeypatch):
+    from api import cache, projections
+
+    weeks = {
+        1: {"qb": {"stats": {"gp": 1, "pass_td": 2, "pass_yd": 250}}, "wr": {"stats": {"gp": 1, "rec": 5}}},
+        2: {"qb": {"stats": {"gp": 1, "pass_td": 1, "pass_yd": 200}}, "wr": {"stats": {}}},
+    }
+    monkeypatch.setattr(projections, "week_lines", lambda kind, season, week, ttl: weeks.get(week, {}))
+    monkeypatch.setattr(projections, "league_scoring", lambda sid: {"pass_td": 6, "pass_yd": 0.04, "rec": 1})
+    monkeypatch.setattr(cache, "cached", lambda key, ttl, fn: fn())
+    avg, games = projections.season_averages("S", 2026, 2)
+    assert games == {"qb": 2, "wr": 1}
+    assert avg["qb"] == round((12 + 10 + 6 + 8) / 2, 2) and avg["wr"] == 5.0

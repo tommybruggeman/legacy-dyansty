@@ -2,7 +2,7 @@
 
 Home shows GM's Risers from Thursday to Saturday: the players whose projection this week beats their season average by
 the most (api.home.risers). The first time a league's list is built each week it is saved to league_ai_experiments as
-'gm_risers_v1' (player, season average, projection). Once the week is scored the daily learning job settles it: a riser
+'gm_risers_v2' (player, season average, projection). Once the week is scored the daily learning job settles it: a riser
 'hit' when he outscored his season average, and the mean of (actual - average) says how much the list really rose.
 """
 from __future__ import annotations
@@ -11,7 +11,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Mapping
 
-EXPERIMENT = "gm_risers_v1"
+EXPERIMENT = "gm_risers_v2"   # v1 (week 9 only) compared league-scoring projections with full-PPR averages
 LOGGED = 10   # the top of the list is what owners see
 
 

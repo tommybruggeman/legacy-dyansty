@@ -157,3 +157,26 @@ def week_projections(client: Any, sleeper_id: str, season: int, week: int, ids: 
         factor = total_multiplier(pos, game, dvp.get((game["opponent"], pos)) if game else None) if pos in ("QB", "RB", "WR", "TE") else 1.0
         out[pid] = round(base * factor, 1)
     return out
+
+
+def played(stats: dict[str, Any] | None) -> bool:
+    """A real game: Sleeper marks games played (gp) and offensive snaps (off_snp)."""
+    return bool(stats) and bool(stats.get("gp") or stats.get("off_snp"))
+
+
+def season_averages(sleeper_id: str, season: int, through_week: int) -> tuple[dict[str, float], dict[str, int]]:
+    """player_id -> points per game played in weeks 1..through_week, in this league's scoring (and games played).
+
+    Same scoring as week_projections, so a projection and an average can be compared directly.
+    """
+    def load() -> tuple[dict[str, float], dict[str, int]]:
+        scoring = league_scoring(sleeper_id)
+        totals: dict[str, float] = {}
+        games: dict[str, int] = {}
+        for week in range(1, through_week + 1):
+            for pid, line in week_lines("stats", season, week, 86400).items():
+                if played(line.get("stats")):
+                    totals[pid] = totals.get(pid, 0.0) + score(line["stats"], scoring)
+                    games[pid] = games.get(pid, 0) + 1
+        return {pid: round(t / games[pid], 2) for pid, t in totals.items()}, games
+    return cache.cached(("season_avg", sleeper_id, season, through_week), 21600, load)
