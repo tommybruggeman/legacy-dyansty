@@ -316,6 +316,12 @@ def run(client: Any, runner: Runner, *, season: int | None = None, web_search: b
         summary["trade_ideas"] = idea_log.grade(client, now=now, dry_run=dry_run)
     except Exception as exc:
         print(f"[learning] trade idea tracking skipped: {type(exc).__name__}: {exc}", flush=True)
+    try:
+        from league_ai import risers
+
+        summary["gm_risers"] = risers.grade(client, now=now, dry_run=dry_run)
+    except Exception as exc:
+        print(f"[learning] GM's Risers grading skipped: {type(exc).__name__}", flush=True)
     if backtest if backtest is not None else now.weekday() == 1:  # weekly, with the Tuesday report
         try:
             summary["trade_backtest"] = run_trade_backtests(client, now=now, dry_run=dry_run)

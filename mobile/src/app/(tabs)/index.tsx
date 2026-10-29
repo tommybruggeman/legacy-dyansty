@@ -2,6 +2,7 @@ import { router, useFocusEffect } from 'expo-router';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
+import { GameDayBottom } from '../../components/home/GameDayBottom';
 import { Avatar, Headshot, type Ring } from '../../components/Pictures';
 import { ErrorState, Loading } from '../../components/ScreenState';
 import { Bar, Card, Pill, Screen, firstName, money, ordinal, record, ui } from '../../components/ui';
@@ -321,7 +322,8 @@ function GameDay({ data }: { data: HomeData }) {
       <>
         <Card gold><Eyebrow>{`WEEK ${data.week}`}</Eyebrow><Text style={[ui.sub, styles.gap]}>No game this week.</Text></Card>
         <AskBar placeholder="Ask your GM…" />
-        {data.standings?.length ? <Standings rows={data.standings} playoffTeams={data.playoff_teams} /> : null}
+        {data.bottom ? <GameDayBottom bottom={data.bottom} week={data.week} />
+          : data.standings?.length ? <Standings rows={data.standings} playoffTeams={data.playoff_teams} /> : null}
       </>
     );
   }
@@ -352,7 +354,8 @@ function GameDay({ data }: { data: HomeData }) {
         <PlayerHeads title="YOUR STARTERS · FIRST UP" players={first.slice(0, 3)} showPoints={false} sub={(p) => KICK(p.kickoff)} />
         <LineupCheck issues={data.lineup_issues ?? []} />
         <AskBar placeholder="Who should I start this week?" />
-        {data.standings?.length ? <Standings rows={data.standings} playoffTeams={data.playoff_teams} /> : null}
+        {data.bottom ? <GameDayBottom bottom={data.bottom} week={data.week} />
+          : data.standings?.length ? <Standings rows={data.standings} playoffTeams={data.playoff_teams} /> : null}
       </>
     );
   }
@@ -388,7 +391,7 @@ function GameDay({ data }: { data: HomeData }) {
             {g.them ? <Text style={styles.needs}>{ahead ? `${firstName(g.them.name)} needs ${pts(gap)} to pass you` : `You need ${pts(gap)} to win`}</Text> : null}
           </Card>
         ) : null}
-        <Race rows={data.race ?? []} title="TOP 5 RACE" window="bubble" />
+        {data.bottom ? <GameDayBottom bottom={data.bottom} week={data.week} /> : <Race rows={data.race ?? []} title="TOP 5 RACE" window="bubble" />}
         <AskBar placeholder="What do I need tonight?" />
       </>
     );
@@ -408,7 +411,8 @@ function GameDay({ data }: { data: HomeData }) {
         badges={[[ordinal(g.me.rank), 'HIGH SCORE'], [g.me.top5 ? '✓' : '✗', 'IN TOP 5'], [String(left(mine)), 'LEFT TO PLAY']]}
       />
       <PlayerHeads title="YOUR PLAYERS RIGHT NOW" right={anyPlaying(data) ? 'Live' : undefined} players={now} sub={statusLine} />
-      <Race rows={data.race ?? []} title={g.is_final ? 'TOP 5 · FINAL' : 'TOP 5 RACE · LIVE'} window="top" />
+      {data.bottom ? <GameDayBottom bottom={data.bottom} week={data.week} />
+        : <Race rows={data.race ?? []} title={g.is_final ? 'TOP 5 · FINAL' : 'TOP 5 RACE · LIVE'} window="top" />}
       <AskBar placeholder="How is my week going?" />
     </>
   );

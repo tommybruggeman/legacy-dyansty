@@ -12,6 +12,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Iterable
 from zoneinfo import ZoneInfo
 
+from services.matchups_view import _team_points as team_points
 from services.standings_rules import TOP_FIVE_POINTS, WIN_POINTS
 
 ROLLOVER_MONTH, ROLLOVER_DAY = 6, 30
@@ -255,3 +256,162 @@ def standings_table(rows: list[dict[str, Any]], team_ids: dict[int, str], pics: 
              "ties": r.get("ties", 0), "standing_points": r.get("standing_points", 0), "is_me": bool(r.get("is_me")),
              "in": r["rank"] <= playoff_teams, "team_id": team_ids.get(r["roster_id"]), "avatar": pics.get(r["roster_id"])}
             for r in picked]
+
+
+# ---- the bottom of game-day Home -------------------------------------------------
+#
+# Thu-Sat: GM's Risers (who our projection says beats his normal the most this week).
+# Sunday: the week's scoreboard (every Legacy game) until Shotgun watch takes over
+# midway through the late games. Shotgun watch follows the lowest projected final
+# score (last place shotguns a beer) and everyone close to it: within 10 projected
+# points until the late games end, 7 on Sunday night, 5 on Monday. Once last place
+# can't change it shows the locked result.
+
+LATE_SLATE_HOUR = 16          # Sunday kickoffs from 4 PM Eastern on are the late games
+LATE_SLATE_END_HOUR = 19      # ...and before 7 PM (later is the night game)
+SHOTGUN_AFTER = timedelta(hours=1, minutes=45)  # about halftime of the late games
+SHOTGUN_WINDOWS = {"late": 10.0, "night": 7.0, "monday": 5.0}
+CEILING = 2.5                 # a big game: 2.5x what's left of a projection
+RISER_MIN_PROJ, RISER_MIN_GAMES, RISERS_SHOWN = 8.0, 2, 20
+OUT_TAGS = {"out", "ir", "doubtful", "pup", "sus", "na"}
+
+
+def _late_slate(starts: Iterable[datetime], sunday: date) -> list[datetime]:
+    out = []
+    for s in starts:
+        local = s.astimezone(EASTERN)
+        if local.date() == sunday and LATE_SLATE_HOUR <= local.hour < LATE_SLATE_END_HOUR:
+            out.append(s)
+    return sorted(set(out))
+
+
+def bottom_mode(now: datetime, starts: dict[str, datetime]) -> dict[str, Any]:
+    """Which card sits at the bottom of game-day Home: risers, scoreboard or shotgun (with its window).
+
+    Days follow the league's own clock (US Eastern kickoffs), so Sunday is the NFL's Sunday.
+    """
+    local = now.astimezone(EASTERN)
+    day = local.weekday()
+    if day in (3, 4, 5):
+        return {"mode": "risers"}
+    if day == 0:
+        return {"mode": "shotgun", "window": SHOTGUN_WINDOWS["monday"]}
+    if day != 6:
+        return {"mode": "scoreboard"}
+    late = _late_slate(starts.values(), local.date())
+    if not late:  # no late games found: fall back to a 6:05 PM Eastern switch, night window after 7:30
+        switch = local.replace(hour=18, minute=5, second=0, microsecond=0)
+        night = local.replace(hour=19, minute=30, second=0, microsecond=0)
+    else:
+        switch = late[0].astimezone(EASTERN) + SHOTGUN_AFTER
+        night = late[-1].astimezone(EASTERN) + timedelta(hours=GAME_LENGTH_HOURS)
+    if local < switch:
+        return {"mode": "scoreboard"}
+    return {"mode": "shotgun", "window": SHOTGUN_WINDOWS["night" if local >= night else "late"]}
+
+
+def remaining(status: str, projected: float, kickoff: datetime | None, now: datetime) -> float:
+    """What's left of one starter's projection: all of it before kickoff, the unplayed share while playing."""
+    if status == "waiting":
+        return projected
+    if status != "playing" or kickoff is None:
+        return 0.0
+    played = (now - kickoff).total_seconds() / (GAME_LENGTH_HOURS * 3600)
+    return round(max(0.0, projected * (1 - played)), 2)
+
+
+def team_live(rows: list[dict[str, Any]], info: dict[str, dict[str, Any]], starts: dict[str, datetime], now: datetime,
+              projections: dict[str, float]) -> dict[int, dict[str, Any]]:
+    """roster_id -> score now, starters left to play, and the projected rest of the week."""
+    out: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        rid = row.get("roster_id")
+        if rid is None:
+            continue
+        players = lineup(row, info, starts, now)
+        left = [p for p in players if p["status"] in ("waiting", "playing")]
+        rest = sum(remaining(p["status"], projections.get(p["player_id"] or "", 0.0),
+                             starts.get(p["team"]), now) for p in left)
+        score = _f(team_points(row))
+        out[int(rid)] = {"score": score, "left": len(left), "playing": sum(p["status"] == "playing" for p in left),
+                         "rest": round(rest, 2), "projected": round(score + rest, 1)}
+    return out
+
+
+def scoreboard(games: list[dict[str, Any]], live: dict[int, dict[str, Any]], my_roster_id: int | None,
+               pics: dict[int, str | None]) -> list[dict[str, Any]]:
+    """Every Legacy game this week, mine first, each side with its score and starters left."""
+    out = []
+    for g in games:
+        sides = [{"roster_id": t["roster_id"], "name": t["name"], "score": t["score"], "top5": bool(t.get("top5")),
+                  "left": live.get(t["roster_id"], {}).get("left", 0), "is_me": t["roster_id"] == my_roster_id,
+                  "avatar": pics.get(t["roster_id"])} for t in g.get("teams") or []]
+        sides.sort(key=lambda s: (not s["is_me"], -s["score"]))
+        out.append({"matchup_id": g.get("matchup_id"), "teams": sides, "mine": any(s["is_me"] for s in sides)})
+    out.sort(key=lambda g: (not g["mine"], -max((s["score"] for s in g["teams"]), default=0)))
+    return out
+
+
+def shotgun(live: dict[int, dict[str, Any]], names: dict[int, str], pics: dict[int, str | None], my_roster_id: int | None,
+            window: float) -> dict[str, Any] | None:
+    """Who is on the can (lowest projected final) and everyone within `window` projected points of them.
+
+    Locked once nobody can catch last place: every other team's score now is above the most last place could
+    still reach (its score plus CEILING times what's left of its projection), which also covers everyone frozen.
+    """
+    if len(live) < 2:
+        return None
+    ranked = sorted(live.items(), key=lambda kv: (kv[1]["projected"], kv[1]["score"]))
+    last_id, last = ranked[0]
+    reach = last["score"] + CEILING * last["rest"]
+    locked = all(t["score"] > reach for rid, t in live.items() if rid != last_id)
+    if locked:  # final order: whoever is lowest right now (they can't move far enough)
+        last_id, last = min(live.items(), key=lambda kv: kv[1]["score"])
+
+    def row(rid: int, t: dict[str, Any]) -> dict[str, Any]:
+        return {"roster_id": rid, "name": names.get(rid) or f"Roster {rid}", "avatar": pics.get(rid), "is_me": rid == my_roster_id,
+                "score": t["score"], "projected": t["projected"], "left": t["left"], "playing": t["playing"],
+                "frozen": t["left"] == 0, "gap": round(t["projected"] - last["projected"], 1)}
+
+    others = [row(rid, t) for rid, t in ranked if rid != last_id]
+    # The one number that matters: how much last place needs to pass the next-lowest score right now.
+    chase = min(others, key=lambda o: o["score"], default=None)
+    need = round(chase["score"] - last["score"] + 0.01, 2) if chase and not locked else None
+    if locked:
+        others.sort(key=lambda o: o["score"])
+    return {
+        "window": window,
+        "locked": locked,
+        "last": row(last_id, last),
+        "danger": [o for o in others if locked or o["gap"] <= window][:5 if not locked else 2],
+        "safe": [] if locked else [o for o in others if o["gap"] > window][:2],
+        "needs": {"points": need, "to_pass": chase["name"]} if need is not None and need > 0 else None,
+    }
+
+
+def risers(proj: dict[str, float], avg: dict[str, float], games: dict[str, int], info: dict[str, dict[str, Any]],
+           owners: dict[str, int], names: dict[int, str], my_roster_id: int | None, last_week: dict[str, float],
+           limit: int = RISERS_SHOWN) -> list[dict[str, Any]]:
+    """GM's Risers: players whose projection this week beats their season average by the most.
+
+    Only skill players with a real projection (RISER_MIN_PROJ) and at least RISER_MIN_GAMES games this
+    season, so one-game wonders and backups don't crowd the list.
+    """
+    rows = []
+    for pid, p in proj.items():
+        meta = info.get(pid, {})
+        pos = _text(meta.get("position")).upper()
+        if _text(meta.get("injury_status")).lower() in OUT_TAGS:
+            continue
+        if pos not in ("QB", "RB", "WR", "TE") or p < RISER_MIN_PROJ or (games.get(pid) or 0) < RISER_MIN_GAMES or avg.get(pid) is None:
+            continue
+        rise = round(p - avg[pid], 1)
+        if rise <= 0:
+            continue
+        rid = owners.get(pid)
+        rows.append({"player_id": pid, "name": _text(meta.get("full_name")) or pid, "pos": pos, "team": _text(meta.get("team")),
+                     "avg": round(avg[pid], 1), "proj": round(p, 1), "rise": rise, "last": last_week.get(pid),
+                     "roster_id": rid, "owner": names.get(rid) if rid is not None else None, "is_mine": rid is not None and rid == my_roster_id,
+                     "injury": _text(meta.get("injury_status")) or None})
+    rows.sort(key=lambda r: (-r["rise"], -r["proj"]))
+    return rows[:limit]
