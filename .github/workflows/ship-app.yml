@@ -102,7 +102,7 @@ jobs:
   # EAS still holds the signing certificate, profile and App Store Connect key.
   ios-github:
     if: ${{ inputs.ios && inputs.builder == 'github' }}
-    runs-on: macos-15
+    runs-on: macos-latest
     timeout-minutes: 75
     defaults:
       run:
@@ -118,6 +118,8 @@ jobs:
           cache: npm
           cache-dependency-path: mobile/package-lock.json
       - run: npm ci
+      - name: Use the newest Xcode on the runner
+        run: sudo xcode-select -s "$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)" && xcodebuild -version
       - name: Build on this Mac
         run: npx -y eas-cli@latest build -p ios --profile production --local --non-interactive --output "$RUNNER_TEMP/legacy.ipa"
       - name: Submit to TestFlight
