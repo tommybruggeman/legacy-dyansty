@@ -1,6 +1,6 @@
 """Every trade in the league, newest first: what each side got, cap change, and who's winning it.
 
-Shared by the app server (/league/trades) and the website's Trades page, so both show the same numbers.
+Shared by the activity feed (api/activity.py: the app's League > Activity and the website's Activity page), so both show the same numbers.
 Trades come from league_history_events (kind 'trade'), which the history sync fills for every season.
 Two read-outs per trade, both free (no model call):
 
@@ -63,8 +63,8 @@ def group(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
                 "cap_change": round(sum(_f(r.get("contract_salary")) for r in got) - sum(_f(r.get("contract_salary")) for r in gave), 2),
             })
         trades.append({"id": tid, "season": int(first.get("season") or 0), "week": int(first.get("week") or 0),
-                       "date": str(first.get("occurred_at") or "")[:10], "owners": owners, "sides": sides})
-    return sorted(trades, key=lambda t: (t["date"], t["id"]), reverse=True)
+                       "date": str(first.get("occurred_at") or "")[:10], "at": str(first.get("occurred_at") or ""), "owners": owners, "sides": sides})
+    return sorted(trades, key=lambda t: (t["at"], t["id"]), reverse=True)
 
 
 def season_leagues(sleeper_id: str, get: Callable[..., Any] = sleeper.get) -> dict[int, str]:
@@ -167,16 +167,13 @@ def add_verdict(trades: list[dict[str, Any]]) -> None:
         t["winning"] = {"owner": ranked[0]["owner"], "by": round(lead, 1)} if t.get("weeks_since") and lead > 0 else None
 
 
-def trades(client: Any, league_id: str, sleeper_id: str, current: tuple[int, int], team_ids: Mapping[str, str]) -> dict[str, Any]:
-    """The whole feed, as the app and the website show it."""
-    rows = (client.table("league_history_events")
-            .select("event_id, season, week, occurred_at, owner_name, player_id, player_name, position, contract_salary, contract_years, details")
-            .eq("league_id", league_id).eq("kind", "trade").limit(5000).execute().data or [])
-    feed = group(rows)
+def enrich(client: Any, feed: list[dict[str, Any]], sleeper_id: str, current: tuple[int, int], team_ids: Mapping[str, str]) -> None:
+    """Team ids, NFL teams, points since, market shares and the winning side, in place."""
     from api import teams
     pids = sorted({p["player_id"] for t in feed for s in t["sides"] for p in s["players"]})
     info = teams.player_info(client, pids)
     for t in feed:
+        t["kind"] = "trade"
         for side in t["sides"]:
             side["team_id"] = team_ids.get(side["owner"])
             for p in side["players"]:
@@ -189,5 +186,14 @@ def trades(client: Any, league_id: str, sleeper_id: str, current: tuple[int, int
     # In season, this season's picks have been drafted already; next year's are the nearest still to come.
     add_market_shares(feed, market_now(client, pids), pick_values(client), next_draft=current[0] + 1)
     add_verdict(feed)
+
+
+def trades(client: Any, league_id: str, sleeper_id: str, current: tuple[int, int], team_ids: Mapping[str, str]) -> dict[str, Any]:
+    """Just the trades, as a feed of their own."""
+    rows = (client.table("league_history_events")
+            .select("event_id, season, week, occurred_at, owner_name, player_id, player_name, position, contract_salary, contract_years, details")
+            .eq("league_id", league_id).eq("kind", "trade").limit(5000).execute().data or [])
+    feed = group(rows)
+    enrich(client, feed, sleeper_id, current, team_ids)
     return {"trades": feed, "seasons": sorted({t["season"] for t in feed}, reverse=True),
             "owners": sorted({o for t in feed for o in t["owners"]})}

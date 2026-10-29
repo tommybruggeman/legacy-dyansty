@@ -195,8 +195,8 @@ def _render_page_links():
     )
 
     st.page_link(
-        "pages/06_Trades.py",
-        label="Trades",
+        "pages/06_Activity.py",
+        label="Activity",
     )
 
     st.page_link(

@@ -1,8 +1,8 @@
 import unittest
 
-from services.trades_view import card, page_html
+from services.activity_view import card, item_card, page_html
 
-TRADE = {"id": "1", "season": 2026, "week": 5, "date": "2026-10-05", "owners": ["Grady M", "Tommy B"], "weeks_since": 2,
+TRADE = {"kind": "trade", "id": "1", "season": 2026, "week": 5, "date": "2026-10-05", "owners": ["Grady M", "Tommy B"], "weeks_since": 2,
          "winning": {"owner": "Tommy B", "by": 21.4},
          "sides": [{"owner": "Grady M", "players": [{"player_id": "1", "name": "A <b>", "pos": "QB", "salary": 48, "years": 2, "points_since": 71.2}],
                     "picks": [], "faab": -3, "cap_change": 30, "points_since": 71.2, "market_share": 0.46},
@@ -28,7 +28,21 @@ class TradesViewTests(unittest.TestCase):
         self.assertNotIn("pts since", out)
 
     def test_empty_page(self):
-        self.assertIn("No trades here yet.", page_html([], None, 0))
+        self.assertIn("Nothing here yet.", page_html([], None, 0))
+
+    def test_move_and_draft_cards(self):
+        move = {"kind": "move", "type": "waiver", "id": "7", "date": "2026-10-20", "week": 7, "owner": "Grady M",
+                "adds": [{"name": "Add Guy", "pos": "RB", "faab": 12, "salary": 1, "years": 1}], "drops": [{"name": "Drop Guy", "pos": "WR"}]}
+        out = item_card(move, "Tommy B")
+        self.assertIn("WAIVER CLAIM", out)
+        self.assertIn("$12", out)
+        self.assertIn("DROP", out)
+        draft = {"kind": "draft", "id": "d", "season": 2026, "date": "2026-07-10",
+                 "picks": [{"name": "R1", "pos": "RB", "owner": "Tommy B", "round": 1, "slot": 1}]}
+        out = item_card(draft, "Tommy B")
+        self.assertIn("2026 DRAFT", out)
+        self.assertIn("1.01", out)
+        self.assertIn(">You<", out)
 
 
 if __name__ == "__main__":

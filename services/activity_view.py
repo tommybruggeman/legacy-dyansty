@@ -1,4 +1,4 @@
-"""HTML for the website's Trades page: one card per trade, the same feed and numbers the app shows (api/trade_feed.py)."""
+"""HTML for the website's Activity page: trades, pickups, drops and the draft, the same feed the app shows (api/activity.py)."""
 from __future__ import annotations
 
 import html
@@ -10,7 +10,7 @@ CSS = """
 .tf-head{display:flex;justify-content:space-between;align-items:baseline;margin:.2rem 0 .8rem}
 .tf-head h2{margin:0;font-size:1.35rem;font-weight:900;color:#FFF5E7}
 .tf-head span{color:#9DA89C;font-size:.72rem;font-weight:800;letter-spacing:.08em}
-.tf-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px}
+.tf-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px;align-items:start}
 .tf-card{background:#101E1D;border:1px solid rgba(226,188,91,.18);border-radius:18px;padding:14px 16px;box-shadow:0 2px 10px rgba(0,0,0,.28)}
 .tf-card.mine{border-color:#E2BC5B}
 .tf-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
@@ -25,7 +25,9 @@ CSS = """
 .tf-dot{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:.62rem;font-weight:900;border:1px solid #E2BC5B;color:#E2BC5B;flex:none}
 .tf-name{color:#FFF5E7;font-weight:800;font-size:.92rem;line-height:1.15}
 .tf-sub{color:#9DA89C;font-size:.74rem}
-.tf-pts{margin-left:auto;color:#FFF5E7;font-weight:900}
+.tf-pts{margin-left:auto;color:#FFF5E7;font-weight:900;text-align:right}
+.tf-kind{color:#E2BC5B;font-size:.66rem;font-weight:900;letter-spacing:.1em;margin-right:8px}
+.tf-slot{color:#9DA89C;font-size:.78rem;font-weight:800;width:34px;flex:none}
 .tf-value{display:flex;align-items:center;gap:8px;margin-top:10px;color:#9DA89C;font-size:.66rem;font-weight:900;letter-spacing:.05em}
 .tf-bar{flex:1;display:flex;gap:2px;height:6px;border-radius:3px;overflow:hidden}
 .tf-note{color:#9DA89C;font-size:.8rem;text-align:center;margin-top:12px}
@@ -93,10 +95,46 @@ def card(t: Mapping[str, Any], me: str | None) -> str:
         parts = "".join(f"<div style='flex:{max(x, .02)};background:{'#E2BC5B' if i == 0 else '#5B7A6C'}'></div>" for i, x in enumerate(shares))
         value = f"<div class='tf-value'>VALUE NOW<div class='tf-bar'>{parts}</div>{' / '.join(f'{round(x * 100)}%' for x in shares)}</div>"
     mine = " mine" if me and me in t.get("owners", []) else ""
-    return f"<div class='tf-card{mine}'><div class='tf-top'><span class='tf-when'>{_when(t)}</span>{pill}</div>{sides}{value}</div>"
+    return f"<div class='tf-card{mine}'><div class='tf-top'><span><span class='tf-kind'>TRADE</span><span class='tf-when'>{_when(t)}</span></span>{pill}</div>{sides}{value}</div>"
 
 
-def page_html(trades: list[Mapping[str, Any]], me: str | None, total: int) -> str:
-    cards = "".join(card(t, me) for t in trades) or "<div class='tf-note'>No trades here yet.</div>"
-    return (f"{CSS}<div class='tf-head'><h2>League trades</h2><span>{total} TOTAL</span></div><div class='tf-grid'>{cards}</div>"
-            "<div class='tf-note'>Winning = more points scored since the trade by what each side got. Value = today's dynasty market value.</div>")
+MOVE_LABEL = {"waiver": "WAIVER CLAIM", "free_agent": "FREE AGENT", "commissioner": "COMMISSIONER", "drop": "DROP"}
+
+
+def _line(p: Mapping[str, Any], tag: str, right: str = "") -> str:
+    sub = " · ".join(x for x in [tag, p.get("pos"), _money(p["salary"]) if p.get("salary") is not None else None,
+                                  f"{p['years']} yr{'' if p['years'] == 1 else 's'}" if p.get("years") else None] if x)
+    return (f"<div class='tf-row'><div class='tf-dot'>{_e(p.get('pos') or '?')}</div><div><div class='tf-name'>{_e(p.get('name'))}</div>"
+            f"<div class='tf-sub'>{_e(sub)}</div></div>{right}</div>")
+
+
+def move_card(m: Mapping[str, Any], me: str | None) -> str:
+    who = "You" if m.get("owner") == me else _e(m.get("owner"))
+    rows = [_line(p, "ADD", f"<div class='tf-pts'>${p['faab']:g}<div class='tf-sub'>FAAB</div></div>" if p.get("faab") is not None else "") for p in m.get("adds") or []]
+    rows += [_line(p, "DROP") for p in m.get("drops") or []]
+    mine = " mine" if me and m.get("owner") == me else ""
+    return (f"<div class='tf-card{mine}'><div class='tf-top'><span><span class='tf-kind'>{MOVE_LABEL.get(m.get('type'), 'MOVE')}</span>"
+            f"<span class='tf-when'>{_when(m)}</span></span></div><div class='tf-owner'>{who}</div>{''.join(rows)}</div>")
+
+
+def draft_card(d: Mapping[str, Any], me: str | None) -> str:
+    rows = []
+    for p in d.get("picks") or []:
+        slot = f"{p['round']}.{int(p['slot']):02d}" if p.get("round") and p.get("slot") else ""
+        owner = "You" if p.get("owner") == me else _e(p.get("owner"))
+        rows.append(f"<div class='tf-row'><div class='tf-slot'>{slot}</div><div class='tf-dot'>{_e(p.get('pos') or '?')}</div>"
+                    f"<div><div class='tf-name'>{_e(p.get('name'))}</div><div class='tf-sub'>{owner}</div></div></div>")
+    when = _when({**d, "week": 0})
+    return (f"<div class='tf-card'><div class='tf-top'><span><span class='tf-kind'>{d.get('season')} DRAFT</span>"
+            f"<span class='tf-when'>{when} · {len(d.get('picks') or [])} picks</span></span></div>"
+            f"<details><summary class='tf-sub'>Show picks</summary>{''.join(rows)}</details></div>")
+
+
+def item_card(i: Mapping[str, Any], me: str | None) -> str:
+    return card(i, me) if i.get("kind") == "trade" else draft_card(i, me) if i.get("kind") == "draft" else move_card(i, me)
+
+
+def page_html(items: list[Mapping[str, Any]], me: str | None, total: int) -> str:
+    cards = "".join(item_card(i, me) for i in items) or "<div class='tf-note'>Nothing here yet.</div>"
+    return (f"{CSS}<div class='tf-head'><h2>League activity</h2><span>{total} MOVES</span></div><div class='tf-grid'>{cards}</div>"
+            "<div class='tf-note'>Trades: winning = more points scored since the trade by what each side got. Value = today's dynasty market value.</div>")

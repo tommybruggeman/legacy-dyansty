@@ -3,10 +3,11 @@ import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { GameDayBottom } from '../../components/home/GameDayBottom';
+import { shortOwner } from '../../components/league/ActivityView';
 import { Avatar, Headshot, type Ring } from '../../components/Pictures';
 import { ErrorState, Loading } from '../../components/ScreenState';
 import { Bar, Card, Pill, Screen, firstName, money, ordinal, record, ui } from '../../components/ui';
-import { type HomeData, type HomeSide, type LivePlayer, type RaceRow, type RookieDeal, type TableRow, apiSend, prefetch, useApi } from '../../lib/api';
+import { type ActivityFeed, type ActivityItem, type HomeData, type HomeSide, type LivePlayer, type RaceRow, type RookieDeal, type TableRow, type TradeSide, apiSend, prefetch, useApi } from '../../lib/api';
 import { colors } from '../../lib/theme';
 
 // Home changes with the calendar: last week's recap (Tue-Wed), a preview
@@ -33,7 +34,7 @@ export default function Home() {
   useEffect(() => {
     if (!data || warmed.current) return;
     warmed.current = true;
-    prefetch(['/my-team', '/standings', '/matchups', '/teams', '/front-office', '/market/free-agents', '/market/expiring']);
+    prefetch(['/my-team', '/standings', '/matchups', '/teams', '/league/activity', '/front-office', '/market/free-agents', '/market/expiring']);
   }, [data]);
 
   const seen = useRef(false);
@@ -67,8 +68,39 @@ export default function Home() {
       {data.phase === 'playoffs' ? <Playoffs data={data} /> : null}
       {data.phase === 'decisions' ? <Decisions data={data} onChange={reload} /> : null}
       {data.phase === 'draft_prep' ? <DraftPrep data={data} /> : null}
+      <Latest me={data.owner_name} />
     </Screen>
   );
+}
+
+// The newest few moves in the league; tapping opens League > Activity.
+function Latest({ me }: { me: string }) {
+  const { data } = useApi<ActivityFeed>('/league/activity?limit=3');
+  const items = data?.items ?? [];
+  if (!items.length) return null;
+  const open = () => router.navigate({ pathname: '/league', params: { at: String(Date.now()), view: 'Activity' } });
+  return (
+    <Card title="Latest in the league" right={<Pressable onPress={open} hitSlop={8}><Text style={ui.link}>All ›</Text></Pressable>}>
+      {items.map((i) => (
+        <Pressable key={`${i.kind}-${i.id}`} onPress={open} style={styles.latestRow}>
+          <Text style={styles.latestKind}>{i.kind === 'trade' ? 'TRADE' : i.kind === 'draft' ? 'DRAFT' : i.type === 'drop' ? 'DROP' : 'ADD'}</Text>
+          <Text style={[ui.sub, ui.flex]} numberOfLines={2}>{activityLine(i, me)}</Text>
+        </Pressable>
+      ))}
+    </Card>
+  );
+}
+
+const who = (name: string | null | undefined, me: string) => (name === me ? 'You' : shortOwner(name));
+function activityLine(i: ActivityItem, me: string): string {
+  if (i.kind === 'trade') {
+    const got = (s: TradeSide) => [...s.players.map((p) => p.name), ...s.picks.map((p) => p.label)].join(', ') || 'FAAB';
+    return i.sides.map((s) => `${who(s.owner, me)} get${s.owner === me ? '' : 's'} ${got(s)}`).join(' · ');
+  }
+  if (i.kind === 'draft') return `${i.season} draft: ${i.picks.length} picks`;
+  const adds = i.adds.map((p) => `${p.name}${p.faab != null ? ` ($${p.faab})` : ''}`).join(', ');
+  const drops = i.drops.map((p) => p.name).join(', ');
+  return `${who(i.owner, me)} ${[adds && `added ${adds}`, drops && `dropped ${drops}`].filter(Boolean).join(', ')}`;
 }
 
 const initials = (name: string) => name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase() || '•';
@@ -703,4 +735,6 @@ const styles = StyleSheet.create({
   pick: { flexGrow: 1, minWidth: 70, backgroundColor: colors.row, borderRadius: 12, paddingVertical: 10, paddingHorizontal: 4, alignItems: 'center' },
   pickRound: { color: colors.gold, fontSize: 20, fontWeight: '800' },
   pickSub: { color: colors.muted, fontSize: 10, marginTop: 2 },
+  latestRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingVertical: 7 },
+  latestKind: { color: colors.gold, fontSize: 10, fontWeight: '900', letterSpacing: 1, width: 44, marginTop: 2 },
 });
