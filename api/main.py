@@ -142,7 +142,30 @@ def matchups(
     sleeper_id, names, my_roster_id = _league_context(*owner)
     result = league.matchups(sleeper_id, names, week or league.current_week(), my_roster_id)
     result["current_week"] = league.current_week()
+    if not result["is_final"]:
+        try:
+            _add_card_projections(*owner, result)
+        except Exception as exc:
+            print(f"APP_MATCHUP_PROJ_ERROR {type(exc).__name__}: {exc}", flush=True)
     return result
+
+
+def _add_card_projections(client: Client, user: Any, result: dict[str, Any]) -> None:
+    """Each side's projected total on the week's game cards, scored the same way as the box score."""
+    ctx = _season_context(client, user)
+    week = result["week"]
+    rows = league.sleeper.get(f"league/{ctx['sleeper_id']}/matchups/{week}", ttl=league.LIVE_TTL) or []
+    sides = []
+    for row in rows:
+        points = row.get("players_points") or {}
+        starters = [str(pid) for pid in row.get("starters") or [] if pid and str(pid) != "0"]
+        sides.append({"roster_id": row.get("roster_id"), "players": [{"player_id": pid, "points": float(points.get(pid) or 0)} for pid in starters]})
+    info = teams.player_info(client, [p["player_id"] for side in sides for p in side["players"]])
+    _add_projections(client, ctx, week, False, {"teams": sides}, info)
+    projected = {side["roster_id"]: side["projected"] for side in sides}
+    for game in result["games"]:
+        for team in game["teams"]:
+            team["projected"] = projected.get(team["roster_id"])
 
 
 def _season_context(client: Client, user: Any) -> dict[str, Any]:
@@ -202,19 +225,25 @@ def team_list(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, An
     return {"season": ctx["season"], "salary_cap": cap, "my_team_id": ctx["team_id"], "teams": rows}
 
 
-def _saved_win_odds(client: Client, ctx: dict[str, Any], owner_name: str) -> dict[str, Any] | None:
-    """This week's win odds as the Front Office saved them (no model run here), or None before it has."""
-    week = league.current_week()
-
-    def load() -> dict[str, dict[str, Any]]:
-        rows = (client.table("league_ai_odds_history").select("owner_name,win_pct,opp_owner")
-                .eq("league_id", ctx["league_id"]).eq("season", ctx["season"]).eq("week", week).execute().data or [])
-        return {r["owner_name"]: r for r in rows if r.get("win_pct") is not None}
+def _saved_power_rank(client: Client, ctx: dict[str, Any], team_id: str) -> dict[str, Any] | None:
+    """Latest power rank the Front Office saved (no model run here) and its move over about a week."""
+    def load() -> dict[str, Any]:
+        rows = (client.table("league_power_rankings").select("computed_on,league_team_id,now_rank")
+                .eq("league_id", ctx["league_id"]).order("computed_on", desc=True).limit(400).execute().data or [])
+        return {"rows": rows}
     try:
-        row = cache.cached(("win_odds", ctx["league_id"], ctx["season"], week), 600, load).get(owner_name)
+        rows = cache.cached(("power_rank", ctx["league_id"]), 600, load)["rows"]
     except Exception:
         return None
-    return {"pct": row["win_pct"], "opp": row.get("opp_owner"), "week": week} if row else None
+    mine = [r for r in rows if str(r.get("league_team_id")) == str(team_id) and r.get("now_rank") is not None]
+    if not mine:
+        return None
+    latest = rows[0]["computed_on"]
+    teams_ranked = sum(1 for r in rows if r["computed_on"] == latest)
+    now = mine[0]
+    older = next((r for r in mine if (date.fromisoformat(str(now["computed_on"])) - date.fromisoformat(str(r["computed_on"]))).days >= 7), None)
+    move = int(older["now_rank"]) - int(now["now_rank"]) if older else None
+    return {"rank": int(now["now_rank"]), "of": teams_ranked or None, "move": move}
 
 
 def _team_page(client: Client, ctx: dict[str, Any], team_id: str) -> dict[str, Any]:
@@ -243,7 +272,7 @@ def _team_page(client: Client, ctx: dict[str, Any], team_id: str) -> dict[str, A
         h2h=teams.head_to_head(ctx["sleeper_id"], weeks, ctx["sleeper_roster_id"], summary["roster_id"]),
         later=states[1:],
         weeks=league.current_week(),
-        win_odds=_saved_win_odds(client, ctx, summary["owner_name"]),
+        power=_saved_power_rank(client, ctx, team_id),
     )
     return {"season": ctx["season"], "salary_cap": cap, "sleeper_league_id": ctx["sleeper_id"], **detail}
 
@@ -274,6 +303,12 @@ def player_page(player_id: str, owner: tuple[Client, Any] = Depends(owner_client
     weeks = league.last_scored_week(ctx["sleeper_id"])
     meta = teams.player_info(client, [player_id]).get(player_id, {})
     league_weeks = teams.weekly_points(ctx["sleeper_id"], weeks, player_id)
+    if any(w["points"] is None for w in league_weeks) and meta.get("position"):
+        try:
+            scores = player.weekly_scores(ctx["sleeper_id"], ctx["season"], weeks, player_id, str(meta["position"]))
+            league_weeks = player.with_unrostered_points(league_weeks, scores)
+        except Exception:
+            pass
     result = teams.player_detail(player_id, state, meta, league_weeks, ctx["team_id"])
     if result is None:
         raise HTTPException(status_code=404, detail="Player not found.")

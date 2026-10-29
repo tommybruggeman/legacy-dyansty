@@ -120,7 +120,7 @@ def game_log(
             status = "out" if game else "bye"
         elif w.get("started"):
             status = "started"
-        elif w.get("points") is None:
+        elif w.get("points") is None or w.get("unrostered"):
             status = "free_agent"
         else:
             status = "bench"
@@ -512,13 +512,28 @@ def page_extras(
     }
 
 
-def weekly_ranks(sleeper_id: str, season: int, last_week: int, player_id: str, pos: str) -> dict[int, str]:
-    """Week -> his position rank that week ("RB7"), scored with league rules across every NFL player."""
-    def one(week: int) -> str | None:
-        return (projections.week_ranks(sleeper_id, season, week, True, {player_id: pos}).get(player_id) or {}).get("label")
+def weekly_scores(sleeper_id: str, season: int, last_week: int, player_id: str, pos: str) -> dict[int, dict[str, Any]]:
+    """Week -> {label: his position rank ("RB7"), points}, scored with league rules across every NFL player."""
+    def one(week: int) -> dict[str, Any] | None:
+        return projections.week_ranks(sleeper_id, season, week, True, {player_id: pos}).get(player_id)
     with ThreadPoolExecutor(max_workers=6) as pool:
-        labels = list(pool.map(lambda w: _safe(lambda: one(w), None), range(1, last_week + 1)))
-    return {w: label for w, label in zip(range(1, last_week + 1), labels) if label}
+        rows = list(pool.map(lambda w: _safe(lambda: one(w), None), range(1, last_week + 1)))
+    return {w: r for w, r in zip(range(1, last_week + 1), rows) if r}
+
+
+def weekly_ranks(sleeper_id: str, season: int, last_week: int, player_id: str, pos: str) -> dict[int, str]:
+    return {w: r["label"] for w, r in weekly_scores(sleeper_id, season, last_week, player_id, pos).items() if r.get("label")}
+
+
+def with_unrostered_points(league_weeks: list[dict[str, Any]], scores: dict[int, dict[str, Any]]) -> list[dict[str, Any]]:
+    """Weeks he wasn't on a league roster get his real game scored with league rules, so free agents show points, not BYE."""
+    out = []
+    for w in league_weeks:
+        got = scores.get(int(w["week"]))
+        if w.get("points") is None and got and got.get("points") is not None:
+            w = {**w, "points": round(float(got["points"]), 2), "unrostered": True}
+        out.append(w)
+    return out
 
 
 def _avg(values: list[float]) -> float | None:

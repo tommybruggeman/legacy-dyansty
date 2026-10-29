@@ -76,20 +76,22 @@ function TopTiles({ team, tab }: { team: TeamPage; tab: (typeof TABS)[number] })
   }
   if (tab === 'Activity') {
     const m = team.moves ?? { moves: team.activity.length, trades: 0 };
+    const left = team.cap.by_year[0]?.space;
     return (
       <Tiles>
         <Tile label="MOVES" value={String(m.moves)} sub="this season" />
         <Tile label="TRADES" value={String(m.trades)} sub="this season" />
-        <Tile label="FAAB" value={team.faab ? money(team.faab.left) : '—'} sub={team.faab ? 'left to bid' : 'not set in Sleeper'} />
+        <Tile label="SALARY LEFT" value={left != null ? money(left) : '—'} tone={left != null && left < 0 ? 'red' : undefined} sub={`${team.cap.by_year[0]?.season ?? 'this season'} cap`} />
       </Tiles>
     );
   }
-  const odds = team.win_odds;
+  const power = team.power;
+  const move = power?.move ? `${power.move > 0 ? '▲' : '▼'}${Math.abs(power.move)} this week` : null;
   return (
     <Tiles>
       <Tile label="RECORD" value={record(r.wins, r.losses, r.ties)} sub={`${ordinal(r.rank)} · ${r.standing_points} SP`} />
       <Tile label="PPG" value={r.pf_per_game != null ? r.pf_per_game.toFixed(1) : '—'} sub="avg / game" />
-      <Tile label="THIS WEEK" value={odds ? `${Math.round(odds.pct)}%` : '—'} sub={odds?.opp ? `win odds vs ${odds.opp.split(' ')[0]}` : 'win odds'} />
+      <Tile label="POWER RANK" value={power ? `#${power.rank}` : '—'} sub={move ?? (power?.of ? `of ${power.of} teams` : 'not ranked yet')} />
     </Tiles>
   );
 }

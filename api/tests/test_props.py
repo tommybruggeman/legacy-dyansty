@@ -58,3 +58,16 @@ def test_game_without_lines_yet_is_empty(monkeypatch):
 
     monkeypatch.setattr(props, "fetch", fake)
     assert props.game_lines("1") == {}
+
+
+def test_free_agent_weeks_get_league_points_not_bye():
+    from api import player
+
+    weeks = [{"week": 1, "points": None, "started": False}, {"week": 2, "points": 12.5, "started": True}, {"week": 3, "points": None, "started": False}]
+    filled = player.with_unrostered_points(weeks, {1: {"label": "WR30", "points": 8.4}, 2: {"label": "WR5", "points": 12.5}})
+    assert filled[0] == {"week": 1, "points": 8.4, "started": False, "unrostered": True}
+    assert filled[1] == weeks[1]
+    assert filled[2]["points"] is None
+    rows = [{"week": 1, "opponent": "SEA"}]
+    log = player.game_log(filled[:1], rows, {1: {"opp": "SEA", "home": False}}, None, "WR")
+    assert log[0]["status"] == "free_agent" and log[0]["points"] == 8.4
