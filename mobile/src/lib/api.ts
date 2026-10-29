@@ -384,6 +384,18 @@ export type FreeAgent = {
   rank_ppg: number | null;
   points: number | null;
 };
+export type TradePlayer = {
+  player_id: string; name: string; pos: string; nfl_team: string; salary: number | null; years: number | null; points_since?: number;
+};
+export type TradeSide = {
+  owner: string; team_id: string | null; players: TradePlayer[]; picks: { label: string; original_owner: string | null }[];
+  faab: number; cap_change: number; points_since?: number; market_now?: number; market_share?: number | null;
+};
+export type Trade = {
+  id: string; season: number; week: number; date: string; owners: string[]; sides: TradeSide[];
+  weeks_since?: number; winning: { owner: string; by: number } | null;
+};
+export type TradeFeed = { trades: Trade[]; seasons: number[]; owners: string[]; me: string | null };
 export type FreeAgents = { season: number; last_season: number; season_started: boolean; players: FreeAgent[] };
 export type ExpiringPlayer = {
   player_id: string; name: string; pos: string; nfl_team: string; owner_name: string; team_id: string; salary: number;

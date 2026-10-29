@@ -6,16 +6,16 @@ import { Alert, Linking, Pressable, StyleSheet, Text, TextInput, View } from 're
 import { PlayerFace } from '../../components/PlayerFace';
 import { ErrorState, Loading } from '../../components/ScreenState';
 import { Card, Note, Pill, Screen, Segmented, SwipeTabs, Title, money, ui } from '../../components/ui';
-import { apiSend, type Expiring, type FreeAgents, type RookieDeal, type Target, useApi } from '../../lib/api';
+import { apiSend, type Expiring, type FreeAgents, type RookieDeal, type Target, type Trade, type TradeFeed, type TradeSide, useApi } from '../../lib/api';
 import { teamColors } from '../../lib/nflColors';
 import { colors } from '../../lib/theme';
 import { useTargets } from '../../lib/targets';
 
-const VIEWS = ['Free Agents', 'Expiring'] as const;
+const VIEWS = ['Free Agents', 'Expiring', 'Trades'] as const;
 const POSITIONS = ['All', 'QB', 'RB', 'WR', 'TE', 'K'] as const;
 const PAGE = 40;
 
-// Browse only: bidding and the rookie draft happen on the website, trades in Sleeper.
+// Browse only: bidding and the rookie draft happen on the website, trades in Sleeper (the Trades tab shows them all).
 // Players show as tiles ranked by season points, with ☆ to save a transfer target.
 export default function Market() {
   const [view, setView] = useState<(typeof VIEWS)[number]>('Free Agents');
@@ -23,7 +23,7 @@ export default function Market() {
     <Screen>
       <Title>Market</Title>
       <Segmented options={VIEWS} value={view} onChange={setView} />
-      <SwipeTabs options={VIEWS} value={view} onChange={setView} render={(v) => (v === 'Free Agents' ? <FreeAgentList /> : <ExpiringList />)} />
+      <SwipeTabs options={VIEWS} value={view} onChange={setView} render={(v) => (v === 'Free Agents' ? <FreeAgentList /> : v === 'Expiring' ? <ExpiringList /> : <TradeList />)} />
     </Screen>
   );
 }
@@ -294,7 +294,118 @@ function Targets({ data }: { data: Expiring }) {
   );
 }
 
+const tradeDate = (d: string) => new Date(`${d}T12:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+const signedMoney = (n: number) => `${n > 0 ? '+' : ''}${money(n)}`;
+
+// Every trade in the league, newest first, with who's winning it so far (points since the trade).
+function TradeList() {
+  const { data, error, loading, reload } = useApi<TradeFeed>('/league/trades');
+  const [filter, setFilter] = useState<string>('All');
+
+  if (loading && !data) return <Loading />;
+  if (error && !data) return <ErrorState message={error} onRetry={reload} />;
+  if (!data) return null;
+
+  const options = ['All', ...(data.me ? ['Mine'] : []), ...data.seasons.map(String)];
+  const rows = data.trades.filter((t) =>
+    filter === 'All' ? true : filter === 'Mine' ? !!data.me && t.owners.includes(data.me) : String(t.season) === filter);
+
+  return (
+    <>
+      <View style={styles.sectionHead}>
+        <Text style={styles.sectionTitle}>League trades</Text>
+        <Text style={styles.sectionRight}>{`${data.trades.length} TOTAL`}</Text>
+      </View>
+      <Chips options={options} value={filter} onChange={setFilter} />
+      {rows.length === 0 ? <Note>No trades here yet.</Note> : null}
+      {rows.map((t) => <TradeCard key={t.id} trade={t} me={data.me} />)}
+      <Note>Winning = more points scored since the trade by what each side got. Value = today's dynasty market value.</Note>
+    </>
+  );
+}
+
+function TradeCard({ trade, me }: { trade: Trade; me: string | null }) {
+  const mine = !!me && trade.owners.includes(me);
+  const verdict = trade.winning
+    ? { label: `${trade.winning.owner === me ? 'YOU' : shortOwner(trade.winning.owner).toUpperCase()} +${Math.round(trade.winning.by)}`, tone: 'live' as const }
+    : { label: 'TOO EARLY', tone: 'muted' as const };
+  const shares = trade.sides.map((s) => s.market_share ?? 0);
+  return (
+    <View style={[styles.trade, mine && styles.tileGold]}>
+      <View style={styles.tradeHead}>
+        <Text style={styles.tradeWhen}>{`${tradeDate(trade.date)}${trade.week ? ` · Wk ${trade.week}` : ''}`}</Text>
+        <Pill label={verdict.label} tone={verdict.tone} />
+      </View>
+      {trade.sides.map((side, i) => <TradeSideView key={side.owner} side={side} me={me} first={i === 0} played={!!trade.weeks_since} />)}
+      {shares.some((x) => x > 0) ? (
+        <View style={styles.valueRow}>
+          <Text style={styles.valueLabel}>VALUE NOW</Text>
+          <View style={styles.valueBar}>
+            {trade.sides.map((s, i) => (
+              <View key={s.owner} style={[styles.valuePart, { flex: Math.max(s.market_share ?? 0, 0.02), backgroundColor: i === 0 ? colors.gold : '#5B7A6C' }]} />
+            ))}
+          </View>
+          <Text style={styles.valueLabel}>{trade.sides.map((s) => `${Math.round((s.market_share ?? 0) * 100)}%`).join(' / ')}</Text>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function TradeSideView({ side, me, first, played }: { side: TradeSide; me: string | null; first: boolean; played: boolean }) {
+  const who = side.owner === me ? 'You' : side.owner;
+  return (
+    <View style={[styles.side, !first && styles.sideNext]}>
+      <View style={styles.sideHead}>
+        <Pressable disabled={!side.team_id} onPress={() => router.push(`/team/${side.team_id}`)}>
+          <Text style={styles.sideOwner}>{`${who} get${who === 'You' ? '' : 's'}`}</Text>
+        </Pressable>
+        <Text style={styles.sideMeta}>
+          {[played && side.points_since != null ? `${Math.round(side.points_since)} pts since` : null, side.cap_change ? `${signedMoney(side.cap_change)} cap` : null]
+            .filter(Boolean).join(' · ')}
+        </Text>
+      </View>
+      {side.players.map((p) => (
+        <Pressable key={p.player_id} onPress={() => router.push(`/player/${p.player_id}`)} style={styles.sideRow}>
+          <PlayerFace name={p.name} team={p.nfl_team} pos={p.pos} size={36} />
+          <View style={ui.flex}>
+            <Text style={ui.name} numberOfLines={1}>{p.name}</Text>
+            <Text style={ui.sub} numberOfLines={1}>
+              {[p.pos, p.salary != null ? money(p.salary) : null, p.years ? `${p.years} yr${p.years === 1 ? '' : 's'}` : null].filter(Boolean).join(' · ')}
+            </Text>
+          </View>
+          {played && p.points_since != null ? <Text style={styles.sidePts}>{Math.round(p.points_since)}</Text> : null}
+        </Pressable>
+      ))}
+      {side.picks.map((pk) => (
+        <View key={pk.label + (pk.original_owner ?? '')} style={styles.sideRow}>
+          <View style={styles.pickDot}><Text style={styles.pickText}>PICK</Text></View>
+          <Text style={ui.name}>{`${pk.label}${pk.original_owner && pk.original_owner !== side.owner ? ` (${shortOwner(pk.original_owner)}'s)` : ''}`}</Text>
+        </View>
+      ))}
+      {side.faab > 0 ? <Text style={[ui.sub, styles.faab]}>{`+${money(side.faab)} FAAB`}</Text> : null}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
+  trade: { borderRadius: 18, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.card, padding: 14, marginBottom: 12 },
+  tradeHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
+  tradeWhen: { color: colors.muted, fontSize: 12, fontWeight: '700' },
+  side: { paddingTop: 8 },
+  sideNext: { borderTopWidth: 1, borderTopColor: colors.row, marginTop: 8 },
+  sideHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 },
+  sideOwner: { color: colors.gold, fontSize: 14, fontWeight: '800' },
+  sideMeta: { color: colors.muted, fontSize: 11 },
+  sideRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 5 },
+  sidePts: { color: colors.text, fontSize: 15, fontWeight: '800' },
+  pickDot: { width: 36, height: 36, borderRadius: 18, borderWidth: 1, borderColor: colors.gold, alignItems: 'center', justifyContent: 'center' },
+  pickText: { color: colors.gold, fontSize: 9, fontWeight: '800' },
+  faab: { marginTop: 2 },
+  valueRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12 },
+  valueLabel: { color: colors.muted, fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
+  valueBar: { flex: 1, flexDirection: 'row', height: 6, borderRadius: 3, overflow: 'hidden', gap: 2 },
+  valuePart: { height: 6 },
   search: {
     backgroundColor: colors.card, borderWidth: 1, borderColor: colors.line, borderRadius: 22,
     paddingHorizontal: 16, paddingVertical: 11, color: colors.text, fontSize: 15, marginBottom: 10,
