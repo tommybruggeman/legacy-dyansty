@@ -90,3 +90,22 @@ def test_ask_stream_ends_with_done(monkeypatch):
     events = [json.loads(line) for line in front_office.ask_stream(None, "Find me a trade", None)]
     assert [e["e"] for e in events] == ["status", "status", "text", "done"]
     assert events[1]["text"].startswith("Scanning every roster") and events[-1]["conversation_id"] == "c1"
+
+
+def test_gm_tools_gives_the_website_the_same_odds_and_matchup_tools(monkeypatch):
+    seen = {}
+
+    def fake_chat_tools(client, owner, **kw):
+        seen.update(kw)
+        return object()
+
+    monkeypatch.setattr(front_office.runtime, "chat_tools", fake_chat_tools)
+    monkeypatch.setattr(front_office.odds_trial, "watch", lambda tools: "watched")
+    session = SimpleNamespace(owner=SimpleNamespace(league_id="L"), client=None, sleeper_id=None, rules=lambda: {}, league={}, week=lambda: 8,
+                              positions=lambda: [], playoff_start=lambda: 15, state=lambda: {"roster": ["from session"]})
+    tools, watched = front_office.gm_tools(session, {"week": 8}, question=lambda: "q", conversation_id=lambda: None, state={"roster": ["from website"]})
+    assert watched == "watched"
+    assert seen["state"] == {"roster": ["from website"]}
+    assert callable(seen["odds"]) and len(seen["extra"]) == 1
+    front_office.gm_tools(session, None, question=lambda: "q", conversation_id=lambda: None)
+    assert seen["odds"] is None and seen["extra"] is None and seen["state"] == {"roster": ["from session"]}

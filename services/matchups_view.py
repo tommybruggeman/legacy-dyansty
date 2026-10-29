@@ -358,3 +358,48 @@ def matchup_cards_html(
     parts.append("</div>")
 
     return "".join(parts)
+
+
+def box_score_html(game: dict) -> str:
+    """Both lineups of one game (api.box_score.game): points, projection and weekly position rank per starter,
+    plus each side's projected total. Same numbers as the app's game screen."""
+    def side_html(side: dict) -> str:
+        rows = []
+        for p in side.get("players") or []:
+            proj = p.get("proj")
+            proj_txt = f"{proj:.1f}" if isinstance(proj, (int, float)) else "–"
+            rank = html.escape(str(p.get("rank") or ""))
+            status = p.get("status") or ""
+            pts = f"{_as_number(p.get('points')):.1f}" if status in ("playing", "final") or p.get("points") else "–"
+            rows.append(
+                '<div class="bx-row">'
+                f'<span class="bx-slot">{html.escape(str(p.get("slot") or ""))}</span>'
+                f'<span class="bx-name">{html.escape(str(p.get("name") or ""))}'
+                f'<span class="bx-sub">{html.escape(str(p.get("pos") or ""))}{" · " + html.escape(str(p["team"])) if p.get("team") else ""}{" · " + rank if rank else ""}</span></span>'
+                f'<span class="bx-num">{pts}<span class="bx-sub">proj {proj_txt}</span></span>'
+                '</div>'
+            )
+        projected = side.get("projected")
+        head = (f'<div class="bx-head"><b>{html.escape(str(side.get("name") or ""))}</b>'
+                f'<span>{_as_number(side.get("score")):.1f}'
+                + (f'<span class="bx-sub">proj {projected:.1f}</span>' if isinstance(projected, (int, float)) else "")
+                + '</span></div>')
+        return f'<div class="bx-side">{head}{"".join(rows)}</div>'
+
+    sides = "".join(side_html(s) for s in (game.get("teams") or [])[:2])
+    return (
+        '<style>'
+        '.bx-wrap{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:6px 0 18px}'
+        '@media (max-width:700px){.bx-wrap{grid-template-columns:1fr}}'
+        '.bx-side{border:1px solid rgba(226,188,91,.22);border-radius:14px;padding:10px 12px;background:rgba(255,255,255,.025)}'
+        '.bx-head{display:flex;justify-content:space-between;align-items:baseline;padding-bottom:6px;margin-bottom:4px;border-bottom:1px solid rgba(226,188,91,.18);color:#F5EBD7}'
+        '.bx-head span{font-weight:800;text-align:right}'
+        '.bx-row{display:grid;grid-template-columns:38px 1fr auto;gap:8px;align-items:center;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.05);color:#F5EBD7}'
+        '.bx-row:last-child{border-bottom:0}'
+        '.bx-slot{font-size:.7rem;font-weight:800;color:#E2BC5B;letter-spacing:.06em}'
+        '.bx-name{font-size:.9rem;line-height:1.2}'
+        '.bx-num{font-weight:700;text-align:right;line-height:1.2}'
+        '.bx-sub{display:block;font-size:.72rem;font-weight:400;opacity:.55}'
+        '</style>'
+        f'<div class="bx-wrap">{sides}</div>'
+    )

@@ -502,10 +502,12 @@ def merge_brief(data: dict[str, Any], model: dict[str, Any] | None) -> dict[str,
 
 def mobile_status(week: int, tiles: list[dict[str, Any]] | None) -> str:
     """One grey line for phones: 'Week 4 · 3-0, 2nd of 10 · $7 cap · vs Dylan Burruel'."""
-    record = cap = opp = ""
+    record = cap = opp = odds = ""
     for t in tiles or []:
         label, value = str(t.get("label") or ""), str(t.get("value") or "")
-        if label.startswith("Record"):
+        if label.startswith("Playoff odds"):
+            odds = f"{value} playoff odds"
+        elif label.startswith("Record"):
             rank = label.split("·", 1)[1].strip() if "·" in label else ""
             record = f"{value}, {rank}" if rank else value
         elif label == "Cap space":
@@ -513,7 +515,7 @@ def mobile_status(week: int, tiles: list[dict[str, Any]] | None) -> str:
         elif value.startswith("vs "):
             opp = value
     parts = [f"Week {week}"] if week else []
-    return " · ".join(p for p in parts + [record, cap, opp] if p)
+    return " · ".join(p for p in parts + [record, odds, cap, opp] if p)
 
 
 def week_context(fo: Mapping[str, Any] | None, owner: str, today: date | None = None) -> str:

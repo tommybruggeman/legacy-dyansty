@@ -24,7 +24,7 @@ from services.app_context import (
     last_scored_week,
     resolve_my_team,
 )
-from services.matchups_view import build_games, matchup_cards_html
+from services.matchups_view import box_score_html, build_games, matchup_cards_html
 
 
 ICON = Path(__file__).resolve().parents[1] / "assets" / "page_icon.png"
@@ -1398,6 +1398,90 @@ def show_loading_screen(
     )
 
 
+@st.cache_data(
+    ttl=60,
+    show_spinner=False,
+)
+def load_box_score_cached(
+    app_league_id: str,
+    sleeper_league_id: str,
+    season: int,
+    week: int,
+    matchup_id: int,
+    my_roster_id,
+) -> dict | None:
+    from api import box_score
+    from api import sleeper as sleeper_api
+
+    names = _roster_id_to_owner_name(
+        app_league_id,
+        sleeper_league_id,
+    )
+    slots = (sleeper_api.get(f"league/{sleeper_league_id}") or {}).get("roster_positions") or []
+    return box_score.game(
+        sb,
+        {
+            "season": int(season),
+            "sleeper_id": sleeper_league_id,
+            "names": names,
+            "slots": slots,
+            "sleeper_roster_id": my_roster_id,
+        },
+        int(week),
+        int(matchup_id),
+    )
+
+
+def _render_box_score(games: list, week: int) -> None:
+    my_roster_id = _my_roster_id()
+    labels = {
+        g["matchup_id"]: " vs ".join(t["name"] for t in g["teams"])
+        for g in games
+    }
+    ids = list(labels)
+    mine = next(
+        (
+            g["matchup_id"]
+            for g in games
+            if any(t["roster_id"] == my_roster_id for t in g["teams"])
+        ),
+        ids[0] if ids else None,
+    )
+    if mine is None:
+        return
+    st.markdown(
+        '<div class="matchups-page-title" style="font-size:1.05rem;margin-top:8px">Box score</div>',
+        unsafe_allow_html=True,
+    )
+    chosen = st.selectbox(
+        "Game",
+        options=ids,
+        index=ids.index(mine),
+        format_func=lambda mid: labels.get(mid, f"Game {mid}"),
+        key=f"weekly_box_{week}",
+        label_visibility="collapsed",
+    )
+    try:
+        game = load_box_score_cached(
+            str(league_id),
+            SLEEPER_LEAGUE_ID,
+            int(ACTIVE_SEASON.season),
+            int(week),
+            int(chosen),
+            my_roster_id,
+        )
+    except Exception as exc:
+        print(f"WEEKLY_BOX_SCORE_ERROR {type(exc).__name__}", flush=True)
+        game = None
+    if not game:
+        st.caption("No box score for this game yet.")
+        return
+    st.markdown(
+        box_score_html(game),
+        unsafe_allow_html=True,
+    )
+
+
 # ============================================================
 # UI
 # ============================================================
@@ -1547,6 +1631,12 @@ try:
             cards,
             unsafe_allow_html=True,
         )
+
+        # ----------------------------------------------------
+        # Box score: starters with projections and weekly
+        # position ranks (same numbers as the app's game screen)
+        # ----------------------------------------------------
+        _render_box_score(games, selected_week)
 
 
 except Exception as e:

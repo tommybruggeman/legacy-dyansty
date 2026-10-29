@@ -32,6 +32,7 @@ import streamlit as st
 
 from components.sidebar_nav import render_nav
 from auth import auth_client, require_login, current_user
+from services.win_odds_view import win_odds_text
 from services.my_team_context import resolve_my_team
 from services.standings_lookup import (
     build_sleeper_team_identities,
@@ -1495,6 +1496,8 @@ if not row.empty:
     top5_count = int(r.get("top5", 0) or 0)
 
 place_txt = f"{standing_txt} place" if standing_txt != "—" else "—"
+# This week's win odds (same saved number the app shows), in place of the PPG caption when there is one
+ppg_sub = win_odds_text(league_id, active_season, owner_name) or "Avg / game"
 top5_txt = f"{top5_count} Top 5" + ("" if top5_count == 1 else "s")
 
 
@@ -1576,7 +1579,7 @@ m1, m2, m3, m4 = st.columns([1, 1, 1, 1])
 metrics = [
     ("Record", record_txt, place_txt),
     ("Standing Points", standing_points, top5_txt),
-    ("PPG", f"{ppg:.1f}", "Avg / game"),
+    ("PPG", f"{ppg:.1f}", html.escape(ppg_sub)),
     ("Cap Used", cap_txt, f"${cap_space:.1f} space"),
 ]
 
@@ -1642,7 +1645,7 @@ st.markdown(
   <div class="card">
     <div class="metric-title">PPG</div>
     <div class="metric-value">{ppg:.1f}</div>
-    <div class="metric-sub">Avg / game</div>
+    <div class="metric-sub">{html.escape(ppg_sub)}</div>
   </div>
 
   <details class="card mobile-cap-details">

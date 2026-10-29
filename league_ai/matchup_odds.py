@@ -199,3 +199,17 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+def saved_week(client: Any, league_id: str, season: int, week: int | None = None) -> tuple[int | None, dict[str, dict[str, Any]]]:
+    """(week, owner -> {playoff_pct, win_pct, opp_owner}) as the Front Office last saved them: that week, or the latest saved.
+    Read only, no model run, so any page (app or website) can show the same numbers."""
+    try:
+        q = client.table("league_ai_odds_history").select("week,owner_name,playoff_pct,win_pct,opp_owner").eq("league_id", league_id).eq("season", int(season))
+        rows = (q.eq("week", int(week)) if week else q.order("week", desc=True).limit(40)).execute().data or []
+    except Exception:
+        return None, {}
+    if not rows:
+        return None, {}
+    latest = max(int(r["week"]) for r in rows)
+    return latest, {str(r["owner_name"]): r for r in rows if int(r["week"]) == latest}
