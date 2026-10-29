@@ -35,3 +35,12 @@ jobs:
           SYNC_BOT_PASSWORD: ${{ secrets.SYNC_BOT_PASSWORD }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: python scripts/run_sleeper_sync.py
+
+      # Alerts every owner's phone when a trade completes (free, via Expo). Never fails the sync.
+      - name: Trade alerts
+        if: always()
+        continue-on-error: true
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python scripts/notify_trades.py
