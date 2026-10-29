@@ -429,7 +429,7 @@ def team_detail(
     h2h: dict[str, Any] | None,
     later: list[dict[str, Any]] | None = None,
     weeks: int = 0,
-    win_odds: dict[str, Any] | None = None,
+    power: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     lineup = _sleeper_roster(sleeper_id, team["roster_id"])
     roster = roster_rows(state, team["team_id"], lineup, slots, info, ppg)
@@ -450,7 +450,7 @@ def team_detail(
         "activity": activity_view(state, team["team_id"]),
         "moves": moves(sleeper_id, team["roster_id"], weeks),
         "faab": faab(sleeper_id, lineup),
-        "win_odds": win_odds,
+        "power": power,
         "head_to_head": h2h,
     }
 

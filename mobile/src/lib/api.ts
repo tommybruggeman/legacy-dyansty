@@ -73,7 +73,7 @@ export async function apiStream<E>(path: string, body: unknown, onEvent: (event:
 // phone), then refresh quietly in the background. Cleared on sign out.
 // Bump CACHE_VERSION when a response changes shape, so an app update never
 // draws an old saved copy with the new screen.
-const CACHE_VERSION = 'v6';
+const CACHE_VERSION = 'v7';
 const CACHE_PREFIX = 'api:';
 const memory = new Map<string, unknown>();
 
@@ -190,7 +190,7 @@ export type StandingsRow = {
 
 export type Standings = { weeks_played: number; playoff_teams: number; rows: StandingsRow[] };
 
-export type MatchupTeam = { roster_id: number; name: string; score: number; rank: number; top5: boolean };
+export type MatchupTeam = { roster_id: number; name: string; score: number; rank: number; top5: boolean; projected?: number | null };
 export type Game = { matchup_id: number; teams: [MatchupTeam, MatchupTeam] };
 export type Matchups = {
   week: number;
@@ -259,7 +259,7 @@ export type TeamPage = {
   activity: { kind: 'SIGN' | 'CUT'; player: string; at: string | null }[];
   moves?: { moves: number; trades: number };
   faab?: { left: number; budget: number } | null;
-  win_odds?: { pct: number; opp: string | null; week: number } | null;
+  power?: { rank: number; of: number | null; move: number | null } | null;
   head_to_head: { wins: number; losses: number; ties: number; last: { week: number; me: number; them: number } } | null;
 };
 

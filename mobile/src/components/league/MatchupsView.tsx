@@ -105,7 +105,10 @@ function TeamRow({ team, leading, isMe }: { team: MatchupTeam; leading: boolean;
       </View>
       <Text style={[styles.teamName, leading && styles.gold]} numberOfLines={1}>{first(team.name)}</Text>
       {isMe ? <Text style={styles.you}>YOU</Text> : null}
-      <Text style={[styles.score, leading && styles.gold]}>{team.score.toFixed(2)}</Text>
+      <View style={styles.scoreBox}>
+        <Text style={[styles.score, leading && styles.gold]}>{team.score.toFixed(2)}</Text>
+        {team.projected != null ? <Text style={styles.proj}>proj {team.projected.toFixed(1)}</Text> : null}
+      </View>
     </View>
   );
 }
@@ -135,7 +138,9 @@ const styles = StyleSheet.create({
   rankTextTop5: { color: colors.bg },
   teamName: { color: colors.text, fontSize: 19, fontWeight: '700', flexShrink: 1 },
   you: { color: colors.gold, fontSize: 11, fontWeight: '800', backgroundColor: '#2A2A1A', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8, overflow: 'hidden' },
-  score: { color: colors.text, fontSize: 19, fontWeight: '700', marginLeft: 'auto' },
+  scoreBox: { marginLeft: 'auto', alignItems: 'flex-end' },
+  score: { color: colors.text, fontSize: 19, fontWeight: '700' },
+  proj: { color: colors.muted, fontSize: 12, fontWeight: '600', marginTop: 1 },
   gold: { color: colors.gold },
   footer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, backgroundColor: colors.card },
   status: { color: colors.muted, fontSize: 14, fontWeight: '600' },
