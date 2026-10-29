@@ -211,7 +211,18 @@ def report_card(client: Any, owner: runtime.Owner, week: int) -> dict[str, Any]:
         "open_calls": int(rec.get("open_calls") or 0),
         "recent": [{"when": r["when"], "call": r["call"], "right": r["result"] == "right", "points": r["points"], "why": r.get("why")} for r in rec.get("recent") or []],
         "lessons": [{"lesson": l["lesson"], "seen": int(l.get("evidence_count") or 1)} for l in lessons],
+        "accuracy": _accuracy(client, owner),
     }
+
+
+def _accuracy(client: Any, owner: runtime.Owner) -> dict[str, Any] | None:
+    """The weekly start/sit scorecard over every lineup in the league (league_ai.scorecard); None until the first one is saved."""
+    from league_ai import scorecard
+
+    try:
+        return scorecard.load(client, owner.league_id, owner.user_id)
+    except Exception:
+        return None
 
 
 def greeting(owner_name: str, now: datetime | None = None) -> str:

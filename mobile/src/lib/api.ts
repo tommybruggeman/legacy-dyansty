@@ -412,6 +412,17 @@ export type ReportCard = {
   open_calls: number;
   recent: { when: string; call: string; right: boolean; points: string; why: string | null }[];
   lessons: { lesson: string; seen: number }[];
+  accuracy?: Accuracy | null;
+};
+// How the start/sit engine did on every lineup in the league (weekly, free), and this owner's own line.
+export type AccuracyPair = { engine: number; owners: number; calls: number };
+export type Accuracy = {
+  season: number;
+  overall: AccuracyPair;
+  all_seasons: AccuracyPair | null;
+  by_position: (AccuracyPair & { pos: string })[];
+  by_week: (AccuracyPair & { week: number })[];
+  you?: { engine: number; you: number; calls: number; points_per_call: number };
 };
 export type FoMove = { action: 'start' | 'sit'; player: string; slot: string; note: string };
 export type FoHeader = {

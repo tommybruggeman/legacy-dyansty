@@ -86,7 +86,9 @@ def grade(lineups: Iterable[Mapping[str, Any]], projections: Callable[[int, int]
                 tier = "high" if top >= TIER_HIGH else "mid" if top >= TIER_MID else "low"
                 buckets = ["all", "close" if close else "clear", "weeks_1_5" if week <= EARLY_WEEKS else "weeks_6_on", f"pos_{pos}",
                            # where each position struggles: close calls, early season, and how big the players are
-                           f"{pos}_{'close' if close else 'clear'}", f"{pos}_{'weeks_1_5' if week <= EARLY_WEEKS else 'weeks_6_on'}", f"{pos}_tier_{tier}"]
+                           f"{pos}_{'close' if close else 'clear'}", f"{pos}_{'weeks_1_5' if week <= EARLY_WEEKS else 'weeks_6_on'}", f"{pos}_tier_{tier}",
+                           # for the app's report card (saved to the database, never printed: the logs are public)
+                           f"season:{season}", f"season:{season}:{pos}", f"week:{season}:{week}", f"owner:{r.get('owner_name')}:{season}"]
                 for m, (a, c) in score.items():
                     if a is None or c is None or a == c:
                         continue
@@ -191,7 +193,161 @@ def wr_variants(client: Any, week_lines: Callable[[int, int], Mapping[str, Mappi
     return {"wr_model_50": make(0.5, True), "wr_model_100": make(1.0, True), "wr_model_100_no_injuries": make(1.0, False)}
 
 
-def run_league(client: Any, league_id: str, sleeper_league_id: str) -> dict[str, Any]:
+def _signal_rows(client: Any, season: int) -> list[dict[str, Any]]:
+    from league_ai.position_signals import COLUMNS
+
+    rows: list[dict[str, Any]] = []
+    for start in range(0, 30000, 1000):
+        chunk = (client.table("nfl_player_stats").select(COLUMNS).eq("season", season).eq("season_type", "REG")
+                 .order("gsis_id").order("week").range(start, start + 999).execute().data or [])
+        rows += chunk
+        if len(chunk) < 1000:
+            break
+    return rows
+
+
+def signal_variants(client: Any, week_lines: Callable[[int, int], Mapping[str, Mapping[str, Any]]],
+                    games_for: Callable[[int, int], Mapping[str, Any]]) -> dict[str, Callable[[int, int, str, float], float | None]]:
+    """league_ai.position_signals as grader variants on top of the engine's number. Each touches only its positions
+    (the rest keep the engine's number), so the per-position buckets show what it does there."""
+    from league_ai.nfl_data import team_code
+    from league_ai.position_signals import Signals
+
+    season_rows: dict[int, list[dict[str, Any]]] = {}
+    built: dict[tuple[int, int], Signals] = {}
+
+    def sig(season: int, week: int) -> Signals:
+        if season not in season_rows:
+            try:
+                season_rows[season] = [{**r, "opponent": team_code(r.get("opponent")) if r.get("opponent") else None} for r in _signal_rows(client, season)]
+            except Exception:
+                season_rows[season] = []
+        if (season, week) not in built:
+            built[(season, week)] = Signals([r for r in season_rows[season] if int(r.get("week") or 0) < week])
+        return built[(season, week)]
+
+    def make(positions: tuple[str, ...], f: Callable[[Signals, str, str, float], float]) -> Callable[[int, int, str, float], float | None]:
+        def fn(season: int, week: int, pid: str, live: float) -> float | None:
+            line = week_lines(season, week).get(pid) or {}
+            if line.get("pos") not in positions:
+                return live
+            game = games_for(season, week).get(team_code(line.get("team"))) or {}
+            return f(sig(season, week), pid, str(game.get("opponent") or ""), live)
+        return fn
+
+    def floor(c: float) -> Callable[[Signals, str, str, float], float]:
+        return lambda s, pid, opp, live: live - c * (s.spread(pid) or 0.0)
+
+    return {
+        "qb_rush_25": make(("QB",), lambda s, pid, opp, live: live + 0.25 * s.qb_rush(pid)),
+        "qb_rush_50": make(("QB",), lambda s, pid, opp, live: live + 0.5 * s.qb_rush(pid)),
+        "qb_pressure": make(("QB",), lambda s, pid, opp, live: live * s.qb_pressure(opp)),
+        "qb_pass_d": make(("QB",), lambda s, pid, opp, live: live * s.qb_pass_d(opp)),
+        "qb_pressure_pass_d": make(("QB",), lambda s, pid, opp, live: live * s.qb_pressure(opp) * s.qb_pass_d(opp)),
+        "role_50": make(("TE", "WR"), lambda s, pid, opp, live: live * (1 + 0.5 * (s.role_trend(pid) - 1))),
+        "role_100": make(("TE", "WR"), lambda s, pid, opp, live: live * s.role_trend(pid)),
+        "snaps_50": make(("TE", "RB"), lambda s, pid, opp, live: live * (1 + 0.5 * (s.role_trend(pid, "snaps") - 1))),
+        "floor_10": make(SKILL, floor(0.1)),
+        "floor_20": make(SKILL, floor(0.2)),
+        "form_25": make(SKILL, lambda s, pid, opp, live: live * (1 + 0.25 * (s.form(pid) - 1))),
+        "form_50": make(SKILL, lambda s, pid, opp, live: live * (1 + 0.5 * (s.form(pid) - 1))),
+    }
+
+
+PBP_URL = "https://github.com/nflverse/nflverse-data/releases/download/pbp/play_by_play_{season}.csv.gz"
+PBP_COLUMNS = ["season_type", "week", "posteam", "yardline_100", "rush", "pass_attempt", "rusher_player_id", "receiver_player_id",
+               "rush_touchdown", "pass_touchdown"]
+INJURIES_URL = "https://github.com/nflverse/nflverse-data/releases/download/injuries/injuries_{season}.csv"
+
+
+def _nflverse_csv(url: str, columns: list[str] | None = None, gz: bool = False) -> list[dict[str, Any]]:
+    import io
+
+    import pandas as pd
+    import requests
+
+    try:
+        resp = requests.get(url, timeout=120)
+        resp.raise_for_status()
+        df = pd.read_csv(io.BytesIO(resp.content), compression="gzip" if gz else None, low_memory=False,
+                         usecols=(lambda c: c in columns) if columns else None)
+    except Exception:
+        return []
+    return df.where(df.notna(), None).to_dict("records")
+
+
+def missing_variants(client: Any, week_lines: Callable[[int, int], Mapping[str, Mapping[str, Any]]]) -> dict[str, Callable[[int, int, str, float], float | None]]:
+    """league_ai.missing_signals as grader variants: red zone role, offensive line, backup QB."""
+    from league_ai.missing_signals import RedZone, main_passers, ol_out, qb_out, sack_rate
+    from league_ai.nfl_data import team_code
+
+    cache: dict[Any, Any] = {}
+
+    def season_data(season: int) -> dict[str, Any]:
+        if season not in cache:
+            plays = [p for p in _nflverse_csv(PBP_URL.format(season=season), PBP_COLUMNS, gz=True) if p.get("season_type") == "REG"]
+            inj = [{**r, "team": team_code(r.get("team"))} for r in _nflverse_csv(INJURIES_URL.format(season=season))]
+            try:
+                stats = [{**r, "team": team_code(r.get("team"))} for r in _signal_rows(client, season)]
+            except Exception:
+                stats = []
+            cache[season] = {"plays": plays, "inj": inj, "stats": stats, "gsis": {str(r["sleeper_id"]): str(r["gsis_id"]) for r in stats if r.get("sleeper_id")}}
+        return cache[season]
+
+    def week_data(season: int, week: int) -> dict[str, Any]:
+        key = (season, week)
+        if key not in cache:
+            d = season_data(season)
+            rz = RedZone([p for p in d["plays"] if int(p.get("week") or 0) < week])
+            prior = [r for r in d["stats"] if int(r.get("week") or 0) < week]
+            pos_of = {str(r["gsis_id"]): str(r.get("position") or "").upper() for r in prior}
+            avg: dict[str, list[float]] = defaultdict(list)
+            for g, x in rz.xtd.items():
+                avg[pos_of.get(g, "")].append(x)
+            rates, lg = sack_rate(prior)
+            cache[key] = {"rz": rz, "rz_avg": {p: sum(v) / len(v) for p, v in avg.items() if v}, "ol": ol_out(d["inj"], season, week),
+                          "qb_out": qb_out(d["inj"], season, week, main_passers(prior)), "sack": rates, "lg_sack": lg}
+        return cache[key]
+
+    def make(positions: tuple[str, ...], f: Callable[[dict[str, Any], str, str, str, float], float]) -> Callable[[int, int, str, float], float | None]:
+        def fn(season: int, week: int, pid: str, live: float) -> float | None:
+            line = week_lines(season, week).get(pid) or {}
+            pos = line.get("pos")
+            if pos not in positions:
+                return live
+            w = week_data(season, week)
+            return f(w, season_data(season)["gsis"].get(pid, ""), pos, team_code(line.get("team")) or "", live)
+        return fn
+
+    def rz(k: float) -> Callable[[dict[str, Any], str, str, str, float], float]:
+        def f(w: dict[str, Any], g: str, pos: str, team: str, live: float) -> float:
+            avg = w["rz_avg"].get(pos, 0.0)
+            x = w["rz"].expected_tds(g, avg)
+            return live if x is None else live + k * 6 * (x - avg)
+        return f
+
+    def ol(a: float) -> Callable[[dict[str, Any], str, str, str, float], float]:
+        return lambda w, g, pos, team, live: live * (1 - a * min(3, w["ol"].get(team, 0)))
+
+    def sacks(b: float) -> Callable[[dict[str, Any], str, str, str, float], float]:
+        def f(w: dict[str, Any], g: str, pos: str, team: str, live: float) -> float:
+            r = w["sack"].get(team)
+            return live if r is None or not w["lg_sack"] else live * max(0.85, min(1.15, 1 - b * (r / w["lg_sack"] - 1)))
+        return f
+
+    def backup(c: float) -> Callable[[dict[str, Any], str, str, str, float], float]:
+        return lambda w, g, pos, team, live: live * (1 - c) if team in w["qb_out"] else live
+
+    return {
+        "rz_50": make(("RB", "WR", "TE"), rz(0.5)), "rz_100": make(("RB", "WR", "TE"), rz(1.0)), "rz_te_100": make(("TE",), rz(1.0)),
+        "ol_out_3": make(("QB", "RB"), ol(0.03)), "ol_out_6": make(("QB", "RB"), ol(0.06)),
+        "ol_sacks_20": make(("QB", "RB"), sacks(0.2)),
+        "backup_qb_10": make(("WR", "TE"), backup(0.10)), "backup_qb_20": make(("WR", "TE"), backup(0.20)),
+    }
+
+
+def run_league(client: Any, league_id: str, sleeper_league_id: str, variants: bool = True) -> dict[str, Any]:
+    """variants=False skips the experimental signals (the weekly scorecard only needs the engine and the owners)."""
     from api.projections import score
     from league_ai.nfl_data import defense_vs_position_from_stats, season_games, season_stat_rows, team_code, total_multiplier, week_matchups
     from pipeline.league_history.run import league_chain
@@ -230,8 +386,9 @@ def run_league(client: Any, league_id: str, sleeper_league_id: str) -> dict[str,
         game = games.get(team_code(line.get("team")))
         return total_multiplier(pos, game, dvp.get((game["opponent"], pos)) if game else None, weights)
 
-    variants = wr_variants(client, week_lines, lambda season, week: dvp_cache.get((season, week), (None, {}))[1] or week_matchups(season_games(client, season), week))
-    out = grade(rows, projections, lambda s, w, pid: tilt(s, w, pid, {}), lambda s, w, pid: tilt(s, w, pid), variants)
+    games_for = lambda season, week: dvp_cache.get((season, week), (None, {}))[1] or week_matchups(season_games(client, season), week)
+    extra = {**signal_variants(client, week_lines, games_for), **missing_variants(client, week_lines)} if variants else {}
+    out = grade(rows, projections, lambda s, w, pid: tilt(s, w, pid, {}), lambda s, w, pid: tilt(s, w, pid), extra)
     out["lineups"] = len(rows)
     out["seasons"] = sorted({int(r["season"]) for r in rows})
     return out

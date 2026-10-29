@@ -21,5 +21,16 @@ class AcceptanceTest(unittest.TestCase):
         self.assertEqual(idea_log.compact(out)[0]["their_share"]["open"], 0.86)
 
 
+
+class OwnerRateTest(unittest.TestCase):
+    def test_owner_record_pulled_toward_league(self):
+        by_owner = {"A": [0.5, 0.6, 0.7, 0.8], "B": [1.2, 1.3, 1.4, 1.5]}
+        league = acceptance.owner_rate(by_owner, "nobody", 1.0)
+        self.assertAlmostEqual(league, 0.5)
+        self.assertGreater(acceptance.owner_rate(by_owner, "a", 1.0), league)
+        self.assertLess(acceptance.owner_rate(by_owner, "B", 1.0), league)
+        self.assertIsNone(acceptance.owner_rate({"A": [1.0]}, "A", 1.0))
+
+
 if __name__ == "__main__":
     unittest.main()
