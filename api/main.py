@@ -18,6 +18,7 @@ from supabase import Client, create_client
 
 from api import box_score as box_score_mod
 from api import cache, front_office, home, league, market, player, projections, teams
+from league_ai import risers as risers_log
 from season_engine import SeasonResolver
 from services.season_rollover_owner_ui import OwnerRolloverDecisionError, OwnerRolloverDecisionService
 
@@ -604,6 +605,69 @@ def _brief_line(client: Client, ctx: dict[str, Any], user: Any, week: int) -> st
     return ((saved.get("injuries") or {}).get("call") or (saved.get("matchup") or {}).get("stakes") or "").strip()
 
 
+def _nfl_week(client: Client, season: int, week: int) -> list[dict[str, Any]]:
+    try:
+        return cache.cached(("nfl_games", season, week), 600, lambda: client.table("nfl_games").select("gameday,gametime,home_team,away_team")
+                            .eq("season", season).eq("week", week).execute().data or [])
+    except Exception:
+        return []
+
+
+def _risers(client: Client, ctx: dict[str, Any], week: int) -> list[dict[str, Any]]:
+    """GM's Risers for the league this week (the same list for every owner; cached half an hour)."""
+    sid, season = ctx["sleeper_id"], ctx["season"]
+    lines = projections.week_lines("projections", season, week, 1800)
+    scoring = projections.league_scoring(sid)
+    skill = [pid for pid, line in lines.items() if line.get("pos") in ("QB", "RB", "WR", "TE")
+             and projections.score(line["stats"], scoring) >= home.RISER_MIN_PROJ * 0.8]
+    proj = projections.week_projections(client, sid, season, week, skill, {p: lines[p]["pos"] for p in skill}, {p: lines[p]["team"] for p in skill})
+    ppg = market.ranking(client, season)
+    avg, games = dict(ppg.ranking_ppg), dict(getattr(ppg, "ranking_games", {}) or {})
+    near = [p for p, v in proj.items() if v >= home.RISER_MIN_PROJ and avg.get(p) is not None and v > avg[p]]
+    info = teams.player_info(client, near)
+    last_lines = projections.week_lines("stats", season, week - 1, 86400) if week > 1 else {}
+    last = {p: projections.score(last_lines[p]["stats"], scoring) for p in near if p in last_lines}
+    try:
+        owners = league.sleeper_owners(sid)
+    except Exception:
+        owners = {}
+    return home.risers({p: proj[p] for p in near}, avg, games, info, owners, ctx["names"], None, last)
+
+
+_RISERS_LOGGED: set[tuple[str, int, int]] = set()
+
+
+def _game_day_bottom(client: Client, ctx: dict[str, Any], user: Any, week: int, current: dict[str, Any],
+                     pics: dict[int, str | None], now: datetime) -> dict[str, Any]:
+    """The bottom card of game-day Home: GM's Risers, the week's scoreboard, or Shotgun watch."""
+    sid, my_roster = ctx["sleeper_id"], ctx["sleeper_roster_id"]
+    starts = home.kickoffs(_nfl_week(client, ctx["season"], week))
+    pick = home.bottom_mode(now, starts)
+    if pick["mode"] == "risers":
+        rows = cache.cached(("risers", sid, ctx["season"], week), 1800, lambda: _risers(client, ctx, week))
+        key = (str(user.id), ctx["season"], week)
+        if rows and key not in _RISERS_LOGGED:  # once per owner and week per server; the log also skips saved weeks
+            _RISERS_LOGGED.add(key)
+            risers_log.log(client, league_id=ctx["league_id"], sleeper_id=sid, season=ctx["season"], week=week, rows=rows)
+        return {"mode": "risers", "risers": [{**r, "is_mine": r["roster_id"] is not None and r["roster_id"] == my_roster} for r in rows]}
+
+    raw = league.sleeper.get(f"league/{sid}/matchups/{week}", ttl=league.LIVE_TTL) or []
+    ids = [p for r in raw for p in (r.get("starters") or []) if p and p != "0"]
+    info = teams.player_info(client, ids)
+    proj = cache.cached(("starter_proj", sid, ctx["season"], week), 1800, lambda: projections.week_projections(
+        client, sid, ctx["season"], week, ids, {p: _text(info.get(p, {}).get("position")) for p in ids},
+        {p: _text(info.get(p, {}).get("team")) for p in ids}))
+    live = home.team_live(raw, info, starts, now, proj)
+    if pick["mode"] == "scoreboard":
+        return {"mode": "scoreboard", "scoreboard": home.scoreboard(current["games"], live, my_roster, pics),
+                "race": home.race(current["games"], my_roster, pics)}
+    return {"mode": "shotgun", "shotgun": home.shotgun(live, ctx["names"], pics, my_roster, pick["window"])}
+
+
+def _text(value: Any) -> str:
+    return str(value or "").strip()
+
+
 @app.get("/home")
 def home_page(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
     client, user = owner
@@ -661,11 +725,7 @@ def home_page(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, An
             theirs = next((r for r in raw if game.get("them") and r.get("roster_id") == game["them"]["roster_id"]), None)
             ids = [p for r in (mine, theirs) if r for p in (r.get("starters") or [])]
             info = teams.player_info(client, ids)
-            try:
-                nfl = cache.cached(("nfl_games", ctx["season"], wk), 600, lambda: client.table("nfl_games").select("gameday,gametime,home_team,away_team")
-                                   .eq("season", ctx["season"]).eq("week", wk).execute().data or [])
-            except Exception:
-                nfl = []
+            nfl = _nfl_week(client, ctx["season"], wk)
             now = datetime.now(front_office.LEAGUE_TZ)
             return {"me": home.lineup(mine, info, home.kickoffs(nfl), now), "them": home.lineup(theirs, info, home.kickoffs(nfl), now)}
 
@@ -679,6 +739,11 @@ def home_page(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, An
             out["players"] = players
             out["lineup_issues"] = home.lineup_issues(players["me"])
             out["race"] = home.race(current["games"], my_roster, pics)
+        if phase == "game_day":
+            try:
+                out["bottom"] = _game_day_bottom(client, ctx, user, week, current, pics, datetime.now(front_office.LEAGUE_TZ))
+            except Exception as exc:  # the old standings / race cards still show
+                print(f"APP_HOME_BOTTOM_ERROR {type(exc).__name__}", flush=True)
             them = (mine_now or {}).get("them")
             if them:
                 out["series"] = teams.head_to_head(sid, weeks, my_roster, them["roster_id"])

@@ -477,6 +477,22 @@ export type RookieDeal = {
   decision_id: string | null; player_id: string; name: string; pos: string; salary: number; ppg: number | null;
   choice: 'keep' | 'walk' | 'review' | null; open: boolean; status: string;
 };
+export type Riser = {
+  player_id: string; name: string; pos: string; team: string; avg: number; proj: number; rise: number; last: number | null;
+  roster_id: number | null; owner: string | null; is_mine: boolean; injury: string | null;
+};
+export type BoardSide = { roster_id: number; name: string; score: number; top5: boolean; left: number; is_me: boolean; avatar: string | null };
+export type ShotgunRow = {
+  roster_id: number; name: string; avatar: string | null; is_me: boolean; score: number; projected: number;
+  left: number; playing: number; frozen: boolean; gap: number;
+};
+export type HomeBottom =
+  | { mode: 'risers'; risers: Riser[] }
+  | { mode: 'scoreboard'; scoreboard: { matchup_id: number; teams: BoardSide[]; mine: boolean }[]; race: RaceRow[] }
+  | { mode: 'shotgun'; shotgun: {
+      window: number; locked: boolean; last: ShotgunRow; danger: ShotgunRow[]; safe: ShotgunRow[];
+      needs: { points: number; to_pass: string } | null;
+    } | null };
 export type HomeData = {
   phase: 'game_day' | 'recap' | 'playoffs' | 'decisions' | 'draft_prep';
   season: number;
@@ -495,6 +511,7 @@ export type HomeData = {
   players?: { me: LivePlayer[]; them: LivePlayer[] };
   lineup_issues?: LivePlayer[];
   race?: RaceRow[];
+  bottom?: HomeBottom;
   series?: { wins: number; losses: number; ties: number } | null;
   weeks_left?: number;
   bracket?: { round: number; week: number; label: string; games: { a: BracketSide; b: BracketSide; winner: number | null }[] }[];
