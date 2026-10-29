@@ -1,7 +1,6 @@
 import unittest
 from unittest import mock
 
-from pipeline.league_history.build import OwnerMap
 from scripts import notify_trades as nt
 
 
@@ -47,11 +46,8 @@ TX = {"transaction_id": "t9", "type": "trade", "status": "complete", "status_upd
 
 
 class NotifyTradesTests(unittest.TestCase):
-    def test_message_lists_what_each_side_gets(self):
-        owners = OwnerMap([], [{"roster_id": 1}, {"roster_id": 2}], [{"sleeper_roster_id": 1, "owner_name": "Tommy Bruggeman"}, {"sleeper_roster_id": 2, "owner_name": "Grady M"}])
-        title, body = nt.trade_message(TX, owners, {"100": "Justin Jefferson", "200": "Josh Allen"})
-        self.assertEqual(title, "Trade completed")
-        self.assertEqual(body, "Tommy B. gets Justin Jefferson, 2027 R1 · Grady M. gets Josh Allen")
+    def test_message_names_the_league(self):
+        self.assertEqual(nt.trade_message("Legacy Dynasty"), "A trade was completed in Legacy Dynasty")
 
     def _run(self, db):
         def get(url):
@@ -59,7 +55,7 @@ class NotifyTradesTests(unittest.TestCase):
                 return [TX] if url.endswith("/8") else []
             return []
         with mock.patch.object(nt, "_get", side_effect=get), mock.patch.object(nt, "send", return_value=[]) as send:
-            res = nt.run_league(_Client(db), {"id": "L", "sleeper_league_id": "S"}, 8)
+            res = nt.run_league(_Client(db), {"id": "L", "sleeper_league_id": "S"}, 8, "Legacy Dynasty")
         return res, send
 
     def test_first_run_is_quiet_then_new_trades_are_sent_once(self):
@@ -70,7 +66,8 @@ class NotifyTradesTests(unittest.TestCase):
         db["push_sent"] = [r for r in db["push_sent"] if r["key"] == "seeded"]  # pretend the trade is new after seeding
         res, send = self._run(db)
         self.assertEqual(res, {"new": 1, "sent": 1})
-        self.assertEqual(send.call_args[0][0][0]["to"], "ExponentPushToken[a]")
+        msg = send.call_args[0][0][0]
+        self.assertEqual((msg["to"], msg["body"], msg["data"]["url"]), ("ExponentPushToken[a]", "A trade was completed in Legacy Dynasty", "/activity?focus=t9"))
         res, send = self._run(db)
         self.assertEqual(res, {"new": 0, "sent": 0})
 

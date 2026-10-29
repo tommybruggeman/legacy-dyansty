@@ -11,21 +11,14 @@ from __future__ import annotations
 
 import os
 import sys
-import time
-from pathlib import Path
 from typing import Any, Mapping
 
 import requests
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.append(str(ROOT))
-
-from pipeline.league_history.build import OwnerMap  # noqa: E402
 
 SLEEPER = "https://api.sleeper.app/v1"
 EXPO = "https://exp.host/--/api/v2/push/send"
-ACTIVITY_URL = "/league?view=Activity&at={at}"
+ACTIVITY_URL = "/activity?focus={tid}"
 
 
 def _get(url: str) -> Any:
@@ -34,24 +27,9 @@ def _get(url: str) -> Any:
     return resp.json()
 
 
-def short(name: str) -> str:
-    parts = str(name or "").split()
-    return f"{parts[0]} {parts[1][0]}." if len(parts) > 1 else str(name or "")
-
-
-def trade_message(tx: Mapping[str, Any], owners: OwnerMap, names: Mapping[str, str]) -> tuple[str, str]:
-    """('Trade completed', 'Grady M. gets Josh Allen · Tommy B. gets Justin Jefferson, 2027 R1')."""
-    gets: dict[str, list[str]] = {}
-    for rid in tx.get("roster_ids") or []:
-        gets.setdefault(owners.name(rid), [])
-    for pid, rid in (tx.get("adds") or {}).items():
-        gets.setdefault(owners.name(rid), []).append(names.get(str(pid)) or "a player")
-    for pk in tx.get("draft_picks") or []:
-        gets.setdefault(owners.name(pk.get("owner_id")), []).append(f"{pk.get('season')} R{pk.get('round')}")
-    for b in tx.get("waiver_budget") or []:
-        gets.setdefault(owners.name(b.get("receiver")), []).append(f"${b.get('amount')} FAAB")
-    body = " · ".join(f"{short(o)} gets {', '.join(items) or 'nothing'}" for o, items in gets.items())
-    return "Trade completed", body
+def trade_message(league_name: str | None) -> str:
+    """'A trade was completed in Legacy Dynasty'; tapping it opens Activity on that trade."""
+    return f"A trade was completed in {league_name or 'your league'}"
 
 
 def send(messages: list[dict[str, Any]]) -> list[str]:
@@ -71,7 +49,7 @@ def send(messages: list[dict[str, Any]]) -> list[str]:
     return dead
 
 
-def run_league(client: Any, league: Mapping[str, Any], week: int) -> dict[str, int]:
+def run_league(client: Any, league: Mapping[str, Any], week: int, league_name: str | None = None) -> dict[str, int]:
     lid, sid = str(league["id"]), str(league["sleeper_league_id"])
     sent_keys = {r["key"] for r in client.table("push_sent").select("key").eq("league_id", lid).execute().data or []}
     first_run = "seeded" not in sent_keys
@@ -86,16 +64,11 @@ def run_league(client: Any, league: Mapping[str, Any], week: int) -> dict[str, i
         return {"new": len(new), "sent": 0}
     if not new:
         return {"new": 0, "sent": 0}
-    teams = client.table("league_teams").select("owner_name, sleeper_roster_id, sleeper_user_id").eq("league_id", lid).execute().data or []
-    owners = OwnerMap(_get(f"{SLEEPER}/league/{sid}/users") or [], _get(f"{SLEEPER}/league/{sid}/rosters") or [], teams)
-    ids = sorted({str(p) for t in new for p in (t.get("adds") or {})})
-    names = {str(r["sleeper_id"]): r.get("full_name") for r in (client.table("nfl_players").select("sleeper_id, full_name").in_("sleeper_id", ids).execute().data or [])} if ids else {}
     tokens = [r["token"] for r in client.table("push_tokens").select("token").eq("league_id", lid).execute().data or []]
     sent = 0
     for t in sorted(new, key=lambda t: t.get("status_updated") or 0):
-        title, body = trade_message(t, owners, names)
-        messages = [{"to": tok, "title": title, "body": body, "sound": "default",
-                     "data": {"url": ACTIVITY_URL.format(at=int(time.time() * 1000))}} for tok in tokens]
+        messages = [{"to": tok, "body": trade_message(league_name), "sound": "default",
+                     "data": {"url": ACTIVITY_URL.format(tid=t["transaction_id"])}} for tok in tokens]
         dead = send(messages) if messages else []
         if dead:
             client.table("push_tokens").delete().in_("token", dead).execute()
@@ -120,9 +93,10 @@ def main() -> int:
         if not league.get("sleeper_league_id"):
             continue
         try:
-            if str((_get(f"{SLEEPER}/league/{league['sleeper_league_id']}") or {}).get("season")) != season:
+            info = _get(f"{SLEEPER}/league/{league['sleeper_league_id']}") or {}
+            if str(info.get("season")) != season:
                 continue  # last season's league: nothing new happens there
-            res = run_league(client, league, week)
+            res = run_league(client, league, week, info.get("name"))
             print(f"[push] league {n}: {res['new']} new trades, {res['sent']} alerts sent", flush=True)
         except Exception as exc:
             print(f"[push] league {n}: failed ({type(exc).__name__})", flush=True)
