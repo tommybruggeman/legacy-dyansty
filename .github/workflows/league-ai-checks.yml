@@ -20,7 +20,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - run: pip install supabase requests
+      - run: pip install supabase requests pandas
       - if: inputs.check == 'start_sit_grade' || inputs.check == 'practice_test' || inputs.check == 'weekly_cards'
         run: pip install -r api/requirements.txt
       - name: Run
