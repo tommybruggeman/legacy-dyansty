@@ -19,21 +19,7 @@ def render_league_ai_settings(client: Any, league_id: str, sleeper_league_id: st
 
     s = load_settings(client, league_id)
 
-    st.markdown("#### Scoring (from Sleeper)")
-    st.write(scoring_summary(s))
-    c1, c2 = st.columns([1, 2])
-    with c1:
-        if st.button("Sync scoring from Sleeper", use_container_width=True, disabled=not sleeper_league_id):
-            try:
-                payload = fetch_sleeper_scoring(sleeper_league_id or "")
-                apply_sleeper_scoring(s, payload)
-                save_settings(client, s)
-                st.success("Scoring synced.")
-                st.rerun()
-            except Exception as exc:
-                st.error(f"Could not sync scoring: {exc}")
-    with c2:
-        st.caption(f"Last synced: {s.scoring_synced_at or 'never'}")
+    render_scoring_editor(client, s, sleeper_league_id)
 
     s.house_rules = st.text_area(
         "House rules and anything else the AI should know about this league",
@@ -50,6 +36,61 @@ def render_league_ai_settings(client: Any, league_id: str, sleeper_league_id: st
             st.error(f"Could not save: {exc}")
 
     render_weekly_reports(client, league_id)
+
+
+def render_scoring_editor(client: Any, s: Any, sleeper_league_id: str | None) -> None:
+    """The league's scoring rules, edited and saved here. This copy is what scores the league (scoring/engine.py)."""
+    import pandas as pd
+
+    from scoring.rules import rows_from_rules, rules_from_rows
+
+    st.markdown("#### Scoring")
+    st.write(scoring_summary(s))
+    source = "copied from Sleeper" if s.scoring_source == "sleeper" else "set here"
+    st.caption(f"Points per stat. Rules are {source}" + (f" (last copied {s.scoring_synced_at[:10]})." if s.scoring_source == "sleeper" and s.scoring_synced_at else "."))
+
+    rows = rows_from_rules(s.scoring_settings)
+    edited: list[dict[str, Any]] = []
+    for group in dict.fromkeys(r["group"] for r in rows):
+        mine = [r for r in rows if r["group"] == group]
+        used = sum(1 for r in mine if r["points"])
+        with st.expander(f"{group} ({used} in use)", expanded=False):
+            table = st.data_editor(
+                pd.DataFrame(mine)[["rule", "points", "key"]],
+                key=f"scoring_rules_{group}",
+                hide_index=True,
+                use_container_width=True,
+                disabled=["rule", "key"],
+                column_config={
+                    "rule": st.column_config.TextColumn("Rule"),
+                    "points": st.column_config.NumberColumn("Points", step=0.01, format="%.2f"),
+                    "key": None,
+                },
+            )
+            edited += table.to_dict("records")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("Save scoring", type="primary", use_container_width=True):
+            try:
+                s.scoring_settings = rules_from_rows(edited)
+                s.scoring_source = "app"
+                save_settings(client, s)
+                st.success("Scoring saved.")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Could not save scoring: {exc}")
+    with c2:
+        if st.button("Copy rules from Sleeper", use_container_width=True, disabled=not sleeper_league_id,
+                     help="Replaces the rules above with this league's current Sleeper scoring."):
+            try:
+                payload = fetch_sleeper_scoring(sleeper_league_id or "")
+                apply_sleeper_scoring(s, payload)
+                save_settings(client, s)
+                st.success("Scoring copied from Sleeper.")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Could not copy scoring: {exc}")
 
 
 def render_weekly_reports(client: Any, league_id: str) -> None:

@@ -172,7 +172,7 @@ def lineup_summary(positions: list[str]) -> str:
 def scoring_summary(settings: LeagueAISettings) -> str:
     scoring = settings.scoring_settings or {}
     if not scoring and not settings.roster_positions:
-        return "Scoring and lineup settings not synced yet (commissioner: Settings > League AI > Sync scoring from Sleeper)."
+        return "Scoring and lineup settings not synced yet (commissioner: Settings > League AI > Scoring)."
     parts = []
     for key, (label, _) in _SCORING_LABELS.items():
         if key in scoring and scoring[key]:
