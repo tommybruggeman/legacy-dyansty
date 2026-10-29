@@ -421,6 +421,11 @@ class TeamContext:
         if last:
             who = "the same HC" if coach and coach == last_coach else (f"{last_coach} (coaching change)" if last_coach else "the prior staff")
             text += f"; last season {_pct(last['pass_rate'])} pass rate, {last['plays_per_game']} plays/g under {who}"
+        from league_ai.playcallers import note as playcaller_note
+
+        caller = playcaller_note(self.season, team, self.last_tendencies)
+        if caller:   # a new play-caller makes last season's profile a weaker guide
+            text += f"; {caller}"
         return text
 
     def defense_text(self, team: str) -> str | None:
