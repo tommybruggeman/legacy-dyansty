@@ -1,3 +1,4 @@
+# Changing this file makes Streamlit Cloud reinstall and restart the website (clears stale code after merges).
 streamlit>=1.58
 supabase
 openai>=1.97.0
