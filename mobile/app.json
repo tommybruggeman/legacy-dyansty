@@ -36,8 +36,7 @@
           "resizeMode": "contain",
           "backgroundColor": "#071A12"
         }
-      ],
-      "expo-notifications"
+      ]
     ],
     "scheme": "legacydynasty",
     "backgroundColor": "#071A12",
