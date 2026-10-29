@@ -1,14 +1,15 @@
 name: League AI checks
 
 # Run by hand: how accurate the playoff odds are on past seasons, how the 20-answer playoff-odds trial is going,
-# start/sit graded on every saved lineup, and the free pre-deploy practice test.
+# start/sit graded on every saved lineup, the free pre-deploy practice test,
+# and shadow scoring (our own scoring engine vs Sleeper's scores on every finished week).
 on:
   workflow_dispatch:
     inputs:
       check:
         description: Which check to run
         type: choice
-        options: [odds_backtest, odds_trial, odds_grade, start_sit_grade, practice_test, weekly_cards]
+        options: [odds_backtest, odds_trial, odds_grade, start_sit_grade, practice_test, weekly_cards, shadow_scoring]
         default: odds_backtest
 
 jobs:
@@ -37,5 +38,6 @@ jobs:
             practice_test) python -m league_ai.practice_test ;;
             # the weekly start/sit scorecard and accepted-trade shares now, without waiting for Tuesday's learning job (no model calls)
             weekly_cards) python -m league_ai.scorecard ;;
+            shadow_scoring) python -m scoring.shadow ;;
             *) python -m league_ai.playoff_odds ;;
           esac
