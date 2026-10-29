@@ -19,6 +19,7 @@ import pandas as pd
 import streamlit as st
 from components.sidebar_nav import render_nav
 from auth import require_login, current_user
+from services.win_odds_view import win_odds_text
 from services.config import configured_value
 from services.standings_lookup import (
     build_sleeper_team_identities,
@@ -2059,6 +2060,9 @@ if not stand_df.empty:
 
         ppg_val = float(r.get("ppg", 0.0) or 0.0)
 
+# This week's win odds (same saved number the app shows), in place of the PPG caption when there is one
+ppg_sub = win_odds_text(league_id, active_season, sel_name) or "Avg/game"
+
 # Cap (resolve after roster load)
 cap_txt, cap_sub = resolve_cap_for_owner(
     roster_df,
@@ -2472,7 +2476,7 @@ with top_stats:
             '<div class="teams-mobile-stat">',
             '<div class="teams-mobile-stat-label">PPG</div>',
             f'<div class="teams-mobile-stat-value">{ppg_val:.1f}</div>',
-            '<div class="teams-mobile-stat-sub">Avg/game</div>',
+            f'<div class="teams-mobile-stat-sub">{_mobile_escape(ppg_sub)}</div>',
             '</div>',
             '<div class="teams-mobile-stat">',
             '<div class="teams-mobile-stat-label">Cap</div>',

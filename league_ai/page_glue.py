@@ -93,7 +93,19 @@ def _owner(request_context: Any, team: dict) -> runtime.Owner:
                          team_name=request_context.team_name or team.get("team_name") or owner_name, role=request_context.role or team.get("role") or "owner")
 
 
-def run_league_ai(*, request_context: Any, team: dict, question: str, history: list[dict[str, str]], tools: ToolRegistry | None = None, on_event: Any = None, week_context: str | None = None) -> AnswerResult:
+def app_session(request_context: Any, team: dict) -> Any:
+    """The app server's Front Office session for this owner, so the website runs the same Assistant GM and the same numbers."""
+    from api import front_office as app_fo
+
+    client = auth_client()
+    owner = _owner(request_context, team)
+    return app_fo.Session(client, owner, _league_row(client, owner.league_id).get("sleeper_league_id"))
+
+
+def run_league_ai(*, request_context: Any, team: dict, question: str, history: list[dict[str, str]], tools: ToolRegistry | None = None, on_event: Any = None,
+                  week_context: str | None = None, fo: dict | None = None) -> AnswerResult:
+    from api import front_office as app_fo
+
     client = auth_client()
     owner = _owner(request_context, team)
     league = _league_row(client, owner.league_id)
@@ -103,16 +115,19 @@ def run_league_ai(*, request_context: Any, team: dict, question: str, history: l
         owner.league_id, owner.season, owner.league_team_id, owner.user_id, epoch,
         league.get("sleeper_league_id"), league.get("name") or "the league", owner.owner_name, owner.team_name, owner.role, memory_epoch,
     )
+    session = seen = None
     if tools is None:
-        tools = runtime.chat_tools(
-            client, owner, state=_cached_state(owner.league_id, owner.season, owner.user_id, epoch), rules=_cached_rules(owner.league_id, owner.user_id, epoch),
-            league=league, week=_cached_nfl_week(),
-            positions=lambda: _cached_roster_positions(owner.league_id, league.get("sleeper_league_id"), owner.user_id),
-            playoff_week=lambda: _cached_playoff_start(league.get("sleeper_league_id")),
-            question=lambda: question, conversation_id=lambda: st.session_state.get(CONVERSATION_KEY),
-        )
+        # Same tools as the app (playoff and matchup odds, Sleeper-rostered players); the state keeps the website's edit-aware cache.
+        session = app_session(request_context, team)
+        tools, seen = app_fo.gm_tools(session, fo, question=lambda: question, conversation_id=lambda: st.session_state.get(CONVERSATION_KEY),
+                                      state=_cached_state(owner.league_id, owner.season, owner.user_id, epoch))
     turn = runtime.chat_turn(client, owner, question=question, history=history, conversation_id=st.session_state.get(CONVERSATION_KEY),
                              pack=pack, tools=tools, on_event=on_event, week_context=week_context)
+    if session is not None and turn.result.ok:
+        try:
+            app_fo.after_answer(session, seen, conversation_id=turn.conversation_id, question=question, answer=turn.result.text)
+        except Exception as exc:
+            print(f"FRONT_OFFICE_TRIAL_ERROR {type(exc).__name__}", flush=True)
     if turn.notes_changed:
         st.session_state[MEMORY_EPOCH_KEY] = memory_epoch + 1  # rebuild the pack next turn so new notes show
     if turn.conversation_id:
@@ -338,7 +353,7 @@ FRONT_OFFICE_CSS = """
 .fo-who { margin-left:auto; text-align:right; }
 .fo-who .n { font-weight:800; }
 .fo-who .m { opacity:.55; font-size:.8rem; }
-.fo-tiles { display:grid; grid-template-columns:repeat(6,1fr); gap:12px; margin:14px 0 18px; }
+.fo-tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:12px; margin:14px 0 18px; }
 @media (max-width: 900px) { .fo-tiles { grid-template-columns:repeat(3,1fr);} .fo-brief { grid-template-columns:1fr !important; } }
 .fo-tile { border:1px solid rgba(226,188,91,.22); border-radius:14px; background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.015));
            padding:14px 10px; text-align:center; min-width:0; }
@@ -521,6 +536,85 @@ def render_brief(brief: dict[str, Any] | None, *, generating: bool = False) -> N
     st.markdown(html_out, unsafe_allow_html=True)
 
 
+def app_numbers(request_context: Any, team: dict, fo: dict | None) -> dict[str, Any]:
+    """The app's Front Office numbers for this owner (playoff odds, this week's win chance, lineup moves), from the same code.
+    Each piece is optional: a failure leaves it out and the page carries on."""
+    from api import front_office as app_fo
+
+    if not fo:
+        return {}
+    session = app_session(request_context, team)
+    out: dict[str, Any] = {}
+    try:
+        out["odds"] = app_fo._my_odds(session.odds_summary(fo), session.owner.owner_name)
+    except Exception as exc:
+        print(f"FRONT_OFFICE_ODDS_ERROR {type(exc).__name__}", flush=True)
+    try:
+        _, win = session.my_week(fo)
+        out["win"] = {"pct": round(100 * win["win"]), "opponent": win["opp"]} if win else None
+    except Exception as exc:
+        print(f"FRONT_OFFICE_WIN_ERROR {type(exc).__name__}", flush=True)
+    try:
+        out["moves"] = session.moves(fo)
+    except Exception as exc:
+        print(f"FRONT_OFFICE_MOVES_ERROR {type(exc).__name__}", flush=True)
+    return out
+
+
+def number_tiles(numbers: dict[str, Any]) -> list[dict[str, Any]]:
+    """Playoff odds and this week's win chance as Front Office tiles."""
+    tiles = []
+    odds = numbers.get("odds")
+    if odds:
+        change = odds.get("change")
+        moved = f"{'+' if change > 0 else ''}{change} this week" if change else f"{odds.get('weeks_left')} weeks left"
+        tiles.append({"label": f"Playoff odds · {moved}", "value": f"{odds['pct']}%", "tone": "warn" if odds["pct"] < 25 else ""})
+    win = numbers.get("win")
+    if win:
+        tiles.append({"label": f"Win chance · vs {win['opponent']}", "value": f"{win['pct']}%", "tone": "warn" if win["pct"] < 35 else ""})
+    return tiles
+
+
+def render_moves(moves: list[dict[str, str]] | None) -> None:
+    """This week's lineup changes in Sleeper (same list as the app's Front Office)."""
+    if moves is None:
+        return
+    st.markdown('<div class="fo-sec"><span class="fo-label">Lineup moves</span><span class="fo-note">Best lineup for this matchup vs your starters in Sleeper now</span></div>',
+                unsafe_allow_html=True)
+    if not moves:
+        st.caption("Your lineup looks set.")
+        return
+    for m in moves:
+        verb = "Start" if m["action"] == "start" else "Sit"
+        slot = f" at {_esc(m['slot'])}" if m.get("slot") else ""
+        note = f" <span class='fo-note'>{_esc(m['note'])}</span>" if m.get("note") else ""
+        st.markdown(f"**{verb} {_esc(m['player'])}**{slot}{note}", unsafe_allow_html=True)
+
+
+def _render_accuracy(client: Any, request_context: Any) -> None:
+    """The weekly start/sit scorecard over every lineup in the league, same as the app's report card."""
+    from league_ai import scorecard
+
+    try:
+        card = scorecard.load(client, request_context.league_id, request_context.user_id)
+    except Exception:
+        card = None
+    if not card:
+        return
+    overall = card["overall"]
+    st.markdown(f"**Start/sit accuracy, {card['season']}** <span class='fo-note'>every lineup in the league, graded</span>", unsafe_allow_html=True)
+    lines = [f"- Engine right on {overall['engine']}% of {overall['calls']:,} calls vs owners {overall['owners']}%"]
+    you = card.get("you")
+    if you:
+        lines.append(f"- You: {you['you']}% (the engine would have been {you['engine']}% on your {you['calls']} calls)")
+    if card.get("by_position"):
+        lines.append("- By position: " + " · ".join(f"{p['pos']} {p['engine']}% vs {p['owners']}%" for p in card["by_position"]))
+    recent = (card.get("by_week") or [])[-6:]
+    if recent:
+        lines.append("- Last weeks: " + " · ".join(f"W{w['week']} {w['engine']}%" for w in recent))
+    st.markdown("\n".join(lines))
+
+
 def render_report_card(request_context: Any) -> None:
     """'How my calls have graded': this owner's record, recent graded calls with the diagnosis, and the playbook."""
     client = auth_client()
@@ -543,6 +637,7 @@ def render_report_card(request_context: Any) -> None:
             mark = "✅" if r["result"] == "right" else "❌"
             st.markdown(f"{mark} **{_esc(r['when'])}** · {_esc(r['call'])} ({_esc(r['points'])})" + (f"  \n<span class='fo-note'>{_esc(r['why'])}</span>" if r.get("why") else ""),
                         unsafe_allow_html=True)
+        _render_accuracy(client, request_context)
         if lessons:
             st.markdown("**What I've learned in this league**")
             for l in lessons:

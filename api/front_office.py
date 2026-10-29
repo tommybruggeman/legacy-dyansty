@@ -308,6 +308,32 @@ def home(session: Session) -> dict[str, Any]:
     }
 
 
+def gm_tools(session: Session, fo: dict[str, Any] | None, *, question: Callable[[], str], conversation_id: Callable[[], str | None],
+             state: dict[str, Any] | None = None) -> tuple[Any, Any]:
+    """Every tool the Assistant GM gets, for the app and the website alike: (tools, what the odds trial watches)."""
+    o, client = session.owner, session.client
+    state = state if state is not None else session.state()
+    if session.sleeper_id:
+        # Players on a Sleeper roster without a contract row yet (fresh rookie picks) aren't free agents.
+        try:
+            from api import league as league_api
+            names = league_api.roster_names(client, o.league_id, session.sleeper_id)
+            state = {**state, "sleeper_rostered": {pid: names.get(rid, f"Roster {rid}") for pid, rid in league_api.sleeper_owners(session.sleeper_id).items()}}
+        except Exception:
+            pass
+    tools = runtime.chat_tools(client, o, state=state, rules=session.rules(), league=session.league, week=session.week(),
+                               positions=session.positions, playoff_week=session.playoff_start,
+                               question=question, conversation_id=conversation_id,
+                               odds=(lambda: _gm_odds(session, fo)) if fo else None, extra=[matchup_tool(session, fo)] if fo else None)
+    return tools, odds_trial.watch(tools)
+
+
+def after_answer(session: Session, seen: Any, *, conversation_id: str | None, question: str, answer: str) -> None:
+    o = session.owner
+    odds_trial.maybe_run(session.client, league_id=o.league_id, user_id=o.user_id, conversation_id=conversation_id, question=question,
+                         answer=answer, seen=seen, sdk_factory=lambda: runtime.ClaudeClient()._client())
+
+
 def ask(session: Session, question: str, conversation_id: str | None, on_event: Callable[[str, Any], None] | None = None) -> dict[str, Any]:
     """One chat turn. Returns the answer, or a friendly error the app can show."""
     o, client = session.owner, session.client
@@ -324,25 +350,11 @@ def ask(session: Session, question: str, conversation_id: str | None, on_event: 
     except Exception as exc:
         print(f"APP_FRONT_OFFICE_ERROR {type(exc).__name__}: {exc}", flush=True)
         fo = None
-    state = session.state()
-    if session.sleeper_id:
-        # Players on a Sleeper roster without a contract row yet (fresh rookie picks) aren't free agents.
-        try:
-            from api import league as league_api
-            names = league_api.roster_names(client, o.league_id, session.sleeper_id)
-            state = {**state, "sleeper_rostered": {pid: names.get(rid, f"Roster {rid}") for pid, rid in league_api.sleeper_owners(session.sleeper_id).items()}}
-        except Exception:
-            pass
-    tools = runtime.chat_tools(client, o, state=state, rules=session.rules(), league=session.league, week=session.week(),
-                               positions=session.positions, playoff_week=session.playoff_start,
-                               question=lambda: question, conversation_id=lambda: conversation_id,
-                               odds=(lambda: _gm_odds(session, fo)) if fo else None, extra=[matchup_tool(session, fo)] if fo else None)
-    seen = odds_trial.watch(tools)
+    tools, seen = gm_tools(session, fo, question=lambda: question, conversation_id=lambda: conversation_id)
     turn = runtime.chat_turn(client, o, question=question, history=history, conversation_id=conversation_id, pack=session.pack(), tools=tools,
                              on_event=on_event, week_context=week_context(fo, o.owner_name))
     if turn.result.ok:
-        odds_trial.maybe_run(client, league_id=o.league_id, user_id=o.user_id, conversation_id=turn.conversation_id, question=question,
-                             answer=turn.result.text, seen=seen, sdk_factory=lambda: runtime.ClaudeClient()._client())
+        after_answer(session, seen, conversation_id=turn.conversation_id, question=question, answer=turn.result.text)
     if turn.notes_changed:
         session.forget_pack()  # new notes show up in the next answer
     result = turn.result

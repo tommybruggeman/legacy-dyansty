@@ -16,6 +16,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from supabase import Client, create_client
 
+from api import box_score as box_score_mod
 from api import cache, front_office, home, league, market, player, projections, teams
 from season_engine import SeasonResolver
 from services.season_rollover_owner_ui import OwnerRolloverDecisionError, OwnerRolloverDecisionService
@@ -400,82 +401,10 @@ def box_score(
     ctx = _season_context(client, user)
     if not 1 <= week <= 25:
         raise HTTPException(status_code=404, detail="No such week.")
-    final = week <= league.last_scored_week(ctx["sleeper_id"])
-    ttl = 86400 if final else league.LIVE_TTL
-    ids = teams.starter_ids(ctx["sleeper_id"], week, matchup_id, ttl)
-    info = teams.player_info(client, ids)
-    result = teams.box_score(ctx["sleeper_id"], week, matchup_id, ctx["names"], ctx["slots"], info, ttl)
+    result = box_score_mod.game(client, ctx, week, matchup_id, _league_team_rows(client, ctx["league_id"]))
     if result is None:
         raise HTTPException(status_code=404, detail="Game not found.")
-    teams_by_roster = {t["roster_id"]: t["team_id"] for t in _league_team_rows(client, ctx["league_id"])}
-    for side in result["teams"]:
-        side["team_id"] = teams_by_roster.get(side["roster_id"])
-    result["my_roster_id"] = ctx["sleeper_roster_id"]
-    result["is_final"] = final
-    _add_projections(client, ctx, week, final, result, info)
     return result
-
-
-def _week_kickoffs(client: Client, season: int, week: int) -> dict[str, datetime]:
-    try:
-        nfl = cache.cached(("nfl_games", season, week), 600, lambda: client.table("nfl_games").select("gameday,gametime,home_team,away_team")
-                           .eq("season", season).eq("week", week).execute().data or [])
-    except Exception:
-        nfl = []
-    return home.kickoffs(nfl)
-
-
-def _add_projections(client: Client, ctx: dict[str, Any], week: int, final: bool, result: dict[str, Any], info: dict[str, dict[str, Any]]) -> None:
-    """Each starter's projection, game status and weekly position rank, plus each side's projected total.
-
-    A side's projection counts real points for finished games, the higher of
-    real and projected for games in progress, and the projection otherwise.
-    """
-    ids = [p["player_id"] for side in result["teams"] for p in side["players"] if p["player_id"] not in ("", "0")]
-    positions = {pid: str(info.get(pid, {}).get("position") or "") for pid in ids}
-    nfl_teams = {pid: str(info.get(pid, {}).get("team") or "") for pid in ids}
-    season, sid = ctx["season"], ctx["sleeper_id"]
-    proj_job = cache.pool.submit(lambda: cache.cached(("proj", sid, season, week), 900, lambda: projections.week_projections(client, sid, season, week, ids, positions, nfl_teams)))
-    rank_job = cache.pool.submit(lambda: projections.week_ranks(sid, season, week, final, positions))
-    # week_ranks reads the same stat lines, so this second read comes from the Sleeper cache.
-    lines_job = cache.pool.submit(lambda: projections.week_lines("stats", season, week, 86400 if final else 120))
-    scoring_job = cache.pool.submit(lambda: projections.league_scoring(sid))
-    starts = _week_kickoffs(client, season, week)
-    now = datetime.now(front_office.LEAGUE_TZ)
-    try:
-        proj = proj_job.result()
-    except Exception:
-        proj = {}
-    if set(ids) - set(proj):  # cached projections were for another lineup: score these too
-        try:
-            proj = {**proj, **projections.week_projections(client, sid, season, week, set(ids) - set(proj), positions, nfl_teams)}
-        except Exception:
-            pass
-    try:
-        ranks = rank_job.result()
-    except Exception:
-        ranks = {}
-    try:
-        lines, scoring = lines_job.result(), scoring_job.result()
-    except Exception:
-        lines, scoring = {}, {}
-    for side in result["teams"]:
-        total = 0.0
-        for p in side["players"]:
-            pid = p["player_id"]
-            p["pos"] = positions.get(pid) or p.get("slot")
-            p["team"] = nfl_teams.get(pid) or None
-            p["status"] = "final" if final else home.player_status(home.NFLVERSE_TEAMS.get(p["team"] or "", p["team"] or ""), starts, now)
-            p["proj"] = proj.get(pid)
-            p["rank"] = (ranks.get(pid) or {}).get("label") if p["status"] in ("playing", "final") and p["points"] else None
-            p["breakdown"] = projections.breakdown((lines.get(pid) or {}).get("stats"), scoring) if p["status"] in ("playing", "final") else []
-            if p["status"] == "final" or p["proj"] is None:
-                total += p["points"]
-            elif p["status"] == "playing":
-                total += max(p["points"], p["proj"])
-            else:
-                total += p["proj"]
-        side["projected"] = round(total, 1)
 
 
 def _season_state(client: Client, ctx: dict[str, Any]) -> dict[str, Any]:

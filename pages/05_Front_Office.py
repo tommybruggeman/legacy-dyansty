@@ -25,7 +25,10 @@ from league_ai.page_glue import (
     render_mobile_status,
     render_report_card,
     render_tiles,
+    render_moves,
     run_league_ai,
+    app_numbers,
+    number_tiles,
     start_new_conversation,
     weekly_brief,
 )
@@ -86,6 +89,14 @@ try:
     fo = front_office_data(request_context=request_context, team=team)
 except Exception as exc:  # the chat still works if the header data fails
     print(f"FRONT_OFFICE_HEADER_ERROR {type(exc).__name__}: {exc}", flush=True)
+
+numbers: dict = {}
+if fo:
+    try:
+        numbers = app_numbers(request_context, team, fo)
+    except Exception as exc:  # the app numbers are extras; the page works without them
+        print(f"FRONT_OFFICE_NUMBERS_ERROR {type(exc).__name__}", flush=True)
+    fo = {**fo, "tiles": [*fo["tiles"], *number_tiles(numbers)]}
 
 loading_placeholder.empty()
 _h_left, _h_right = st.columns([6, 1])
@@ -175,6 +186,7 @@ if fresh_conversation:
             brief_slot = st.empty()
             with brief_slot.container():
                 render_brief(fo["data_brief"])  # instant, from data; verdict lines fill in below
+            render_moves(numbers.get("moves"))
         try:
             render_report_card(request_context)
         except Exception as exc:  # the report card is optional; never block the chat
@@ -216,7 +228,7 @@ if prompt:
         _render_chat_markdown(prompt)
     with st.chat_message("assistant", avatar=GM_AVATAR):
         live = LiveAnswer()
-        result = run_league_ai(request_context=request_context, team=team, question=prompt, history=gm_messages[:-1], on_event=live,
+        result = run_league_ai(request_context=request_context, team=team, question=prompt, history=gm_messages[:-1], on_event=live, fo=fo,
                                week_context=_week_context(fo, owner_team_name))
         live.finish()
         print(result.trace_line(), flush=True)
