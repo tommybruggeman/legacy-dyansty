@@ -31,6 +31,7 @@ CSS = """
 .tf-value{display:flex;align-items:center;gap:8px;margin-top:10px;color:#9DA89C;font-size:.66rem;font-weight:900;letter-spacing:.05em}
 .tf-bar{flex:1;display:flex;gap:2px;height:6px;border-radius:3px;overflow:hidden}
 .tf-note{color:#9DA89C;font-size:.8rem;text-align:center;margin-top:12px}
+.tf-bids{margin-top:4px;text-align:right}.tf-bids summary{color:#7FB6FF;font-size:.72rem;font-weight:800;cursor:pointer;list-style:none}.tf-bid{display:flex;gap:10px;justify-content:space-between;font-size:.8rem;padding:4px 0;border-top:1px solid #1F3A2D;min-width:150px}.tf-bid span{color:#9DA89C}
 </style>
 """
 
@@ -75,7 +76,7 @@ def _side(side: Mapping[str, Any], me: str | None, played: bool) -> str:
         orig = f" ({_e(_short(pk['original_owner']))}'s)" if pk.get("original_owner") and pk["original_owner"] != side["owner"] else ""
         rows.append(f"<div class='tf-row'><div class='tf-dot'>PICK</div><div class='tf-name'>{_e(pk['label'])}{orig}</div></div>")
     if (side.get("faab") or 0) > 0:
-        rows.append(f"<div class='tf-sub'>+{_money(side['faab'])} FAAB</div>")
+        rows.append(f"<div class='tf-sub'>+{_money(side['faab'])} cap space</div>")
     return (f"<div class='tf-side'><div class='tf-sidehead'><span class='tf-owner'>{who}</span><span class='tf-meta'>{' · '.join(meta)}</span></div>"
             + "".join(rows) + "</div>")
 
@@ -101,17 +102,37 @@ def card(t: Mapping[str, Any], me: str | None) -> str:
 MOVE_LABEL = {"waiver": "WAIVER CLAIM", "free_agent": "FREE AGENT", "commissioner": "COMMISSIONER", "drop": "DROP"}
 
 
-def _line(p: Mapping[str, Any], tag: str, right: str = "") -> str:
+def dead_cap_text(p: Mapping[str, Any], season: int) -> str | None:
+    """'$3 dead cap this season' or '$3 dead cap through 2028' (same wording as the app)."""
+    if not p.get("dead_cap"):
+        return None
+    through = p.get("dead_through")
+    amount = float(p["dead_cap"])
+    return f"${amount:g} dead cap {'this season' if not through or int(through) <= season else f'through {through}'}"
+
+
+def _bids(p: Mapping[str, Any], me: str | None) -> str:
+    bids = p.get("bids") or []
+    if not bids:
+        return ""
+    rows = "".join(f"<div class='tf-bid'><b>{'You' if b.get('owner') == me else _e(b.get('owner'))}</b><span>{'WON' if b.get('won') else 'outbid'}</span>"
+                   f"<b>${float(b.get('amount') or 0):g}</b></div>" for b in bids)
+    return f"<details class='tf-bids'><summary>{len(bids)} bid{'' if len(bids) == 1 else 's'} ›</summary>{rows}</details>"
+
+
+def _line(p: Mapping[str, Any], tag: str, right: str = "", extra: str | None = None) -> str:
     sub = " · ".join(x for x in [tag, p.get("pos"), _money(p["salary"]) if p.get("salary") is not None else None,
-                                  f"{p['years']} yr{'' if p['years'] == 1 else 's'}" if p.get("years") else None] if x)
+                                  f"{p['years']} yr{'' if p['years'] == 1 else 's'}" if p.get("years") else None, extra] if x)
     return (f"<div class='tf-row'><div class='tf-dot'>{_e(p.get('pos') or '?')}</div><div><div class='tf-name'>{_e(p.get('name'))}</div>"
             f"<div class='tf-sub'>{_e(sub)}</div></div>{right}</div>")
 
 
 def move_card(m: Mapping[str, Any], me: str | None) -> str:
     who = "You" if m.get("owner") == me else _e(m.get("owner"))
-    rows = [_line(p, "ADD", f"<div class='tf-pts'>${p['faab']:g}<div class='tf-sub'>FAAB</div></div>" if p.get("faab") is not None else "") for p in m.get("adds") or []]
-    rows += [_line(p, "DROP") for p in m.get("drops") or []]
+    season = int(m.get("season") or 0)
+    rows = [_line(p, "ADD", f"<div class='tf-pts'>${p['faab']:g}<div class='tf-sub'>FAAB</div>{_bids(p, me)}</div>" if p.get("faab") is not None else "")
+            for p in m.get("adds") or []]
+    rows += [_line(p, "DROP", extra=dead_cap_text(p, season)) for p in m.get("drops") or []]
     mine = " mine" if me and m.get("owner") == me else ""
     return (f"<div class='tf-card{mine}'><div class='tf-top'><span><span class='tf-kind'>{MOVE_LABEL.get(m.get('type'), 'MOVE')}</span>"
             f"<span class='tf-when'>{_when(m)}</span></span></div><div class='tf-owner'>{who}</div>{''.join(rows)}</div>")
