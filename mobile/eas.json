@@ -7,16 +7,29 @@
     "production": {
       "distribution": "store",
       "environment": "production",
-      "ios": { "resourceClass": "default" },
+      "ios": {
+        "resourceClass": "default"
+      },
       "env": {
         "EXPO_PUBLIC_API_URL": "https://legacy-api-94901925561.us-central1.run.app",
         "EXPO_PUBLIC_SUPABASE_URL": "https://fhyaahtdbqbdbbspynye.supabase.co"
+      }
+    },
+    "screenshots": {
+      "extends": "production",
+      "distribution": "internal",
+      "ios": {
+        "simulator": true,
+        "resourceClass": "default"
       }
     }
   },
   "submit": {
     "production": {
-      "ios": { "appleTeamId": "UXB5ZFZLP9", "ascAppId": "6827836037" }
+      "ios": {
+        "appleTeamId": "UXB5ZFZLP9",
+        "ascAppId": "6827836037"
+      }
     }
   }
 }

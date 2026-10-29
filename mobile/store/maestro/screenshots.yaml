@@ -1,0 +1,34 @@
+# App Store screenshots: signs in with the App Review login and captures five screens.
+# Run by .github/workflows/app-store.yml on an iPhone Pro Max simulator.
+appId: com.tommybruggeman.legacydynasty
+---
+- launchApp:
+    clearState: true
+- tapOn: "Email"
+- inputText: ${REVIEW_EMAIL}
+- tapOn: "Password"
+- inputText: ${REVIEW_PASSWORD}
+- hideKeyboard
+- tapOn: "Sign in"
+- extendedWaitUntil:
+    visible: "My Team"
+    timeout: 60000
+- waitForAnimationToEnd:
+    timeout: 15000
+- takeScreenshot: 01-home
+- tapOn: "My Team"
+- waitForAnimationToEnd:
+    timeout: 15000
+- takeScreenshot: 02-my-team
+- tapOn: "League"
+- waitForAnimationToEnd:
+    timeout: 15000
+- takeScreenshot: 03-league
+- tapOn: "Market"
+- waitForAnimationToEnd:
+    timeout: 15000
+- takeScreenshot: 04-market
+- tapOn: "Front Office"
+- waitForAnimationToEnd:
+    timeout: 15000
+- takeScreenshot: 05-front-office
