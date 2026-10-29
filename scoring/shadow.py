@@ -66,7 +66,7 @@ def explain(diff: float, line: Mapping[str, Any], scoring: Mapping[str, Any]) ->
 
 def compare_week(matchups: list[Mapping[str, Any]], lines: Mapping[str, Mapping[str, Any]], scoring: Mapping[str, Any]) -> dict[str, Any]:
     """One week: team totals and every rostered player's points, ours vs Sleeper's."""
-    out: dict[str, Any] = {"teams": 0, "teams_match": 0, "overrides": 0, "team_diffs": [], "players": 0, "players_match": 0,
+    out: dict[str, Any] = {"teams": 0, "teams_match": 0, "overrides": 0, "override_gaps": 0, "team_diffs": [], "players": 0, "players_match": 0,
                            "no_line": 0, "misses": []}
     for row in matchups:
         sleeper_pts = row.get("custom_points") if row.get("custom_points") is not None else row.get("points")
@@ -78,6 +78,8 @@ def compare_week(matchups: list[Mapping[str, Any]], lines: Mapping[str, Mapping[
         out["team_diffs"].append(diff)
         if abs(diff) <= TOLERANCE * max(len(row.get("starters") or []), 1):
             out["teams_match"] += 1
+        elif row.get("custom_points") is not None:
+            out["override_gaps"] += 1  # the commissioner changed this score by hand in Sleeper
         for pid, theirs in (row.get("players_points") or {}).items():
             line = lines.get(str(pid))
             out["players"] += 1
@@ -98,7 +100,7 @@ def compare_week(matchups: list[Mapping[str, Any]], lines: Mapping[str, Mapping[
 
 def score_season(season: int, matchups_for: Callable[[int], list[Mapping[str, Any]]], lines_for: Callable[[int], Mapping[str, Mapping[str, Any]]],
                  scoring: Mapping[str, Any], last_week: int) -> dict[str, Any]:
-    total: dict[str, Any] = {"season": season, "weeks": 0, "teams": 0, "teams_match": 0, "overrides": 0, "players": 0, "players_match": 0,
+    total: dict[str, Any] = {"season": season, "weeks": 0, "teams": 0, "teams_match": 0, "overrides": 0, "override_gaps": 0, "players": 0, "players_match": 0,
                              "no_line": 0, "team_diffs": [], "misses": []}
     for week in range(1, last_week + 1):
         rows = [r for r in matchups_for(week) or [] if r.get("matchup_id") is not None or r.get("points")]
@@ -106,7 +108,7 @@ def score_season(season: int, matchups_for: Callable[[int], list[Mapping[str, An
             continue
         res = compare_week(rows, lines_for(week), scoring)
         total["weeks"] += 1
-        for key in ("teams", "teams_match", "overrides", "players", "players_match", "no_line"):
+        for key in ("teams", "teams_match", "overrides", "override_gaps", "players", "players_match", "no_line"):
             total[key] += res[key]
         total["team_diffs"] += res["team_diffs"]
         total["misses"] += res["misses"]
@@ -118,7 +120,7 @@ def report(res: Mapping[str, Any]) -> list[str]:
         return f"{a}/{b} ({a / b:.1%})" if b else "0/0"
     diffs = [abs(d) for d in res["team_diffs"]]
     lines = [f"season {res['season']}: {res['weeks']} weeks",
-             f"  team totals match: {pct(res['teams_match'], res['teams'])}; biggest gap {max(diffs, default=0):.2f} pts; commissioner overrides {res['overrides']}",
+             f"  team totals match: {pct(res['teams_match'], res['teams'])}; biggest gap {max(diffs, default=0):.2f} pts; commissioner overrides {res['overrides']} ({res['override_gaps']} of the misses)",
              f"  player scores match: {pct(res['players_match'], res['players'])}; scored by Sleeper but no public stat line: {res['no_line']}"]
     by_pos: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for m in res["misses"]:
@@ -153,9 +155,10 @@ def run(client: Any, get_json: Callable[[str], Any] = _fetch) -> list[str]:
             theirs = league.get("scoring_settings") or {}
             current = season == now_season
             scoring = saved if current and saved else theirs
-            if current and saved:
-                diff = rule_diff(saved, theirs)
-                out.append(f"league {n} {season}: app scoring rules " + ("match Sleeper's" if not diff else f"differ from Sleeper's on {', '.join(diff)}"))
+            if current:
+                diff = rule_diff(saved, theirs) if saved else None
+                out.append(f"league {n} {season}: " + ("no scoring rules saved in the app yet; scored with Sleeper's" if diff is None else
+                                                       "app scoring rules match Sleeper's" if not diff else f"app scoring rules differ from Sleeper's on {', '.join(diff)}"))
             last_week = max(now_week - 1, 0) if current else MAX_WEEKS
             res = score_season(season, lambda w: get_json(f"{SLEEPER}/v1/league/{lid}/matchups/{w}") or [],
                                lambda w: stat_lines(season, w, get_json), scoring, last_week)
