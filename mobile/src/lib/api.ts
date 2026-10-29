@@ -395,7 +395,11 @@ export type Trade = {
   kind: 'trade'; id: string; season: number; week: number; date: string; at: string; owners: string[]; sides: TradeSide[];
   weeks_since?: number; winning: { owner: string; by: number } | null;
 };
-export type MovePlayer = { player_id: string; name: string; pos: string; nfl_team: string; salary: number | null; years: number | null; faab?: number | null };
+export type WaiverBid = { owner: string; amount: number; won: boolean };
+export type MovePlayer = {
+  player_id: string; name: string; pos: string; nfl_team: string; salary: number | null; years: number | null; faab?: number | null;
+  bids?: WaiverBid[]; dead_cap?: number; dead_through?: number;
+};
 export type Move = {
   kind: 'move'; type: 'waiver' | 'free_agent' | 'commissioner' | 'drop'; id: string; season: number; week: number; date: string; at: string;
   owner: string; owners: string[]; team_id: string | null; adds: MovePlayer[]; drops: MovePlayer[];

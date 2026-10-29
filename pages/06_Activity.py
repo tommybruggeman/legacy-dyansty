@@ -36,7 +36,6 @@ sys.path.append(os.path.join(ROOT_DIR, "lib"))
 
 from api import activity, teams  # noqa: E402
 from services.activity_view import page_html  # noqa: E402
-from services.team_roster_state import load_team_state  # noqa: E402
 
 require_login("home.py")
 
@@ -70,12 +69,13 @@ st.markdown("<style>html,body,[data-testid='stAppViewContainer']{background:#061
 @st.cache_data(ttl=120, show_spinner="Loading league activity…")
 def _feed(league_id: str, sleeper_id: str, current: tuple[int, int], week: int, _client) -> dict:
     try:
-        roster = load_team_state(_client, league_id, current[0]).get("roster", [])
+        states = teams.seasons_state(_client, league_id, current[0])
     except Exception:
-        roster = []
+        states = []
     contracts = {str(r.get("sleeper_player_id")): {"salary": r.get("contract_cap_hit") or r.get("cap_hit"), "years": r.get("contract_years_left")}
-                 for r in roster if r.get("sleeper_player_id")}
-    return activity.feed(_client, league_id, sleeper_id, current, teams.league_teams(_client, league_id), contracts, week=week)
+                 for r in (states[0].get("roster", []) if states else []) if r.get("sleeper_player_id")}
+    return activity.feed(_client, league_id, sleeper_id, current, teams.league_teams(_client, league_id), contracts, week=week,
+                         dead_cap=activity.dead_cap_index(states))
 
 
 try:

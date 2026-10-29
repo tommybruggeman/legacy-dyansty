@@ -47,3 +47,15 @@ class TradesViewTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_move_card_shows_bids_and_dead_cap():
+    from services import activity_view as av
+    move = {"kind": "move", "type": "waiver", "id": "1", "season": 2026, "week": 9, "date": "2026-10-29", "at": "", "owner": "Nick", "owners": ["Nick"],
+            "adds": [{"player_id": "1", "name": "Kenneth Walker III", "pos": "RB", "salary": 1, "years": 1, "faab": 14,
+                      "bids": [{"owner": "Nick", "amount": 14, "won": True}, {"owner": "Grady", "amount": 11, "won": False}]}],
+            "drops": [{"player_id": "2", "name": "Chase Brown", "pos": "RB", "salary": None, "years": None, "dead_cap": 3, "dead_through": 2027}]}
+    html = av.move_card(move, None)
+    assert "2 bids" in html and "Grady" in html and "outbid" in html
+    assert "$3 dead cap through 2027" in html
+    assert av.dead_cap_text({"dead_cap": 2, "dead_through": 2026}, 2026) == "$2 dead cap this season"

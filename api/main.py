@@ -559,10 +559,11 @@ def league_activity(limit: int = Query(150, ge=1, le=500), owner: tuple[Client, 
     current = (ctx["season"], league.last_scored_week(ctx["sleeper_id"]))
 
     def build() -> dict[str, Any]:
-        roster = _seasons_state(client, lid, ctx["season"])[0].get("roster", [])
+        states = _seasons_state(client, lid, ctx["season"])
         contracts = {str(r.get("sleeper_player_id")): {"salary": r.get("contract_cap_hit") or r.get("cap_hit"), "years": r.get("contract_years_left")}
-                     for r in roster if r.get("sleeper_player_id")}
-        return activity.feed(client, lid, ctx["sleeper_id"], current, _league_team_rows(client, lid), contracts, week=league.current_week())
+                     for r in states[0].get("roster", []) if r.get("sleeper_player_id")}
+        return activity.feed(client, lid, ctx["sleeper_id"], current, _league_team_rows(client, lid), contracts, week=league.current_week(),
+                             dead_cap=activity.dead_cap_index(states))
 
     data = cache.cached(("activity", lid, current), 120, build)
     return {"items": data["items"][:limit], "seasons": data["seasons"], "total": len(data["items"]), "me": ctx.get("owner_name")}

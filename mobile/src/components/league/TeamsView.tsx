@@ -3,13 +3,14 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import { type TeamList, useApi } from '../../lib/api';
 import { colors } from '../../lib/theme';
+import { LatestActivity } from './ActivityView';
 import { ErrorState, Loading } from '../ScreenState';
 import { Card, Row, money, ordinal, record, ui } from '../ui';
 
 const initials = (name: string) =>
   name.split(' ').filter(Boolean).slice(0, 2).map((w) => w[0]?.toUpperCase()).join('');
 
-// Every owner in standings order. Tap one to open their team page.
+// Every owner in standings order (tap one to open their team page), then the league's newest moves.
 export function TeamsView() {
   const { data, error, loading, reload } = useApi<TeamList>('/teams');
 
@@ -37,6 +38,7 @@ export function TeamsView() {
           </Row>
         ))}
       </Card>
+      <LatestActivity />
     </>
   );
 }
