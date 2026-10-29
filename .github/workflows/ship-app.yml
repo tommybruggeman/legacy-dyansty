@@ -17,6 +17,11 @@ on:
         description: Build on Expo and submit to TestFlight (uses ios.buildNumber in mobile/app.json)
         type: boolean
         default: true
+      builder:
+        description: Where to build iOS. "github" builds on a free GitHub Mac runner (use when Expo's free monthly builds are used up)
+        type: choice
+        options: [expo, github]
+        default: expo
       practice:
         description: Run the free practice test first (start/sit, odds, trade tools on the real league) and stop if it fails
         type: boolean
@@ -73,7 +78,7 @@ jobs:
           curl -fsS "$URL/health"
 
   ios:
-    if: ${{ inputs.ios }}
+    if: ${{ inputs.ios && inputs.builder != 'github' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     defaults:
@@ -92,3 +97,30 @@ jobs:
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: npx -y eas-cli@latest build -p ios --profile production --auto-submit --non-interactive --no-wait
+
+  # Same build on a GitHub Mac (free for this public repo), then upload it with EAS Submit.
+  # EAS still holds the signing certificate, profile and App Store Connect key.
+  ios-github:
+    if: ${{ inputs.ios && inputs.builder == 'github' }}
+    runs-on: macos-latest
+    timeout-minutes: 75
+    defaults:
+      run:
+        working-directory: mobile
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      LANG: en_US.UTF-8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - run: npm ci
+      - name: Use the newest Xcode on the runner
+        run: sudo xcode-select -s "$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)" && xcodebuild -version
+      - name: Build on this Mac
+        run: npx -y eas-cli@latest build -p ios --profile production --local --non-interactive --output "$RUNNER_TEMP/legacy.ipa"
+      - name: Submit to TestFlight
+        run: npx -y eas-cli@latest submit -p ios --profile production --path "$RUNNER_TEMP/legacy.ipa" --non-interactive
