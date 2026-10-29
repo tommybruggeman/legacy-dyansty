@@ -1,5 +1,5 @@
 import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type { Pick, Player, TeamPage } from '../../lib/api';
@@ -18,7 +18,7 @@ function go(path: Parameters<typeof router.push>[0]) {
 
 // One owner's team with the same four tabs as My Team. Other owners' teams
 // are read only; trades are made in Sleeper.
-export function TeamView({ team, eyebrow }: { team: TeamPage; eyebrow?: string }) {
+export function TeamView({ team, eyebrow, badge }: { team: TeamPage; eyebrow?: string; badge?: ReactNode }) {
   const [tab, setTab] = useState<(typeof TABS)[number]>('Roster');
   // Always open on the roster. Coming back from a player or cap page opened here keeps the tab;
   // leaving for another part of the app and coming back starts over.
@@ -32,7 +32,7 @@ export function TeamView({ team, eyebrow }: { team: TeamPage; eyebrow?: string }
   useEffect(() => setTab('Roster'), [team.team_id]);
   return (
     <>
-      <Title eyebrow={eyebrow ?? team.owner_name.toUpperCase()}>{team.team_name}</Title>
+      <Title eyebrow={eyebrow ?? team.owner_name.toUpperCase()} badge={badge}>{team.team_name}</Title>
       <TopTiles team={team} tab={tab} />
       <Segmented options={TABS} value={tab} onChange={setTab} />
       <SwipeTabs

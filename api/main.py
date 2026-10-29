@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from supabase import Client, create_client
 
 from api import box_score as box_score_mod
-from api import activity, cache, front_office, home, league, market, player, projections, teams
+from api import activity, cache, front_office, home, league, market, player, projections, teams, trade_feed, trade_offers
 from league_ai import risers as risers_log
 from season_engine import SeasonResolver
 from services.season_rollover_owner_ui import OwnerRolloverDecisionError, OwnerRolloverDecisionService
@@ -353,7 +353,8 @@ def player_page(player_id: str, owner: tuple[Client, Any] = Depends(owner_client
             team_id = next((t["team_id"] for t in _league_team_rows(client, ctx["league_id"]) if t["roster_id"] == rid), None)
             result["rostered_by"] = {"roster_id": rid, "owner_name": ctx["names"].get(rid, f"Roster {rid}"), "team_id": team_id}
             result["is_mine"] = rid == ctx["sleeper_roster_id"]
-    return {"season": ctx["season"], **result, **extras}
+    return {"season": ctx["season"], **result, **extras, "transactions_enabled": _transactions_on(client, ctx["league_id"]),
+            "sleeper_league_id": ctx["sleeper_id"]}
 
 
 class IrRequest(BaseModel):
@@ -567,6 +568,118 @@ def league_activity(limit: int = Query(150, ge=1, le=500), owner: tuple[Client, 
 
     data = cache.cached(("activity", lid, current), 120, build)
     return {"items": data["items"][:limit], "seasons": data["seasons"], "total": len(data["items"]), "me": ctx.get("owner_name")}
+
+
+# ---- Trades between owners (off until the league leaves Sleeper) -------------------
+
+def _transactions_on(client: Client, league_id: str) -> bool:
+    return cache.cached(("tx_on", league_id), 60, lambda: trade_offers.enabled(client, league_id))
+
+
+@app.get("/trade-builder/{team_id}")
+def trade_builder(team_id: str, add: str | None = None, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """Both rosters and pick lists for a trade with one team, with today's dynasty values for the live read."""
+    client, user = owner
+    ctx = _season_context(client, user)
+    if not ctx["team_id"] or team_id == ctx["team_id"]:
+        raise HTTPException(status_code=400, detail="Pick another owner's team to trade with.")
+    rows, states, _, cap = _league_teams(client, ctx)
+    them = next((t for t in rows if t["team_id"] == team_id), None)
+    me = next((t for t in rows if t["team_id"] == ctx["team_id"]), None)
+    if them is None or me is None:
+        raise HTTPException(status_code=404, detail="Team not found in your league.")
+    state = states[0]
+    ids = [str(r.get("sleeper_player_id")) for r in state.get("roster", []) if str(r.get("league_team_id")) in {team_id, ctx["team_id"]}]
+    values = trade_feed.market_now(client, sorted(set(ids)))
+    pick_value = trade_offers.pick_pricer(trade_feed.pick_values(client))
+    owner_of = {t["team_id"]: t["owner_name"] for t in rows}
+    info = teams.player_info(client, ids)
+    ppg = teams.player_ppg(ctx["sleeper_id"], league.last_scored_week(ctx["sleeper_id"]))
+    return {
+        "enabled": _transactions_on(client, ctx["league_id"]),
+        "sleeper_league_id": ctx["sleeper_id"],
+        "salary_cap": cap,
+        "me": {"team_id": ctx["team_id"], "owner_name": me["owner_name"], "cap_space": me["cap_space"],
+               **trade_offers.side(state, ctx["team_id"], info, ppg, values, pick_value, owner_of)},
+        "them": {"team_id": team_id, "owner_name": them["owner_name"], "cap_space": them["cap_space"],
+                 **trade_offers.side(state, team_id, info, ppg, values, pick_value, owner_of)},
+        "add": add,
+    }
+
+
+class TradePiece(BaseModel):
+    contract_id: str | None = None
+    player_id: str | None = None
+    name: str | None = None
+    pick_id: str | None = None
+    label: str | None = None
+
+
+class TradeOffer(BaseModel):
+    to_team_id: str
+    give: list[TradePiece] = []
+    get: list[TradePiece] = []
+    note: str | None = None
+    parent_offer_id: str | None = None
+
+
+@app.post("/trade-offers")
+def send_trade_offer(body: TradeOffer, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """Send an offer (or a counter, with parent_offer_id). The database checks ownership, locks and the league switch."""
+    client, user = owner
+    ctx = _season_context(client, user)
+    pieces = [p for p in [*body.give, *body.get] if (p.contract_id and trade_offers.is_uuid(p.contract_id)) or (p.pick_id and trade_offers.is_uuid(p.pick_id))]
+    if len(pieces) != len(body.give) + len(body.get) or not trade_offers.is_uuid(body.to_team_id):
+        raise HTTPException(status_code=400, detail="Something in this offer isn't a player or pick.")
+    items = trade_offers.offer_items(ctx["team_id"], body.to_team_id, [p.model_dump() for p in body.give], [p.model_dump() for p in body.get])
+    request = {
+        "league_id": ctx["league_id"], "to_league_team_id": body.to_team_id,
+        "players": [i for i in items if i.get("contract_id")], "picks": [i for i in items if i.get("draft_pick_id")],
+        "note": (body.note or "")[:280] or None, "parent_offer_id": body.parent_offer_id if body.parent_offer_id and trade_offers.is_uuid(body.parent_offer_id) else None,
+    }
+    try:
+        result = client.rpc("propose_trade_offer_authenticated", {"p_request": request}).execute().data
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=trade_offers.friendly(exc))
+    return {"ok": True, **(result or {})}
+
+
+@app.post("/trade-offers/{offer_id}/{action}")
+def answer_trade_offer(offer_id: str, action: str, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """accept | decline | cancel. Accepting completes the trade right away (no review)."""
+    client, user = owner
+    if action not in {"accept", "decline", "cancel"} or not trade_offers.is_uuid(offer_id):
+        raise HTTPException(status_code=400, detail="Unknown action.")
+    ctx = resolve_team(client, user)
+    try:
+        result = client.rpc("respond_trade_offer_authenticated", {"p_request": {"offer_id": offer_id, "action": action}}).execute().data
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=trade_offers.friendly(exc))
+    if action == "accept":
+        cache.forget("state", ctx["league_id"])
+        cache.forget("activity", ctx["league_id"])
+    return {"ok": True, **(result or {})}
+
+
+@app.get("/transactions")
+def transactions(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """My Team's transaction center: offers to answer, trades you sent, bids, and the last week's results."""
+    client, user = owner
+    team = resolve_team(client, user)
+    on = _transactions_on(client, team["league_id"])
+    empty = {"enabled": on, "needs_answer": [], "sent": [], "bids": [], "results": [], "pending": 0}
+    if not on or not team.get("team_id"):
+        return empty
+    try:
+        rows = (client.table("trade_offers").select("*").eq("league_id", team["league_id"])
+                .order("created_at", desc=True).limit(200).execute().data or [])
+    except Exception:
+        return empty
+    owner_of = {t["team_id"]: t["owner_name"] for t in _league_team_rows(client, team["league_id"])}
+    ids = [str(i.get("player_id")) for r in rows for i in (r.get("players") or []) if i.get("player_id")]
+    data = trade_offers.center(rows, str(team["team_id"]), owner_of, teams.player_info(client, ids))
+    data["results"] = [{**r, "line": trade_offers.result_line(r)} for r in data["results"]]
+    return {"enabled": on, "bids": [], **data}
 
 
 # ---- Front Office ------------------------------------------------------------------

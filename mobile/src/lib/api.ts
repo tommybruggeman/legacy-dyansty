@@ -305,6 +305,8 @@ export type PlayerPage = {
     is_rookie: boolean;
   } | null;
   is_mine: boolean;
+  transactions_enabled?: boolean;
+  sleeper_league_id?: string;
   rostered_by?: { roster_id: number; owner_name: string; team_id: string | null } | null;
   bye_week: number | null;
   nfl_season: {
@@ -548,3 +550,15 @@ export type HomeData = {
   roster_max?: number;
   coming_off?: { total: number; players: { name: string; player_id: string; pos: string; salary: number }[] };
 };
+
+// ---- trades between owners (off until the league leaves Sleeper) ----
+export type TradeAsset = { player_id: string; contract_id: string; name: string; pos: string; nfl_team: string; salary: number; years: number; ppg: number | null; value: number };
+export type TradePick = { pick_id: string; label: string; year: number; round: number; value: number };
+export type TradeSideData = { team_id: string; owner_name: string; cap_space: number; players: TradeAsset[]; picks: TradePick[] };
+export type TradeBuilder = { enabled: boolean; sleeper_league_id: string; salary_cap: number; me: TradeSideData; them: TradeSideData; add: string | null };
+export type OfferPiece = { kind: 'player' | 'pick'; player_id: string | null; contract_id: string | null; pick_id: string | null; name: string; pos: string; nfl_team: string };
+export type Offer = {
+  id: string; partner: string; partner_team_id: string; you_get: OfferPiece[]; you_give: OfferPiece[]; note: string | null;
+  created_at: string; status: string; decided_at: string | null; is_counter: boolean; line?: string; sent_by_you?: boolean;
+};
+export type Transactions = { enabled: boolean; needs_answer: Offer[]; sent: Offer[]; bids: unknown[]; results: Offer[]; pending: number };
