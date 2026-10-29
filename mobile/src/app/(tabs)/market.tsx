@@ -15,7 +15,7 @@ const VIEWS = ['Free Agents', 'Expiring'] as const;
 const POSITIONS = ['All', 'QB', 'RB', 'WR', 'TE', 'K'] as const;
 const PAGE = 40;
 
-// Browse only: bidding and the rookie draft happen on the website, trades in Sleeper.
+// Browse only: bidding and the rookie draft happen on the website, trades in Sleeper (League > Activity shows them all).
 // Players show as tiles ranked by season points, with ☆ to save a transfer target.
 export default function Market() {
   const [view, setView] = useState<(typeof VIEWS)[number]>('Free Agents');

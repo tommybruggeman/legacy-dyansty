@@ -12,8 +12,8 @@ export default function League() {
   const [view, setView] = useState<(typeof VIEWS)[number]>('Matchups');
   const navigation = useNavigation();
   const { at } = useLocalSearchParams<{ at?: string }>();
-  // Opening League from the tab bar starts on Matchups and Home's standings card
-  // opens Standings; coming back from a game or team page keeps the view you were on.
+  // Opening League from the tab bar starts on Matchups; Home's standings card opens Standings;
+  // coming back from a game or team page keeps the view you were on.
   useEffect(() => navigation.addListener('tabPress' as never, () => setView('Matchups')), [navigation]);
   useEffect(() => {
     if (at) setView('Standings');

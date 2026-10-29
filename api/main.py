@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from supabase import Client, create_client
 
 from api import box_score as box_score_mod
-from api import cache, front_office, home, league, market, player, projections, teams
+from api import activity, cache, front_office, home, league, market, player, projections, teams
 from league_ai import risers as risers_log
 from season_engine import SeasonResolver
 from services.season_rollover_owner_ui import OwnerRolloverDecisionError, OwnerRolloverDecisionService
@@ -526,6 +526,25 @@ def add_target(player_id: str, owner: tuple[Client, Any] = Depends(owner_client)
 @app.delete("/market/targets/{player_id}")
 def remove_target(player_id: str, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
     return _change_target(owner, player_id, False)
+
+
+@app.get("/league/activity")
+def league_activity(limit: int = Query(150, ge=1, le=500), owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """Every trade, pickup, drop and draft pick, newest first (api/activity.py); the website's Activity page shows the same."""
+    client, user = owner
+    ctx = _season_context(client, user)
+    lid = ctx["league_id"]
+    current = (ctx["season"], league.last_scored_week(ctx["sleeper_id"]))
+
+    def build() -> dict[str, Any]:
+        states = _seasons_state(client, lid, ctx["season"])
+        contracts = {str(r.get("sleeper_player_id")): {"salary": r.get("contract_cap_hit") or r.get("cap_hit"), "years": r.get("contract_years_left")}
+                     for r in states[0].get("roster", []) if r.get("sleeper_player_id")}
+        return activity.feed(client, lid, ctx["sleeper_id"], current, _league_team_rows(client, lid), contracts, week=league.current_week(),
+                             dead_cap=activity.dead_cap_index(states))
+
+    data = cache.cached(("activity", lid, current), 120, build)
+    return {"items": data["items"][:limit], "seasons": data["seasons"], "total": len(data["items"]), "me": ctx.get("owner_name")}
 
 
 # ---- Front Office ------------------------------------------------------------------

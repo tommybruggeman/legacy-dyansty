@@ -33,7 +33,7 @@ export default function Home() {
   useEffect(() => {
     if (!data || warmed.current) return;
     warmed.current = true;
-    prefetch(['/my-team', '/standings', '/matchups', '/teams', '/front-office', '/market/free-agents', '/market/expiring']);
+    prefetch(['/my-team', '/standings', '/matchups', '/teams', '/league/activity', '/front-office', '/market/free-agents', '/market/expiring']);
   }, [data]);
 
   const seen = useRef(false);

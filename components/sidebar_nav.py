@@ -195,6 +195,11 @@ def _render_page_links():
     )
 
     st.page_link(
+        "pages/06_Activity.py",
+        label="Activity",
+    )
+
+    st.page_link(
         "pages/90_Settings.py",
         label="Settings",
     )

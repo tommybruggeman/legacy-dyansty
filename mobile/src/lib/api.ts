@@ -384,6 +384,32 @@ export type FreeAgent = {
   rank_ppg: number | null;
   points: number | null;
 };
+export type TradePlayer = {
+  player_id: string; name: string; pos: string; nfl_team: string; salary: number | null; years: number | null; points_since?: number;
+};
+export type TradeSide = {
+  owner: string; team_id: string | null; players: TradePlayer[]; picks: { label: string; original_owner: string | null }[];
+  faab: number; cap_change: number; points_since?: number; market_now?: number; market_share?: number | null;
+};
+export type Trade = {
+  kind: 'trade'; id: string; season: number; week: number; date: string; at: string; owners: string[]; sides: TradeSide[];
+  weeks_since?: number; winning: { owner: string; by: number } | null;
+};
+export type WaiverBid = { owner: string; amount: number; won: boolean };
+export type MovePlayer = {
+  player_id: string; name: string; pos: string; nfl_team: string; salary: number | null; years: number | null; faab?: number | null;
+  bids?: WaiverBid[]; dead_cap?: number; dead_through?: number;
+};
+export type Move = {
+  kind: 'move'; type: 'waiver' | 'free_agent' | 'commissioner' | 'drop'; id: string; season: number; week: number; date: string; at: string;
+  owner: string; owners: string[]; team_id: string | null; adds: MovePlayer[]; drops: MovePlayer[];
+};
+export type Draft = {
+  kind: 'draft'; id: string; season: number; date: string; at: string; owners: string[];
+  picks: (MovePlayer & { owner: string; team_id: string | null; round: number | null; slot: number | null; amount: number | null })[];
+};
+export type ActivityItem = Trade | Move | Draft;
+export type ActivityFeed = { items: ActivityItem[]; seasons: number[]; total: number; me: string | null };
 export type FreeAgents = { season: number; last_season: number; season_started: boolean; players: FreeAgent[] };
 export type ExpiringPlayer = {
   player_id: string; name: string; pos: string; nfl_team: string; owner_name: string; team_id: string; salary: number;
