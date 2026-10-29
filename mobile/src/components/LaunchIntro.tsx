@@ -5,13 +5,15 @@ import { colors } from '../lib/theme';
 
 // Launch animation (Tommy picked option B "Slam & Shockwave"): the two halves of the
 // crest's football spin in and slam together, a gold shockwave and rays burst out,
-// the frame and crown pop in and the name fades up. 4s of animation, 2s hold, then
-// the crest shrinks up and the overlay fades into the app. Tap anywhere to skip.
+// the frame and crown pop in and the name fades up. The animation plays at PACE
+// (Tommy asked for 10% faster: 3.6s), then a 2s hold, then the crest shrinks up and
+// the overlay fades into the app. Tap anywhere to skip.
 const ANIM = 4000;
 const HOLD = 2000;
 const EXIT = 500;
 const TOTAL = ANIM + HOLD + EXIT;
 const END = ANIM + HOLD;
+const PACE = 0.9;
 
 const base = require('../../assets/intro/crest-base.png');
 const left = require('../../assets/intro/crest-left.png');
@@ -37,7 +39,8 @@ export function LaunchIntro({ onReady, onDone }: { onReady: () => void; onDone: 
   }
 
   useEffect(() => {
-    const anim = Animated.timing(t, { toValue: TOTAL, duration: TOTAL, easing: Easing.linear, useNativeDriver: true });
+    const step = (toValue: number, duration: number) => Animated.timing(t, { toValue, duration, easing: Easing.linear, useNativeDriver: true });
+    const anim = Animated.sequence([step(ANIM, ANIM * PACE), step(END, HOLD), step(TOTAL, EXIT * PACE)]);
     anim.start(({ finished }) => finished && finish());
     return () => anim.stop();
   }, []);
@@ -56,7 +59,8 @@ export function LaunchIntro({ onReady, onDone }: { onReady: () => void; onDone: 
   const pop = r([1200, 1800], [0.55, 1], Easing.out(Easing.back(2)));
   const popOpacity = r([1200, 1450], [0, 1]);
   const ring = r([1100, 2000], [0.1, 2.2], Easing.out(Easing.cubic));
-  const ringOpacity = r([1100, 2000], [1, 0]);
+  // Hidden until the halves hit, so no ring sits in the middle while they fly in.
+  const ringOpacity = r([1099, 1100, 2000], [0, 1, 0]);
   const raysOpacity = r([1100, 1300, 2600, 3800], [0, 0.13, 0.13, 0]);
   const raysSpin = r([1100, ANIM], ['0deg', '40deg']);
   const wordOpacity = r([2300, 3300, END, END + 300], [0, 1, 1, 0]);
