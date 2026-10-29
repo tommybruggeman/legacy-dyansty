@@ -6,10 +6,11 @@ import { colors } from '../lib/theme';
 // Launch animation (Tommy picked option B "Slam & Shockwave"): the two halves of the
 // crest's football spin in and slam together, a gold shockwave and rays burst out,
 // the frame and crown pop in and the name fades up. The animation plays at PACE
-// (Tommy asked for 10% faster: 3.6s), then a 2s hold, then the crest shrinks up and
+// (Tommy asked for 10% faster: about 3s), then a 0.5s hold, then the crest shrinks up and
 // the overlay fades into the app. Tap anywhere to skip.
-const ANIM = 4000;
-const HOLD = 2000;
+// ANIM ends when the name has fully faded in; Tommy wants only a 0.5s hold after that.
+const ANIM = 3300;
+const HOLD = 500;
 const EXIT = 500;
 const TOTAL = ANIM + HOLD + EXIT;
 const END = ANIM + HOLD;
@@ -61,7 +62,7 @@ export function LaunchIntro({ onReady, onDone }: { onReady: () => void; onDone: 
   const ring = r([1100, 2000], [0.1, 2.2], Easing.out(Easing.cubic));
   // Hidden until the halves hit, so no ring sits in the middle while they fly in.
   const ringOpacity = r([1099, 1100, 2000], [0, 1, 0]);
-  const raysOpacity = r([1100, 1300, 2600, 3800], [0, 0.13, 0.13, 0]);
+  const raysOpacity = r([1100, 1300, 2400, ANIM], [0, 0.13, 0.13, 0]);
   const raysSpin = r([1100, ANIM], ['0deg', '40deg']);
   const wordOpacity = r([2300, 3300, END, END + 300], [0, 1, 1, 0]);
   const wordRise = r([2300, 3300], [18, 0], Easing.out(Easing.cubic));
