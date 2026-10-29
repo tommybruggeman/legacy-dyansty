@@ -73,9 +73,15 @@ class NamedTargetTests(unittest.TestCase):
     def test_says_so_when_nothing_is_fair(self):
         lg = _league()
         lg.find_player("WR deepwr-wr0").cap_hit = 100.0  # no package of mine can make room for him
-        out = price_target(league=lg, asker_team_id="me", cap_space=self.CAP, target="WR deepwr-wr0")
+        out = price_target(league=lg, asker_team_id="me", cap_space=self.CAP, target="WR deepwr-wr0", cap_trades=False)
         self.assertFalse(out["fair_deal_found"])
         self.assertEqual(out["note"], "no package is cap-legal for both teams")
+        # where traded cap moves cap, Deepwr can send cap space with him, and that cap is priced in
+        out = price_target(league=lg, asker_team_id="me", cap_space=self.CAP, target="WR deepwr-wr0")
+        self.assertTrue(out["fair_deal_found"])
+        self.assertIn("Deepwr adds", out["salary_note"])
+        self.assertGreaterEqual(out["cap_after"]["you"], 0)
+        self.assertGreaterEqual(out["cap_after"]["them"], 0)
 
     def test_errors_are_plain(self):
         lg = _league()

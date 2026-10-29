@@ -1,7 +1,7 @@
 import unittest
 
 from league_ai.power import PlayerStrength
-from league_ai.trade_finder import League, find_trades, trade_finder_tools
+from league_ai.trade_finder import POSITIONS, League, find_trades, trade_finder_tools
 
 SLOTS = ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX"]
 
@@ -63,6 +63,58 @@ class TradeFinderTests(unittest.TestCase):
                 p.cap_hit = 40.0
         out = find_trades(league=league, asker_team_id="me", cap_space={"me": 20.0, "deepwr": 0.0, "deepboth": 0.0, "avg": 0.0})
         self.assertEqual(out["ideas"], [])
+
+    def test_cap_space_balances_uneven_salaries(self):
+        league = _league()
+        for p in league.by_team["me"]:
+            if p.position == "RB":
+                p.cap_hit = 14.0
+        cap = {"me": 20.0, "deepwr": 0.0, "deepboth": 0.0, "avg": 0.0}
+        self.assertEqual(find_trades(league=league, asker_team_id="me", cap_space=cap, cap_trades=False)["ideas"], [])
+        out = find_trades(league=league, asker_team_id="me", cap_space=cap)
+        self.assertTrue(out["ideas"])
+        top = out["ideas"][0]
+        self.assertIn("$4 of cap space (as FAAB)", top["open_with"])  # $14 RB for a $10 WR: Deepwr is $4 short
+        self.assertIn("Deepwr would be $4 over the cap", top["salary_note"])
+        self.assertIn("counted in the value", top["salary_note"])
+        self.assertEqual(top["cap_after"], {"you": 20.0, "them": 0.0})
+        self.assertGreaterEqual(int(top["by_their_goals"].split("back ")[1].split("%")[0]), 100)
+
+    def test_partner_sends_cap_when_you_are_short(self):
+        league = _league()
+        for p in league.by_team["deepwr"]:
+            if p.position == "WR":
+                p.cap_hit = 13.0
+        out = find_trades(league=league, asker_team_id="me", cap_space={"me": 0.0, "deepwr": 20.0, "deepboth": 0.0, "avg": 0.0})
+        self.assertTrue(out["ideas"])
+        top = out["ideas"][0]
+        self.assertIn("and they add $3 of cap space to you (as FAAB)", top["open_with"])
+        self.assertIn("you'd be $3 over the cap", top["salary_note"])
+        self.assertEqual(top["cap_after"]["you"], 0.0)
+
+    def test_straightforward_by_default_creative_when_asked(self):
+        league = _real_league()
+        picks = [{"draft_year": 2027, "round_number": r, "original_league_team_id": "tommy", "current_owner_league_team_id": "tommy", "asset_status": "tradable"}
+                 for r in (1, 2)]
+        league = League(league.players, list(league.teams.values()), SLOTS + ["SUPER_FLEX"], pick_values=league.pick_values, picks=picks)
+        self.assertEqual(league.owned_picks["tommy"], [("2027 2nd", 1300.0), ("2027 1st", 3500.0)])
+        cap = {t: 10.0 for t in league.teams}
+        plain = [i for pos in POSITIONS for i in find_trades(league=league, asker_team_id="tommy", cap_space=cap, want_position=pos, limit=8)["ideas"]]
+        rungs = [r for i in plain for k in ("open_with", "likely_close", "walk_away_after") for r in i.get(k, [])]
+        self.assertFalse([r for r in rungs if "pick" in r])  # no picks unless the owner asks for creative
+        for i in plain:
+            self.assertLessEqual(len([r for r in i["open_with"] if "cap space" not in r]), 2)
+            if any("cap space" in r for r in i["open_with"]):
+                self.assertIn("salary_note", i)  # cap only goes in to make salaries fit
+        creative = [i for pos in POSITIONS for i in find_trades(league=league, asker_team_id="tommy", cap_space=cap, want_position=pos, limit=8,
+                                                                creative=True)["ideas"]]
+        self.assertGreater(len(creative), len(plain))
+        self.assertTrue(any("pick" in r for i in creative for k in ("open_with", "likely_close", "walk_away_after") for r in i.get(k, [])))
+        for i in creative:  # creative still has to be fair to them and worth it to us
+            self.assertGreaterEqual(int(i["by_their_goals"].split("back ")[1].split("%")[0]), 100, i)
+            self.assertLessEqual(int(i["by_your_goals"].split("pay ")[1].split("%")[0]), 110, i)
+            self.assertGreaterEqual(i["cap_after"]["you"], 0)
+            self.assertGreaterEqual(i["cap_after"]["them"], 0)
 
     def test_partner_filter_and_tool_wrapper(self):
         league = _league()
@@ -159,6 +211,17 @@ class RealTradeTests(unittest.TestCase):
         self.assertEqual(set(league.windows.values()) <= {"contending", "middle", "rebuilding"}, True)
         league.set_windows({"Grady": "rebuilding"})
         self.assertEqual(league.window("grady"), "rebuilding")
+
+    def test_evaluate_counts_cap_and_says_what_makes_it_legal(self):
+        from league_ai.trade_finder import evaluate_trade
+        league = _real_league(windows={"Dylan": "contending", "Grady": "rebuilding"})
+        cap = {t: 0.0 for t in league.teams}
+        out = evaluate_trade(league, "grady", "Dylan", you_get=["Jordan Love"], you_send=["Kyren Williams"], cap_space=cap)
+        self.assertIn("You end over the cap: ask Dylan to add $5 of cap space", out["cap_check"])  # Love $30 in, Kyren $25 out
+        fixed = evaluate_trade(league, "grady", "Dylan", you_get=["Jordan Love"], you_send=["Kyren Williams"], cap_you_get=5, cap_space=cap)
+        self.assertIn("Legal for both", fixed["cap_check"])
+        base = int(out["for_them"].split("back ")[1].split("%")[0])
+        self.assertLess(int(fixed["for_them"].split("back ")[1].split("%")[0]), base)  # the $5 they send counts against them
 
 
 class InjuryTiltTest(unittest.TestCase):
