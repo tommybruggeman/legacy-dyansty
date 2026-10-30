@@ -185,7 +185,7 @@ def _add_card_projections(client: Client, user: Any, result: dict[str, Any]) -> 
         starters = [str(pid) for pid in row.get("starters") or [] if pid and str(pid) != "0"]
         sides.append({"roster_id": row.get("roster_id"), "players": [{"player_id": pid, "points": float(points.get(pid) or 0)} for pid in starters]})
     info = teams.player_info(client, [p["player_id"] for side in sides for p in side["players"]])
-    _add_projections(client, ctx, week, False, {"teams": sides}, info)
+    box_score_mod.add_projections(client, ctx, week, False, {"teams": sides}, info)
     projected = {side["roster_id"]: side["projected"] for side in sides}
     for game in result["games"]:
         for team in game["teams"]:
