@@ -345,10 +345,13 @@ function RosterTab({ team, onChange }: { team: TeamPage; onChange?: () => void }
   );
 }
 
-// Every contract, biggest salary first, with its value (PPG per cap dollar).
+const POS_ORDER = ['QB', 'RB', 'WR', 'TE'];
+const posRank = (pos: string) => (POS_ORDER.includes(pos) ? POS_ORDER.indexOf(pos) : POS_ORDER.length);
+
+// Every contract by position (QB, RB, WR, TE, then anyone else), biggest salary first within each, with its value (PPG per cap dollar).
 function ContractsTab({ team }: { team: TeamPage }) {
   const { dead_cap } = team.contracts;
-  const all = [...(team.contracts.all ?? [])].sort((a, b) => b.contract_salary - a.contract_salary);
+  const all = [...(team.contracts.all ?? [])].sort((a, b) => posRank(a.pos) - posRank(b.pos) || b.contract_salary - a.contract_salary);
   return (
     <>
       <Card
