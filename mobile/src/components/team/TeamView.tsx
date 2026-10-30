@@ -143,7 +143,7 @@ function Face({ p, label, hurt }: { p: Player; label: string; hurt?: boolean }) 
 }
 
 
-function PlayerRow({ p, first, showSlot, chip, onEmpty, w, season, short }: { p: Player; first?: boolean; showSlot?: boolean; chip?: ReactNode; onEmpty?: () => void; w?: WeekPlayer; season: number; short?: boolean }) {
+function PlayerRow({ p, first, showSlot, chip, onEmpty, w, season }: { p: Player; first?: boolean; showSlot?: boolean; chip?: ReactNode; onEmpty?: () => void; w?: WeekPlayer; season: number }) {
   if (p.empty) {
     return (
       <Row first={first} onPress={onEmpty}>
@@ -157,14 +157,14 @@ function PlayerRow({ p, first, showSlot, chip, onEmpty, w, season, short }: { p:
     );
   }
   const injury = p.injury ? INJURY_SHORT[p.injury.toLowerCase()] ?? p.injury.toUpperCase() : null;
-  // Other teams' pages use short tags (R rookie, T taxi, IR) next to the injury tag, since taxi and IR players sit on the bench there.
+  // Short tags (R rookie, T taxi, IR) next to the injury tag.
   const role = p.designation === 'ir' ? 'IR' : p.designation === 'taxi' ? 'T' : p.is_rookie ? 'R' : null;
-  const tag = short ? (
+  const tag = (
     <>
       {role ? <Pill label={role} tone={role === 'IR' ? 'out' : 'gold'} /> : null}
       {injury && injury !== role ? <Pill label={injury} tone="out" /> : null}
     </>
-  ) : injury ? <Pill label={injury} tone="out" /> : p.is_rookie ? <Pill label="ROOKIE" tone="gold" /> : null;
+  );
   const label = showSlot && p.slot ? p.slot : p.pos;
   const live = w?.status === 'playing';
   return (
@@ -317,7 +317,7 @@ function RosterTab({ team, onChange, after }: { team: TeamPage; onChange?: () =>
       <Card title="Starters" right={pointsLabel(team.week)}>
         {starters.length ? starters.map((p, i) => (
           <PlayerRow key={p.player_id || `empty-${i}`} p={p} first={i === 0} showSlot chip={slotChip(i)} w={week[p.player_id]} season={team.season}
-            onEmpty={editing ? () => setPicking({ kind: 'slot', index: i }) : undefined} short={!mine} />
+            onEmpty={editing ? () => setPicking({ kind: 'slot', index: i }) : undefined} />
         )) : <Note>{lineup ? 'No lineup set yet.' : 'No lineup set in Sleeper.'}</Note>}
         {bench.length ? (
           <Pressable onPress={() => setShowBench(!showBench)} hitSlop={8}>
@@ -327,7 +327,7 @@ function RosterTab({ team, onChange, after }: { team: TeamPage; onChange?: () =>
       </Card>
       {showBench ? (
         <Card title="Bench">
-          {bench.map((p, i) => <PlayerRow key={p.player_id} p={p} first={i === 0} chip={benchChip(p)} w={week[p.player_id]} season={team.season} short={!mine} />)}
+          {bench.map((p, i) => <PlayerRow key={p.player_id} p={p} first={i === 0} chip={benchChip(p)} w={week[p.player_id]} season={team.season} />)}
         </Card>
       ) : null}
       {after}
@@ -390,7 +390,7 @@ function ContractsTab({ team }: { team: TeamPage }) {
       >
         {all.length === 0 ? <Note>No contracts yet.</Note> : null}
         {all.map((p, i) => {
-          const tag = p.designation === 'taxi' ? 'TAXI' : p.designation === 'ir' ? 'IR' : p.is_rookie ? 'ROOKIE' : null;
+          const tag = p.designation === 'taxi' ? 'T' : p.designation === 'ir' ? 'IR' : p.is_rookie ? 'R' : null;
           const years = Math.max(p.years_left, 1);
           return (
             <Row key={p.player_id} first={i === 0} onPress={() => go(`/player/${p.player_id}`)}>
