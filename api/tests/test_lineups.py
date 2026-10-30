@@ -9,7 +9,7 @@ def test_starter_slots_and_fits():
     assert lineups.starter_slots(["QB", "RB", "FLEX", "BN", "BN", "TAXI", "IR"]) == ["QB", "RB", "FLEX"]
     assert lineups.fits("FLEX", "TE") and not lineups.fits("FLEX", "QB")
     assert lineups.fits("SUPER_FLEX", "QB") and lineups.fits("RB", "RB") and not lineups.fits("RB", "WR")
-    assert lineups.label("SUPER_FLEX") == "SF"
+    assert lineups.label("SUPER_FLEX") == "OP"
 
 
 def test_effective_prefers_saved_then_sleeper_and_drops_gone_players():

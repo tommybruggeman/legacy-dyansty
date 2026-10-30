@@ -14,6 +14,6 @@ export const teamColors = (team: string | null | undefined): [string, string] =>
 
 // Position badge colors on the player circles.
 export const POS_COLORS: Record<string, string> = {
-  QB: '#E07B6A', RB: '#5CC391', WR: '#6EA9E0', TE: '#E6B25A', FLX: '#B393DB', FLEX: '#B393DB', SF: '#B393DB', SUPER_FLEX: '#B393DB',
+  QB: '#E07B6A', RB: '#5CC391', WR: '#6EA9E0', TE: '#E6B25A', FLX: '#B393DB', FLEX: '#B393DB', SF: '#B393DB', OP: '#B393DB', SUPER_FLEX: '#B393DB',
   K: '#C8BEAD', DEF: '#C8BEAD',
 };
