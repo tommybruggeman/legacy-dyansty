@@ -18,7 +18,7 @@ from services.team_roster_state import (
 )
 
 DEFAULT_CAP = 225.0
-CAP_YEARS = 3
+CAP_YEARS = 4
 LINEUP_SLOTS = {"QB", "RB", "WR", "TE", "K", "DEF", "FLEX", "SUPER_FLEX", "REC_FLEX", "WRRB_FLEX"}
 
 
