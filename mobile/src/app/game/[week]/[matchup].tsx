@@ -5,7 +5,7 @@ import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Avatar } from '../../../components/Pictures';
 import { ErrorState, Loading } from '../../../components/ScreenState';
-import { Back, Note, Screen, firstName } from '../../../components/ui';
+import { Back, Screen, firstName } from '../../../components/ui';
 import { type BoxPlayer, type BoxScore, useApi } from '../../../lib/api';
 import { teamColors } from '../../../lib/nflColors';
 import { colors } from '../../../lib/theme';
@@ -43,7 +43,7 @@ export default function Game() {
   const open = (teamId: string | null) => (teamId ? () => router.push(`/team/${teamId}`) : undefined);
 
   return (
-    <Screen loading={loading} onRefresh={reload}>
+    <Screen loading={loading} onRefresh={reload} fill>
       <Back label="Matchups" />
       <Text style={styles.eyebrow}>WEEK {data.week} · {firstName(a.name).toUpperCase()} VS {firstName(b.name).toUpperCase()}</Text>
       <View style={styles.header}>
@@ -65,7 +65,6 @@ export default function Game() {
           );
         })}
       </View>
-      <Note>Tap a score to see where the points came from, a player's name for his page, or a team at the top for that team.</Note>
       <Breakdown player={shown} onClose={() => setShown(null)} />
     </Screen>
   );
@@ -266,9 +265,9 @@ const styles = StyleSheet.create({
   oddsFill: { height: 6, backgroundColor: colors.live },
   oddsLabel: { color: colors.muted, fontSize: 10, fontWeight: '800' },
   banner: { color: colors.gold, fontSize: 12, fontWeight: '700', backgroundColor: '#122B20', borderRadius: 10, overflow: 'hidden', paddingHorizontal: 10, paddingVertical: 8, marginBottom: 10 },
-  table: { borderRadius: 14, overflow: 'hidden', backgroundColor: colors.bg },
-  row: { flexDirection: 'row', alignItems: 'stretch', marginBottom: 3 },
-  half: { flex: 1, minWidth: 0, backgroundColor: '#11271D', paddingHorizontal: 8, paddingVertical: 7, overflow: 'hidden' },
+  table: { flexGrow: 1, borderRadius: 14, overflow: 'hidden', backgroundColor: colors.bg },
+  row: { flexGrow: 1, flexDirection: 'row', alignItems: 'stretch', marginBottom: 3 },
+  half: { flex: 1, minWidth: 0, justifyContent: 'center', backgroundColor: '#11271D', paddingHorizontal: 8, paddingVertical: 7, overflow: 'hidden' },
   empty: { color: colors.muted, fontSize: 12 },
   slot: { width: 30, alignItems: 'center', justifyContent: 'center', backgroundColor: '#08140F' },
   slotText: { color: colors.muted, fontSize: 10, fontWeight: '800' },
