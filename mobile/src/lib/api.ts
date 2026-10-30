@@ -443,7 +443,10 @@ export type LeaguePlayer = {
   salary: number | null; years_left: number | null; rookie_deal: boolean; designation: 'taxi' | 'ir' | null;
 };
 export type LeagueOwner = { team_id: string; owner_name: string; team_name: string; is_mine: boolean };
-export type LeaguePlayers = { season: number; last_season: number; season_started: boolean; players: LeaguePlayer[]; owners: LeagueOwner[] };
+export type LeaguePlayers = {
+  season: number; last_season: number; season_started: boolean; players: LeaguePlayer[]; owners: LeagueOwner[];
+  plan_question?: string; // the ★ Saved chip's GM question (from build 38)
+};
 export type ExpiringPlayer = {
   player_id: string; name: string; pos: string; nfl_team: string; owner_name: string; team_id: string; salary: number;
   is_mine: boolean; rank_ppg: number | null; points: number | null;

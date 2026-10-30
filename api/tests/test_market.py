@@ -120,3 +120,15 @@ def test_filter_players_like_the_app():
     assert names(salary="Under $20") == ["Davante Adams"]
     assert names(salary="$20+") == ["Derrick Henry", "Josh Allen"]
     assert market.name_matches("A.J. Brown", "aj brown") and market.name_matches("Christian McCaffrey", "mc")
+
+
+def test_filter_players_contract_ends_and_saved_free_agents():
+    rows = market.all_players(POOL, STATE, PPG, TEAMS, ROSTERS, "t2")["players"]
+    ends = lambda year: [p["name"] for p in market.filter_players(rows, ends=year, season=2026)]  # noqa: E731
+    assert ends(2026) == ["Davante Adams", "Derrick Henry"]
+    assert ends(2028) == ["Josh Allen"]
+    assert ends(2027) == []
+    assert [p["name"] for p in market.filter_players(rows, status="Rostered", sort="Salary")][:2] == ["Josh Allen", "Derrick Henry"]
+    # A saved free agent past the cut still comes back so the Saved chip finds him.
+    kept = market.all_players(POOL, STATE, PPG, TEAMS, ROSTERS, "t2", fa_limit=1, keep_ids=["9"])["players"]
+    assert "9" in {p["player_id"] for p in kept}

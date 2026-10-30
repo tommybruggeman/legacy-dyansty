@@ -505,7 +505,24 @@ def all_players(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, 
         rosters = league.sleeper.get(f"league/{ctx['sleeper_id']}/rosters") or []
     except Exception:
         rosters = []
-    return market.all_players(pool, state, ppg, _league_team_rows(client, ctx["league_id"]), rosters, ctx["team_id"])
+    ids = _saved_ids(client, ctx["league_id"]) or []
+    result = market.all_players(pool, state, ppg, _league_team_rows(client, ctx["league_id"]), rosters, ctx["team_id"], keep_ids=ids)
+    # The ★ Saved chip's "Plan these moves with the GM" question.
+    result["plan_question"] = market.strategy_question(market.targets(ids, state, ctx["team_id"], pool, ppg), ctx["season"])
+    return result
+
+
+@app.get("/my-team/calls")
+def my_calls(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """My keep-or-walk calls on rookie deals, shown on top of My Team from the final game to the June 30 rollover."""
+    client, user = owner
+    ctx = _season_context(client, user)
+    phase, today = _league_phase(ctx)
+    if phase != "decisions" or not ctx.get("team_id"):
+        return {"calls": None, "sleeper_league_id": ctx["sleeper_id"]}
+    state = _season_state(client, ctx)
+    pool, ppg = _market_ppg(client, ctx)
+    return {"calls": _my_calls(client, ctx, state, pool, ppg, today), "sleeper_league_id": ctx["sleeper_id"]}
 
 
 EXPIRING_YEARS = 3

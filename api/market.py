@@ -127,12 +127,14 @@ def all_players(
     sleeper_rosters: list[dict[str, Any]],
     my_team_id: str | None,
     fa_limit: int = FA_IN_SEARCH,
+    keep_ids: Iterable[str] = (),
 ) -> dict[str, Any]:
     """Every rostered player plus the best free agents, for league-wide search and filters.
 
     Sleeper rosters say who is rostered (taxi and IR included) and on which team;
     contract rows add salary, years left and rookie deals. Free agents are the
-    same pool as free_agents(), cut to the top `fa_limit` by points.
+    same pool as free_agents(), cut to the top `fa_limit` by points, plus any
+    in `keep_ids` (saved targets) so the Saved chip always finds them.
     """
     by_roster = {t["roster_id"]: t for t in league_teams if t.get("roster_id") is not None}
     by_team = {t["team_id"]: t for t in league_teams}
@@ -181,7 +183,8 @@ def all_players(
     rostered = [row(pid) for pid in rostered_ids]
     free = [row(pid) for pid in players if pid not in rostered_ids and _text(players[pid].get("position")) in POSITIONS]
     free.sort(key=_rank_key)
-    rows = rostered + free[:fa_limit]
+    keep = {_text(i) for i in keep_ids}
+    rows = rostered + free[:fa_limit] + [r for r in free[fa_limit:] if r["player_id"] in keep]
     rows.sort(key=_rank_key)
     owners = sorted(league_teams, key=lambda t: (t["team_id"] != mine, t["owner_name"].lower()))
     return {
@@ -208,8 +211,13 @@ SALARY_CAPS = {"Under $5": 5, "Under $10": 10, "Under $20": 20}
 
 
 def filter_players(rows: list[dict[str, Any]], *, search: str = "", status: str = "All", pos: str = "All",
-                   owner: str | None = None, salary: str = "Any", contract: str = "Any", sort: str = "Points") -> list[dict[str, Any]]:
-    """The Players tab's filters, for the website. A name search always looks through the whole league."""
+                   owner: str | None = None, salary: str = "Any", contract: str = "Any", sort: str = "Points",
+                   ends: int | None = None, season: int | None = None) -> list[dict[str, Any]]:
+    """The Players tab's filters, for the website. A name search always looks through the whole league.
+
+    `ends` keeps contracts ending after that season (needs `season`, the current one), like the app's
+    "Contract ends" filter: after this season means 1 year left or fewer.
+    """
     def keep(p: dict[str, Any]) -> bool:
         if search.strip():
             if not name_matches(p["name"], search):
@@ -224,6 +232,10 @@ def filter_players(rows: list[dict[str, Any]], *, search: str = "", status: str 
         if salary != "Any" and (pay is None or (pay < 20 if salary == "$20+" else pay >= SALARY_CAPS[salary])):
             return False
         years = p["years_left"]
+        if ends is not None and season is not None:
+            left = ends - season + 1
+            if years is None or (years > left if left <= 1 else years != left):
+                return False
         return {
             "Any": True,
             "Expiring": years is not None and years <= 1,
@@ -239,6 +251,7 @@ def filter_players(rows: list[dict[str, Any]], *, search: str = "", status: str 
         "PPG": lambda p: -(p["rank_ppg"] if p["rank_ppg"] is not None else -1),
         "Value per $": lambda p: -per_dollar(p),
         "Youngest": lambda p: p["age"] if p["age"] is not None else 99,
+        "Salary": lambda p: -(p["salary"] or 0),
     }
     return sorted(out, key=keys[sort]) if sort in keys else out
 
