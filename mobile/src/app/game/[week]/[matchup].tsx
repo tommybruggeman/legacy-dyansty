@@ -36,9 +36,6 @@ export default function Game() {
   const swap = data.teams[1]?.roster_id === data.my_roster_id;
   const [a, b] = swap ? [data.teams[1], data.teams[0]] : data.teams;
   const odds = data.win_chance ? (swap ? [data.win_chance[1], data.win_chance[0]] : data.win_chance) : null;
-  const players = [...a.players, ...b.players];
-  const playing = players.filter((p) => p.status === 'playing').length;
-  const started = players.some((p) => p.status === 'playing' || p.status === 'final');
   const open = (teamId: string | null) => (teamId ? () => router.push(`/team/${teamId}`) : undefined);
 
   return (
@@ -47,7 +44,6 @@ export default function Game() {
       <Text style={styles.eyebrow}>WEEK {data.week} · {firstName(a.name).toUpperCase()} VS {firstName(b.name).toUpperCase()}</Text>
       <View style={styles.header}>
         <ScoreSide side={a} other={b} final={data.is_final} onPress={open(a.team_id)} me />
-        <StatusPill final={data.is_final} playing={playing} started={started} won={a.score > b.score} players={players} />
         <ScoreSide side={b} other={a} final={data.is_final} onPress={open(b.team_id)} right />
       </View>
       {data.is_final ? <FinalBanner a={a} b={b} /> : odds ? <WinOdds odds={odds} /> : null}
@@ -96,20 +92,6 @@ function ScoreSide({ side, other, final, onPress, me, right }: { side: Side; oth
       </View>
     </Pressable>
   );
-}
-
-function StatusPill({ final, playing, started, won, players }: { final: boolean; playing: number; started: boolean; won: boolean; players: BoxPlayer[] }) {
-  if (final) return <Text style={[styles.pill, styles.pillFinal]}>{won ? 'FINAL · YOU WON' : 'FINAL'}</Text>;
-  if (playing) {
-    return (
-      <View style={[styles.pillRow, styles.pillLive]}>
-        <View style={styles.dot} />
-        <Text style={styles.pillLiveText}>LIVE · {playing} PLAYING</Text>
-      </View>
-    );
-  }
-  const next = players.map((p) => p.kickoff).filter((k): k is string => !!k && Date.parse(k) > Date.now()).sort()[0];
-  return <Text style={styles.pill}>{next ? `NEXT ${kickoffText(next).toUpperCase()}` : started ? 'BETWEEN GAMES' : 'NOT STARTED'}</Text>;
 }
 
 function WinOdds({ odds }: { odds: number[] }) {
@@ -267,11 +249,6 @@ const styles = StyleSheet.create({
   sub: { color: colors.muted, fontSize: 11, marginTop: -1 },
   win: { color: colors.live, fontWeight: '800' },
   gold: { color: colors.gold },
-  pill: { color: colors.muted, backgroundColor: '#16301F', fontSize: 9, fontWeight: '800', letterSpacing: 0.5, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10, overflow: 'hidden' },
-  pillFinal: { color: colors.gold, backgroundColor: '#2A2A1A' },
-  pillRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10 },
-  pillLive: { backgroundColor: 'rgba(76,195,138,0.16)' },
-  pillLiveText: { color: colors.live, fontSize: 9, fontWeight: '800', letterSpacing: 0.5 },
   dot: { width: 7, height: 7, borderRadius: 4, backgroundColor: colors.live, marginRight: 5 },
   odds: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 },
   oddsPct: { color: colors.text, fontSize: 11, fontWeight: '800', fontVariant: ['tabular-nums'] },
