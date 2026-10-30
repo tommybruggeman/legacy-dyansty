@@ -36,6 +36,7 @@ function RootStack() {
         <Stack.Screen name="chats" />
         <Stack.Screen name="report-card" />
         <Stack.Screen name="settings" />
+        <Stack.Screen name="search" options={{ animation: 'fade_from_bottom' }} />
       </Stack.Protected>
       <Stack.Protected guard={!session}>
         <Stack.Screen name="sign-in" />

@@ -1,29 +1,36 @@
 import { LinearGradient } from 'expo-linear-gradient';
-import { router } from 'expo-router';
-import { useMemo, useState } from 'react';
-import { Alert, Linking, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { router, useLocalSearchParams } from 'expo-router';
+import { useEffect, useMemo, useState } from 'react';
+import { Alert, Linking, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { PlayerFace } from '../../components/PlayerFace';
 import { ErrorState, Loading } from '../../components/ScreenState';
 import { Card, Note, Pill, Screen, Segmented, SwipeTabs, Title, money, ui } from '../../components/ui';
-import { apiSend, type Expiring, type FreeAgents, type RookieDeal, type Target, useApi } from '../../lib/api';
+import { apiSend, type Expiring, type LeagueOwner, type LeaguePlayer, type LeaguePlayers, type RookieDeal, type Target, useApi } from '../../lib/api';
 import { teamColors } from '../../lib/nflColors';
+import { nameMatches } from '../../lib/players';
 import { colors } from '../../lib/theme';
 import { useTargets } from '../../lib/targets';
 
-const VIEWS = ['Free Agents', 'Expiring'] as const;
+const VIEWS = ['Players', 'Expiring'] as const;
 const POSITIONS = ['All', 'QB', 'RB', 'WR', 'TE', 'K'] as const;
 const PAGE = 40;
 
-// Browse only: bidding and the rookie draft happen on the website, trades in Sleeper (League > Activity shows them all).
+// Players: every player in the league (free agents first). Browse only: bidding and the rookie draft happen on the website, trades in Sleeper (League > Activity shows them all).
 // Players show as tiles ranked by season points, with ☆ to save a transfer target.
 export default function Market() {
-  const [view, setView] = useState<(typeof VIEWS)[number]>('Free Agents');
+  const [view, setView] = useState<(typeof VIEWS)[number]>('Players');
+  // "See all in Players" from the pull-down search lands here with the search typed in.
+  const { q } = useLocalSearchParams<{ q?: string }>();
+  useEffect(() => {
+    if (q != null) setView('Players');
+  }, [q]);
   return (
     <Screen>
       <Title>Market</Title>
       <Segmented options={VIEWS} value={view} onChange={setView} />
-      <SwipeTabs options={VIEWS} value={view} onChange={setView} render={(v) => (v === 'Free Agents' ? <FreeAgentList /> : <ExpiringList />)} />
+      <SwipeTabs options={VIEWS} value={view} onChange={setView} render={(v) => (v === 'Players' ? <PlayersList query={q} /> : <ExpiringList />)} />
     </Screen>
   );
 }
@@ -81,41 +88,101 @@ function PlayerTile({ id, name, pos, team, ppg, points, line, tag, mine }: {
   );
 }
 
-function FreeAgentList() {
-  const { data, error, loading, reload } = useApi<FreeAgents>('/market/free-agents');
-  const [search, setSearch] = useState('');
-  const [pos, setPos] = useState<(typeof POSITIONS)[number]>('All');
-  const [shown, setShown] = useState(PAGE);
+const STATUSES = ['Free agents', 'Rostered', 'All'] as const;
+const SALARY = ['Any', 'Under $5', 'Under $10', 'Under $20', '$20+'] as const;
+const CONTRACT = ['Any', 'Expiring', '2+ years', 'Rookie deal', 'Taxi', 'IR'] as const;
+const SORTS = ['Points', 'PPG', 'Value per $', 'Youngest'] as const;
+type Filters = {
+  pos: (typeof POSITIONS)[number]; owner: string; salary: (typeof SALARY)[number];
+  contract: (typeof CONTRACT)[number]; sort: (typeof SORTS)[number];
+};
+const NO_FILTERS: Filters = { pos: 'All', owner: 'all', salary: 'Any', contract: 'Any', sort: 'Points' };
 
+const salaryOk = (p: LeaguePlayer, s: Filters['salary']) => {
+  if (s === 'Any') return true;
+  if (p.salary == null) return false;
+  return s === '$20+' ? p.salary >= 20 : p.salary < Number(s.replace(/\D/g, ''));
+};
+const contractOk = (p: LeaguePlayer, c: Filters['contract']) =>
+  c === 'Any' ? true
+    : c === 'Expiring' ? p.years_left != null && p.years_left <= 1
+    : c === '2+ years' ? (p.years_left ?? 0) >= 2
+    : c === 'Rookie deal' ? p.rookie_deal
+    : p.designation === (c === 'Taxi' ? 'taxi' : 'ir');
+const perDollar = (p: LeaguePlayer) => (p.rank_ppg != null && p.salary ? p.rank_ppg / p.salary : -1);
+const SORTERS: Record<Filters['sort'], (a: LeaguePlayer, b: LeaguePlayer) => number> = {
+  Points: () => 0, // the server already ranks by points
+  PPG: (a, b) => (b.rank_ppg ?? -1) - (a.rank_ppg ?? -1),
+  'Value per $': (a, b) => perDollar(b) - perDollar(a),
+  Youngest: (a, b) => (a.age ?? 99) - (b.age ?? 99),
+};
+
+// Every player in the league: free agents by default, rostered players a tap away, and a name search
+// that always looks through everyone. Everything past the status row lives in the Filters sheet.
+function PlayersList({ query }: { query?: string }) {
+  const { data, error, loading, reload } = useApi<LeaguePlayers>('/market/players');
+  const [search, setSearch] = useState(query ?? '');
+  const [status, setStatus] = useState<(typeof STATUSES)[number]>('Free agents');
+  const [filters, setFilters] = useState<Filters>(NO_FILTERS);
+  const [sheet, setSheet] = useState(false);
+  const [shown, setShown] = useState(PAGE);
+  useEffect(() => {
+    if (query != null) setSearch(query);
+  }, [query]);
+
+  const needle = search.trim();
   const rows = useMemo(() => {
-    const needle = search.trim().toLowerCase();
-    return (data?.players ?? []).filter(
-      (p) => (pos === 'All' || p.pos === pos) && (!needle || p.name.toLowerCase().includes(needle)),
-    );
-  }, [data, search, pos]);
+    const out = (data?.players ?? []).filter((p) =>
+      (needle ? nameMatches(p.name, needle) : status === 'All' || (status === 'Rostered') === !!p.team_id)
+      && (filters.pos === 'All' || p.pos === filters.pos)
+      && (filters.owner === 'all' || p.team_id === filters.owner)
+      && salaryOk(p, filters.salary)
+      && contractOk(p, filters.contract));
+    return filters.sort === 'Points' ? out : [...out].sort(SORTERS[filters.sort]);
+  }, [data, needle, status, filters]);
 
   if (loading && !data) return <Loading />;
   if (error && !data) return <ErrorState message={error} onRetry={reload} />;
   if (!data) return null;
 
   const rankSeason = data.season_started ? data.season : data.last_season;
+  const active = (Object.keys(NO_FILTERS) as (keyof Filters)[]).filter((k) => filters[k] !== NO_FILTERS[k]);
+  const owner = data.owners.find((o) => o.team_id === filters.owner);
+  const summary = [
+    filters.pos !== 'All' ? filters.pos : null,
+    owner ? (owner.is_mine ? 'YOURS' : owner.owner_name.toUpperCase()) : null,
+    filters.salary !== 'Any' ? filters.salary.toUpperCase() : null,
+    filters.contract !== 'Any' ? filters.contract.toUpperCase() : null,
+    `${rows.length} PLAYERS`,
+  ].filter(Boolean).join(' · ');
+  const reset = () => { setFilters(NO_FILTERS); setShown(PAGE); };
 
   return (
     <>
       <TextInput
         value={search}
-        onChangeText={setSearch}
-        placeholder="Search players"
+        onChangeText={(t) => { setSearch(t); setShown(PAGE); }}
+        placeholder="Search every player"
         placeholderTextColor={colors.muted}
         style={styles.search}
         autoCorrect={false}
+        clearButtonMode="while-editing"
       />
-      <Chips options={POSITIONS} value={pos} onChange={(p) => { setPos(p); setShown(PAGE); }} />
-      <View style={styles.sectionHead}>
-        <Text style={styles.sectionTitle}>Open market</Text>
-        <Text style={styles.sectionRight}>{`MOST ${rankSeason} POINTS`}</Text>
+      <View style={[styles.chips, needle ? styles.dim : null]}>
+        {STATUSES.map((o) => (
+          <Pressable key={o} onPress={() => { setStatus(o); setShown(PAGE); }} style={[styles.chip, o === status && styles.chipOn]}>
+            <Text style={[styles.chipText, o === status && styles.chipTextOn]}>{o}</Text>
+          </Pressable>
+        ))}
+        <Pressable onPress={() => setSheet(true)} style={[styles.chip, styles.filterChip, active.length > 0 && styles.chipOn]}>
+          <Text style={[styles.chipText, active.length > 0 && styles.chipTextOn]}>{active.length ? `Filters · ${active.length}` : 'Filters'}</Text>
+        </Pressable>
       </View>
-      {rows.length === 0 ? <Note>No free agents match.</Note> : null}
+      <View style={styles.sectionHead}>
+        <Text style={styles.sectionRight} numberOfLines={1}>{needle ? `WHOLE LEAGUE · ${summary}` : summary}</Text>
+        <Text style={styles.sectionRight}>{filters.sort === 'Points' ? `MOST ${rankSeason} POINTS` : filters.sort.toUpperCase()}</Text>
+      </View>
+      {rows.length === 0 ? <Note>No players match.</Note> : null}
       <View style={styles.grid}>
         {rows.slice(0, shown).map((p) => (
           <PlayerTile
@@ -126,8 +193,13 @@ function FreeAgentList() {
             team={p.nfl_team}
             ppg={p.rank_ppg}
             points={p.points}
-            line={`${p.nfl_team}${p.last_ppg != null && data.season_started ? ` · ${p.last_ppg.toFixed(1)} last yr` : ''}`}
-            tag={p.injury ? { label: injuryLabel(p.injury), tone: 'out' } : p.rookie ? { label: 'ROOKIE', tone: 'gold' } : null}
+            mine={p.is_mine}
+            line={p.team_id
+              ? `${p.is_mine ? 'You' : shortOwner(p.owner_name ?? '')}${p.salary != null ? ` · ${money(p.salary)}` : ''}${p.years_left ? ` · ${p.years_left}y` : ''}`
+              : `${p.nfl_team} · Free agent`}
+            tag={p.injury ? { label: injuryLabel(p.injury), tone: 'out' }
+              : p.designation ? { label: p.designation.toUpperCase(), tone: 'gold' }
+              : p.rookie ? { label: 'ROOKIE', tone: 'gold' } : null}
           />
         ))}
       </View>
@@ -137,7 +209,65 @@ function FreeAgentList() {
         </Pressable>
       ) : null}
       <Note>Bids happen in the free agent auction on the website.</Note>
+      <FilterSheet
+        open={sheet}
+        onClose={() => setSheet(false)}
+        filters={filters}
+        owners={data.owners}
+        count={rows.length}
+        onChange={(f) => { setFilters(f); setShown(PAGE); }}
+        onReset={reset}
+      />
     </>
+  );
+}
+
+function SheetChips<T extends string>({ label, options, value, onChange, names }: {
+  label: string; options: readonly T[]; value: T; onChange: (v: T) => void; names?: Record<string, string>;
+}) {
+  return (
+    <>
+      <Text style={styles.sheetLabel}>{label}</Text>
+      <View style={styles.chips}>
+        {options.map((o) => (
+          <Pressable key={o} onPress={() => onChange(o)} style={[styles.chip, o === value && styles.chipOn]}>
+            <Text style={[styles.chipText, o === value && styles.chipTextOn]}>{names?.[o] ?? o}</Text>
+          </Pressable>
+        ))}
+      </View>
+    </>
+  );
+}
+
+function FilterSheet({ open, onClose, filters, owners, count, onChange, onReset }: {
+  open: boolean; onClose: () => void; filters: Filters; owners: LeagueOwner[]; count: number;
+  onChange: (f: Filters) => void; onReset: () => void;
+}) {
+  const insets = useSafeAreaInsets();
+  const set = <K extends keyof Filters>(k: K) => (v: Filters[K]) => onChange({ ...filters, [k]: v });
+  const ownerIds = ['all', ...owners.map((o) => o.team_id)];
+  const ownerNames = Object.fromEntries([['all', 'Everyone'], ...owners.map((o) => [o.team_id, o.is_mine ? 'You' : shortOwner(o.owner_name)])]);
+  return (
+    <Modal visible={open} transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={styles.scrim} onPress={onClose} />
+      <View style={[styles.sheet, { paddingBottom: insets.bottom + 12 }]}>
+        <View style={styles.grab} />
+        <View style={styles.sheetHead}>
+          <Text style={styles.sectionTitle}>Filters</Text>
+          <Pressable onPress={onReset} hitSlop={10}><Text style={ui.link}>Reset</Text></Pressable>
+        </View>
+        <ScrollView style={styles.sheetBody}>
+          <SheetChips label="POSITION" options={POSITIONS} value={filters.pos} onChange={set('pos')} />
+          <SheetChips label="OWNER" options={ownerIds} value={filters.owner} onChange={set('owner')} names={ownerNames} />
+          <SheetChips label="SALARY" options={SALARY} value={filters.salary} onChange={set('salary')} />
+          <SheetChips label="CONTRACT" options={CONTRACT} value={filters.contract} onChange={set('contract')} />
+          <SheetChips label="SORT" options={SORTS} value={filters.sort} onChange={set('sort')} />
+        </ScrollView>
+        <Pressable onPress={onClose} style={styles.plan}>
+          <Text style={styles.planText}>Show {count} players</Text>
+        </Pressable>
+      </View>
+    </Modal>
   );
 }
 
@@ -304,6 +434,14 @@ const styles = StyleSheet.create({
   chipOn: { borderColor: colors.gold },
   chipText: { color: colors.muted, fontSize: 12, fontWeight: '700' },
   chipTextOn: { color: colors.gold },
+  filterChip: { marginLeft: 'auto', backgroundColor: colors.card },
+  dim: { opacity: 0.45 },
+  scrim: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)' },
+  sheet: { backgroundColor: '#0C2419', borderTopLeftRadius: 22, borderTopRightRadius: 22, paddingHorizontal: 18, paddingTop: 10, maxHeight: '80%' },
+  grab: { alignSelf: 'center', width: 40, height: 5, borderRadius: 3, backgroundColor: colors.line, marginBottom: 10 },
+  sheetHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
+  sheetBody: { flexGrow: 0 },
+  sheetLabel: { color: colors.muted, fontSize: 11, fontWeight: '800', letterSpacing: 1, marginTop: 10, marginBottom: 8 },
   sectionHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 4, marginBottom: 10, paddingHorizontal: 2 },
   sectionTitle: { color: colors.text, fontSize: 18, fontWeight: '800' },
   sectionRight: { color: colors.muted, fontSize: 10, fontWeight: '800', letterSpacing: 1 },

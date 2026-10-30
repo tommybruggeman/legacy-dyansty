@@ -494,6 +494,20 @@ def free_agents(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, 
     return market.free_agents(pool, state, ppg, rostered=rostered)
 
 
+@app.get("/market/players")
+def all_players(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """Every rostered player plus the best free agents, for the Players tab and pull-down search."""
+    client, user = owner
+    ctx = _season_context(client, user)
+    state = _season_state(client, ctx)
+    pool, ppg = _market_ppg(client, ctx)
+    try:
+        rosters = league.sleeper.get(f"league/{ctx['sleeper_id']}/rosters") or []
+    except Exception:
+        rosters = []
+    return market.all_players(pool, state, ppg, _league_team_rows(client, ctx["league_id"]), rosters, ctx["team_id"])
+
+
 EXPIRING_YEARS = 3
 
 

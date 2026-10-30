@@ -25,6 +25,14 @@ from services.free_agents import (
 
 from services.publication_context import publication_generation
 
+import sys  # noqa: E402
+
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+from api import market as app_market, sleeper as app_sleeper, teams as app_teams  # noqa: E402
+from auth import _sb  # noqa: E402
+from season_engine import SeasonResolver  # noqa: E402
+from services.team_roster_state import load_team_state  # noqa: E402
+
 
 ICON = Path(__file__).resolve().parents[1] / "assets" / "page_icon.png"
 
@@ -629,9 +637,10 @@ for warning in results.warnings:
     st.warning(warning)
 
 
-open_market_tab, expiring_tab, rookie_tab = st.tabs(
+open_market_tab, league_players_tab, expiring_tab, rookie_tab = st.tabs(
     [
         "Open Market",
+        "League Players",
         "Expiring Contracts",
         "Rookie Class",
     ]
@@ -785,6 +794,101 @@ with open_market_tab:
         st.info(
             "No Open Market players match these filters."
         )
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def _cached_league_players(league_id: str, team_id: str, active_season: int, context_generation: int, _ppg) -> dict:
+    """The app's Market > Players list (api.market.all_players), so the website and app show the same players."""
+    client = _sb(st.session_state.get("sb_access_token"))
+    season = SeasonResolver(client).get_active_season(league_id)
+    rosters = app_sleeper.get(f"league/{season.sleeper_league_id}/rosters") or [] if season.sleeper_league_id else []
+    return app_market.all_players(
+        app_market.player_pool(service_client()),
+        load_team_state(client, league_id, active_season),
+        _ppg,
+        app_teams.league_teams(client, league_id),
+        rosters,
+        team_id,
+    )
+
+
+with league_players_tab:
+    st.subheader("League Players")
+    st.caption("Every rostered player plus the best free agents. Searching a name looks through the whole league.")
+    try:
+        league_players = _cached_league_players(
+            context.league_id, str(context.league_team_id or ""), active_season, context_generation, ppg_state,
+        )
+    except Exception:
+        league_players = None
+        st.error("League players are temporarily unavailable. Refresh the page or try again later.")
+
+    if league_players:
+        owners = {o["team_id"]: ("You" if o["is_mine"] else o["owner_name"]) for o in league_players["owners"]}
+        with st.container(key="fa_league_players_filters"):
+            lp_search_col, lp_status_col, lp_owner_col = st.columns([1.6, 1.4, 1], gap="medium")
+            with lp_search_col:
+                lp_search = st.text_input("Search player", placeholder="🔍  Search every player", key="league_players_search")
+            with lp_status_col:
+                lp_status = st.segmented_control(
+                    "Status", ["Free agents", "Rostered", "All"], default="Free agents", key="league_players_status",
+                ) or "Free agents"
+            with lp_owner_col:
+                lp_owner = st.selectbox("Owner", ["Everyone", *owners], key="league_players_owner",
+                                        format_func=lambda t: owners.get(t, t))
+            lp_pos_col, lp_salary_col, lp_contract_col, lp_sort_col = st.columns(4, gap="medium")
+            with lp_pos_col:
+                lp_pos = st.selectbox("Position", ["All", *app_market.POSITIONS], key="league_players_pos")
+            with lp_salary_col:
+                lp_salary = st.selectbox("Salary", ["Any", *app_market.SALARY_CAPS, "$20+"], key="league_players_salary")
+            with lp_contract_col:
+                lp_contract = st.selectbox("Contract", ["Any", "Expiring", "2+ years", "Rookie deal", "Taxi", "IR"],
+                                           key="league_players_contract")
+            with lp_sort_col:
+                lp_sort = st.selectbox("Sort", ["Points", "PPG", "Value per $", "Youngest"], key="league_players_sort")
+
+        lp_rows = app_market.filter_players(
+            league_players["players"], search=lp_search, status=lp_status, pos=lp_pos,
+            owner=None if lp_owner == "Everyone" else lp_owner, salary=lp_salary, contract=lp_contract, sort=lp_sort,
+        )
+        lp_rank = _season_label(league_players["season"] if league_players["season_started"] else league_players["last_season"])
+
+        def _lp_owner(p: dict) -> str:
+            return ("You" if p["is_mine"] else p["owner_name"] or "Rostered") if p["team_id"] else "Free agent"
+
+        def _lp_contract(p: dict) -> str:
+            if p["salary"] is None:
+                return "—"
+            years = f" · {p['years_left']} yr{'s' if p['years_left'] != 1 else ''}" if p["years_left"] else ""
+            return f"${p['salary']:g}{years}"
+
+        def _lp_note(p: dict) -> str:
+            return " · ".join(filter(None, [
+                (p["designation"] or "").upper(), "Rookie deal" if p["rookie_deal"] else "", p["injury"] or "",
+            ]))
+
+        st.caption(f"{len(lp_rows)} players")
+        if lp_rows:
+            lp_visible = lp_rows[:150]
+            _render_html_table(pd.DataFrame([{
+                "Player": p["name"],
+                "Pos": p["pos"],
+                "NFL": p["nfl_team"],
+                "Owner": _lp_owner(p),
+                "Contract": _lp_contract(p),
+                lp_rank: _ppg_text(p["rank_ppg"]),
+                "Points": f"{p['points']:.0f}" if p["points"] is not None else "—",
+                "Notes": _lp_note(p) or "",
+            } for p in lp_visible]))
+            _render_player_cards([
+                (p["pos"], p["name"], f"{_lp_owner(p)} · {_lp_contract(p)}" if p["team_id"] else f"{p['nfl_team']} · Free agent",
+                 [(_ppg_text(p["rank_ppg"]), lp_rank, True)])
+                for p in lp_visible
+            ])
+            if len(lp_rows) > len(lp_visible):
+                st.caption(f"Showing the top {len(lp_visible)}. Search or filter to narrow the list.")
+        else:
+            st.info("No players match these filters.")
 
 
 with expiring_tab:
