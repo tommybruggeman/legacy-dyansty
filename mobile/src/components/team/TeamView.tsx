@@ -304,7 +304,7 @@ function RosterTab({ team, onChange, after }: { team: TeamPage; onChange?: () =>
       {editing && lineup ? (
         <LineupSheet lineup={lineup} players={[...starters, ...bench]} picking={picking} onClose={() => setPicking(null)} onSaved={() => onChange?.()} />
       ) : null}
-      <Card title={editing ? `Week ${lineup!.week} lineup` : 'Starters'} right={pointsLabel(team.week)}>
+      <Card title="Starters" right={pointsLabel(team.week)}>
         {starters.length ? starters.map((p, i) => (
           <PlayerRow key={p.player_id || `empty-${i}`} p={p} first={i === 0} showSlot chip={slotChip(i)} w={week[p.player_id]} season={team.season}
             onEmpty={editing ? () => setPicking({ kind: 'slot', index: i }) : undefined} />
