@@ -301,7 +301,7 @@ export type BoxScore = {
   is_final: boolean;
   matchup_id: number;
   my_roster_id: number | null;
-  teams: { roster_id: number; team_id: string | null; name: string; score: number; projected?: number; players: BoxPlayer[] }[];
+  teams: { roster_id: number; team_id: string | null; name: string; score: number; projected?: number; players: BoxPlayer[]; bench?: BoxPlayer[] }[];
   win_chance?: [number, number] | null;
 };
 

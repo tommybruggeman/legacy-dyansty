@@ -17,14 +17,17 @@ class _C:
 
 
 def test_game_adds_projections_and_projected_totals(monkeypatch):
-    rows = [{"matchup_id": 3, "roster_id": 1, "starters": ["10", "20"], "starters_points": [20.0, 0.0], "points": 20.0},
+    rows = [{"matchup_id": 3, "roster_id": 1, "starters": ["10", "20"], "starters_points": [20.0, 0.0], "points": 20.0,
+             "players": ["10", "20", "40", "50"], "players_points": {"40": 3.0}},
             {"matchup_id": 3, "roster_id": 2, "starters": ["30", "0"], "starters_points": [12.5, 0.0], "points": 12.5}]
     monkeypatch.setattr(teams.sleeper, "get", lambda path, ttl=60: rows)
     monkeypatch.setattr(league, "last_scored_week", lambda sid: 7)
     monkeypatch.setattr(teams, "player_info", lambda client, ids: {"10": {"full_name": "A", "position": "QB", "team": "BUF"},
                                                                     "20": {"full_name": "B", "position": "RB", "team": "KC"},
-                                                                    "30": {"full_name": "C", "position": "WR", "team": "MIA"}})
-    monkeypatch.setattr(projections, "week_projections", lambda *a, **k: {"10": 22.0, "20": 14.0, "30": 15.0})
+                                                                    "30": {"full_name": "C", "position": "WR", "team": "MIA"},
+                                                                    "40": {"full_name": "D", "position": "TE", "team": "KC"},
+                                                                    "50": {"full_name": "E", "position": "RB", "team": "KC"}})
+    monkeypatch.setattr(projections, "week_projections", lambda *a, **k: {"10": 22.0, "20": 14.0, "30": 15.0, "40": 9.0, "50": 6.0})
     monkeypatch.setattr(projections, "week_ranks", lambda *a, **k: {"10": {"label": "QB2"}})
     monkeypatch.setattr(projections, "week_lines", lambda *a, **k: {})
     monkeypatch.setattr(projections, "league_scoring", lambda sid: {})
@@ -37,6 +40,7 @@ def test_game_adds_projections_and_projected_totals(monkeypatch):
     assert me["players"][0]["proj"] == 22.0 and me["players"][0]["rank"] == "QB2"
     assert me["projected"] == 36.0          # no live clock: max(20 real, 22 proj) while playing + 14 projected
     assert them["projected"] == 15.0
+    assert [(p["name"], p["pos"], p["points"], p["live_proj"]) for p in me["bench"]] == [("E", "RB", 0.0, 6.0), ("D", "TE", 3.0, 9.0)]
     assert box_score.game(_C(), ctx, 8, 99) is None
 
 
