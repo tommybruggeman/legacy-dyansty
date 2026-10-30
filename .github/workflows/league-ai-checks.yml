@@ -2,14 +2,15 @@ name: League AI checks
 
 # Run by hand: how accurate the playoff odds are on past seasons, how the 20-answer playoff-odds trial is going,
 # start/sit graded on every saved lineup, the free pre-deploy practice test,
-# and shadow scoring (our own scoring engine vs Sleeper's scores on every finished week).
+# shadow scoring (our own scoring engine vs Sleeper's scores on every finished week),
+# and the live projection study (which mid-game projection update predicts final scores best).
 on:
   workflow_dispatch:
     inputs:
       check:
         description: Which check to run
         type: choice
-        options: [odds_backtest, odds_trial, odds_grade, start_sit_grade, practice_test, weekly_cards, shadow_scoring]
+        options: [odds_backtest, odds_trial, odds_grade, start_sit_grade, practice_test, weekly_cards, shadow_scoring, live_projection_study]
         default: odds_backtest
 
 jobs:
@@ -24,6 +25,8 @@ jobs:
       - run: pip install supabase requests pandas
       - if: inputs.check == 'start_sit_grade' || inputs.check == 'practice_test' || inputs.check == 'weekly_cards'
         run: pip install -r api/requirements.txt
+      - if: inputs.check == 'live_projection_study'
+        run: pip install pyarrow numpy
       - name: Run
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -39,5 +42,6 @@ jobs:
             # the weekly start/sit scorecard and accepted-trade shares now, without waiting for Tuesday's learning job (no model calls)
             weekly_cards) python -m league_ai.scorecard ;;
             shadow_scoring) python -m scoring.shadow ;;
+            live_projection_study) python -m scoring.live_projection_study ;;
             *) python -m league_ai.playoff_odds ;;
           esac
