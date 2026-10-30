@@ -143,7 +143,7 @@ function Face({ p, label, hurt }: { p: Player; label: string; hurt?: boolean }) 
 }
 
 
-function PlayerRow({ p, first, showSlot, chip, onEmpty, w, season }: { p: Player; first?: boolean; showSlot?: boolean; chip?: ReactNode; onEmpty?: () => void; w?: WeekPlayer; season: number }) {
+function PlayerRow({ p, first, showSlot, chip, onEmpty, w, season, short }: { p: Player; first?: boolean; showSlot?: boolean; chip?: ReactNode; onEmpty?: () => void; w?: WeekPlayer; season: number; short?: boolean }) {
   if (p.empty) {
     return (
       <Row first={first} onPress={onEmpty}>
@@ -157,7 +157,14 @@ function PlayerRow({ p, first, showSlot, chip, onEmpty, w, season }: { p: Player
     );
   }
   const injury = p.injury ? INJURY_SHORT[p.injury.toLowerCase()] ?? p.injury.toUpperCase() : null;
-  const tag = injury ? <Pill label={injury} tone="out" /> : p.is_rookie ? <Pill label="ROOKIE" tone="gold" /> : null;
+  // Other teams' pages use short tags (R rookie, T taxi, IR) next to the injury tag, since taxi and IR players sit on the bench there.
+  const role = p.designation === 'ir' ? 'IR' : p.designation === 'taxi' ? 'T' : p.is_rookie ? 'R' : null;
+  const tag = short ? (
+    <>
+      {role ? <Pill label={role} tone={role === 'IR' ? 'out' : 'gold'} /> : null}
+      {injury && injury !== role ? <Pill label={injury} tone="out" /> : null}
+    </>
+  ) : injury ? <Pill label={injury} tone="out" /> : p.is_rookie ? <Pill label="ROOKIE" tone="gold" /> : null;
   const label = showSlot && p.slot ? p.slot : p.pos;
   const live = w?.status === 'playing';
   return (
@@ -268,7 +275,7 @@ function ContractFoot({ p, w, season }: { p: Player; w?: WeekPlayer; season: num
 }
 
 // "$48" for whole dollars, "$12.5" otherwise.
-const dollars = (n: number) => `$${Number.isInteger(n) ? n : n.toFixed(1)}`;
+const dollars = (n: number) => `${n < 0 ? '-' : ''}$${Number.isInteger(n) ? Math.abs(n) : Math.abs(n).toFixed(1)}`;
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 // "Sun 11:00 AM" in the phone's own time zone.
@@ -291,7 +298,10 @@ function RosterTab({ team, onChange, after }: { team: TeamPage; onChange?: () =>
   const editing = !!lineup?.enabled;
   const [showBench, setShowBench] = useState(editing && team.is_me);
   const [picking, setPicking] = useState<Picking>(null);
-  const { starters, bench, taxi, ir } = team.roster;
+  const { starters, taxi, ir } = team.roster;
+  const mine = team.is_me;
+  // Other teams: taxi and IR players join the bench (tagged T and IR) instead of their own cards.
+  const bench = mine ? team.roster.bench : [...team.roster.bench, ...taxi, ...ir].filter((p, i, all) => all.findIndex((q) => q.player_id === p.player_id) === i);
   const week = team.week?.players ?? {};
   const slotChip = (i: number) => editing && lineup ? (
     <SlotChip label={lineup.slots[i]?.label ?? ''} locked={lineup.slots[i]?.locked} onPress={() => setPicking({ kind: 'slot', index: i })} />
@@ -307,7 +317,7 @@ function RosterTab({ team, onChange, after }: { team: TeamPage; onChange?: () =>
       <Card title="Starters" right={pointsLabel(team.week)}>
         {starters.length ? starters.map((p, i) => (
           <PlayerRow key={p.player_id || `empty-${i}`} p={p} first={i === 0} showSlot chip={slotChip(i)} w={week[p.player_id]} season={team.season}
-            onEmpty={editing ? () => setPicking({ kind: 'slot', index: i }) : undefined} />
+            onEmpty={editing ? () => setPicking({ kind: 'slot', index: i }) : undefined} short={!mine} />
         )) : <Note>{lineup ? 'No lineup set yet.' : 'No lineup set in Sleeper.'}</Note>}
         {bench.length ? (
           <Pressable onPress={() => setShowBench(!showBench)} hitSlop={8}>
@@ -317,36 +327,40 @@ function RosterTab({ team, onChange, after }: { team: TeamPage; onChange?: () =>
       </Card>
       {showBench ? (
         <Card title="Bench">
-          {bench.map((p, i) => <PlayerRow key={p.player_id} p={p} first={i === 0} chip={benchChip(p)} w={week[p.player_id]} season={team.season} />)}
+          {bench.map((p, i) => <PlayerRow key={p.player_id} p={p} first={i === 0} chip={benchChip(p)} w={week[p.player_id]} season={team.season} short={!mine} />)}
         </Card>
       ) : null}
       {after}
-      <View style={styles.pair}>
-        <Card style={styles.half}>
-          <Text style={styles.eyebrow}>TAXI</Text>
-          {taxi.length ? taxi.map((p) => (
-            <View key={p.player_id} style={styles.mini}>
-              <Text style={ui.name} numberOfLines={1}>{p.name}</Text>
-              <Text style={ui.sub}>{p.pos} · {money(p.salary)} cap</Text>
-            </View>
-          )) : <Text style={ui.sub}>Empty</Text>}
-        </Card>
-        <Card style={styles.half}>
-          <Text style={styles.eyebrow}>IR</Text>
-          {ir.length ? ir.map((p) => (
-            <View key={p.player_id} style={styles.mini}>
-              <Text style={ui.name} numberOfLines={1}>{p.name}</Text>
-              <Text style={ui.sub}>{p.pos} · {money(p.salary)}</Text>
-            </View>
-          )) : <Text style={ui.sub}>1 spot open</Text>}
-          {team.is_me ? (
-            <Pressable onPress={() => go('/ir')} hitSlop={8}>
-              <Text style={[ui.link, styles.manage]}>{ir.length ? 'Remove / swap ›' : 'Move a player ›'}</Text>
-            </Pressable>
-          ) : null}
-        </Card>
-      </View>
-      <Note>{team.roster.count} players under contract</Note>
+      {mine ? (
+        <>
+        <View style={styles.pair}>
+          <Card style={styles.half}>
+            <Text style={styles.eyebrow}>TAXI</Text>
+            {taxi.length ? taxi.map((p) => (
+              <View key={p.player_id} style={styles.mini}>
+                <Text style={ui.name} numberOfLines={1}>{p.name}</Text>
+                <Text style={ui.sub}>{p.pos} · {money(p.salary)} cap</Text>
+              </View>
+            )) : <Text style={ui.sub}>Empty</Text>}
+          </Card>
+          <Card style={styles.half}>
+            <Text style={styles.eyebrow}>IR</Text>
+            {ir.length ? ir.map((p) => (
+              <View key={p.player_id} style={styles.mini}>
+                <Text style={ui.name} numberOfLines={1}>{p.name}</Text>
+                <Text style={ui.sub}>{p.pos} · {money(p.salary)}</Text>
+              </View>
+            )) : <Text style={ui.sub}>1 spot open</Text>}
+            {team.is_me ? (
+              <Pressable onPress={() => go('/ir')} hitSlop={8}>
+                <Text style={[ui.link, styles.manage]}>{ir.length ? 'Remove / swap ›' : 'Move a player ›'}</Text>
+              </Pressable>
+            ) : null}
+          </Card>
+        </View>
+        <Note>{team.roster.count} players under contract</Note>
+        </>
+      ) : null}
       <HeadToHead team={team} />
       {!team.is_me ? (
         <Pressable style={styles.button} onPress={() => Linking.openURL(`https://sleeper.com/leagues/${team.sleeper_league_id}`)}>
