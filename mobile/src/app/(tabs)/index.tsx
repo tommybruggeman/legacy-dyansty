@@ -6,7 +6,7 @@ import { GameDayBottom } from '../../components/home/GameDayBottom';
 import { Avatar, Headshot, type Ring } from '../../components/Pictures';
 import { ErrorState, Loading } from '../../components/ScreenState';
 import { Bar, Card, Pill, Screen, firstName, money, ordinal, record, ui } from '../../components/ui';
-import { type HomeData, type HomeSide, type LivePlayer, type RaceRow, type RookieDeal, type TableRow, apiSend, prefetch, useApi } from '../../lib/api';
+import { type BoxScore, type HomeData, type HomeSide, type LivePlayer, type RaceRow, type RookieDeal, type TableRow, apiSend, prefetch, useApi } from '../../lib/api';
 import { colors } from '../../lib/theme';
 
 // Home changes with the calendar: last week's recap (Tue-Wed), a preview
@@ -97,18 +97,19 @@ function Badges({ items }: { items: [string, string][] }) {
   );
 }
 
-function Hero({ title, pill, me, them, week, matchupId, meLabel, themLabel, badges, showScores = true }: {
+function Hero({ title, pill, me, them, week, matchupId, meLabel, themLabel, badges, showScores = true, proj }: {
   title: string; pill?: ReactNode; me: HomeSide; them?: HomeSide | null; week: number; matchupId?: number;
-  meLabel?: string; themLabel?: string; badges: [string, string][]; showScores?: boolean;
+  meLabel?: string; themLabel?: string; badges: [string, string][]; showScores?: boolean; proj?: [number, number] | null;
 }) {
   const total = me.score + (them?.score ?? 0);
   const ahead = me.score >= (them?.score ?? 0);
   const open = matchupId != null ? () => router.push(`/game/${week}/${matchupId}`) : undefined;
-  const Side = ({ s, label, lead }: { s: HomeSide | null | undefined; label: string; lead: boolean }) => (
+  const Side = ({ s, label, lead, projected }: { s: HomeSide | null | undefined; label: string; lead: boolean; projected?: number }) => (
     <View style={styles.side}>
       <Avatar uri={s?.avatar} name={s?.name ?? 'Bye'} size={54} me={label.startsWith('You')} />
       <Text style={styles.sideName} numberOfLines={1}>{label}</Text>
       {showScores ? <Text style={[styles.score, !lead && styles.dim]}>{pts(s?.score ?? 0)}</Text> : null}
+      {showScores && projected != null ? <Text style={styles.proj}>proj {projected.toFixed(1)}</Text> : null}
     </View>
   );
   return (
@@ -116,15 +117,60 @@ function Hero({ title, pill, me, them, week, matchupId, meLabel, themLabel, badg
       <Card gold>
         <Eyebrow right={pill}>{title}</Eyebrow>
         <View style={styles.vs}>
-          <Side s={me} label={meLabel ?? 'You'} lead={!total || ahead} />
+          <Side s={me} label={meLabel ?? 'You'} lead={!total || ahead} projected={proj?.[0]} />
           <Text style={styles.vsText}>VS</Text>
-          <Side s={them} label={themLabel ?? (them ? firstName(them.name) : 'Bye')} lead={!total || !ahead} />
+          <Side s={them} label={themLabel ?? (them ? firstName(them.name) : 'Bye')} lead={!total || !ahead} projected={them ? proj?.[1] : undefined} />
         </View>
         <View style={styles.bar}><Bar fraction={total ? me.score / total : 0.5} /></View>
         <Badges items={badges} />
       </Card>
     </Pressable>
   );
+}
+
+// The game-week Hero with each side's live projected total (same numbers as the game page). Top 5 is
+// only meaningful once most games are in, so until Sunday 3:00 PM Mountain the middle badge shows win odds.
+function LiveHero({ data, title, left: toPlay }: { data: HomeData; title: string; left: number }) {
+  const g = data.game!;
+  const me = g.me!;
+  const final = !!g.is_final;
+  const { data: box } = useApi<BoxScore>(`/matchups/${data.week}/${g.matchup_id}`, final ? 0 : 60_000);
+  const sides = box?.teams ?? [];
+  const mine = box ? sides.findIndex((t) => t.roster_id === me.roster_id) : -1;
+  const proj: [number, number] | null = !final && mine >= 0 && sides.length === 2
+    ? [sides[mine].projected ?? sides[mine].score, sides[1 - mine].projected ?? sides[1 - mine].score] : null;
+  const odds = mine >= 0 && box?.win_chance ? box.win_chance[mine] : null;
+  const middle: [string, string] = final || topFiveTime()
+    ? [me.top5 ? '✓' : '✗', 'IN TOP 5']
+    : [odds != null ? `${odds}%` : '—', 'WIN ODDS'];
+  return (
+    <Hero
+      title={title}
+      pill={<LivePill data={data} />}
+      me={me}
+      them={g.them}
+      week={data.week}
+      matchupId={g.matchup_id}
+      proj={proj}
+      badges={[[ordinal(me.rank), 'HIGH SCORE'], middle, [String(toPlay), 'LEFT TO PLAY']]}
+    />
+  );
+}
+
+// True from Sunday 3:00 PM Mountain until the week turns over (Monday and Tuesday count too).
+function topFiveTime(now = new Date()) {
+  const y = now.getUTCFullYear();
+  const nthSunday = (month: number, n: number) => {
+    const first = new Date(Date.UTC(y, month, 1));
+    return 1 + ((7 - first.getUTCDay()) % 7) + 7 * (n - 1);
+  };
+  // US daylight time: 2nd Sunday of March to 1st Sunday of November, switching at 2 AM local (9 AM / 8 AM UTC).
+  const dstStart = Date.UTC(y, 2, nthSunday(2, 2), 9);
+  const dstEnd = Date.UTC(y, 10, nthSunday(10, 1), 8);
+  const offset = now.getTime() >= dstStart && now.getTime() < dstEnd ? 6 : 7;
+  const mt = new Date(now.getTime() - offset * 3_600_000);
+  const day = mt.getUTCDay();
+  return (day === 0 && mt.getUTCHours() >= 15) || day === 1 || day === 2;
 }
 
 const ring = (p: LivePlayer): Ring => (p.status === 'playing' ? 'live' : p.status === 'final' ? 'done' : 'wait');
@@ -401,15 +447,7 @@ function GameDay({ data }: { data: HomeData }) {
     .sort((a, b) => order(a) - order(b) || b.points - a.points).slice(0, 3);
   return (
     <>
-      <Hero
-        title={title}
-        pill={<LivePill data={data} />}
-        me={g.me}
-        them={g.them}
-        week={data.week}
-        matchupId={g.matchup_id}
-        badges={[[ordinal(g.me.rank), 'HIGH SCORE'], [g.me.top5 ? '✓' : '✗', 'IN TOP 5'], [String(left(mine)), 'LEFT TO PLAY']]}
-      />
+      <LiveHero data={data} title={title} left={left(mine)} />
       <PlayerHeads title="YOUR PLAYERS RIGHT NOW" right={anyPlaying(data) ? 'Live' : undefined} players={now} sub={statusLine} />
       {data.bottom ? <GameDayBottom bottom={data.bottom} week={data.week} />
         : <Race rows={data.race ?? []} title={g.is_final ? 'TOP 5 · FINAL' : 'TOP 5 RACE · LIVE'} window="top" />}
@@ -651,6 +689,7 @@ const styles = StyleSheet.create({
   side: { alignItems: 'center', gap: 6, width: 130 },
   sideName: { color: colors.text, fontWeight: '800', fontSize: 15 },
   score: { color: colors.text, fontSize: 30, fontWeight: '800' },
+  proj: { color: colors.muted, fontSize: 12, marginTop: -4 },
   bar: { marginTop: 12 },
   badges: { flexDirection: 'row', gap: 8, marginTop: 12 },
   badge: { flex: 1, backgroundColor: colors.row, borderRadius: 12, paddingVertical: 8, paddingHorizontal: 4, alignItems: 'center' },

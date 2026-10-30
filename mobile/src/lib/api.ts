@@ -272,6 +272,7 @@ export type BoxPlayer = {
   team?: string | null;
   status?: 'bye' | 'waiting' | 'playing' | 'final';
   proj?: number | null;
+  live_proj?: number | null;
   rank?: string | null;
   breakdown?: { label: string; value: number; points: number }[];
   game?: NflGame | null;

@@ -35,7 +35,7 @@ def test_game_adds_projections_and_projected_totals(monkeypatch):
     me, them = g["teams"]
     assert me["team_id"] == "t1" and g["my_roster_id"] == 1 and g["is_final"] is False
     assert me["players"][0]["proj"] == 22.0 and me["players"][0]["rank"] == "QB2"
-    assert me["projected"] == 36.0          # max(20 real, 22 proj) while playing + 14 projected
+    assert me["projected"] == 36.0          # no live clock: max(20 real, 22 proj) while playing + 14 projected
     assert them["projected"] == 15.0
     assert box_score.game(_C(), ctx, 8, 99) is None
 
@@ -87,3 +87,14 @@ def test_scoreboard_maps_espn_codes_and_stat_lines_by_position():
     assert [x["text"] for x in rb] == ["17 CAR", "88 YD", "1 TD", "3 REC 19 YD", "1 FUM"]
     assert nfl_live.stat_line({}, "WR") == [] and nfl_live.stat_line({"rec": 1}, "K") == []
     assert nfl_live.win_chance([{"score": 130}, {"score": 120}], True) == [100, 0]
+
+
+def test_live_projection_follows_the_game_clock():
+    q3 = {"state": "in", "quarter": 3, "clock": "7:30"}  # 22.5 of 60 minutes left
+    assert nfl_live.time_left(q3) == 0.375
+    assert nfl_live.live_projection(20.0, 28.0, "playing", q3) == 30.5      # 20 so far + 28 x 0.375
+    assert nfl_live.live_projection(2.0, 16.0, "playing", q3) == 8.0       # quiet game drops below projection
+    assert nfl_live.live_projection(9.0, 16.0, "final", None) == 9.0
+    assert nfl_live.live_projection(0.0, 16.0, "waiting", None) == 16.0
+    assert nfl_live.live_projection(5.0, 16.0, "playing", None) == 16.0    # no clock: never below projection
+    assert nfl_live.time_left({"state": "in", "quarter": 5, "clock": "8:00"}) == 0.0

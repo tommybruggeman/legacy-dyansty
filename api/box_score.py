@@ -42,8 +42,8 @@ def week_kickoffs(client: Any, season: int, week: int) -> dict[str, datetime]:
 def add_projections(client: Any, ctx: dict[str, Any], week: int, final: bool, result: dict[str, Any], info: dict[str, dict[str, Any]]) -> None:
     """Each starter's projection, game status and weekly position rank, plus each side's projected total.
 
-    A side's projection counts real points for finished games, the higher of
-    real and projected for games in progress, and the projection otherwise.
+    A side's projection counts real points for finished games, points so far plus the
+    projection for the game time still left for games in progress, and the projection otherwise.
     """
     ids = [p["player_id"] for side in result["teams"] for p in side["players"] if p["player_id"] not in ("", "0")]
     positions = {pid: str(info.get(pid, {}).get("position") or "") for pid in ids}
@@ -95,10 +95,6 @@ def add_projections(client: Any, ctx: dict[str, Any], week: int, final: bool, re
             p["proj"] = proj.get(pid)
             p["rank"] = (ranks.get(pid) or {}).get("label") if p["status"] in ("playing", "final") and p["points"] else None
             p["breakdown"] = projections.breakdown((lines.get(pid) or {}).get("stats"), scoring) if p["status"] in ("playing", "final") else []
-            if p["status"] == "final" or p["proj"] is None:
-                total += p["points"]
-            elif p["status"] == "playing":
-                total += max(p["points"], p["proj"])
-            else:
-                total += p["proj"]
+            p["live_proj"] = nfl_live.live_projection(p["points"], p["proj"], p["status"], p.get("game"))
+            total += p["live_proj"] if p["live_proj"] is not None else p["points"]
         side["projected"] = round(total, 1)

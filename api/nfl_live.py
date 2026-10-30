@@ -136,6 +136,38 @@ def stat_line(stats: dict[str, Any] | None, pos: str) -> list[dict[str, str]]:
     return out
 
 
+QUARTER_MINUTES = 15
+
+
+def time_left(game: dict[str, Any] | None) -> float | None:
+    """Share of regulation still to play (1.0 before kickoff, 0.0 at the end); None without a live clock."""
+    if not game or game.get("state") != "in":
+        return None
+    quarter = int(game.get("quarter") or 0)
+    if quarter > 4:
+        return 0.0
+    try:
+        mins, secs = str(game.get("clock") or "0:00").split(":")
+        clock = int(mins) + int(secs) / 60
+    except ValueError:
+        return None
+    left = (4 - max(1, quarter)) * QUARTER_MINUTES + min(clock, QUARTER_MINUTES)
+    return max(0.0, min(1.0, left / (4 * QUARTER_MINUTES)))
+
+
+def live_projection(points: float, proj: float | None, status: str, game: dict[str, Any] | None) -> float | None:
+    """A starter's projected final: real points once done, points so far plus his projection for the
+    game time left while playing (so a hot start raises it and a quiet game lowers it), else the projection."""
+    if status == "final" or proj is None:
+        return round(points, 2)
+    if status != "playing":
+        return round(proj, 2)
+    left = time_left(game)
+    if left is None:  # no clock from the scoreboard: don't let a live total sink below the projection
+        return round(max(points, proj), 2)
+    return round(points + proj * left, 2)
+
+
 def win_chance(sides: list[dict[str, Any]], final: bool) -> list[int] | None:
     """Each side's chance to win, from the current score plus what's still projected to come.
 
@@ -152,7 +184,7 @@ def win_chance(sides: list[dict[str, Any]], final: bool) -> list[int] | None:
         means.append(float(side.get("projected") or side.get("score") or 0))
         for p in side.get("players") or []:
             if p.get("status") in ("waiting", "playing") and p.get("proj") is not None:
-                left = max(0.0, float(p["proj"]) - (float(p.get("points") or 0) if p.get("status") == "playing" else 0.0))
+                left = max(0.0, float(p.get("live_proj") if p.get("live_proj") is not None else p["proj"]) - (float(p.get("points") or 0) if p.get("status") == "playing" else 0.0))
                 var += (0.5 * left + 1.0) ** 2
     if var <= 0:
         return None
