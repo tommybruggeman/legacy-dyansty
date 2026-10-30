@@ -506,7 +506,8 @@ def all_players(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, 
     except Exception:
         rosters = []
     ids = _saved_ids(client, ctx["league_id"]) or []
-    result = market.all_players(pool, state, ppg, _league_team_rows(client, ctx["league_id"]), rosters, ctx["team_id"], keep_ids=ids)
+    result = market.all_players(pool, state, ppg, _league_team_rows(client, ctx["league_id"]), rosters, ctx["team_id"],
+                                keep_ids=ids, kickers=not ctx["slots"] or "K" in ctx["slots"])
     # The ★ Saved chip's "Plan these moves with the GM" question.
     result["plan_question"] = market.strategy_question(market.targets(ids, state, ctx["team_id"], pool, ppg), ctx["season"])
     return result

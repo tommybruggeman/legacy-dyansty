@@ -81,7 +81,7 @@ export function ActivityCard({ item, me, focused }: { item: ActivityItem; me: st
 // ---- the newest few, under League > Teams ------------------------------------
 
 const ICON: Record<string, [string, string]> = {
-  trade: ['TR', colors.gold], waiver: ['WV', '#7FB6FF'], free_agent: ['FA', colors.live], drop: ['DR', '#E07C7C'], commissioner: ['CM', colors.muted], draft: ['DF', '#D9A6FF'],
+  trade: ['TR', colors.gold], waiver: ['WA', '#7FB6FF'], free_agent: ['FA', colors.live], drop: ['DR', '#E07C7C'], commissioner: ['CM', colors.muted], draft: ['DF', '#D9A6FF'],
 };
 
 export function LatestActivity() {

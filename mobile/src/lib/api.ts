@@ -446,6 +446,7 @@ export type LeagueOwner = { team_id: string; owner_name: string; team_name: stri
 export type LeaguePlayers = {
   season: number; last_season: number; season_started: boolean; players: LeaguePlayer[]; owners: LeagueOwner[];
   plan_question?: string; // the ★ Saved chip's GM question (from build 38)
+  positions?: string[]; // positions this league starts, so no kicker filter in a league without one (from build 39)
 };
 export type ExpiringPlayer = {
   player_id: string; name: string; pos: string; nfl_team: string; owner_name: string; team_id: string; salary: number;

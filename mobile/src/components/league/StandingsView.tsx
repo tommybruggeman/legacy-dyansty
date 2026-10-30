@@ -37,7 +37,6 @@ export function StandingsView() {
           ))}
         </View>
       )}
-      <Text style={styles.note}>Tap an owner to open their team · through week {data.weeks_played}</Text>
     </>
   );
 }

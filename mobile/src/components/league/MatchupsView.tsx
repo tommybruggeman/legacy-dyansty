@@ -1,5 +1,5 @@
 import { router } from 'expo-router';
-import { type ReactNode, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Avatar } from '../Pictures';
@@ -89,8 +89,8 @@ function Tile({ label, value, sub }: { label: string; value: string; sub: string
 }
 
 // Scorebug cards (picked by Tommy from the 10 list designs): rank, owner face,
-// record and score per row. Live games get a green edge and a "playing / yet
-// to play" footer; finished games fade the loser and point at the winner.
+// record and score per row. Live games get a green edge; finished games fade
+// the loser and point at the winner. No footer line (Tommy, build 39).
 function GameCard({ game, week, myId, weekFinal, isMine }: { game: Game; week: number; myId: number | null; weekFinal: boolean; isMine?: boolean }) {
   const [a, b] = game.teams;
   const playing = (a.playing ?? 0) + (b.playing ?? 0);
@@ -104,7 +104,6 @@ function GameCard({ game, week, myId, weekFinal, isMine }: { game: Game; week: n
       {state === 'live' ? <View style={styles.liveEdge} /> : null}
       <TeamRow team={a} state={state} isMe={a.roster_id === myId} winner={winner} />
       <TeamRow team={b} state={state} isMe={b.roster_id === myId} winner={winner} />
-      <Footer game={game} state={state} playing={playing} toPlay={toPlay} />
     </Pressable>
   );
 }
@@ -129,36 +128,6 @@ function TeamRow({ team, state, isMe, winner }: { team: MatchupTeam; state: 'pre
         </View>
         {state !== 'final' && team.projected != null ? <Text style={styles.proj}>proj {team.projected.toFixed(1)}</Text> : null}
       </View>
-    </View>
-  );
-}
-
-const kickoffText = (iso?: string | null) => {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return isNaN(d.getTime()) ? '' : d.toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' }).replace(',', '');
-};
-
-function Footer({ game, state, playing, toPlay }: { game: Game; state: 'pre' | 'live' | 'final'; playing: number; toPlay: number }) {
-  const [a, b] = game.teams;
-  let left: ReactNode = null;
-  let right = '';
-  if (state === 'final') {
-    left = <Text style={styles.footText}>FINAL</Text>;
-    right = `Margin ${Math.abs(a.score - b.score).toFixed(2)}`;
-  } else if (state === 'live') {
-    left = playing > 0 ? (
-      <View style={styles.liveRow}><View style={styles.liveDot} /><Text style={styles.liveText}>{playing} PLAYING</Text></View>
-    ) : <Text style={styles.footText}>Next {kickoffText(game.next_kickoff)}</Text>;
-    right = toPlay > 0 ? `${toPlay} yet to play` : 'last ones playing';
-  } else {
-    left = <Text style={styles.footText}>{game.win_chance ? `Win odds ${game.win_chance[0]}% · ${game.win_chance[1]}%` : 'Not started'}</Text>;
-    right = kickoffText(game.next_kickoff);
-  }
-  return (
-    <View style={styles.footer}>
-      {left}
-      <Text style={styles.footText}>{right}</Text>
     </View>
   );
 }
@@ -197,11 +166,6 @@ const styles = StyleSheet.create({
   scorePre: { opacity: 0.4 },
   winArrow: { color: colors.text, fontSize: 10 },
   proj: { color: colors.muted, fontSize: 10.5, fontWeight: '600', opacity: 0.55, marginTop: 1 },
-  footer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingLeft: 16, paddingRight: 14, paddingVertical: 8, borderTopWidth: 1, borderTopColor: '#1B2E24' },
-  footText: { color: colors.muted, fontSize: 11, fontWeight: '700' },
-  liveRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  liveDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: colors.live, shadowColor: colors.live, shadowOpacity: 0.8, shadowRadius: 4 },
-  liveText: { color: colors.live, fontSize: 11, fontWeight: '800', letterSpacing: 0.5 },
   badge: { fontSize: 11, fontWeight: '800', letterSpacing: 1, paddingHorizontal: 10, paddingVertical: 3, borderRadius: 10, overflow: 'hidden' },
   liveBadge: { color: colors.live, backgroundColor: '#163626' },
   finalBadge: { color: colors.muted, backgroundColor: colors.row },
