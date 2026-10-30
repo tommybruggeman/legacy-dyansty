@@ -65,7 +65,6 @@ export function MatchupsView() {
       {others.map((game) => (
         <GameCard key={game.matchup_id} game={game} week={shown} myId={data.my_roster_id} weekFinal={data.is_final} />
       ))}
-      <Text style={styles.note}>Gold rank = a Top 5 score this week · tap a game for the box score</Text>
     </View>
   );
 }
