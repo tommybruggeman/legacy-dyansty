@@ -95,3 +95,38 @@ def test_matchup_cards_get_projected_totals(monkeypatch):
     result = {"week": 8, "games": [{"teams": [{"roster_id": 1}, {"roster_id": 2}]}]}
     main._add_card_projections(None, None, result)
     assert [t["projected"] for t in result["games"][0]["teams"]] == [11.0, 12.0]
+
+
+def test_matchup_cards_get_live_counts_and_win_odds(monkeypatch):
+    from api import box_score, league, teams
+    rows = [{"matchup_id": 1, "roster_id": 1, "starters": ["10", "11"], "players_points": {"10": 5.0}},
+            {"matchup_id": 1, "roster_id": 2, "starters": ["20", "21"], "players_points": {"20": 0.0}}]
+    monkeypatch.setattr(main, "_season_context", lambda client, user: {"season": 2026, "sleeper_id": "S"})
+    monkeypatch.setattr(league.sleeper, "get", lambda path, ttl=60: rows)
+    monkeypatch.setattr(teams, "player_info", lambda client, ids: {})
+
+    def fake(client, ctx, week, final, result, info):
+        for side in result["teams"]:
+            a, b = side["players"]
+            a.update(status="playing", proj=12.0, live_proj=10.0)
+            b.update(status="waiting", proj=8.0, live_proj=8.0, kickoff=f"2026-11-01T1{side['roster_id']}:00:00-07:00")
+            side["projected"] = 18.0 + side["roster_id"]
+    monkeypatch.setattr(box_score, "add_projections", fake)
+    result = {"week": 8, "games": [{"teams": [{"roster_id": 1, "score": 5.0}, {"roster_id": 2, "score": 0.0}]}]}
+    main._add_card_projections(None, None, result)
+    game = result["games"][0]
+    assert [(t["playing"], t["to_play"]) for t in game["teams"]] == [(1, 1), (1, 1)]
+    assert sum(game["win_chance"]) == 100 and game["win_chance"][0] < 50
+    assert game["next_kickoff"] == "2026-11-01T11:00:00-07:00"
+
+
+def test_matchup_cards_get_owner_pictures_and_records(monkeypatch):
+    from api import league
+    monkeypatch.setattr(main.cache, "cached", lambda key, seconds, load: load())
+    monkeypatch.setattr(league.sleeper, "get", lambda path, ttl=60: [{"user_id": "u1", "avatar": "abc"}] if path.endswith("users") else [{"roster_id": 1, "owner_id": "u1"}])
+    monkeypatch.setattr(league, "standings", lambda sid, names, me: {"rows": [{"roster_id": 1, "wins": 5, "losses": 2, "ties": 0}, {"roster_id": 2, "wins": 3, "losses": 3, "ties": 1}]})
+    result = {"games": [{"teams": [{"roster_id": 1}, {"roster_id": 2}]}]}
+    main._add_card_owners("S", {}, 1, result)
+    a, b = result["games"][0]["teams"]
+    assert a["avatar"].endswith("/abc") and a["record"] == "5-2"
+    assert b["avatar"] is None and b["record"] == "3-3-1"

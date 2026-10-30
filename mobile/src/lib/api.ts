@@ -190,8 +190,11 @@ export type StandingsRow = {
 
 export type Standings = { weeks_played: number; playoff_teams: number; rows: StandingsRow[] };
 
-export type MatchupTeam = { roster_id: number; name: string; score: number; rank: number; top5: boolean; projected?: number | null };
-export type Game = { matchup_id: number; teams: [MatchupTeam, MatchupTeam] };
+export type MatchupTeam = {
+  roster_id: number; name: string; score: number; rank: number; top5: boolean; projected?: number | null;
+  avatar?: string | null; record?: string; playing?: number; to_play?: number;
+};
+export type Game = { matchup_id: number; teams: [MatchupTeam, MatchupTeam]; win_chance?: [number, number] | null; next_kickoff?: string | null };
 export type Matchups = {
   week: number;
   current_week: number;
