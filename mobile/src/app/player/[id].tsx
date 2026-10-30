@@ -51,13 +51,13 @@ export default function Player() {
           <Headshot playerId={data.player_id} pos={data.pos} team={data.nfl_team} size={84} />
           <View style={styles.heroText}>
             <Text style={styles.eyebrow}>{eyebrow}</Text>
-            <Text style={styles.name} numberOfLines={2}>{name}</Text>
-            <View style={styles.pills}>
+            <View style={styles.nameRow}>
+              <Text style={styles.name} numberOfLines={2}>{name}</Text>
               <Text style={[styles.pill, h.healthy ? styles.pillOk : styles.pillOut]}>{h.healthy ? 'Healthy' : h.status}</Text>
-              <Pressable onPress={action.onPress} hitSlop={6}>
-                <Text style={[styles.pill, action.style]}>{action.label}</Text>
-              </Pressable>
             </View>
+            <Pressable onPress={action.onPress} hitSlop={6} style={styles.actionWrap}>
+              <Text style={[styles.action, action.style]}>{action.label}</Text>
+            </Pressable>
           </View>
         </View>
 
@@ -85,30 +85,6 @@ export default function Player() {
                 <Text style={styles.snapText}>{nfl.snap_pct}%{nfl.snap_trend === 'up' ? ' ▲' : nfl.snap_trend === 'down' ? ' ▼' : ''}</Text>
               </View>
             ) : null}
-          </View>
-        ) : null}
-
-        {ls.played || ls.rank ? (
-          <View style={styles.card}>
-            <Text style={styles.label}>IN LEGACY · {data.season}</Text>
-            <View style={styles.statRow}>
-              <View style={styles.stat}>
-                <Text style={styles.statValue}>{ls.started}/{ls.played}</Text>
-                <Text style={styles.statLabel}>weeks started</Text>
-              </View>
-              <View style={styles.stat}>
-                <Text style={styles.statValue} numberOfLines={1} adjustsFontSizeToFit>{ls.rank ? ls.rank.total.toFixed(0) : '—'}</Text>
-                <Text style={styles.statLabel}>total points</Text>
-              </View>
-              <View style={styles.stat}>
-                <Text style={styles.statValue}>{ls.per_dollar != null ? ls.per_dollar.toFixed(1) : '—'}</Text>
-                <Text style={styles.statLabel}>pts per $1</Text>
-              </View>
-              <View style={styles.stat}>
-                <Text style={styles.statValue}>{ls.best ? ls.best.points.toFixed(1) : '—'}</Text>
-                <Text style={styles.statLabel}>{ls.best ? `best · W${ls.best.week}` : 'best week'}</Text>
-              </View>
-            </View>
           </View>
         ) : null}
 
@@ -275,8 +251,10 @@ const styles = StyleSheet.create({
   hero: { flexDirection: 'row', gap: 14, alignItems: 'center' },
   heroText: { flex: 1, gap: 4 },
   eyebrow: { color: colors.gold, fontSize: 11, fontWeight: '700', letterSpacing: 1 },
-  name: { color: colors.text, fontSize: 26, fontWeight: '800', lineHeight: 30 },
-  pills: { flexDirection: 'row', gap: 6 },
+  name: { flexShrink: 1, color: colors.text, fontSize: 26, fontWeight: '800', lineHeight: 30 },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  actionWrap: { alignSelf: 'flex-start', marginTop: 2 },
+  action: { fontSize: 14, fontWeight: '800', borderRadius: 12, overflow: 'hidden', paddingHorizontal: 14, paddingVertical: 6 },
   pill: { fontSize: 11, fontWeight: '800', borderRadius: 10, overflow: 'hidden', paddingHorizontal: 8, paddingVertical: 3 },
   pillTrade: { color: colors.bg, backgroundColor: colors.gold },
   pillDrop: { color: '#FFD9D9', backgroundColor: '#7A2F2F' },
