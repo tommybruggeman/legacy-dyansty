@@ -1,3 +1,4 @@
+import * as Haptics from 'expo-haptics';
 import { router, useNavigation } from 'expo-router';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { Animated, Dimensions, Easing, PanResponder, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, type ScrollViewInstance, type StyleProp, type ViewStyle } from 'react-native';
@@ -12,16 +13,58 @@ export function Screen({ children, loading, onRefresh }: { children: ReactNode; 
   const insets = useSafeAreaInsets();
   const scroll = useRef<ScrollViewInstance>(null);
   useScrollTopOnTab(scroll);
+  const pull = usePullToSearch();
   return (
     <ScrollView
       ref={scroll}
       style={styles.screen}
       contentContainerStyle={[styles.content, { paddingTop: insets.top + 8 }]}
       refreshControl={onRefresh ? <RefreshControl refreshing={!!loading} onRefresh={onRefresh} tintColor={colors.gold} /> : undefined}
+      scrollEventThrottle={16}
+      {...pull.handlers}
     >
+      {pull.hint ? <Text style={[styles.pullHint, { top: insets.top - 12 }]}>{pull.hint === 'ready' ? 'Let go to search' : 'Keep pulling to search'}</Text> : null}
       {children}
     </ScrollView>
   );
+}
+
+// Pull-down search, only on purpose: the page must already be resting at the top when the finger lands
+// (a flick that bounces off the top doesn't count), and the pull has to go about twice as far as a refresh.
+// A tap says it's far enough; letting go there opens search, sliding back up cancels it.
+const PULL_TO_SEARCH = 150;
+const PULL_HINT = 80;
+const STILL_MS = 150;
+type ScrollEvent = { nativeEvent: { contentOffset: { y: number } } };
+
+function usePullToSearch() {
+  const state = useRef({ armed: false, ready: false, lastMove: 0 });
+  const [hint, setHint] = useState<null | 'pull' | 'ready'>(null);
+  const handlers = useMemo(() => ({
+    onScrollBeginDrag: (e: ScrollEvent) => {
+      const s = state.current;
+      s.armed = e.nativeEvent.contentOffset.y <= 1 && Date.now() - s.lastMove > STILL_MS;
+      s.ready = false;
+    },
+    onScroll: (e: ScrollEvent) => {
+      const s = state.current;
+      s.lastMove = Date.now();
+      if (!s.armed) return;
+      const y = e.nativeEvent.contentOffset.y;
+      const ready = y <= -PULL_TO_SEARCH;
+      if (ready && !s.ready) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
+      s.ready = ready;
+      setHint(ready ? 'ready' : y <= -PULL_HINT ? 'pull' : null);
+    },
+    onScrollEndDrag: () => {
+      const s = state.current;
+      if (s.armed && s.ready) router.push('/search');
+      s.armed = false;
+      s.ready = false;
+      setHint(null);
+    },
+  }), []);
+  return { handlers, hint };
 }
 
 // Tapping a tab in the tab bar always opens that tab at the top. Pages outside the tabs never get tabPress, so they keep their place.
@@ -261,4 +304,5 @@ const styles = StyleSheet.create({
   bar: { height: 6, borderRadius: 3, backgroundColor: colors.card, overflow: 'hidden' },
   barFill: { height: '100%', backgroundColor: colors.gold },
   note: { color: colors.muted, fontSize: 12, textAlign: 'center', marginTop: 4 },
+  pullHint: { position: 'absolute', left: 0, right: 0, textAlign: 'center', color: colors.gold, fontSize: 12, fontWeight: '800', letterSpacing: 0.5 },
 });

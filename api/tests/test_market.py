@@ -80,3 +80,43 @@ def test_strategy_question_names_each_target():
     q = market.strategy_question(saved, 2026)
     assert "Bijan Robinson (Nick) and Tyjae Spears (free agent)" in q
     assert market.strategy_question([], 2026) == "Plan my offseason after the 2026 season."
+
+
+TEAMS = [
+    {"team_id": "t1", "owner_name": "Nick", "team_name": "Nick's", "roster_id": 1},
+    {"team_id": "t2", "owner_name": "Tommy", "team_name": "Tommy's", "roster_id": 2},
+]
+ROSTERS = [
+    {"roster_id": 1, "players": ["1", "7"], "taxi": ["7"]},
+    {"roster_id": 2, "players": ["2", "3"], "reserve": ["3"]},
+]
+
+
+def test_all_players_lists_rostered_and_free_agents_with_owners():
+    result = market.all_players(POOL, STATE, PPG, TEAMS, ROSTERS, "t2")
+    rows = {p["player_id"]: p for p in result["players"]}
+    assert set(rows) == {"1", "2", "3", "7", "8", "9"}
+    # On a Sleeper taxi squad without a contract row: rostered to Nick, no salary.
+    assert (rows["7"]["owner_name"], rows["7"]["designation"], rows["7"]["salary"]) == ("Nick", "taxi", None)
+    assert (rows["3"]["is_mine"], rows["3"]["designation"], rows["3"]["salary"], rows["3"]["years_left"]) == (True, "ir", 45.0, 3)
+    assert rows["8"]["team_id"] is None and rows["8"]["rookie"]
+    assert [p["name"] for p in result["players"]][:2] == ["Bryce Young", "Tyjae Spears"]
+    assert [o["owner_name"] for o in result["owners"]] == ["Tommy", "Nick"]
+
+
+def test_all_players_caps_free_agents_only():
+    result = market.all_players(POOL, STATE, PPG, TEAMS, ROSTERS, "t2", fa_limit=1)
+    assert sorted(p["player_id"] for p in result["players"]) == ["1", "2", "3", "7", "8"]
+
+
+def test_filter_players_like_the_app():
+    rows = market.all_players(POOL, STATE, PPG, TEAMS, ROSTERS, "t2")["players"]
+    names = lambda **kw: [p["name"] for p in market.filter_players(rows, **kw)]  # noqa: E731
+    assert names(status="Free agents") == ["Bryce Young", "Nobody"]
+    assert names(status="Rostered", owner="t2") == ["Davante Adams", "Josh Allen"]
+    # A search ignores the status row and looks through everyone.
+    assert names(search="tyjae", status="Free agents") == ["Tyjae Spears"]
+    assert names(contract="Taxi") == ["Tyjae Spears"]
+    assert names(salary="Under $20") == ["Davante Adams"]
+    assert names(salary="$20+") == ["Derrick Henry", "Josh Allen"]
+    assert market.name_matches("A.J. Brown", "aj brown") and market.name_matches("Christian McCaffrey", "mc")
