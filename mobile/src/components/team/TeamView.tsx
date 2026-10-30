@@ -7,7 +7,7 @@ import { colors } from '../../lib/theme';
 import { PlayerFace } from '../PlayerFace';
 import { Card, Note, Pill, Pos, Row, Segmented, SwipeTabs, Tile, Tiles, Title, money, ordinal, record, ui } from '../ui';
 
-const TABS = ['Roster', 'Contracts', 'Picks', 'Activity'] as const;
+const TABS = ['Roster', 'Contracts', 'Picks'] as const;
 
 // Set when a team page opens a page of its own, so returning from it keeps the tab.
 let openedHere = false;
@@ -16,7 +16,7 @@ function go(path: Parameters<typeof router.push>[0]) {
   router.push(path);
 }
 
-// One owner's team with the same four tabs as My Team. Other owners' teams
+// One owner's team with the same three tabs as My Team (league activity lives on League > Teams). Other owners' teams
 // are read only; trades are made in Sleeper.
 export function TeamView({ team, eyebrow, badge }: { team: TeamPage; eyebrow?: string; badge?: ReactNode }) {
   const [tab, setTab] = useState<(typeof TABS)[number]>('Roster');
@@ -40,7 +40,7 @@ export function TeamView({ team, eyebrow, badge }: { team: TeamPage; eyebrow?: s
         value={tab}
         onChange={setTab}
         render={(t) =>
-          t === 'Roster' ? <RosterTab team={team} /> : t === 'Contracts' ? <ContractsTab team={team} /> : t === 'Picks' ? <PicksTab team={team} /> : <ActivityTab team={team} />
+          t === 'Roster' ? <RosterTab team={team} /> : t === 'Contracts' ? <ContractsTab team={team} /> : <PicksTab team={team} />
         }
       />
     </>
@@ -71,17 +71,6 @@ function TopTiles({ team, tab }: { team: TeamPage; tab: (typeof TABS)[number] })
         <Tile label="PICKS" value={String(owned.length)} sub={`next ${drafts.length || 0} draft${drafts.length === 1 ? '' : 's'}`} />
         <Tile label="FIRST" value={first ? ROUND[first.round] ?? `R${first.round}` : '—'} sub={first ? `${first.year} draft` : 'no picks'} />
         <Tile label="1STS" value={String(firsts.length)} sub={firstYears.length ? firstYears.join(' + ') : 'none owned'} />
-      </Tiles>
-    );
-  }
-  if (tab === 'Activity') {
-    const m = team.moves ?? { moves: team.activity.length, trades: 0 };
-    const left = team.cap.by_year[0]?.space;
-    return (
-      <Tiles>
-        <Tile label="MOVES" value={String(m.moves)} sub="this season" />
-        <Tile label="TRADES" value={String(m.trades)} sub="this season" />
-        <Tile label="SALARY LEFT" value={left != null ? money(left) : '—'} tone={left != null && left < 0 ? 'red' : undefined} sub={`${team.cap.by_year[0]?.season ?? 'this season'} cap`} />
       </Tiles>
     );
   }
@@ -188,6 +177,7 @@ function RosterTab({ team }: { team: TeamPage }) {
         </Card>
       </View>
       <Note>{team.roster.count} players under contract</Note>
+      <HeadToHead team={team} />
       {!team.is_me ? (
         <Pressable style={styles.button} onPress={() => Linking.openURL(`https://sleeper.com/leagues/${team.sleeper_league_id}`)}>
           <Text style={styles.buttonText}>Trade in Sleeper ↗</Text>
@@ -282,31 +272,19 @@ function PicksTab({ team }: { team: TeamPage }) {
   );
 }
 
-function ActivityTab({ team }: { team: TeamPage }) {
+// Your record against this owner, under their roster (other teams only).
+function HeadToHead({ team }: { team: TeamPage }) {
   const h2h = team.head_to_head;
+  if (!h2h) return null;
   return (
-    <>
-      <Card>
-        {team.activity.length === 0 ? <Note>No signings or releases yet.</Note> : null}
-        {team.activity.map((a, i) => (
-          <Row key={`${a.player}-${a.at}-${i}`} first={i === 0}>
-            <Pill label={a.kind} tone={a.kind === 'SIGN' ? 'live' : 'out'} />
-            <Text style={[ui.value, ui.flex]}>{a.kind === 'SIGN' ? 'Signed' : 'Released'} {a.player}</Text>
-            <Text style={ui.sub}>{a.at ? new Date(a.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : ''}</Text>
-          </Row>
-        ))}
-      </Card>
-      {h2h ? (
-        <Card
-          title="Head to head with you"
-          right={<Text style={[ui.value, ui.gold]}>{h2h.wins > h2h.losses ? 'You lead' : h2h.wins < h2h.losses ? 'They lead' : 'Even'} {record(h2h.wins, h2h.losses, h2h.ties)}</Text>}
-        >
-          <Text style={ui.sub}>
-            Last meeting: Week {h2h.last.week}, you {h2h.last.me >= h2h.last.them ? 'won' : 'lost'} {h2h.last.me.toFixed(1)} to {h2h.last.them.toFixed(1)}
-          </Text>
-        </Card>
-      ) : null}
-    </>
+    <Card
+      title="Head to head with you"
+      right={<Text style={[ui.value, ui.gold]}>{h2h.wins > h2h.losses ? 'You lead' : h2h.wins < h2h.losses ? 'They lead' : 'Even'} {record(h2h.wins, h2h.losses, h2h.ties)}</Text>}
+    >
+      <Text style={ui.sub}>
+        Last meeting: Week {h2h.last.week}, you {h2h.last.me >= h2h.last.them ? 'won' : 'lost'} {h2h.last.me.toFixed(1)} to {h2h.last.them.toFixed(1)}
+      </Text>
+    </Card>
   );
 }
 
