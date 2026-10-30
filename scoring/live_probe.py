@@ -99,6 +99,9 @@ def run(minutes: float, every: float, leagues: int, season: int | None, week: in
 
     seen_play: dict[str, float] = {}
     espn_lag: list[float] = []
+    all_lag: dict[str, list[float]] = {"plain": [], "fresh": []}  # every new play; odd loops add a cache-busting param
+    board_lag: list[float] = []  # the scoreboard's own last-play line (no extra download)
+    seen_last: set[str] = set()
     espn_td_times: dict[str, list[float]] = defaultdict(list)  # team -> wallclock of each TD play, in order
     sleeper_prev: dict[str, float] | None = None
     sleeper_seen: dict[str, list[float]] = defaultdict(list)  # team -> when each new TD first showed in Sleeper
@@ -111,14 +114,25 @@ def run(minutes: float, every: float, leagues: int, season: int | None, week: in
         loops += 1
         board = meter.get(f"{ESPN}/scoreboard") or {}
         live = [e for e in board.get("events") or [] if ((e.get("status") or {}).get("type") or {}).get("state") == "in"]
+        mode = "fresh" if loops % 2 else "plain"
         for event in live:
-            for play in espn_plays(meter.get(f"{ESPN}/summary?event={event.get('id')}")):
+            last = ((event.get("competitions") or [{}])[0].get("situation") or {}).get("lastPlay") or {}
+            if last.get("id") and str(last["id"]) not in seen_last:
+                seen_last.add(str(last["id"]))
+                wall = seen_play.get(str(last["id"]))  # first time the summary showed the same play
+                if loops > 1 and wall is None:
+                    board_lag.append(0.0)  # scoreboard had it before the summary did
+                elif loops > 1 and wall is not None:
+                    board_lag.append(started - wall)  # seconds the scoreboard trailed the summary
+            bust = f"&_={int(started)}" if mode == "fresh" else ""
+            for play in espn_plays(meter.get(f"{ESPN}/summary?event={event.get('id')}{bust}")):
                 if not play["id"] or play["id"] in seen_play:
                     continue
                 seen_play[play["id"]] = started
                 if loops == 1 or play["wallclock"] is None:
                     continue  # plays already on the board when the probe started have no fair first-seen time
                 lag = started - play["wallclock"]
+                all_lag[mode].append(lag)
                 if play["scoring"] or play["td"] or abs(play["yards"] or 0) >= BIG_PLAY_YARDS:
                     espn_lag.append(lag)
                 if play["td"]:
@@ -151,6 +165,9 @@ def run(minutes: float, every: float, leagues: int, season: int | None, week: in
     out = [f"probe: {minutes:g} min, every {every:g}s, {loops} loops, {leagues} league(s), season {season} week {week}"]
     for name, lags in (("ESPN big plays/scores", espn_lag), ("Sleeper touchdowns", sleeper_lag)):
         out.append(f"  {name}: {len(lags)} timed; median {median(lags) if lags else 0:.0f}s, 90th pct {pct(lags, 0.9):.0f}s, worst {max(lags, default=0):.0f}s")
+    for mode, lags in all_lag.items():
+        out.append(f"  ESPN every play ({mode} url): {len(lags)} timed; median {median(lags) if lags else 0:.0f}s, 90th pct {pct(lags, 0.9):.0f}s")
+    out.append(f"  ESPN scoreboard last play vs summary: {len(board_lag)} timed; median {median(board_lag) if board_lag else 0:.0f}s behind")
     out.append(f"  alert checks run: {alerts}")
     out.append(f"  download: {meter.bytes / 1e6 / elapsed_h:.0f} MB/hour over {meter.calls} calls; CPU {cpu / elapsed_h:.0f} s/hour; peak memory {peak_mb:.0f} MB")
     return out
