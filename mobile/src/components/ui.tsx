@@ -1,10 +1,11 @@
 import * as Haptics from 'expo-haptics';
 import { router, useNavigation } from 'expo-router';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { Animated, Dimensions, Easing, PanResponder, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, type ScrollViewInstance, type StyleProp, type ViewStyle } from 'react-native';
+import { ActivityIndicator, Animated, Dimensions, Easing, PanResponder, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, type ScrollViewInstance, type StyleProp, type ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { colors } from '../lib/theme';
+import { useSlow } from './ScreenState';
 
 // Shared pieces from the page designs: cards, tiles, the gold segmented
 // switcher, position badges and status pills.
@@ -14,6 +15,7 @@ export function Screen({ children, loading, onRefresh }: { children: ReactNode; 
   const scroll = useRef<ScrollViewInstance>(null);
   useScrollTopOnTab(scroll);
   const pull = usePullToSearch();
+  const slow = useSlow(!!loading);
   return (
     <ScrollView
       ref={scroll}
@@ -24,7 +26,8 @@ export function Screen({ children, loading, onRefresh }: { children: ReactNode; 
       {...pull.handlers}
     >
       {pull.hint ? <Text style={[styles.pullHint, { top: insets.top - 12 }]}>{pull.hint === 'ready' ? 'Let go to search' : 'Keep pulling to search'}</Text> : null}
-      {children}
+      <View style={slow && styles.faded} pointerEvents={slow ? 'none' : 'auto'}>{children}</View>
+      {slow ? <ActivityIndicator size="large" color={colors.gold} style={[styles.wheel, { top: insets.top + 140 }]} /> : null}
     </ScrollView>
   );
 }
@@ -304,5 +307,7 @@ const styles = StyleSheet.create({
   bar: { height: 6, borderRadius: 3, backgroundColor: colors.card, overflow: 'hidden' },
   barFill: { height: '100%', backgroundColor: colors.gold },
   note: { color: colors.muted, fontSize: 12, textAlign: 'center', marginTop: 4 },
+  faded: { opacity: 0.35 },
+  wheel: { position: 'absolute', left: 0, right: 0 },
   pullHint: { position: 'absolute', left: 0, right: 0, textAlign: 'center', color: colors.gold, fontSize: 12, fontWeight: '800', letterSpacing: 0.5 },
 });

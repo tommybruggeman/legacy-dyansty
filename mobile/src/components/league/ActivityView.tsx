@@ -30,7 +30,16 @@ const signedMoney = (n: number) => `${n > 0 ? '+' : ''}${money(n)}`;
 const openTeam = (id: string | null | undefined) => (id ? () => router.push(`/team/${id}`) : undefined);
 
 // One place for everything that happens in the league: trades, pickups, drops and the draft, newest first.
-export function ActivityView({ focus }: { focus?: string }) {
+// The newest drop by that team that let the player go (or trade that sent him away), for a dead cap row.
+function sourceOf(items: ActivityItem[], from: { player: string; team: string; trade: boolean }): string | undefined {
+  const hit = items.find((i) =>
+    from.trade
+      ? i.kind === 'trade' && i.sides.some((s) => s.team_id !== from.team && s.players.some((p) => p.player_id === from.player))
+      : i.kind === 'move' && i.team_id === from.team && i.drops.some((p) => p.player_id === from.player));
+  return hit?.id;
+}
+
+export function ActivityView({ focus: focusId, from }: { focus?: string; from?: { player: string; team: string; trade: boolean } }) {
   const { data, error, loading, reload } = useApi<ActivityFeed>('/league/activity');
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>('All');
   const [shown, setShown] = useState(PAGE);
@@ -40,7 +49,8 @@ export function ActivityView({ focus }: { focus?: string }) {
   if (!data) return null;
 
   const me = data.me;
-  // A trade alert opens the page on that trade: it goes first, outlined.
+  const focus = focusId ?? (from ? sourceOf(data.items, from) : undefined);
+  // A trade alert or a dead cap row opens the page on that item: it goes first, outlined.
   const items = focus ? [...data.items.filter((i) => i.id === focus), ...data.items.filter((i) => i.id !== focus)] : data.items;
   const rows = items.filter((i) =>
     filter === 'All' ? true
@@ -75,7 +85,7 @@ export function ActivityView({ focus }: { focus?: string }) {
 export function ActivityCard({ item, me, focused }: { item: ActivityItem; me: string | null; focused?: boolean }) {
   if (item.kind === 'trade') return <TradeCard trade={item} me={me} focused={focused} />;
   if (item.kind === 'draft') return <DraftCard draft={item} me={me} />;
-  return <MoveCard move={item} me={me} />;
+  return <MoveCard move={item} me={me} focused={focused} />;
 }
 
 // ---- the newest few, under League > Teams ------------------------------------
@@ -189,12 +199,12 @@ function TradeSideView({ side, me, first, played }: { side: TradeSide; me: strin
 const MOVE_LABEL: Record<Move['type'], string> = { waiver: 'WAIVER CLAIM', free_agent: 'FREE AGENT', commissioner: 'COMMISSIONER', drop: 'DROP' };
 const KIND_COLOR: Record<Move['type'], string> = { waiver: '#7FB6FF', free_agent: colors.live, commissioner: colors.muted, drop: '#E07C7C' };
 
-function MoveCard({ move, me }: { move: Move; me: string | null }) {
+function MoveCard({ move, me, focused }: { move: Move; me: string | null; focused?: boolean }) {
   const mine = !!me && move.owner === me;
   const [bids, setBids] = useState<{ player: string; bids: WaiverBid[] } | null>(null);
   const label = move.adds.length && move.drops.length && move.type !== 'commissioner' ? (move.type === 'waiver' ? 'WAIVER CLAIM + DROP' : 'ADD + DROP') : MOVE_LABEL[move.type];
   return (
-    <View style={[styles.card, mine && styles.cardMine]}>
+    <View style={[styles.card, mine && styles.cardMine, focused && styles.cardFocus]}>
       <View style={styles.head}>
         <Text style={[styles.kind, { color: KIND_COLOR[move.type] }]}>{label}</Text>
         <View style={ui.flex} />
