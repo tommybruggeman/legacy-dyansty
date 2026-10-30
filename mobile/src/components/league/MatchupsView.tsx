@@ -4,7 +4,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Avatar } from '../Pictures';
 import { ErrorState, Loading } from '../ScreenState';
-import { type Game, type Matchups as MatchupsData, type MatchupTeam, useApi } from '../../lib/api';
+import { type Game, type Matchups as MatchupsData, type MatchupTeam, prefetch, useApi } from '../../lib/api';
 import { colors } from '../../lib/theme';
 
 const first = (name: string) => name.split(' ')[0];
@@ -21,6 +21,15 @@ export function MatchupsView() {
   const [live, setLive] = useState(true);
   const { data, error, loading, reload } = useApi<MatchupsData>(week ? `/matchups?week=${week}` : '/matchups', live ? LIVE_REFRESH_MS : 0);
   useEffect(() => { if (data) setLive(!data.is_final); }, [data]);
+  // The current week always loads as /matchups (Home prefetches it), and the weeks on either side load in the
+  // background, so the week arrows open instantly.
+  const path = (w: number) => (w === data?.current_week ? '/matchups' : `/matchups?week=${w}`);
+  const go = (w: number) => setWeek(w === data?.current_week ? null : w);
+  const near = data ? [data.week - 1, data.week + 1].filter((w) => w >= 1 && w <= Math.min(18, data.current_week)) : [];
+  useEffect(() => {
+    if (near.length) prefetch(near.map(path));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data?.week, data?.current_week]);
 
   if (loading && !data) return <Loading />;
   if (error && !data) return <ErrorState message={error} onRetry={reload} />;
@@ -37,11 +46,11 @@ export function MatchupsView() {
       <View style={styles.titleRow}>
         {status ? <Text style={[styles.badge, data.is_final ? styles.finalBadge : styles.liveBadge]}>{status}</Text> : <View />}
         <View style={styles.weekPicker}>
-          <Pressable disabled={shown <= 1} onPress={() => setWeek(shown - 1)} hitSlop={10}>
+          <Pressable disabled={shown <= 1} onPress={() => go(shown - 1)} hitSlop={10}>
             <Text style={[styles.arrow, shown <= 1 && styles.dim]}>‹</Text>
           </Pressable>
           <Text style={styles.weekText}>Week {shown}</Text>
-          <Pressable disabled={shown >= 18} onPress={() => setWeek(shown + 1)} hitSlop={10}>
+          <Pressable disabled={shown >= 18} onPress={() => go(shown + 1)} hitSlop={10}>
             <Text style={[styles.arrow, shown >= 18 && styles.dim]}>›</Text>
           </Pressable>
         </View>

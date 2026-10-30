@@ -191,18 +191,27 @@ def _add_card_owners(sleeper_id: str, names: dict[int, str], my_roster_id: int |
                 team["record"] = f"{rec['wins']}-{rec['losses']}" + (f"-{rec['ties']}" if rec["ties"] else "")
 
 
+CARD_PROJ_TTL = 15
+
+
 def _add_card_projections(client: Client, user: Any, result: dict[str, Any]) -> None:
     """Each side's projected total on the week's game cards, scored the same way as the box score."""
     ctx = _season_context(client, user)
     week = result["week"]
-    rows = league.sleeper.get(f"league/{ctx['sleeper_id']}/matchups/{week}", ttl=league.LIVE_TTL) or []
-    sides = []
-    for row in rows:
-        points = row.get("players_points") or {}
-        starters = [str(pid) for pid in row.get("starters") or [] if pid and str(pid) != "0"]
-        sides.append({"roster_id": row.get("roster_id"), "players": [{"player_id": pid, "points": float(points.get(pid) or 0)} for pid in starters]})
-    info = teams.player_info(client, [p["player_id"] for side in sides for p in side["players"]])
-    box_score_mod.add_projections(client, ctx, week, False, {"teams": sides}, info)
+
+    def load() -> list[dict[str, Any]]:
+        rows = league.sleeper.get(f"league/{ctx['sleeper_id']}/matchups/{week}", ttl=league.LIVE_TTL) or []
+        sides = []
+        for row in rows:
+            points = row.get("players_points") or {}
+            starters = [str(pid) for pid in row.get("starters") or [] if pid and str(pid) != "0"]
+            sides.append({"roster_id": row.get("roster_id"), "players": [{"player_id": pid, "points": float(points.get(pid) or 0)} for pid in starters]})
+        info = teams.player_info(client, [p["player_id"] for side in sides for p in side["players"]])
+        box_score_mod.add_projections(client, ctx, week, False, {"teams": sides}, info)
+        return sides
+
+    # League-wide and the same for every owner: one scoring pass per live refresh window, shared by all.
+    sides = cache.cached(("card_proj", ctx["sleeper_id"], ctx["season"], week), CARD_PROJ_TTL, load)
     by_roster = {side["roster_id"]: side for side in sides}
     for game in result["games"]:
         pair = [by_roster.get(team["roster_id"]) for team in game["teams"]]
