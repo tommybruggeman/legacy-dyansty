@@ -36,14 +36,13 @@ export default function Game() {
   const swap = data.teams[1]?.roster_id === data.my_roster_id;
   const [a, b] = swap ? [data.teams[1], data.teams[0]] : data.teams;
   const odds = data.win_chance ? (swap ? [data.win_chance[1], data.win_chance[0]] : data.win_chance) : null;
-  const rows = Math.max(a.players.length, b.players.length);
   const players = [...a.players, ...b.players];
   const playing = players.filter((p) => p.status === 'playing').length;
   const started = players.some((p) => p.status === 'playing' || p.status === 'final');
   const open = (teamId: string | null) => (teamId ? () => router.push(`/team/${teamId}`) : undefined);
 
   return (
-    <Screen loading={loading} onRefresh={reload} fill>
+    <Screen loading={loading} onRefresh={reload}>
       <Back label="Matchups" />
       <Text style={styles.eyebrow}>WEEK {data.week} · {firstName(a.name).toUpperCase()} VS {firstName(b.name).toUpperCase()}</Text>
       <View style={styles.header}>
@@ -52,21 +51,36 @@ export default function Game() {
         <ScoreSide side={b} other={a} final={data.is_final} onPress={open(b.team_id)} right />
       </View>
       {data.is_final ? <FinalBanner a={a} b={b} /> : odds ? <WinOdds odds={odds} /> : null}
-      <View style={styles.table}>
-        {Array.from({ length: rows }).map((_, i) => {
-          const pa = a.players[i];
-          const pb = b.players[i];
-          return (
-            <View key={i} style={styles.row}>
-              <Half p={pa} side="l" onScore={setShown} />
-              <View style={styles.slot}><Text style={styles.slotText}>{pa?.slot || pb?.slot || ''}</Text></View>
-              <Half p={pb} side="r" onScore={setShown} />
-            </View>
-          );
-        })}
-      </View>
+      <Text style={styles.section}>STARTERS</Text>
+      <Lineup left={a.players} right={b.players} onScore={setShown} />
+      {a.bench?.length || b.bench?.length ? (
+        <>
+          <Text style={[styles.section, styles.sectionBench]}>BENCH</Text>
+          <Lineup left={a.bench ?? []} right={b.bench ?? []} onScore={setShown} bench />
+        </>
+      ) : null}
       <Breakdown player={shown} onClose={() => setShown(null)} />
     </Screen>
+  );
+}
+
+// Two lineups side by side, row by row. Bench rows pair by order (QB, RB, WR, TE, then projection) and show each player's position.
+function Lineup({ left, right, onScore, bench }: { left: BoxPlayer[]; right: BoxPlayer[]; onScore: (p: BoxPlayer) => void; bench?: boolean }) {
+  const rows = Math.max(left.length, right.length);
+  return (
+    <View style={styles.table}>
+      {Array.from({ length: rows }).map((_, i) => {
+        const pa = left[i];
+        const pb = right[i];
+        return (
+          <View key={i} style={styles.row}>
+            <Half p={pa} side="l" onScore={onScore} bench={bench} />
+            <View style={styles.slot}><Text style={styles.slotText}>{bench ? 'BN' : pa?.slot || pb?.slot || ''}</Text></View>
+            <Half p={pb} side="r" onScore={onScore} bench={bench} />
+          </View>
+        );
+      })}
+    </View>
   );
 }
 
@@ -118,8 +132,8 @@ function FinalBanner({ a, b }: { a: Side; b: Side }) {
 }
 
 // One player's half of a row. Live = gold edge on the outside + warm tint; has the ball = brighter; red zone = red edge.
-function Half({ p, side, onScore }: { p?: BoxPlayer; side: 'l' | 'r'; onScore: (p: BoxPlayer) => void }) {
-  if (!p || !p.player_id || p.player_id === '0') return <View style={styles.half}><Text style={styles.empty}>{p ? 'Empty' : ''}</Text></View>;
+function Half({ p, side, onScore, bench }: { p?: BoxPlayer; side: 'l' | 'r'; onScore: (p: BoxPlayer) => void; bench?: boolean }) {
+  if (!p || !p.player_id || p.player_id === '0') return <View style={[styles.half, bench && styles.halfBench]}><Text style={styles.empty}>{p ? 'Empty' : ''}</Text></View>;
   const g = p.game;
   const on = p.status === 'playing';
   const right = side === 'r';
@@ -127,16 +141,17 @@ function Half({ p, side, onScore }: { p?: BoxPlayer; side: 'l' | 'r'; onScore: (
   const tint = on ? (g?.possession ? ['#4A3C1A', '#2A2D18'] : ['#3A3018', '#1D2A1D']) : null;
   const scored = p.status === 'playing' || p.status === 'final';
   return (
-    <View style={[styles.half, right ? { borderRightWidth: 4, borderRightColor: edge ?? 'transparent' } : { borderLeftWidth: 4, borderLeftColor: edge ?? 'transparent' }]}>
+    <View style={[styles.half, bench && styles.halfBench, right ? { borderRightWidth: 4, borderRightColor: edge ?? 'transparent' } : { borderLeftWidth: 4, borderLeftColor: edge ?? 'transparent' }]}>
       {tint ? <LinearGradient colors={tint as [string, string]} start={{ x: right ? 1 : 0, y: 0 }} end={{ x: right ? 0.2 : 0.8, y: 0 }} style={StyleSheet.absoluteFill} /> : null}
       <View style={styles.line}>
         <Pressable onPress={() => router.push(`/player/${p.player_id}`)} hitSlop={4} style={styles.nameWrap}>
           <Text style={styles.name} numberOfLines={1}>{shortName(p.name)}</Text>
+          {bench && p.pos ? <Text style={styles.benchPos}>{p.pos}</Text> : null}
           {p.team ? <Text style={[styles.chip, { backgroundColor: teamColors(p.team)[0] }]}>{p.team}</Text> : null}
           {on && g?.possession ? <View style={styles.ball}><View style={styles.lace} /></View> : null}
         </Pressable>
         <Pressable onPress={() => onScore(p)} hitSlop={8}>
-          <Text style={[styles.points, side === 'l' && styles.gold]}>{scored || p.points ? p.points.toFixed(1) : '–'}</Text>
+          <Text style={[styles.points, side === 'l' && !bench && styles.gold, bench && styles.pointsBench]}>{scored || p.points ? p.points.toFixed(1) : '–'}</Text>
         </Pressable>
       </View>
       <View style={styles.line}>
@@ -265,29 +280,34 @@ const styles = StyleSheet.create({
   oddsFill: { height: 6, backgroundColor: colors.live },
   oddsLabel: { color: colors.muted, fontSize: 10, fontWeight: '800' },
   banner: { color: colors.gold, fontSize: 12, fontWeight: '700', backgroundColor: '#122B20', borderRadius: 10, overflow: 'hidden', paddingHorizontal: 10, paddingVertical: 8, marginBottom: 10 },
-  table: { flexGrow: 1, borderRadius: 14, overflow: 'hidden', backgroundColor: colors.bg },
-  row: { flexGrow: 1, flexDirection: 'row', alignItems: 'stretch', marginBottom: 3 },
-  half: { flex: 1, minWidth: 0, justifyContent: 'center', backgroundColor: '#11271D', paddingHorizontal: 8, paddingVertical: 7, overflow: 'hidden' },
-  empty: { color: colors.muted, fontSize: 12 },
-  slot: { width: 30, alignItems: 'center', justifyContent: 'center', backgroundColor: '#08140F' },
-  slotText: { color: colors.muted, fontSize: 10, fontWeight: '800' },
+  table: { borderRadius: 14, overflow: 'hidden', backgroundColor: colors.bg },
+  section: { color: colors.gold, fontSize: 11, fontWeight: '800', letterSpacing: 1.2, marginBottom: 6 },
+  sectionBench: { color: colors.muted, marginTop: 16 },
+  row: { flexDirection: 'row', alignItems: 'stretch', marginBottom: 3 },
+  half: { flex: 1, minWidth: 0, backgroundColor: '#11271D', paddingHorizontal: 8, paddingVertical: 9, overflow: 'hidden' },
+  halfBench: { backgroundColor: '#0E2119' },
+  empty: { color: colors.muted, fontSize: 13 },
+  slot: { width: 32, alignItems: 'center', justifyContent: 'center', backgroundColor: '#08140F' },
+  slotText: { color: colors.muted, fontSize: 11, fontWeight: '800' },
   line: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 4 },
   nameWrap: { flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 1 },
-  name: { color: colors.text, fontSize: 13, fontWeight: '800', flexShrink: 1 },
-  chip: { flexShrink: 0, color: '#FFFFFF', fontSize: 8, fontWeight: '800', paddingHorizontal: 3, paddingVertical: 1, borderRadius: 3, overflow: 'hidden' },
-  points: { color: colors.text, fontSize: 15, fontWeight: '800', fontVariant: ['tabular-nums'] },
-  proj: { color: colors.muted, fontSize: 10 },
+  name: { color: colors.text, fontSize: 14, fontWeight: '800', flexShrink: 1 },
+  chip: { flexShrink: 0, color: '#FFFFFF', fontSize: 8.5, fontWeight: '800', paddingHorizontal: 3, paddingVertical: 1, borderRadius: 3, overflow: 'hidden' },
+  points: { color: colors.text, fontSize: 16, fontWeight: '800', fontVariant: ['tabular-nums'] },
+  pointsBench: { color: '#C9C2B2' },
+  benchPos: { flexShrink: 0, color: colors.muted, fontSize: 10, fontWeight: '800' },
+  proj: { color: colors.muted, fontSize: 10.5 },
   projLive: { color: colors.text, fontWeight: '700' },
   gameRow: { flexDirection: 'row', alignItems: 'center', flexShrink: 1 },
-  game: { color: colors.muted, fontSize: 10, marginTop: 2, flexShrink: 1 },
+  game: { color: colors.muted, fontSize: 10.5, marginTop: 2, flexShrink: 1 },
   clock: { color: colors.live, fontWeight: '800' },
   finalWord: { fontWeight: '800' },
-  ball: { flexShrink: 0, width: 13, height: 8, borderRadius: 5, backgroundColor: '#9A5A2B', justifyContent: 'center', alignItems: 'center' },
+  ball: { flexShrink: 0, width: 14, height: 9, borderRadius: 5, backgroundColor: '#9A5A2B', justifyContent: 'center', alignItems: 'center' },
   lace: { width: 5, height: 1, backgroundColor: '#FFFFFF' },
-  stats: { color: '#D9D0BD', fontSize: 10.5, fontWeight: '600', marginTop: 3, lineHeight: 14 },
+  stats: { color: '#D9D0BD', fontSize: 11, fontWeight: '600', marginTop: 3, lineHeight: 15 },
   good: { color: colors.live, fontWeight: '800' },
   bad: { color: '#EF7A7A', fontWeight: '800' },
-  offense: { color: colors.gold, fontSize: 9, fontWeight: '800', letterSpacing: 0.4, marginTop: 4 },
+  offense: { color: colors.gold, fontSize: 9.5, fontWeight: '800', letterSpacing: 0.4, marginTop: 4 },
   redZone: { color: '#FF7D7D' },
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', padding: 28 },
   sheet: { backgroundColor: colors.card, borderRadius: 18, padding: 18, gap: 4 },

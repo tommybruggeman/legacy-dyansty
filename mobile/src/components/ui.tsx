@@ -8,12 +8,12 @@ import { colors } from '../lib/theme';
 // Shared pieces from the page designs: cards, tiles, the gold segmented
 // switcher, position badges and status pills.
 
-export function Screen({ children, loading, onRefresh, fill }: { children: ReactNode; loading?: boolean; onRefresh?: () => void; fill?: boolean }) {
+export function Screen({ children, loading, onRefresh }: { children: ReactNode; loading?: boolean; onRefresh?: () => void }) {
   const insets = useSafeAreaInsets();
   return (
     <ScrollView
       style={styles.screen}
-      contentContainerStyle={[styles.content, { paddingTop: insets.top + 8 }, fill && { flexGrow: 1, paddingBottom: insets.bottom + 12 }]}
+      contentContainerStyle={[styles.content, { paddingTop: insets.top + 8 }]}
       refreshControl={onRefresh ? <RefreshControl refreshing={!!loading} onRefresh={onRefresh} tintColor={colors.gold} /> : undefined}
     >
       {children}

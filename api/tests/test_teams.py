@@ -29,10 +29,11 @@ STATE = {
 NEXT = {"season": 2027, "roster": [{"league_team_id": T1, "cap_hit": 77.5}], "dead_cap": [], "cap_adjustments": []}
 
 SLEEPER = {
-    "league/S/rosters": [{"roster_id": 1, "starters": ["10", "11", "14"]}, {"roster_id": 2, "starters": ["20"]}],
+    "league/S/rosters": [{"roster_id": 1, "starters": ["10", "11", "14"]}, {"roster_id": 2, "starters": ["20"], "taxi": ["21"]}],
     "league/S/matchups/1": [
-        {"roster_id": 1, "matchup_id": 1, "points": 120, "starters": ["10", "11", "14"], "starters_points": [30, 20, 10], "players_points": {"10": 30, "11": 20, "14": 10, "12": 0}},
-        {"roster_id": 2, "matchup_id": 1, "points": 100, "starters": ["20"], "starters_points": [100], "players_points": {"20": 100}},
+        {"roster_id": 1, "matchup_id": 1, "points": 120, "starters": ["10", "11", "14"], "starters_points": [30, 20, 10], "players_points": {"10": 30, "11": 20, "14": 10, "12": 0},
+         "players": ["10", "11", "14", "12"]},
+        {"roster_id": 2, "matchup_id": 1, "points": 100, "starters": ["20"], "starters_points": [100], "players_points": {"20": 100}, "players": ["20", "21"]},
     ],
     "league/S/matchups/2": [
         {"roster_id": 1, "matchup_id": 1, "points": 80, "players_points": {"10": 20, "11": 10}},
@@ -126,6 +127,8 @@ def test_head_to_head_and_box_score():
     assert tommy["name"] == "Tommy" and tommy["score"] == 120.0
     assert [(p["name"], p["slot"], p["points"]) for p in tommy["players"]][0] == ("Josh Allen", "QB", 30.0)
     assert tommy["players"][2]["slot"] == "FLX"
+    assert [(p["player_id"], p["slot"], p["points"]) for p in tommy["bench"]] == [("12", "BN", 0.0)]
+    assert box["teams"][1]["bench"] == []  # taxi player 21 can't play
 
 
 def test_ir_rows_only_for_this_team():
