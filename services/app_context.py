@@ -557,7 +557,13 @@ def build_standings_from_sleeper(sleeper_league_id: str) -> pd.DataFrame:
     # not by the display name shown in the Team column.
     team_roster_ids = {}
 
-    # Only finished weeks count; the week being played is left out.
+    # Only finished regular-season weeks count; the week being played and the playoffs are left out.
+    try:
+        playoff_start = int(((get_json(f"https://api.sleeper.app/v1/league/{sleeper_league_id}") or {}).get("settings") or {}).get("playoff_week_start") or 0)
+    except Exception:
+        playoff_start = 0
+    if playoff_start > 1:
+        latest_week = min(latest_week, playoff_start - 1)
     for week in range(1, latest_week + 1):
         try:
             rows = (

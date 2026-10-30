@@ -230,10 +230,14 @@ def load_weekly_games_cached(
         sleeper_league_id,
     )
 
-    rows = _get(
-        f"https://api.sleeper.app/v1/league/"
-        f"{sleeper_league_id}/matchups/{week}"
-    ) or []
+    # Weeks the app runs itself (playoffs on) come from app lineups and our scoring, same as the iOS app.
+    from api import own_league
+    from api import sleeper as sleeper_api
+    try:
+        own_league.sync(sb, app_league_id, sleeper_league_id, int(ACTIVE_SEASON.season))
+    except Exception:
+        pass
+    rows = sleeper_api.get(f"league/{sleeper_league_id}/matchups/{week}", ttl=15) or []
 
     return build_games(rows, names)
 

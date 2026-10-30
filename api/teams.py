@@ -7,7 +7,7 @@ the website. Lineups and points come from Sleeper.
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from api import sleeper
 from services.team_roster_state import (
@@ -181,6 +181,12 @@ def _sleeper_roster(sleeper_id: str, roster_id: int | None) -> dict[str, Any]:
     return next((r for r in rosters if r.get("roster_id") == roster_id), {})
 
 
+EMPTY_SLOT = {
+    "player_id": "", "name": "Empty", "pos": "", "nfl_team": "", "injury": None, "salary": 0.0, "contract_salary": 0.0,
+    "years_left": 0, "designation": None, "is_rookie": False, "ppg": None, "no_contract": True, "empty": True,
+}
+
+
 def roster_rows(
     state: dict[str, Any],
     team_id: str,
@@ -235,14 +241,17 @@ def roster_rows(
     starter_ids = [_text(p) for p in lineup.get("starters") or []]
     lineup_slots = [s for s in slots if s in LINEUP_SLOTS]
     starters = []
-    for index, pid in enumerate(starter_ids):
+    for slot_label, pid in lineup.get("app_lineup") or []:  # set in the app: every slot shows, empty ones too
+        player = contracts.get(pid or "")
+        starters.append({**player, "slot": slot_label} if player else {**EMPTY_SLOT, "slot": slot_label})
+    for index, pid in enumerate([] if "app_lineup" in lineup else starter_ids):
         player = contracts.get(pid)
         # The app's Taxi and IR designations win over a stale Sleeper lineup.
         if player and not player["designation"]:
             slot = lineup_slots[index] if index < len(lineup_slots) else player["pos"]
             starters.append({**player, "slot": "FLX" if "FLEX" in slot else slot})
 
-    taken = {p["player_id"] for p in starters}
+    taken = {p["player_id"] for p in starters if p["player_id"]}
     others = [p for p in contracts.values() if p["player_id"] not in taken]
     taxi = [p for p in others if p["designation"] == "taxi"]
     ir = [p for p in others if p["designation"] == "ir"]
@@ -433,9 +442,15 @@ def team_detail(
     later: list[dict[str, Any]] | None = None,
     weeks: int = 0,
     power: dict[str, Any] | None = None,
+    app_lineup: Callable[[set[str], list[str]], tuple[list[tuple[str, str | None]], dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     lineup = _sleeper_roster(sleeper_id, team["roster_id"])
     roster = roster_rows(state, team["team_id"], lineup, slots, info, ppg)
+    lineup_view = None
+    if app_lineup is not None:  # lineups set in the app: who can start (not taxi or IR), then this week's lineup
+        active = {p["player_id"] for p in roster["starters"] + roster["bench"]}
+        pairs, lineup_view = app_lineup(active, [_text(p) for p in lineup.get("starters") or []])
+        roster = roster_rows(state, team["team_id"], {**lineup, "app_lineup": pairs}, slots, info, ppg)
     everyone = roster["starters"] + roster["bench"] + roster["taxi"] + roster["ir"]
     return {
         **team,
@@ -455,6 +470,7 @@ def team_detail(
         "faab": faab(sleeper_id, lineup),
         "power": power,
         "head_to_head": h2h,
+        "lineup": lineup_view,
     }
 
 

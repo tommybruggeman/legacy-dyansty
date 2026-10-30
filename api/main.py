@@ -8,7 +8,7 @@ reads run as that owner so row-level security applies just like the website.
 from __future__ import annotations
 
 import os
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from supabase import Client, create_client
 
 from api import box_score as box_score_mod
-from api import activity, cache, front_office, home, league, market, nfl_live, player, projections, teams, trade_feed, trade_offers
+from api import activity, cache, front_office, home, league, lineups, market, nfl_live, own_league, player, projections, teams, trade_feed, trade_offers
 from league_ai import risers as risers_log
 from season_engine import SeasonResolver
 from services.season_rollover_owner_ui import OwnerRolloverDecisionError, OwnerRolloverDecisionService
@@ -235,6 +235,10 @@ def _season_context(client: Client, user: Any) -> dict[str, Any]:
     if not season.sleeper_league_id:
         raise HTTPException(status_code=409, detail="The active season isn't linked to a Sleeper league yet.")
     sleeper_id = season.sleeper_league_id
+    try:  # weeks the app runs itself (playoffs on) replace Sleeper's matchups for every page below
+        own_league.sync(client, team["league_id"], sleeper_id, int(season.season))
+    except Exception:
+        pass
     return {
         **team,
         "season": int(season.season),
@@ -333,8 +337,66 @@ def _team_page(client: Client, ctx: dict[str, Any], team_id: str) -> dict[str, A
         later=states[1:],
         weeks=league.current_week(),
         power=_saved_power_rank(client, ctx, team_id),
+        app_lineup=_app_lineup(client, ctx, team_id) if _transactions_on(client, ctx["league_id"]) else None,
     )
     return {"season": ctx["season"], "salary_cap": cap, "sleeper_league_id": ctx["sleeper_id"], **detail}
+
+
+def _lineup_slots(client: Client, league_id: str) -> list[str]:
+    """The league's starting slots as saved in Settings (the same list the database checks lineups against)."""
+    def load() -> dict[str, Any]:
+        from league_ai.settings_store import load_settings
+        return {"slots": lineups.starter_slots(load_settings(client, league_id).roster_positions)}
+    return cache.cached(("lineup_slots", league_id), 600, load)["slots"]
+
+
+def _week_kickoffs(client: Client, season: int, week: int) -> dict[str, Any]:
+    def load() -> dict[str, Any]:
+        rows = (client.table("nfl_games").select("gameday,gametime,home_team,away_team")
+                .eq("season", season).eq("week", week).execute().data or [])
+        return {"rows": rows}
+    return lineups.kickoffs(cache.cached(("kickoffs", season, week), 600, load)["rows"])
+
+
+def _app_lineup(client: Client, ctx: dict[str, Any], team_id: str):
+    """This week's app lineup for one team, for team_detail: (slot label, player id) pairs plus the editor's view."""
+    def build(active: set[str], sleeper_starters: list[str]) -> tuple[list[tuple[str, str | None]], dict[str, Any]]:
+        week, slots = league.current_week(), _lineup_slots(client, ctx["league_id"])
+        saved = (client.table("league_lineups").select("week,slots").eq("league_id", ctx["league_id"])
+                 .eq("league_team_id", team_id).eq("season", ctx["season"]).lte("week", week)
+                 .order("week", desc=True).limit(1).execute().data or [])
+        ids = lineups.effective(slots, saved, sleeper_starters, active)
+        starts, now = _week_kickoffs(client, ctx["season"], week), datetime.now(timezone.utc)
+        info = teams.player_info(client, active)
+        locked = {pid for pid in active if lineups.is_locked(pid, info.get(pid, {}).get("team"), starts, now)}
+        editable = team_id == ctx["team_id"] and bool(slots)
+        return [(lineups.label(s), ids[i]) for i, s in enumerate(slots)], lineups.view(slots, ids, week, locked, editable)
+    return build
+
+
+class LineupRequest(BaseModel):
+    week: int
+    slots: list[str | None]
+
+
+@app.post("/my-team/lineup")
+def set_lineup(body: LineupRequest, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """Save this week's starters (player ids in slot order, None for an empty slot) through the checked database call."""
+    client, user = owner
+    ctx = _season_context(client, user)
+    if not ctx["team_id"]:
+        raise HTTPException(status_code=404, detail="This account isn't linked to a team yet.")
+    slots = _lineup_slots(client, ctx["league_id"])
+    if len(body.slots) != len(slots):
+        raise HTTPException(status_code=400, detail=lineups.ERRORS["lineup_shape_invalid"])
+    try:
+        client.rpc("set_lineup_authenticated", {"p_request": {
+            "league_id": ctx["league_id"], "season": ctx["season"], "week": body.week,
+            "slots": [{"slot": s, "player_id": body.slots[i] or None} for i, s in enumerate(slots)],
+        }}).execute()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=lineups.friendly(exc))
+    return {"ok": True}
 
 
 @app.get("/teams/{team_id}")

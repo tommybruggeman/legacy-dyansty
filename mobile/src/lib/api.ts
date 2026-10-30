@@ -239,6 +239,15 @@ export type Player = {
   ppg: number | null;
   slot?: string;
   through?: number;
+  empty?: boolean;
+};
+// This week's lineup when it's set in the app: slots in league order, who is locked (game started), what fits where.
+export type Lineup = {
+  enabled: boolean;
+  week: number;
+  slots: { index: number; slot: string; label: string; player_id: string | null; locked: boolean }[];
+  locked: string[];
+  fits: Record<string, string[]>;
 };
 // A contract on the value board: PPG per cap dollar, graded against the whole league.
 export type ValuedContract = Player & { through: number; per_dollar: number | null; grade: 'bargain' | 'fair' | 'overpaid' | 'stash' | null };
@@ -264,6 +273,7 @@ export type TeamPage = {
   faab?: { left: number; budget: number } | null;
   power?: { rank: number; of: number | null; move: number | null } | null;
   head_to_head: { wins: number; losses: number; ties: number; last: { week: number; me: number; them: number } } | null;
+  lineup?: Lineup | null;
 };
 
 export type BoxPlayer = {

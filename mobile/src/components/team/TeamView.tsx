@@ -5,6 +5,7 @@ import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import type { Pick, Player, TeamPage } from '../../lib/api';
 import { colors } from '../../lib/theme';
 import { PlayerFace } from '../PlayerFace';
+import { LineupSheet, type Picking, SlotChip } from './LineupSheet';
 import { Card, Note, Pill, Pos, Row, Segmented, SwipeTabs, Tile, Tiles, Title, money, ordinal, record, ui } from '../ui';
 
 const TABS = ['Roster', 'Contracts', 'Picks'] as const;
@@ -18,7 +19,7 @@ function go(path: Parameters<typeof router.push>[0]) {
 
 // One owner's team with the same three tabs as My Team (league activity lives on League > Teams). Other owners' teams
 // are read only; trades are made in Sleeper.
-export function TeamView({ team, eyebrow, badge, top }: { team: TeamPage; eyebrow?: string; badge?: ReactNode; top?: ReactNode }) {
+export function TeamView({ team, eyebrow, badge, top, onChange }: { team: TeamPage; eyebrow?: string; badge?: ReactNode; top?: ReactNode; onChange?: () => void }) {
   const [tab, setTab] = useState<(typeof TABS)[number]>('Roster');
   // Always open on the roster. Coming back from a player or cap page opened here keeps the tab;
   // leaving for another part of the app and coming back starts over.
@@ -41,7 +42,7 @@ export function TeamView({ team, eyebrow, badge, top }: { team: TeamPage; eyebro
         value={tab}
         onChange={setTab}
         render={(t) =>
-          t === 'Roster' ? <RosterTab team={team} /> : t === 'Contracts' ? <ContractsTab team={team} /> : <PicksTab team={team} />
+          t === 'Roster' ? <RosterTab team={team} onChange={onChange} /> : t === 'Contracts' ? <ContractsTab team={team} /> : <PicksTab team={team} />
         }
       />
     </>
@@ -94,14 +95,27 @@ function Face({ p, label, hurt }: { p: Player; label: string; hurt?: boolean }) 
 }
 
 
-function PlayerRow({ p, first, showSlot }: { p: Player; first?: boolean; showSlot?: boolean }) {
+function PlayerRow({ p, first, showSlot, chip, onEmpty }: { p: Player; first?: boolean; showSlot?: boolean; chip?: ReactNode; onEmpty?: () => void }) {
+  if (p.empty) {
+    return (
+      <Row first={first} onPress={onEmpty}>
+        {chip}
+        <View style={styles.emptyFace}><Text style={styles.emptyPlus}>+</Text></View>
+        <View style={ui.flex}>
+          <Text style={[ui.name, styles.emptyName]}>Empty</Text>
+          <Text style={ui.sub}>{onEmpty ? 'Tap to start someone' : 'Nobody starting here'}</Text>
+        </View>
+      </Row>
+    );
+  }
   const injury = p.injury ? INJURY_SHORT[p.injury.toLowerCase()] ?? p.injury.toUpperCase() : null;
   const tag = injury ? <Pill label={injury} tone="out" /> : p.is_rookie ? <Pill label="ROOKIE" tone="gold" /> : null;
   const label = showSlot && p.slot ? p.slot : p.pos;
   const years = p.no_contract ? 0 : p.years_left;
   return (
     <Row first={first} onPress={() => go(`/player/${p.player_id}`)}>
-      <Face p={p} label={label} hurt={!!injury} />
+      {chip}
+      <Face p={p} label={chip ? p.pos : label} hurt={!!injury} />
       <View style={ui.flex}>
         <View style={styles.nameLine}>
           <Text style={[ui.name, styles.shrink]} numberOfLines={1}>{p.name}</Text>
@@ -134,13 +148,28 @@ function PlayerRow({ p, first, showSlot }: { p: Player; first?: boolean; showSlo
   );
 }
 
-function RosterTab({ team }: { team: TeamPage }) {
-  const [showBench, setShowBench] = useState(false);
+function RosterTab({ team, onChange }: { team: TeamPage; onChange?: () => void }) {
+  const lineup = team.lineup;
+  const editing = !!lineup?.enabled;
+  const [showBench, setShowBench] = useState(editing);
+  const [picking, setPicking] = useState<Picking>(null);
   const { starters, bench, taxi, ir } = team.roster;
+  const slotChip = (i: number) => editing && lineup ? (
+    <SlotChip label={lineup.slots[i]?.label ?? ''} locked={lineup.slots[i]?.locked} onPress={() => setPicking({ kind: 'slot', index: i })} />
+  ) : undefined;
+  const benchChip = (p: Player) => editing ? (
+    <SlotChip label="BN" bench locked={lineup?.locked.includes(p.player_id)} onPress={() => setPicking({ kind: 'bench', player: p })} />
+  ) : undefined;
   return (
     <>
-      <Card title="Starters" right="PPG · SALARY">
-        {starters.length ? starters.map((p, i) => <PlayerRow key={p.player_id} p={p} first={i === 0} showSlot />) : <Note>No lineup set in Sleeper.</Note>}
+      {editing && lineup ? (
+        <LineupSheet lineup={lineup} players={[...starters, ...bench]} picking={picking} onClose={() => setPicking(null)} onSaved={() => onChange?.()} />
+      ) : null}
+      <Card title={editing ? `Week ${lineup!.week} lineup` : 'Starters'} right="PPG · SALARY">
+        {starters.length ? starters.map((p, i) => (
+          <PlayerRow key={p.player_id || `empty-${i}`} p={p} first={i === 0} showSlot chip={slotChip(i)}
+            onEmpty={editing ? () => setPicking({ kind: 'slot', index: i }) : undefined} />
+        )) : <Note>{lineup ? 'No lineup set yet.' : 'No lineup set in Sleeper.'}</Note>}
         {bench.length ? (
           <Pressable onPress={() => setShowBench(!showBench)} hitSlop={8}>
             <Text style={[ui.link, styles.center]}>{showBench ? 'Hide bench' : `Bench (${bench.length}) ›`}</Text>
@@ -149,7 +178,7 @@ function RosterTab({ team }: { team: TeamPage }) {
       </Card>
       {showBench ? (
         <Card title="Bench">
-          {bench.map((p, i) => <PlayerRow key={p.player_id} p={p} first={i === 0} />)}
+          {bench.map((p, i) => <PlayerRow key={p.player_id} p={p} first={i === 0} chip={benchChip(p)} />)}
         </Card>
       ) : null}
       <View style={styles.pair}>
@@ -318,4 +347,7 @@ const styles = StyleSheet.create({
   left: { width: 84, textAlign: 'right' },
   button: { marginTop: 12, borderWidth: 1, borderColor: colors.gold, borderRadius: 14, padding: 14, alignItems: 'center' },
   buttonText: { color: colors.gold, fontWeight: '800', fontSize: 15 },
+  emptyFace: { width: 44, height: 44, borderRadius: 22, borderWidth: 1, borderStyle: 'dashed', borderColor: colors.muted, alignItems: 'center', justifyContent: 'center' },
+  emptyPlus: { color: colors.muted, fontSize: 20, fontWeight: '700' },
+  emptyName: { color: colors.muted },
 });
