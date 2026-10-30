@@ -392,7 +392,7 @@ def box_score_html(game: dict) -> str:
     def side_html(side: dict) -> str:
         rows = []
         for p in side.get("players") or []:
-            proj = p.get("proj")
+            proj = p.get("live_proj") if p.get("status") == "playing" and p.get("live_proj") is not None else p.get("proj")
             proj_txt = f"{proj:.1f}" if isinstance(proj, (int, float)) else "–"
             rank = html.escape(str(p.get("rank") or ""))
             status = p.get("status") or ""

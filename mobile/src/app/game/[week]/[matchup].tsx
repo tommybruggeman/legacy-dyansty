@@ -142,7 +142,7 @@ function Half({ p, side, onScore }: { p?: BoxPlayer; side: 'l' | 'r'; onScore: (
       </View>
       <View style={styles.line}>
         <GameText p={p} />
-        <Text style={styles.proj}>{p.proj != null ? p.proj.toFixed(1) : ''}</Text>
+        <Text style={[styles.proj, on && p.live_proj != null && styles.projLive]}>{shownProj(p)}</Text>
       </View>
       {p.line?.length ? (
         <Text style={styles.stats}>
@@ -177,6 +177,12 @@ function GameText({ p }: { p: BoxPlayer }) {
   }
   if (p.status === 'final') return <Text style={styles.game}>{p.rank ?? 'Final'}</Text>;
   return <Text style={styles.game} numberOfLines={1}>{[p.kickoff ? kickoffText(p.kickoff) : null, vs].filter(Boolean).join(' ')}</Text>;
+}
+
+// Mid-game the projection follows the game: points so far plus his projection for the time left.
+function shownProj(p: BoxPlayer) {
+  const v = p.status === 'playing' && p.live_proj != null ? p.live_proj : p.proj;
+  return v != null ? v.toFixed(1) : '';
 }
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -272,6 +278,7 @@ const styles = StyleSheet.create({
   chip: { flexShrink: 0, color: '#FFFFFF', fontSize: 8, fontWeight: '800', paddingHorizontal: 3, paddingVertical: 1, borderRadius: 3, overflow: 'hidden' },
   points: { color: colors.text, fontSize: 15, fontWeight: '800', fontVariant: ['tabular-nums'] },
   proj: { color: colors.muted, fontSize: 10 },
+  projLive: { color: colors.text, fontWeight: '700' },
   gameRow: { flexDirection: 'row', alignItems: 'center', flexShrink: 1 },
   game: { color: colors.muted, fontSize: 10, marginTop: 2, flexShrink: 1 },
   clock: { color: colors.live, fontWeight: '800' },
