@@ -150,6 +150,24 @@ def build(*, season: int, own_from: int, current_week: int, league: Mapping[str,
     return {"weeks": out, "bracket": bracket, "playoff_start": playoff_start, "weeks_by_round": weeks_by_round}
 
 
+def app_rosters(client: Any, league_id: str, season: int, roster_of_team: Mapping[str, int]) -> list[dict[str, Any]]:
+    """Each team's roster as the app holds it (live contracts), shaped like Sleeper's rosters: players, taxi, reserve."""
+    from api import teams as teams_mod
+    state = teams_mod.load_team_state(client, league_id, season)
+    out = {rid: {"roster_id": rid, "players": [], "taxi": [], "reserve": []} for rid in roster_of_team.values()}
+    ir = {str(r.get("sleeper_player_id")) for r in state.get("cap_adjustments", []) if r.get("adjustment_type") == "ir_adjustment"}
+    for r in state.get("roster", []):
+        rid, pid = roster_of_team.get(str(r.get("league_team_id"))), str(r.get("sleeper_player_id") or "")
+        if rid is None or not pid or not r.get("contract_agreement_id"):
+            continue
+        out[rid]["players"].append(pid)
+        if teams_mod.roster_designation(r) == "taxi":
+            out[rid]["taxi"].append(pid)
+        elif teams_mod.roster_designation(r) == "ir" or pid in ir:
+            out[rid]["reserve"].append(pid)
+    return list(out.values())
+
+
 def sync(client: Any, league_id: str, sleeper_id: str, season: int) -> None:
     """Rebuild the app's weeks for one league and hand them to api.sleeper (shared by every owner for LIVE_TTL)."""
     from api import cache, league, sleeper  # here, not at import time: api.league reads api.sleeper too
@@ -167,6 +185,7 @@ def sync(client: Any, league_id: str, sleeper_id: str, season: int) -> None:
         from league_ai.settings_store import load_settings
         settings = load_settings(client, league_id)
         teams = client.table("league_teams").select("id,sleeper_roster_id").eq("league_id", league_id).execute().data or []
+        roster_of_team = {str(t["id"]): int(t["sleeper_roster_id"]) for t in teams if t.get("sleeper_roster_id") is not None}
         saved = (client.table("league_lineups").select("league_team_id,week,slots")
                  .eq("league_id", league_id).eq("season", season).execute().data or [])
 
@@ -177,8 +196,8 @@ def sync(client: Any, league_id: str, sleeper_id: str, season: int) -> None:
 
         result = build(
             season=season, own_from=own_from, current_week=current, league=info,
-            rosters=sleeper.raw(f"league/{sleeper_id}/rosters", ttl=60) or [],
-            team_of_roster={int(t["sleeper_roster_id"]): str(t["id"]) for t in teams if t.get("sleeper_roster_id") is not None},
+            rosters=app_rosters(client, league_id, season, roster_of_team),
+            team_of_roster={rid: tid for tid, rid in roster_of_team.items()},
             saved=saved, scoring=settings.scoring_settings or {}, slots=lineups.starter_slots(settings.roster_positions),
             sleeper_rows=lambda w: sleeper.raw(f"league/{sleeper_id}/matchups/{w}", ttl=league.LIVE_TTL if w == current else 3600) or [],
             lines_for=lambda w: stat_lines(season, w, get_json=lambda url: sleeper.get_url(url, ttl=league.LIVE_TTL if w == current else 3600)),

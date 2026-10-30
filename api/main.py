@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from supabase import Client, create_client
 
 from api import box_score as box_score_mod
-from api import activity, cache, front_office, home, league, lineups, market, nfl_live, own_league, player, projections, teams, trade_feed, trade_offers
+from api import activity, cache, front_office, home, league, lineups, market, nfl_live, own_league, player, projections, teams, trade_feed, trade_offers, waivers
 from league_ai import risers as risers_log
 from season_engine import SeasonResolver
 from services.season_rollover_owner_ui import OwnerRolloverDecisionError, OwnerRolloverDecisionService
@@ -239,6 +239,7 @@ def _season_context(client: Client, user: Any) -> dict[str, Any]:
         own_league.sync(client, team["league_id"], sleeper_id, int(season.season))
     except Exception:
         pass
+    _process_due_waivers(client, team["league_id"])
     return {
         **team,
         "season": int(season.season),
@@ -809,7 +810,142 @@ def transactions(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str,
     ids = [str(i.get("player_id")) for r in rows for i in (r.get("players") or []) if i.get("player_id")]
     data = trade_offers.center(rows, str(team["team_id"]), owner_of, teams.player_info(client, ids))
     data["results"] = [{**r, "line": trade_offers.result_line(r)} for r in data["results"]]
-    return {"enabled": on, "bids": [], **data}
+    try:
+        claims = (client.table("waiver_claims").select("*").eq("league_id", team["league_id"])
+                  .order("created_at", desc=True).limit(300).execute().data or [])
+    except Exception:
+        claims = []
+    bid_ids = [str(c.get(k)) for c in claims for k in ("player_id", "drop_player_id") if c.get(k)]
+    bids = waivers.bids_view(claims, str(team["team_id"]), owner_of, teams.player_info(client, bid_ids))
+    results = sorted(data["results"] + bids["results"], key=lambda r: str(r.get("decided_at") or ""), reverse=True)
+    return {"enabled": on, **data, "bids": bids["bids"], "results": results, "pending": data["pending"] + len(bids["bids"])}
+
+
+# ---- Pickups and drops ------------------------------------------------------------
+
+
+def _process_due_waivers(client: Client, league_id: str) -> None:
+    """Run any bids whose Wednesday/Sunday 3 AM time has passed (the scheduled job does the same; first one wins)."""
+    def run() -> dict[str, Any]:
+        if not _transactions_on(client, league_id):
+            return {}
+        out = client.rpc("process_due_waivers", {"p_league_id": league_id}).execute().data or {}
+        if (out or {}).get("processed"):
+            cache.forget("state", league_id)
+        return out
+    try:
+        cache.cached(("waivers_due", league_id), 60, run)
+    except Exception:
+        pass
+
+
+def _dead_cap_pct(client: Client, league_id: str) -> float:
+    def load() -> dict[str, Any]:
+        rows = client.table("league_rules").select("default_dead_cap_pct").eq("league_id", league_id).limit(1).execute().data or []
+        return {"pct": float(rows[0]["default_dead_cap_pct"]) if rows and rows[0].get("default_dead_cap_pct") is not None else 50.0}
+    return cache.cached(("dead_cap_pct", league_id), 600, load)["pct"]
+
+
+@app.get("/waivers/player/{player_id}")
+def waiver_sheet(player_id: str, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """Everything the Bid / Add sheet needs: FAAB left, the next run, my open bid, and my roster with each drop's dead cap."""
+    client, user = owner
+    ctx = _season_context(client, user)
+    state = _my_state(client, ctx)
+    lid, me, season = ctx["league_id"], str(ctx["team_id"]), ctx["season"]
+    now = datetime.now(timezone.utc)
+    ledger = client.table("faab_ledger").select("amount").eq("league_id", lid).eq("league_team_id", me).eq("season", season).execute().data or []
+    mine = (client.table("waiver_claims").select("id,bid,drop_player_id").eq("league_team_id", me)
+            .eq("player_id", player_id).eq("status", "pending").limit(1).execute().data or [])
+    roster = [r for r in state.get("roster", []) if str(r.get("league_team_id")) == me and r.get("contract_agreement_id")]
+    ids = [str(r["contract_agreement_id"]) for r in roster]
+    seasons = client.table("contract_seasons").select("contract_id,season,cap_hit,salary,obligation_status").in_("contract_id", ids).execute().data if ids else []
+    by_contract: dict[str, list[dict[str, Any]]] = {}
+    for row in seasons or []:
+        by_contract.setdefault(str(row["contract_id"]), []).append(row)
+    pct = _dead_cap_pct(client, lid)
+    info = teams.player_info(client, [r.get("sleeper_player_id") for r in roster])
+    starts = _week_kickoffs(client, season, league.current_week())
+    players = []
+    for r in roster:
+        pid = str(r.get("sleeper_player_id"))
+        cost = waivers.dead_cap(by_contract.get(str(r["contract_agreement_id"]), []), season, pct)
+        players.append({"player_id": pid, "name": r.get("player_name") or info.get(pid, {}).get("full_name") or pid,
+                        "pos": r.get("pos") or info.get(pid, {}).get("position") or "", "nfl_team": info.get(pid, {}).get("team") or "FA",
+                        "salary": float(r.get("contract_cap_hit") or r.get("cap_hit") or 0), "dead_cap": cost,
+                        "dead_cap_text": waivers.dead_cap_text(cost, season), "designation": teams.roster_designation(r),
+                        "locked": lineups.is_locked(pid, info.get(pid, {}).get("team"), starts, now)})
+    players.sort(key=lambda p: (p["dead_cap"]["total"], p["salary"]))
+    slots = len([s for s in (_roster_positions(client, lid)) if s not in ("TAXI", "IR")])
+    active = sum(1 for p in players if not p["designation"])
+    return {
+        "enabled": _transactions_on(client, lid), "season": season, "faab_left": round(sum(float(r["amount"]) for r in ledger), 2),
+        "free_agency_open": waivers.free_agency_open(now), "next_run": waivers.run_label(waivers.next_run(now)),
+        "my_bid": ({"id": str(mine[0]["id"]), "bid": float(mine[0]["bid"]), "drop_player_id": mine[0].get("drop_player_id")} if mine else None),
+        "roster_full": bool(slots) and active >= slots, "players": players,
+        "locked": lineups.is_locked(player_id, teams.player_info(client, [player_id]).get(player_id, {}).get("team"), starts, now),
+    }
+
+
+def _roster_positions(client: Client, league_id: str) -> list[str]:
+    def load() -> dict[str, Any]:
+        from league_ai.settings_store import load_settings
+        return {"slots": list(load_settings(client, league_id).roster_positions or [])}
+    return cache.cached(("roster_positions", league_id), 600, load)["slots"]
+
+
+class BidRequest(BaseModel):
+    player_id: str
+    bid: int
+    drop_player_id: str | None = None
+
+
+class AddRequest(BaseModel):
+    player_id: str
+    drop_player_id: str | None = None
+
+
+class DropRequest(BaseModel):
+    player_id: str
+
+
+def _waiver_call(client: Client, user: Any, fn: str, request: dict[str, Any]) -> dict[str, Any]:
+    ctx = _season_context(client, user)
+    if not ctx["team_id"]:
+        raise HTTPException(status_code=404, detail="This account isn't linked to a team yet.")
+    try:
+        out = client.rpc(fn, {"p_request": {"league_id": ctx["league_id"], **request}}).execute().data or {}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=waivers.friendly(exc))
+    for key in ("state", "activity"):
+        cache.forget(key, ctx["league_id"])
+    return out
+
+
+@app.post("/waivers/bid")
+def place_bid(body: BidRequest, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    return _waiver_call(*owner, "place_waiver_claim_authenticated", body.model_dump())
+
+
+@app.post("/waivers/bid/{claim_id}/cancel")
+def cancel_bid(claim_id: str, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    if not trade_offers.is_uuid(claim_id):
+        raise HTTPException(status_code=404, detail="Bid not found.")
+    client, user = owner
+    try:
+        return client.rpc("cancel_waiver_claim_authenticated", {"p_request": {"claim_id": claim_id}}).execute().data or {}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=waivers.friendly(exc))
+
+
+@app.post("/waivers/add")
+def add_free_agent(body: AddRequest, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    return _waiver_call(*owner, "add_free_agent_authenticated", body.model_dump())
+
+
+@app.post("/my-team/drop")
+def drop_player(body: DropRequest, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    return _waiver_call(*owner, "drop_player_authenticated", body.model_dump())
 
 
 # ---- Front Office ------------------------------------------------------------------
