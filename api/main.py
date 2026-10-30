@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from supabase import Client, create_client
 
 from api import box_score as box_score_mod
-from api import activity, cache, front_office, home, league, market, player, projections, teams, trade_feed, trade_offers
+from api import activity, cache, front_office, home, league, market, nfl_live, player, projections, teams, trade_feed, trade_offers
 from league_ai import risers as risers_log
 from season_engine import SeasonResolver
 from services.season_rollover_owner_ui import OwnerRolloverDecisionError, OwnerRolloverDecisionService
@@ -166,12 +166,29 @@ def matchups(
     sleeper_id, names, my_roster_id = _league_context(*owner)
     result = league.matchups(sleeper_id, names, week or league.current_week(), my_roster_id)
     result["current_week"] = league.current_week()
+    try:
+        _add_card_owners(sleeper_id, names, my_roster_id, result)
+    except Exception as exc:
+        print(f"APP_MATCHUP_OWNERS_ERROR {type(exc).__name__}", flush=True)
     if not result["is_final"]:
         try:
             _add_card_projections(*owner, result)
         except Exception as exc:
             print(f"APP_MATCHUP_PROJ_ERROR {type(exc).__name__}: {exc}", flush=True)
     return result
+
+
+def _add_card_owners(sleeper_id: str, names: dict[int, str], my_roster_id: int | None, result: dict[str, Any]) -> None:
+    """Each card row's owner picture and season record."""
+    pics = home.avatars(league.sleeper.get(f"league/{sleeper_id}/users") or [], league.sleeper.get(f"league/{sleeper_id}/rosters") or [])
+    rows = cache.cached(("standings", sleeper_id), 300, lambda: league.standings(sleeper_id, names, my_roster_id))["rows"]
+    records = {r["roster_id"]: r for r in rows}
+    for game in result["games"]:
+        for team in game["teams"]:
+            team["avatar"] = pics.get(team["roster_id"])
+            rec = records.get(team["roster_id"])
+            if rec:
+                team["record"] = f"{rec['wins']}-{rec['losses']}" + (f"-{rec['ties']}" if rec["ties"] else "")
 
 
 def _add_card_projections(client: Client, user: Any, result: dict[str, Any]) -> None:
@@ -186,10 +203,20 @@ def _add_card_projections(client: Client, user: Any, result: dict[str, Any]) -> 
         sides.append({"roster_id": row.get("roster_id"), "players": [{"player_id": pid, "points": float(points.get(pid) or 0)} for pid in starters]})
     info = teams.player_info(client, [p["player_id"] for side in sides for p in side["players"]])
     box_score_mod.add_projections(client, ctx, week, False, {"teams": sides}, info)
-    projected = {side["roster_id"]: side["projected"] for side in sides}
+    by_roster = {side["roster_id"]: side for side in sides}
     for game in result["games"]:
-        for team in game["teams"]:
-            team["projected"] = projected.get(team["roster_id"])
+        pair = [by_roster.get(team["roster_id"]) for team in game["teams"]]
+        kicks = []
+        for team, side in zip(game["teams"], pair):
+            if not side:
+                continue
+            team["projected"] = side.get("projected")
+            statuses = [p.get("status") for p in side["players"]]
+            team["playing"], team["to_play"] = statuses.count("playing"), statuses.count("waiting")
+            kicks += [p["kickoff"] for p in side["players"] if p.get("status") == "waiting" and p.get("kickoff")]
+        if all(pair):
+            game["win_chance"] = nfl_live.win_chance([{**side, "score": team.get("score")} for team, side in zip(game["teams"], pair)], False)
+        game["next_kickoff"] = min(kicks) if kicks else None
 
 
 def _season_context(client: Client, user: Any) -> dict[str, Any]:
