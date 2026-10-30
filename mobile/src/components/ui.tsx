@@ -192,11 +192,11 @@ export function Tiles({ children }: { children: ReactNode }) {
   return <View style={styles.tiles}>{children}</View>;
 }
 
-export function Tile({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: 'red' }) {
+export function Tile({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: 'red' | 'live' }) {
   return (
     <View style={styles.tile}>
       <Text style={styles.tileLabel}>{label}</Text>
-      <Text style={[styles.tileValue, tone === 'red' && { color: colors.danger }]} numberOfLines={1}>{value}</Text>
+      <Text style={[styles.tileValue, tone === 'red' && { color: colors.danger }, tone === 'live' && { color: colors.live }]} numberOfLines={1}>{value}</Text>
       {sub ? <Text style={styles.tileSub} numberOfLines={1}>{sub}</Text> : null}
     </View>
   );

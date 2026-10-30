@@ -340,7 +340,56 @@ def _team_page(client: Client, ctx: dict[str, Any], team_id: str) -> dict[str, A
         power=_saved_power_rank(client, ctx, team_id),
         app_lineup=_app_lineup(client, ctx, team_id) if _transactions_on(client, ctx["league_id"]) else None,
     )
-    return {"season": ctx["season"], "salary_cap": cap, "sleeper_league_id": ctx["sleeper_id"], **detail}
+    try:
+        week = _team_week(client, ctx, summary["roster_id"])
+    except Exception:
+        week = None
+    return {"season": ctx["season"], "salary_cap": cap, "sleeper_league_id": ctx["sleeper_id"], **detail, "week": week}
+
+
+TEAM_WEEK_TTL = 15
+
+
+def _team_week(client: Client, ctx: dict[str, Any], roster_id: int | None) -> dict[str, Any] | None:
+    """This week for one team's roster page: each player's projection, live points and live projection, game and
+    stat line (scored the same way as the box score), the team's total and projected total, and its odds against
+    this week's opponent. None when the team has no game this week."""
+    if roster_id is None:
+        return None
+    week = league.current_week()
+    final = week <= league.last_scored_week(ctx["sleeper_id"])
+
+    def load() -> dict[str, Any] | None:
+        rows = league.sleeper.get(f"league/{ctx['sleeper_id']}/matchups/{week}", ttl=86400 if final else league.LIVE_TTL) or []
+        mine = next((r for r in rows if r.get("roster_id") == roster_id), None)
+        if not mine:
+            return None
+        opp = next((r for r in rows if r is not mine and r.get("matchup_id") and r.get("matchup_id") == mine.get("matchup_id")), None)
+
+        def side(row: dict[str, Any], with_bench: bool) -> dict[str, Any]:
+            pts = row.get("players_points") or {}
+            starters = [str(p) for p in row.get("starters") or [] if p and str(p) != "0"]
+            out = {"roster_id": row.get("roster_id"), "players": [{"player_id": p, "points": float(pts.get(p) or 0)} for p in starters],
+                   "score": round(float(row.get("points") or sum(float(pts.get(p) or 0) for p in starters)), 2)}
+            if with_bench:
+                out["bench"] = [{"player_id": str(p), "points": float(pts.get(str(p)) or 0)} for p in row.get("players") or [] if p and str(p) not in starters]
+            return out
+
+        sides = [side(mine, True)] + ([side(opp, False)] if opp else [])
+        info = teams.player_info(client, [p["player_id"] for s in sides for p in s["players"] + s.get("bench", [])])
+        box_score_mod.add_projections(client, ctx, week, final, {"teams": sides}, info)
+        me = sides[0]
+        keys = ("points", "proj", "live_proj", "status", "game", "line", "kickoff")
+        odds = nfl_live.win_chance(sides, final) if opp else None
+        return {
+            "week": week, "is_final": final, "score": me["score"], "projected": me.get("projected"),
+            "opponent": {"name": ctx["names"].get(opp.get("roster_id"), "Opponent"), "score": sides[1]["score"],
+                         "projected": sides[1].get("projected")} if opp else None,
+            "win_chance": odds[0] if odds else None,
+            "players": {p["player_id"]: {k: p.get(k) for k in keys} for p in me["players"] + me.get("bench", [])},
+        }
+
+    return cache.cached(("team_week", ctx["sleeper_id"], ctx["season"], week, roster_id), TEAM_WEEK_TTL, load)
 
 
 def _lineup_slots(client: Client, league_id: str) -> list[str]:
