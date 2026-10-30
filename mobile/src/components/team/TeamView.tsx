@@ -18,7 +18,7 @@ function go(path: Parameters<typeof router.push>[0]) {
 
 // One owner's team with the same three tabs as My Team (league activity lives on League > Teams). Other owners' teams
 // are read only; trades are made in Sleeper.
-export function TeamView({ team, eyebrow, badge }: { team: TeamPage; eyebrow?: string; badge?: ReactNode }) {
+export function TeamView({ team, eyebrow, badge, top }: { team: TeamPage; eyebrow?: string; badge?: ReactNode; top?: ReactNode }) {
   const [tab, setTab] = useState<(typeof TABS)[number]>('Roster');
   // Always open on the roster. Coming back from a player or cap page opened here keeps the tab;
   // leaving for another part of the app and coming back starts over.
@@ -33,6 +33,7 @@ export function TeamView({ team, eyebrow, badge }: { team: TeamPage; eyebrow?: s
   return (
     <>
       <Title eyebrow={eyebrow ?? team.owner_name.toUpperCase()} badge={badge}>{team.team_name}</Title>
+      {top}
       <TopTiles team={team} tab={tab} />
       <Segmented options={TABS} value={tab} onChange={setTab} />
       <SwipeTabs

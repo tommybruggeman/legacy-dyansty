@@ -4,7 +4,7 @@ import { Alert } from 'react-native';
 import { apiGet, apiSend } from './api';
 import { supabase } from './supabase';
 
-// Transfer targets: players the owner saved with ☆. One list shared by every
+// Saved players (Market's ★ Saved chip): players the owner saved with ☆. One list shared by every
 // screen that shows a star, so saving on one page shows everywhere at once.
 type Saved = { ids: string[]; ready: boolean };
 
