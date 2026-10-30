@@ -103,3 +103,6 @@ revoke all on function public.set_lineup_authenticated(jsonb) from public,anon;
 grant execute on function public.set_lineup_authenticated(jsonb) to authenticated;
 grant execute on function public.lineup_slot_fits_private(text,text) to authenticated,service_role;
 grant execute on function public.player_locked_for_week_private(text,int,int) to service_role;
+
+-- The first week the app scores itself (null = the first playoff week). Set it earlier for a dry run.
+alter table public.league_app_transactions add column if not exists own_from_week int check(own_from_week between 1 and 18);

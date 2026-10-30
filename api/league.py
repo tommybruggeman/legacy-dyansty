@@ -78,9 +78,18 @@ def current_week() -> int:
     return max(1, min(week, 25))
 
 
+def regular_season_end(sleeper_id: str) -> int:
+    """The last regular-season week (the week before the playoffs start)."""
+    try:
+        start = int(((sleeper.get(f"league/{sleeper_id}") or {}).get("settings") or {}).get("playoff_week_start") or 0)
+    except (TypeError, ValueError):
+        start = 0
+    return start - 1 if start > 1 else 25
+
+
 def standings(sleeper_id: str, names: dict[int, str], my_roster_id: int | None) -> dict[str, Any]:
-    """Season standings, scored the same way as build_standings_from_sleeper."""
-    latest = last_scored_week(sleeper_id)
+    """Season standings, scored the same way as build_standings_from_sleeper (regular season only)."""
+    latest = min(last_scored_week(sleeper_id), regular_season_end(sleeper_id))
     frames = []
     for week in range(1, latest + 1):
         # Finished weeks never change, so they can stay cached for a day.

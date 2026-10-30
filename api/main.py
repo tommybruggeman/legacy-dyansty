@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from supabase import Client, create_client
 
 from api import box_score as box_score_mod
-from api import activity, cache, front_office, home, league, lineups, market, nfl_live, player, projections, teams, trade_feed, trade_offers
+from api import activity, cache, front_office, home, league, lineups, market, nfl_live, own_league, player, projections, teams, trade_feed, trade_offers
 from league_ai import risers as risers_log
 from season_engine import SeasonResolver
 from services.season_rollover_owner_ui import OwnerRolloverDecisionError, OwnerRolloverDecisionService
@@ -235,6 +235,10 @@ def _season_context(client: Client, user: Any) -> dict[str, Any]:
     if not season.sleeper_league_id:
         raise HTTPException(status_code=409, detail="The active season isn't linked to a Sleeper league yet.")
     sleeper_id = season.sleeper_league_id
+    try:  # weeks the app runs itself (playoffs on) replace Sleeper's matchups for every page below
+        own_league.sync(client, team["league_id"], sleeper_id, int(season.season))
+    except Exception:
+        pass
     return {
         **team,
         "season": int(season.season),
