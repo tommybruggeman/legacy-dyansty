@@ -32,6 +32,17 @@ language sql stable security definer set search_path=pg_catalog,public as $$
  )
 $$;
 
+-- True while the team holds a live contract for the player this season (the roster the app owns).
+create or replace function public.team_holds_player_private(p_league_id uuid,p_team_id uuid,p_player_id text,p_season int) returns boolean
+language sql stable security definer set search_path=pg_catalog,public as $$
+ select exists(
+  select 1 from public.contract_agreements a join public.contract_seasons s on s.contract_id=a.id
+  where a.league_id=p_league_id and a.league_team_id=p_team_id and a.player_id=p_player_id
+    and a.status='active' and a.superseded_by_contract_id is null
+    and s.season=p_season and s.obligation_status='active'
+ )
+$$;
+
 -- Which positions each lineup slot takes (Sleeper's slot names).
 create or replace function public.lineup_slot_fits_private(p_slot text,p_pos text) returns boolean
 language sql immutable set search_path=pg_catalog,public as $$
@@ -77,8 +88,7 @@ begin
   if pid is not null then
    if pid=any(seen) then raise exception 'lineup_duplicate';end if;
    seen:=seen||pid;
-   if not exists(select 1 from public.season_roster_assignments a where a.league_season_id=sid and a.league_team_id=me and a.sleeper_player_id=pid)
-    then raise exception 'lineup_player_not_yours';end if;
+   if not public.team_holds_player_private(lid,me,pid,yr) then raise exception 'lineup_player_not_yours';end if;
    if exists(select 1 from public.season_roster_assignments a where a.league_season_id=sid and a.sleeper_player_id=pid and a.roster_designation in('taxi','ir'))
       or exists(select 1 from public.cap_adjustments c where c.league_id=lid and c.season=yr and c.adjustment_type='ir_adjustment' and c.sleeper_player_id=pid)
     then raise exception 'lineup_player_inactive';end if;
@@ -98,6 +108,7 @@ begin
 end$$;
 
 revoke all on function public.player_locked_for_week_private(text,int,int) from public,anon,authenticated;
+revoke all on function public.team_holds_player_private(uuid,uuid,text,int) from public,anon,authenticated;
 revoke all on function public.lineup_slot_fits_private(text,text) from public,anon;
 revoke all on function public.set_lineup_authenticated(jsonb) from public,anon;
 grant execute on function public.set_lineup_authenticated(jsonb) to authenticated;
