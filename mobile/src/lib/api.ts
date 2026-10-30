@@ -606,4 +606,23 @@ export type Offer = {
   id: string; partner: string; partner_team_id: string; you_get: OfferPiece[]; you_give: OfferPiece[]; note: string | null;
   created_at: string; status: string; decided_at: string | null; is_counter: boolean; line?: string; sent_by_you?: boolean;
 };
-export type Transactions = { enabled: boolean; needs_answer: Offer[]; sent: Offer[]; bids: unknown[]; results: Offer[]; pending: number };
+export type BidPlayer = { player_id: string; name: string; pos: string; nfl_team: string };
+export type Bid = { id: string; player: BidPlayer; bid: number; drop: BidPlayer | null; runs: string | null; process_at: string };
+// A processed bid in Results: every bid on that player in that run, highest first.
+export type BidResult = { kind: 'bid'; id: string; status: 'won' | 'lost' | 'failed'; line: string; player: BidPlayer; bid: number;
+  bids: { owner: string; bid: number; won: boolean; mine: boolean }[]; decided_at: string };
+export type TradeResult = Offer & { kind: 'trade'; line: string; sent_by_you: boolean };
+export type Transactions = { enabled: boolean; needs_answer: Offer[]; sent: Offer[]; bids: Bid[]; results: (TradeResult | BidResult)[]; pending: number };
+// The Bid / Add sheet for one free agent, and the Drop confirm (players carries each drop's dead cap).
+export type WaiverSheet = {
+  enabled: boolean;
+  season: number;
+  faab_left: number;
+  free_agency_open: boolean;
+  next_run: string;
+  my_bid: { id: string; bid: number; drop_player_id: string | null } | null;
+  roster_full: boolean;
+  locked: boolean;
+  players: (BidPlayer & { salary: number; dead_cap_text: string; designation: 'taxi' | 'ir' | null; locked: boolean;
+    dead_cap: { this_season: number; total: number; through: number | null } })[];
+};

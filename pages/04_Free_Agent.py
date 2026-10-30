@@ -32,6 +32,7 @@ from api import market as app_market, sleeper as app_sleeper, teams as app_teams
 from auth import _sb  # noqa: E402
 from season_engine import SeasonResolver  # noqa: E402
 from services.team_roster_state import load_team_state  # noqa: E402
+from services.waiver_editor import render_waiver_card  # noqa: E402
 
 
 ICON = Path(__file__).resolve().parents[1] / "assets" / "page_icon.png"
@@ -824,6 +825,9 @@ with league_players_tab:
         st.error("League players are temporarily unavailable. Refresh the page or try again later.")
 
     if league_players:
+        # Bids, Sunday adds and drops once the app runs the league (hidden until then).
+        render_waiver_card(_sb(st.session_state.get("sb_access_token")), league_id=context.league_id,
+                           team_id=str(context.league_team_id or ""), season=int(active_season), players=league_players["players"])
         owners = {o["team_id"]: ("You" if o["is_mine"] else o["owner_name"]) for o in league_players["owners"]}
         with st.container(key="fa_league_players_filters"):
             lp_search_col, lp_status_col, lp_owner_col = st.columns([1.6, 1.4, 1], gap="medium")

@@ -1,11 +1,11 @@
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
-import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { PlayerFace } from '../components/PlayerFace';
 import { ErrorState, Loading } from '../components/ScreenState';
 import { Back, Note, Screen, Title, ui } from '../components/ui';
-import { type Offer, type OfferPiece, type Transactions, apiSend, useApi } from '../lib/api';
+import { type BidResult, type Offer, type OfferPiece, type Transactions, apiSend, useApi } from '../lib/api';
 import { colors } from '../lib/theme';
 
 export { ScreenError as ErrorBoundary } from '../components/ScreenState';
@@ -21,6 +21,7 @@ const keys = (pieces: OfferPiece[]) => pieces.map((p) => p.contract_id ?? p.pick
 export default function TransactionsPage() {
   const { data, error, loading, reload, refresh } = useApi<Transactions>('/transactions');
   const [busy, setBusy] = useState<string | null>(null);
+  const [bids, setBids] = useState<BidResult | null>(null);
   const seen = useRef(false);
   useFocusEffect(useCallback(() => {
     if (seen.current) refresh();
@@ -48,6 +49,20 @@ export default function TransactionsPage() {
       } },
     ]);
   };
+  const cancelBid = (id: string, who: string) => Alert.alert(`Cancel your bid on ${who}?`, '', [
+    { text: 'Keep it', style: 'cancel' },
+    { text: 'Cancel bid', style: 'destructive', onPress: async () => {
+      setBusy(id);
+      try {
+        await apiSend('POST', `/waivers/bid/${id}/cancel`);
+        refresh();
+      } catch (e) {
+        Alert.alert('Not saved', e instanceof Error ? e.message : 'Try again.');
+      } finally {
+        setBusy(null);
+      }
+    } },
+  ]);
   const counter = (offer: Offer) => router.push({ pathname: '/trade/[teamId]', params: { teamId: offer.partner_team_id, parent: offer.id, give: keys(offer.you_give), get: keys(offer.you_get) } });
 
   return (
@@ -74,26 +89,66 @@ export default function TransactionsPage() {
         </OfferCard>
       ))}
 
-      {data.enabled && !data.pending ? <Note>Nothing pending. Start a trade from any player's page.</Note> : null}
+      {data.bids.length ? <Section title="Your bids" count={data.bids.length} right={`Run ${data.bids[0].runs ?? ''}`} /> : null}
+      {data.bids.length ? (
+        <View style={styles.card}>
+          {data.bids.map((b, i) => (
+            <View key={b.id} style={[styles.result, i > 0 && styles.resultNext]}>
+              <Pressable style={ui.flex} onPress={() => router.push({ pathname: '/bid/[id]', params: { id: b.player.player_id, name: b.player.name, pos: b.player.pos, team: b.player.nfl_team } })}>
+                <Text style={styles.resultLine}>{b.player.name} <Text style={styles.bidAmount}>${b.bid}</Text></Text>
+                <Text style={ui.sub} numberOfLines={1}>{[b.player.pos, b.player.nfl_team, b.drop ? `drops ${b.drop.name}` : null].filter(Boolean).join(' · ')}</Text>
+              </Pressable>
+              <Pressable onPress={() => cancelBid(b.id, b.player.name)} hitSlop={8} disabled={busy === b.id}>
+                <Text style={styles.cancel}>Cancel</Text>
+              </Pressable>
+            </View>
+          ))}
+        </View>
+      ) : null}
+
+      {data.enabled && !data.pending ? <Note>Nothing pending. Start a trade or a bid from any player's page.</Note> : null}
 
       {data.results.length ? (
         <>
           <Section title="Results" right="Last 7 days" />
           <View style={styles.card}>
-            {data.results.map((r, i) => (
-              <View key={r.id} style={[styles.result, i > 0 && styles.resultNext]}>
-                <View style={[styles.icon, { backgroundColor: r.status === 'accepted' ? 'rgba(200,155,74,0.18)' : 'rgba(224,124,124,0.18)' }]}>
-                  <Text style={[styles.iconText, { color: r.status === 'accepted' ? colors.gold : '#E07C7C' }]}>{r.status === 'accepted' ? '✓' : '✕'}</Text>
+            {data.results.map((r, i) => {
+              const good = r.status === 'accepted' || r.status === 'won';
+              return (
+                <View key={r.id} style={[styles.result, i > 0 && styles.resultNext]}>
+                  <View style={[styles.icon, { backgroundColor: good ? 'rgba(200,155,74,0.18)' : 'rgba(224,124,124,0.18)' }]}>
+                    <Text style={[styles.iconText, { color: good ? colors.gold : '#E07C7C' }]}>{good ? '✓' : '✕'}</Text>
+                  </View>
+                  <View style={ui.flex}>
+                    <Text style={styles.resultLine}>{r.line}</Text>
+                    {r.kind === 'bid' ? (
+                      r.bids.length > 1 ? (
+                        <Pressable onPress={() => setBids(r)} hitSlop={6}><Text style={[ui.sub, styles.bidsLink]}>{r.bids.length} bids ›</Text></Pressable>
+                      ) : <Text style={ui.sub}>{r.player.pos} · {r.player.nfl_team}</Text>
+                    ) : (
+                      <Text style={ui.sub} numberOfLines={1}>{[...r.you_give, ...r.you_get].map((p) => p.name).join(' · ')}</Text>
+                    )}
+                  </View>
                 </View>
-                <View style={ui.flex}>
-                  <Text style={styles.resultLine}>{r.line}</Text>
-                  <Text style={ui.sub} numberOfLines={1}>{[...r.you_give, ...r.you_get].map((p) => p.name).join(' · ')}</Text>
-                </View>
-              </View>
-            ))}
+              );
+            })}
           </View>
         </>
       ) : null}
+
+      <Modal visible={!!bids} transparent animationType="fade" onRequestClose={() => setBids(null)}>
+        <Pressable style={styles.shade} onPress={() => setBids(null)}>
+          <View style={styles.popup}>
+            <Text style={styles.popupTitle}>{bids?.player.name}: {bids?.bids.length} bids</Text>
+            {bids?.bids.map((b, i) => (
+              <View key={i} style={styles.popupRow}>
+                <Text style={[styles.popupOwner, b.mine && { color: colors.gold }]}>{b.mine ? 'You' : b.owner}{b.won ? '  ✓' : ''}</Text>
+                <Text style={styles.popupBid}>${b.bid}</Text>
+              </View>
+            ))}
+          </View>
+        </Pressable>
+      </Modal>
     </Screen>
   );
 }
@@ -147,6 +202,15 @@ function Button({ label, onPress, gold, line, disabled }: { label: string; onPre
 const styles = StyleSheet.create({
   section: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 10, marginBottom: 8 },
   sectionTitle: { color: colors.text, fontSize: 16, fontWeight: '900' },
+  bidAmount: { color: colors.gold, fontWeight: '800' },
+  cancel: { color: '#E07C7C', fontWeight: '700', fontSize: 14 },
+  bidsLink: { color: colors.gold, fontWeight: '700' },
+  shade: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center', padding: 24 },
+  popup: { width: '100%', maxWidth: 360, backgroundColor: colors.card, borderRadius: 18, padding: 18, borderWidth: 1, borderColor: colors.line },
+  popupTitle: { color: colors.text, fontSize: 17, fontWeight: '800', marginBottom: 10 },
+  popupRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.line },
+  popupOwner: { color: colors.text, fontSize: 15, fontWeight: '600' },
+  popupBid: { color: colors.text, fontSize: 15, fontWeight: '800' },
   card: { backgroundColor: colors.card, borderRadius: 18, borderWidth: 1, borderColor: colors.line, padding: 13, marginBottom: 10 },
   cardGold: { borderColor: colors.gold },
   head: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },

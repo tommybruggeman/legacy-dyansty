@@ -5,7 +5,7 @@ import { Headshot } from '../../components/Pictures';
 import { PointsChart } from '../../components/player/PointsChart';
 import { ErrorState, Loading } from '../../components/ScreenState';
 import { Back, Screen, money } from '../../components/ui';
-import { type PlayerPage, useApi } from '../../lib/api';
+import { apiGet, apiSend, type PlayerPage, type WaiverSheet, useApi } from '../../lib/api';
 import { colors } from '../../lib/theme';
 import { useTargets } from '../../lib/targets';
 
@@ -36,12 +36,35 @@ export default function Player() {
   // Trade (another owner's player), Drop (yours) or Bid (free agent). Until the league leaves Sleeper, all three open Sleeper.
   const ownerTeam = c?.team_id ?? data.rostered_by?.team_id ?? null;
   const sleeper = () => data.sleeper_league_id && Linking.openURL(`https://sleeper.com/leagues/${data.sleeper_league_id}`);
-  const comingNext = () => Alert.alert('Coming next', 'Drops and waiver bids in the app come in the next update.');
+  // Drop: confirm with what it costs in dead cap, then it's done (no waiting period).
+  const dropHim = async () => {
+    let cost = '';
+    try {
+      const sheet = await apiGet<WaiverSheet>(`/waivers/player/${data.player_id}`);
+      const me = sheet.players.find((p) => p.player_id === data.player_id);
+      if (me?.locked) return Alert.alert("Can't drop him yet", 'His game has already started this week.');
+      cost = me?.dead_cap_text ?? '';
+    } catch {
+      cost = '';
+    }
+    Alert.alert(`Drop ${name}?`, cost ? `${cost}.` : 'He becomes a free agent right away.', [
+      { text: 'Keep him', style: 'cancel' },
+      { text: 'Drop', style: 'destructive', onPress: async () => {
+        try {
+          await apiSend('POST', '/my-team/drop', { player_id: data.player_id });
+          router.back();
+        } catch (e) {
+          Alert.alert('Not dropped', e instanceof Error ? e.message : 'Try again.');
+        }
+      } },
+    ]);
+  };
+  const bid = () => router.push({ pathname: '/bid/[id]', params: { id: data.player_id, name, pos: data.pos ?? '', team: data.nfl_team ?? '' } });
   const action = data.is_mine
-    ? { label: 'Drop', style: styles.pillDrop, onPress: data.transactions_enabled ? comingNext : sleeper }
+    ? { label: 'Drop', style: styles.pillDrop, onPress: data.transactions_enabled ? dropHim : sleeper }
     : c || data.rostered_by
       ? { label: '⇄ Trade', style: styles.pillTrade, onPress: data.transactions_enabled && ownerTeam ? () => router.push({ pathname: '/trade/[teamId]', params: { teamId: ownerTeam, add: data.player_id } }) : sleeper }
-      : { label: 'Bid', style: styles.pillBid, onPress: data.transactions_enabled ? comingNext : sleeper };
+      : { label: 'Bid', style: styles.pillBid, onPress: data.transactions_enabled ? bid : sleeper };
 
   return (
     <Screen loading={loading} onRefresh={reload}>
