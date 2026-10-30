@@ -35,9 +35,20 @@ export function TeamView({ team, eyebrow, badge, top, onChange }: { team: TeamPa
     return () => { opened.current = openedHere; openedHere = false; };
   }, []));
   useEffect(() => setTab('Roster'), [team.team_id]);
+  // Other owners' teams are one page (no tabs), so a swipe there only ever means back to the teams list.
+  if (!team.is_me) {
+    return (
+      <>
+        <Title badge={badge}>{team.team_name}</Title>
+        {top}
+        <TopTiles team={team} tab="Roster" />
+        <RosterTab team={team} onChange={onChange} after={<><CapCard team={team} /><PicksCard team={team} /></>} />
+      </>
+    );
+  }
   return (
     <>
-      <Title eyebrow={eyebrow ?? team.owner_name.toUpperCase()} badge={badge}>{team.team_name}</Title>
+      <Title eyebrow={eyebrow} badge={badge}>{team.team_name}</Title>
       {top}
       <TopTiles team={team} tab={tab} />
       <UnderlineTabs value={tab} onChange={setTab} />
@@ -275,7 +286,7 @@ function pointsLabel(week: TeamWeek | null | undefined) {
   return ps.some((p) => p.status === 'playing' || p.status === 'final') ? 'LIVE PTS' : 'PROJ PTS';
 }
 
-function RosterTab({ team, onChange }: { team: TeamPage; onChange?: () => void }) {
+function RosterTab({ team, onChange, after }: { team: TeamPage; onChange?: () => void; after?: ReactNode }) {
   const lineup = team.lineup;
   const editing = !!lineup?.enabled;
   const [showBench, setShowBench] = useState(editing);
@@ -309,6 +320,7 @@ function RosterTab({ team, onChange }: { team: TeamPage; onChange?: () => void }
           {bench.map((p, i) => <PlayerRow key={p.player_id} p={p} first={i === 0} chip={benchChip(p)} w={week[p.player_id]} season={team.season} />)}
         </Card>
       ) : null}
+      {after}
       <View style={styles.pair}>
         <Card style={styles.half}>
           <Text style={styles.eyebrow}>TAXI</Text>
@@ -355,7 +367,7 @@ function ContractsTab({ team }: { team: TeamPage }) {
   return (
     <>
       <Card
-        title="Your contracts"
+        title={team.is_me ? 'Your contracts' : 'Contracts'}
         right={
           <Pressable onPress={() => go('/league-cap')} hitSlop={8}>
             <Text style={ui.link}>Whole league ›</Text>
@@ -440,6 +452,86 @@ function PicksTab({ team }: { team: TeamPage }) {
   );
 }
 
+// Other teams: cap space for the next three seasons as rings (filled = cap used), dead cap under them.
+// "All contracts" opens the full contract list and dead cap rows in place.
+function CapCard({ team }: { team: TeamPage }) {
+  const [open, setOpen] = useState(false);
+  const dead = team.contracts.dead_cap;
+  const deadTotal = dead.reduce((s, d) => s + d.amount, 0);
+  const toggle = () => setOpen(!open);
+  return (
+    <>
+      <Card
+        title="Cap by year"
+        right={
+          <Pressable onPress={toggle} hitSlop={8}>
+            <Text style={styles.smallLink}>{open ? 'HIDE CONTRACTS' : 'ALL CONTRACTS ›'}</Text>
+          </Pressable>
+        }
+      >
+        <View style={styles.rings}>
+          {team.cap.by_year.slice(0, 3).map((y) => (
+            <View key={y.season} style={styles.ringCol}>
+              <CapRing used={team.salary_cap ? y.used / team.salary_cap : 0} label={dollars(y.space)} red={y.space < 0} />
+              <Text style={ui.sub}>{y.season}</Text>
+            </View>
+          ))}
+        </View>
+        <Pressable onPress={dead.length ? toggle : undefined} style={styles.deadLine}>
+          <Text style={[ui.sub, ui.flex]}>Dead cap</Text>
+          <Text style={styles.deadValue}>
+            {dead.length ? `${dollars(deadTotal)} · ${dead.length} player${dead.length === 1 ? '' : 's'}${open ? '' : ' ›'}` : 'None'}
+          </Text>
+        </Pressable>
+      </Card>
+      {open ? <ContractsTab team={team} /> : null}
+    </>
+  );
+}
+
+const RING = 64;
+const RING_W = 6;
+
+// A ring filled clockwise from the top by `used` (0 to 1), drawn from two clipped half circles (no SVG in the app).
+function CapRing({ used, label, red }: { used: number; label: string; red?: boolean }) {
+  const deg = Math.max(0, Math.min(1, used)) * 360;
+  const color = red ? '#E08A8A' : colors.gold;
+  const arc = { borderTopColor: color, borderRightColor: color };
+  return (
+    <View style={styles.ring}>
+      <View style={[styles.ringHalf, { left: RING / 2 }]}>
+        <View style={[styles.ringArc, arc, { left: -RING / 2, transform: [{ rotate: `${45 + Math.min(deg, 180) - 180}deg` }] }]} />
+      </View>
+      <View style={[styles.ringHalf, { left: 0 }]}>
+        <View style={[styles.ringArc, arc, { left: 0, transform: [{ rotate: `${225 + Math.max(deg - 180, 0) - 180}deg` }] }]} />
+      </View>
+      <Text style={[styles.ringText, red && { color }]}>{label}</Text>
+    </View>
+  );
+}
+
+// Other teams: every pick they own as a chip (year + round, and whose it was).
+function PicksCard({ team }: { team: TeamPage }) {
+  const owned = team.picks.owned;
+  const away = team.picks.traded_away;
+  return (
+    <Card title="Picks" right={<Text style={[ui.value, ui.gold]}>{owned.length}</Text>}>
+      {owned.length === 0 ? <Note>No draft picks on record.</Note> : null}
+      <View style={styles.chips}>
+        {owned.map((p) => (
+          <View key={`${p.year}-${p.round}-${p.original_owner}`} style={styles.chip}>
+            <Text style={styles.chipTop}>{p.year} {ROUND[p.round] ?? `R${p.round}`}</Text>
+            <Text style={styles.chipSub}>{p.own ? 'own' : `from ${firstName(p.original_owner)}`}</Text>
+          </View>
+        ))}
+      </View>
+      {away.length ? (
+        <Text style={[ui.sub, styles.subGap]}>Traded away: {away.map((p) => `${p.year} ${ROUND[p.round] ?? p.round} (to ${firstName(p.current_owner)})`).join(', ')}</Text>
+      ) : null}
+    </Card>
+  );
+}
+
 // Your record against this owner, under their roster (other teams only).
 function HeadToHead({ team }: { team: TeamPage }) {
   const h2h = team.head_to_head;
@@ -457,6 +549,19 @@ function HeadToHead({ team }: { team: TeamPage }) {
 }
 
 const styles = StyleSheet.create({
+  smallLink: { color: colors.gold, fontSize: 11, fontWeight: '800', letterSpacing: 1 },
+  rings: { flexDirection: 'row', justifyContent: 'space-around', paddingVertical: 6 },
+  ringCol: { alignItems: 'center', gap: 6 },
+  ring: { width: RING, height: RING, borderRadius: RING / 2, borderWidth: RING_W, borderColor: '#22352B', alignItems: 'center', justifyContent: 'center' },
+  ringHalf: { position: 'absolute', top: -RING_W, width: RING / 2, height: RING, overflow: 'hidden', marginLeft: -RING_W },
+  ringArc: { position: 'absolute', top: 0, width: RING, height: RING, borderRadius: RING / 2, borderWidth: RING_W, borderColor: 'transparent' },
+  ringText: { color: colors.text, fontSize: 14, fontWeight: '800' },
+  deadLine: { flexDirection: 'row', alignItems: 'center', borderTopWidth: 1, borderTopColor: '#22352B', marginTop: 10, paddingTop: 10 },
+  deadValue: { color: colors.gold, fontSize: 13, fontWeight: '700' },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  chip: { backgroundColor: '#1A2E24', borderRadius: 10, paddingVertical: 7, paddingHorizontal: 10 },
+  chipTop: { color: colors.text, fontSize: 13, fontWeight: '800' },
+  chipSub: { color: colors.muted, fontSize: 10, fontWeight: '600', marginTop: 1 },
   nameLine: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   shrink: { flexShrink: 1 },
   subGap: { marginTop: 3 },
