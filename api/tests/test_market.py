@@ -132,3 +132,11 @@ def test_filter_players_contract_ends_and_saved_free_agents():
     # A saved free agent past the cut still comes back so the Saved chip finds him.
     kept = market.all_players(POOL, STATE, PPG, TEAMS, ROSTERS, "t2", fa_limit=1, keep_ids=["9"])["players"]
     assert "9" in {p["player_id"] for p in kept}
+
+
+def test_all_players_without_a_kicker_slot():
+    pool = POOL + [{"sleeper_id": "11", "full_name": "Kicky", "position": "K"}]
+    with_k = market.all_players(pool, STATE, PPG, TEAMS, ROSTERS, "t2")
+    without = market.all_players(pool, STATE, PPG, TEAMS, ROSTERS, "t2", kickers=False)
+    assert "K" in with_k["positions"] and "11" in {p["player_id"] for p in with_k["players"]}
+    assert without["positions"] == ["QB", "RB", "WR", "TE"] and "11" not in {p["player_id"] for p in without["players"]}

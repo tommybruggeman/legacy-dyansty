@@ -128,13 +128,15 @@ def all_players(
     my_team_id: str | None,
     fa_limit: int = FA_IN_SEARCH,
     keep_ids: Iterable[str] = (),
+    kickers: bool = True,
 ) -> dict[str, Any]:
     """Every rostered player plus the best free agents, for league-wide search and filters.
 
     Sleeper rosters say who is rostered (taxi and IR included) and on which team;
     contract rows add salary, years left and rookie deals. Free agents are the
     same pool as free_agents(), cut to the top `fa_limit` by points, plus any
-    in `keep_ids` (saved targets) so the Saved chip always finds them.
+    in `keep_ids` (saved targets) so the Saved chip always finds them. A league
+    without a kicker slot (kickers=False) leaves kickers out and off the filters.
     """
     by_roster = {t["roster_id"]: t for t in league_teams if t.get("roster_id") is not None}
     by_team = {t["team_id"]: t for t in league_teams}
@@ -181,7 +183,9 @@ def all_players(
 
     rostered_ids = set(contracts) | set(sleeper_team)
     rostered = [row(pid) for pid in rostered_ids]
-    free = [row(pid) for pid in players if pid not in rostered_ids and _text(players[pid].get("position")) in POSITIONS]
+    positions = [p for p in POSITIONS if kickers or p != "K"]
+    rostered = [r for r in rostered if r["pos"] in positions or not r["pos"]]
+    free = [row(pid) for pid in players if pid not in rostered_ids and _text(players[pid].get("position")) in positions]
     free.sort(key=_rank_key)
     keep = {_text(i) for i in keep_ids}
     rows = rostered + free[:fa_limit] + [r for r in free[fa_limit:] if r["player_id"] in keep]
@@ -192,6 +196,7 @@ def all_players(
         "last_season": ppg.last_season,
         "season_started": ppg.active_season_started,
         "players": rows,
+        "positions": positions,
         "owners": [{"team_id": t["team_id"], "owner_name": t["owner_name"], "team_name": t["team_name"], "is_mine": t["team_id"] == mine}
                    for t in owners],
     }
