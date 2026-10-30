@@ -19,7 +19,7 @@ FITS = {
     "REC_FLEX": {"WR", "TE"},
     "WRRB_FLEX": {"RB", "WR"},
 }
-LABELS = {"FLEX": "FLX", "SUPER_FLEX": "SF", "REC_FLEX": "W/T", "WRRB_FLEX": "W/R"}
+LABELS = {"FLEX": "FLX", "SUPER_FLEX": "OP", "REC_FLEX": "W/T", "WRRB_FLEX": "W/R"}
 ET = ZoneInfo("America/New_York")
 
 ERRORS = {
