@@ -1,7 +1,7 @@
-import { router, useLocalSearchParams } from 'expo-router';
+import { router, useLocalSearchParams, useNavigation } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, type ScrollViewInstance, StyleSheet, Text, TextInput, View,
+  ActivityIndicator, Keyboard, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, type ScrollViewInstance, StyleSheet, Text, TextInput, View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -27,6 +27,26 @@ export default function FrontOfficeScreen() {
   const [typing, setTyping] = useState(false);
   const scroll = useRef<ScrollViewInstance>(null);
   const insets = useSafeAreaInsets();
+  const navigation = useNavigation();
+  // Bumped when a chat is closed, so an answer still streaming for it is dropped.
+  const chat = useRef(0);
+  const focusedChat = useRef(0);
+
+  // Tapping the GM tab while already in a chat goes back to the GM homepage (tiles, brief, starters).
+  // The chat is saved and stays in the chats list.
+  useEffect(() => navigation.addListener('tabPress' as never, () => {
+    if (!navigation.isFocused()) return;
+    chat.current += 1;
+    Keyboard.dismiss();
+    setMessages([]);
+    setConversationId(null);
+    setDraft('');
+    setTyping(false);
+    setThinking(false);
+    setPartial('');
+    setProblem(null);
+    scroll.current?.scrollTo({ y: 0, animated: false });
+  }), [navigation]);
 
   // Opening a past chat (c=id) or starting a new one (c=new) from the chats list.
   useEffect(() => {
@@ -52,8 +72,10 @@ export default function FrontOfficeScreen() {
     setStatus('Reading your roster');
     setPartial('');
     let answer = '';
+    const mine = chat.current;
     try {
       await apiStream<ChatEvent>('/front-office/chat/stream', { question, conversation_id: convo }, (event) => {
+        if (chat.current !== mine) return;
         if (event.e === 'status') {
           setStatus(event.text);
           setPartial('');
@@ -72,10 +94,12 @@ export default function FrontOfficeScreen() {
         }
       });
     } catch (e: any) {
-      setProblem(e?.message ?? 'Something went wrong.');
+      if (chat.current === mine) setProblem(e?.message ?? 'Something went wrong.');
     } finally {
-      setThinking(false);
-      setPartial('');
+      if (chat.current === mine) {
+        setThinking(false);
+        setPartial('');
+      }
     }
   };
 
@@ -180,8 +204,8 @@ export default function FrontOfficeScreen() {
         <TextInput
           value={draft}
           onChangeText={setDraft}
-          onFocus={() => setTyping(true)}
-          onBlur={() => setTyping(!!draft.trim())}
+          onFocus={() => { focusedChat.current = chat.current; setTyping(true); }}
+          onBlur={() => setTyping(focusedChat.current === chat.current && !!draft.trim())}
           placeholder={data.ai_ready ? 'Ask your assistant GM…' : 'The Assistant GM is off for now'}
           placeholderTextColor={colors.muted}
           editable={data.ai_ready && !thinking}
