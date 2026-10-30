@@ -7,7 +7,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Iterable
 
-from api import cache, home, league, projections, teams
+from api import cache, home, league, nfl_live, projections, teams
 from api.front_office import LEAGUE_TZ
 
 
@@ -26,6 +26,7 @@ def game(client: Any, ctx: dict[str, Any], week: int, matchup_id: int, team_rows
     result["my_roster_id"] = ctx.get("sleeper_roster_id")
     result["is_final"] = final
     add_projections(client, ctx, week, final, result, info)
+    result["win_chance"] = nfl_live.win_chance(result["teams"], final)
     return result
 
 
@@ -53,6 +54,7 @@ def add_projections(client: Any, ctx: dict[str, Any], week: int, final: bool, re
     # week_ranks reads the same stat lines, so this second read comes from the Sleeper cache.
     lines_job = cache.pool.submit(lambda: projections.week_lines("stats", season, week, 86400 if final else 120))
     scoring_job = cache.pool.submit(lambda: projections.league_scoring(sid))
+    games_job = cache.pool.submit(lambda: nfl_live.week_games(season, week, final))
     starts = week_kickoffs(client, season, week)
     now = datetime.now(LEAGUE_TZ)
     try:
@@ -72,6 +74,10 @@ def add_projections(client: Any, ctx: dict[str, Any], week: int, final: bool, re
         lines, scoring = lines_job.result(), scoring_job.result()
     except Exception:
         lines, scoring = {}, {}
+    try:
+        games = games_job.result()
+    except Exception:
+        games = {}
     for side in result["teams"]:
         total = 0.0
         for p in side["players"]:
@@ -79,6 +85,13 @@ def add_projections(client: Any, ctx: dict[str, Any], week: int, final: bool, re
             p["pos"] = positions.get(pid) or p.get("slot")
             p["team"] = nfl_teams.get(pid) or None
             p["status"] = "final" if final else home.player_status(home.NFLVERSE_TEAMS.get(p["team"] or "", p["team"] or ""), starts, now)
+            nfl_game = games.get(p["team"] or "")
+            if nfl_game and not final and p["status"] != "bye":  # ESPN's real game state beats the kickoff-time guess
+                p["status"] = {"pre": "waiting", "in": "playing", "post": "final"}.get(nfl_game["state"], p["status"])
+            p["game"] = nfl_live.game_line(nfl_game)
+            kick = starts.get(home.NFLVERSE_TEAMS.get(p["team"] or "", p["team"] or ""))
+            p["kickoff"] = kick.isoformat() if kick else None
+            p["line"] = nfl_live.stat_line((lines.get(pid) or {}).get("stats"), p["pos"]) if p["status"] in ("playing", "final") else []
             p["proj"] = proj.get(pid)
             p["rank"] = (ranks.get(pid) or {}).get("label") if p["status"] in ("playing", "final") and p["points"] else None
             p["breakdown"] = projections.breakdown((lines.get(pid) or {}).get("stats"), scoring) if p["status"] in ("playing", "final") else []
