@@ -32,6 +32,7 @@ import streamlit as st
 
 from components.sidebar_nav import render_nav
 from auth import auth_client, require_login, current_user
+from services.lineup_editor import render_lineup_editor
 from services.win_odds_view import win_odds_text
 from services.my_team_context import resolve_my_team
 from services.standings_lookup import (
@@ -1794,6 +1795,10 @@ with right:
     activity_area = st.container()
 
 with action_trade_col:
+    # This week's lineup, once lineups are set in the app (playoffs on); hidden until then.
+    render_lineup_editor(sb, league_id=str(league_id), season=int(active_season), team_id=str(my_team.get("team_id")),
+                         sleeper_league_id=active_league_season.sleeper_league_id or SLEEPER_LEAGUE_ID,
+                         roster=my_roster.to_dict("records") if not my_roster.empty else [])
     with st.container(border=True, key="my_team_trade_block"):
         st.markdown("### Trade Block")
 

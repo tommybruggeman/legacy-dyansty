@@ -31,7 +31,7 @@ export default function MyTeam() {
 
   return (
     <Screen loading={loading} onRefresh={reload}>
-      <TeamView team={data} eyebrow="OWNER PORTAL" badge={<PendingBadge />} top={callsCard} />
+      <TeamView team={data} eyebrow="OWNER PORTAL" badge={<PendingBadge />} top={callsCard} onChange={refresh} />
     </Screen>
   );
 }
