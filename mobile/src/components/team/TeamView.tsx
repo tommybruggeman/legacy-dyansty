@@ -289,7 +289,7 @@ function pointsLabel(week: TeamWeek | null | undefined) {
 function RosterTab({ team, onChange, after }: { team: TeamPage; onChange?: () => void; after?: ReactNode }) {
   const lineup = team.lineup;
   const editing = !!lineup?.enabled;
-  const [showBench, setShowBench] = useState(editing);
+  const [showBench, setShowBench] = useState(editing && team.is_me);
   const [picking, setPicking] = useState<Picking>(null);
   const { starters, bench, taxi, ir } = team.roster;
   const week = team.week?.players ?? {};
