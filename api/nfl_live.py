@@ -157,7 +157,11 @@ def time_left(game: dict[str, Any] | None) -> float | None:
 
 def live_projection(points: float, proj: float | None, status: str, game: dict[str, Any] | None) -> float | None:
     """A starter's projected final: real points once done, points so far plus his projection for the
-    game time left while playing (so a hot start raises it and a quiet game lowers it), else the projection."""
+    game time left while playing (so a hot start raises it and a quiet game lowers it), else the projection.
+
+    Tested against 2023-2025 replayed play by play (scoring/live_projection_study.py): fitted blends of
+    scoring pace, usage, score margin and "no touches lately" beat this by 1% or less once the starting
+    point is Sleeper's projection, so the simple version stays."""
     if status == "final" or proj is None:
         return round(points, 2)
     if status != "playing":
@@ -171,8 +175,9 @@ def live_projection(points: float, proj: float | None, status: str, game: dict[s
 def win_chance(sides: list[dict[str, Any]], final: bool) -> list[int] | None:
     """Each side's chance to win, from the current score plus what's still projected to come.
 
-    Each unfinished starter's remaining points get a spread of about half his
-    remaining projection (plus a little), a free normal approximation with no model run.
+    Each unfinished starter's remaining points get a spread of 2 x sqrt(points still projected) + 0.4,
+    fitted on every QB/RB/WR/TE game of 2023-2025 replayed play by play against Sleeper's projections
+    (scoring/live_projection_study.py). A free normal approximation, no model run.
     """
     if len(sides) != 2:
         return None
@@ -185,7 +190,7 @@ def win_chance(sides: list[dict[str, Any]], final: bool) -> list[int] | None:
         for p in side.get("players") or []:
             if p.get("status") in ("waiting", "playing") and p.get("proj") is not None:
                 left = max(0.0, float(p.get("live_proj") if p.get("live_proj") is not None else p["proj"]) - (float(p.get("points") or 0) if p.get("status") == "playing" else 0.0))
-                var += (0.5 * left + 1.0) ** 2
+                var += (2.0 * math.sqrt(left) + 0.4) ** 2
     if var <= 0:
         return None
     z = (means[0] - means[1]) / math.sqrt(var)
