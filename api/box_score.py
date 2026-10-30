@@ -10,6 +10,7 @@ from typing import Any, Iterable
 from api import cache, home, league, nfl_live, projections, teams
 from api.front_office import LEAGUE_TZ
 
+PROJ_TTL = 900
 BENCH_ORDER = {"QB": 0, "RB": 1, "WR": 2, "TE": 3, "K": 4, "DEF": 5}
 
 
@@ -52,7 +53,8 @@ def add_projections(client: Any, ctx: dict[str, Any], week: int, final: bool, re
     positions = {pid: str(info.get(pid, {}).get("position") or "") for pid in ids}
     nfl_teams = {pid: str(info.get(pid, {}).get("team") or "") for pid in ids}
     season, sid = ctx["season"], ctx["sleeper_id"]
-    proj_job = cache.pool.submit(lambda: cache.cached(("proj", sid, season, week), 900, lambda: projections.week_projections(client, sid, season, week, ids, positions, nfl_teams)))
+    proj_key = ("proj", sid, season, week)
+    proj_job = cache.pool.submit(lambda: cache.cached(proj_key, PROJ_TTL, lambda: projections.week_projections(client, sid, season, week, ids, positions, nfl_teams)))
     rank_job = cache.pool.submit(lambda: projections.week_ranks(sid, season, week, final, positions))
     # week_ranks reads the same stat lines, so this second read comes from the Sleeper cache.
     lines_job = cache.pool.submit(lambda: projections.week_lines("stats", season, week, 86400 if final else 120))
@@ -64,9 +66,11 @@ def add_projections(client: Any, ctx: dict[str, Any], week: int, final: bool, re
         proj = proj_job.result()
     except Exception:
         proj = {}
-    if set(ids) - set(proj):  # cached projections were for another lineup: score these too
+    missing = set(ids) - set(proj)
+    if missing:  # cached projections were for other players (another game, the bench): score these and keep them all
         try:
-            proj = {**proj, **projections.week_projections(client, sid, season, week, set(ids) - set(proj), positions, nfl_teams)}
+            proj = {**proj, **{pid: None for pid in missing}, **projections.week_projections(client, sid, season, week, missing, positions, nfl_teams)}
+            cache.store(proj_key, PROJ_TTL, proj)
         except Exception:
             pass
     try:

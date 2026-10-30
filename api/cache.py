@@ -26,6 +26,11 @@ def cached(key: Any, seconds: float, load: Callable[[], Any]) -> Any:
     return value
 
 
+def store(key: Any, seconds: float, value: Any) -> None:
+    """Put a value in the cache, e.g. an entry grown with more rows than its loader first fetched."""
+    _cache[key] = (time.monotonic() + seconds, value)
+
+
 def forget(kind: str, league_id: Any = None) -> None:
     """Drop every entry of one kind (optionally for one league)."""
     for key in [k for k in _cache if isinstance(k, tuple) and k[0] == kind and (league_id is None or league_id in k)]:
