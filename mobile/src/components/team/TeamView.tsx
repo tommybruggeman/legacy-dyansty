@@ -303,12 +303,13 @@ function RosterTab({ team, onChange, after }: { team: TeamPage; onChange?: () =>
   // Other teams: taxi and IR players join the bench (tagged T and IR) instead of their own cards.
   const bench = mine ? team.roster.bench : [...team.roster.bench, ...taxi, ...ir].filter((p, i, all) => all.findIndex((q) => q.player_id === p.player_id) === i);
   const week = team.week?.players ?? {};
+  // Every row gets its slot tag; it's tappable only when this lineup is set in the app.
   const slotChip = (i: number) => editing && lineup ? (
     <SlotChip label={lineup.slots[i]?.label ?? ''} locked={lineup.slots[i]?.locked} onPress={() => setPicking({ kind: 'slot', index: i })} />
-  ) : undefined;
+  ) : <SlotChip label={starters[i]?.slot || starters[i]?.pos || ''} />;
   const benchChip = (p: Player) => editing ? (
     <SlotChip label="BN" bench locked={lineup?.locked.includes(p.player_id)} onPress={() => setPicking({ kind: 'bench', player: p })} />
-  ) : undefined;
+  ) : <SlotChip label="BN" bench />;
   return (
     <>
       {editing && lineup ? (

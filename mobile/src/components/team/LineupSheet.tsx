@@ -11,9 +11,10 @@ import { ui } from '../ui';
 export type Picking = { kind: 'slot'; index: number } | { kind: 'bench'; player: Player } | null;
 
 // The gold slot chip next to each player on My Team. Tapping it opens the sheet; a lock shows once his game starts.
-export function SlotChip({ label, locked, bench, onPress }: { label: string; locked?: boolean; bench?: boolean; onPress: () => void }) {
+// Without onPress it's a plain read-only tag (other teams, or lineups still set in Sleeper).
+export function SlotChip({ label, locked, bench, onPress }: { label: string; locked?: boolean; bench?: boolean; onPress?: () => void }) {
   return (
-    <Pressable onPress={onPress} hitSlop={6} style={[styles.chip, bench && styles.chipBench, locked && styles.chipLocked]}>
+    <Pressable onPress={onPress} disabled={!onPress} hitSlop={6} style={[styles.chip, bench && styles.chipBench, locked && styles.chipLocked]}>
       <Text style={[styles.chipText, bench && styles.chipTextBench, locked && styles.chipTextLocked]}>{locked ? '🔒' : label}</Text>
     </Pressable>
   );
