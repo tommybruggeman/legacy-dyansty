@@ -274,6 +274,23 @@ export type BoxPlayer = {
   proj?: number | null;
   rank?: string | null;
   breakdown?: { label: string; value: number; points: number }[];
+  game?: NflGame | null;
+  line?: { text: string; tone: '' | 'good' | 'bad' }[];
+  kickoff?: string | null;
+};
+// A player's NFL game from his team's side (ESPN scoreboard): pre, in or post.
+export type NflGame = {
+  state: 'pre' | 'in' | 'post';
+  quarter: number;
+  clock: string;
+  detail: string;
+  opp: string;
+  home: boolean;
+  score: number;
+  opp_score: number;
+  possession: boolean;
+  red_zone: boolean;
+  down: string;
 };
 export type BoxScore = {
   week: number;
@@ -281,6 +298,7 @@ export type BoxScore = {
   matchup_id: number;
   my_roster_id: number | null;
   teams: { roster_id: number; team_id: string | null; name: string; score: number; projected?: number; players: BoxPlayer[] }[];
+  win_chance?: [number, number] | null;
 };
 
 export type PlayerPage = {

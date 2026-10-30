@@ -360,6 +360,32 @@ def matchup_cards_html(
     return "".join(parts)
 
 
+def _game_html(p: dict) -> str:
+    """'Q3 8:42 · 24-13 vs MIA · ball' while live, 'Final W 34-20 vs MIA' after (same as the app)."""
+    g = p.get("game") or {}
+    if not g or g.get("state") == "pre":
+        return ""
+    vs = f"{'vs' if g.get('home') else '@'} {html.escape(str(g.get('opp') or ''))}"
+    score = f"{g.get('score', 0)}-{g.get('opp_score', 0)}"
+    if g.get("state") == "post":
+        res = "W" if g.get("score", 0) > g.get("opp_score", 0) else "L" if g.get("score", 0) < g.get("opp_score", 0) else "T"
+        return f'<span class="bx-game">Final {res} {score} {vs}</span>'
+    ball = ""
+    if g.get("possession"):
+        down = html.escape(str(g.get("down") or ""))
+        ball = f' · <span class="bx-rz">RED ZONE {down}</span>' if g.get("red_zone") else f" · has the ball{(' ' + down) if down else ''}"
+    return f'<span class="bx-game"><b>Q{g.get("quarter")} {html.escape(str(g.get("clock") or ""))}</b> {score} {vs}{ball}</span>'
+
+
+def _line_html(p: dict) -> str:
+    parts = p.get("line") or []
+    if not parts:
+        return ""
+    tone = {"good": "bx-good", "bad": "bx-bad"}
+    return '<span class="bx-line">' + ", ".join(
+        f'<span class="{tone.get(x.get("tone"), "")}">{html.escape(str(x.get("text") or ""))}</span>' for x in parts) + "</span>"
+
+
 def box_score_html(game: dict) -> str:
     """Both lineups of one game (api.box_score.game): points, projection and weekly position rank per starter,
     plus each side's projected total. Same numbers as the app's game screen."""
@@ -371,11 +397,13 @@ def box_score_html(game: dict) -> str:
             rank = html.escape(str(p.get("rank") or ""))
             status = p.get("status") or ""
             pts = f"{_as_number(p.get('points')):.1f}" if status in ("playing", "final") or p.get("points") else "–"
+            live_cls = " live" if status == "playing" else ""
             rows.append(
-                '<div class="bx-row">'
+                f'<div class="bx-row{live_cls}">'
                 f'<span class="bx-slot">{html.escape(str(p.get("slot") or ""))}</span>'
                 f'<span class="bx-name">{html.escape(str(p.get("name") or ""))}'
-                f'<span class="bx-sub">{html.escape(str(p.get("pos") or ""))}{" · " + html.escape(str(p["team"])) if p.get("team") else ""}{" · " + rank if rank else ""}</span></span>'
+                f'<span class="bx-sub">{html.escape(str(p.get("pos") or ""))}{" · " + html.escape(str(p["team"])) if p.get("team") else ""}{" · " + rank if rank else ""}</span>'
+                f'{_game_html(p)}{_line_html(p)}</span>'
                 f'<span class="bx-num">{pts}<span class="bx-sub">proj {proj_txt}</span></span>'
                 '</div>'
             )
@@ -400,6 +428,9 @@ def box_score_html(game: dict) -> str:
         '.bx-name{font-size:.9rem;line-height:1.2}'
         '.bx-num{font-weight:700;text-align:right;line-height:1.2}'
         '.bx-sub{display:block;font-size:.72rem;font-weight:400;opacity:.55}'
+        '.bx-row.live{background:linear-gradient(90deg,rgba(200,155,74,.16),transparent 75%);box-shadow:inset 3px 0 0 #C89B4A;padding-left:6px;border-radius:6px}'
+        '.bx-game{display:block;font-size:.72rem;opacity:.75}.bx-game b{color:#4CC38A}.bx-game .bx-rz{color:#ff7d7d;font-weight:800}'
+        '.bx-line{display:block;font-size:.74rem;font-weight:600;opacity:.9}.bx-good{color:#4CC38A;font-weight:800}.bx-bad{color:#ef7a7a;font-weight:800}'
         '</style>'
         f'<div class="bx-wrap">{sides}</div>'
     )
