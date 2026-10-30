@@ -28,10 +28,13 @@ export function MatchupsView() {
   const mine = data.games.find((g) => g.teams.some((t) => t.roster_id === data.my_roster_id));
   const others = data.games.filter((g) => g !== mine);
   const shown = data.week;
+  const started = data.games.some((g) => g.teams.some((t) => t.score > 0));
+  const status = !started ? null : data.is_final ? 'FINAL' : 'LIVE';
 
   return (
     <View style={styles.content}>
       <View style={styles.titleRow}>
+        {status ? <Text style={[styles.badge, data.is_final ? styles.finalBadge : styles.liveBadge]}>{status}</Text> : <View />}
         <View style={styles.weekPicker}>
           <Pressable disabled={shown <= 1} onPress={() => setWeek(shown - 1)} hitSlop={10}>
             <Text style={[styles.arrow, shown <= 1 && styles.dim]}>‹</Text>
@@ -57,9 +60,9 @@ export function MatchupsView() {
         <Text style={styles.note}>No scores yet this week.</Text>
       )}
 
-      {mine ? <GameCard game={mine} week={shown} myId={data.my_roster_id} final={data.is_final} isMine /> : null}
+      {mine ? <GameCard game={mine} week={shown} myId={data.my_roster_id} isMine /> : null}
       {others.map((game) => (
-        <GameCard key={game.matchup_id} game={game} week={shown} myId={data.my_roster_id} final={data.is_final} />
+        <GameCard key={game.matchup_id} game={game} week={shown} myId={data.my_roster_id} />
       ))}
       <Text style={styles.note}>Gold rank = a Top 5 score this week · tap a game for the box score</Text>
     </View>
@@ -76,30 +79,21 @@ function Tile({ label, value, sub }: { label: string; value: string; sub: string
   );
 }
 
-function GameCard({ game, week, myId, final, isMine }: { game: Game; week: number; myId: number | null; final: boolean; isMine?: boolean }) {
+function GameCard({ game, week, myId, isMine }: { game: Game; week: number; myId: number | null; isMine?: boolean }) {
   const [a, b] = game.teams;
-  const margin = Math.abs(a.score - b.score).toFixed(2);
   const scored = a.score > 0 || b.score > 0;
-  const status = !scored ? 'Not started' : a.score === b.score ? 'Tied' : `${first(a.name)} ${final ? 'won' : 'leads'} by ${margin}`;
-
   return (
     <Pressable onPress={() => router.push(`/game/${week}/${game.matchup_id}`)} style={[styles.card, isMine && styles.myCard]}>
       {isMine ? <Text style={styles.yourMatchup}>YOUR MATCHUP</Text> : null}
       <TeamRow team={a} leading={scored && a.score > b.score} isMe={a.roster_id === myId} />
-      <TeamRow team={b} leading={false} isMe={b.roster_id === myId} />
-      <View style={styles.footer}>
-        <Text style={styles.status}>{status}</Text>
-        {scored ? (
-          <Text style={[styles.badge, final ? styles.finalBadge : styles.liveBadge]}>{final ? 'FINAL' : 'LIVE'}</Text>
-        ) : null}
-      </View>
+      <TeamRow team={b} leading={scored && b.score > a.score} isMe={b.roster_id === myId} last />
     </Pressable>
   );
 }
 
-function TeamRow({ team, leading, isMe }: { team: MatchupTeam; leading: boolean; isMe: boolean }) {
+function TeamRow({ team, leading, isMe, last }: { team: MatchupTeam; leading: boolean; isMe: boolean; last?: boolean }) {
   return (
-    <View style={styles.teamRow}>
+    <View style={[styles.teamRow, last && styles.teamRowLast]}>
       <View style={[styles.rank, team.top5 && styles.rankTop5]}>
         <Text style={[styles.rankText, team.top5 && styles.rankTextTop5]}>{team.rank}</Text>
       </View>
@@ -115,7 +109,7 @@ function TeamRow({ team, leading, isMe }: { team: MatchupTeam; leading: boolean;
 
 const styles = StyleSheet.create({
   content: { gap: 12 },
-  titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end' },
+  titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   weekPicker: {
     flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: 1, borderColor: colors.line,
     borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8,
@@ -140,10 +134,9 @@ const styles = StyleSheet.create({
   you: { color: colors.gold, fontSize: 11, fontWeight: '800', backgroundColor: '#2A2A1A', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8, overflow: 'hidden' },
   scoreBox: { marginLeft: 'auto', alignItems: 'flex-end' },
   score: { color: colors.text, fontSize: 19, fontWeight: '700' },
-  proj: { color: colors.muted, fontSize: 12, fontWeight: '600', marginTop: 1 },
+  proj: { color: colors.muted, fontSize: 10.5, fontWeight: '500', opacity: 0.6, marginTop: 1 },
+  teamRowLast: { borderBottomWidth: 0 },
   gold: { color: colors.gold },
-  footer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, backgroundColor: colors.card },
-  status: { color: colors.muted, fontSize: 14, fontWeight: '600' },
   badge: { fontSize: 11, fontWeight: '800', letterSpacing: 1, paddingHorizontal: 10, paddingVertical: 3, borderRadius: 10, overflow: 'hidden' },
   liveBadge: { color: colors.live, backgroundColor: '#163626' },
   finalBadge: { color: colors.muted, backgroundColor: colors.row },

@@ -78,3 +78,20 @@ def test_me_falls_back_to_owner_name():
 def test_me_without_membership_is_404():
     client = _app_with({"league_memberships": []})
     assert client.get("/me").status_code == 404
+
+
+def test_matchup_cards_get_projected_totals(monkeypatch):
+    from api import box_score, league, teams
+    rows = [{"matchup_id": 1, "roster_id": 1, "starters": ["10"], "players_points": {"10": 5.0}},
+            {"matchup_id": 1, "roster_id": 2, "starters": ["20"], "players_points": {"20": 0.0}}]
+    monkeypatch.setattr(main, "_season_context", lambda client, user: {"season": 2026, "sleeper_id": "S"})
+    monkeypatch.setattr(league.sleeper, "get", lambda path, ttl=60: rows)
+    monkeypatch.setattr(teams, "player_info", lambda client, ids: {})
+
+    def fake(client, ctx, week, final, result, info):
+        for side in result["teams"]:
+            side["projected"] = 10.0 + side["roster_id"]
+    monkeypatch.setattr(box_score, "add_projections", fake)
+    result = {"week": 8, "games": [{"teams": [{"roster_id": 1}, {"roster_id": 2}]}]}
+    main._add_card_projections(None, None, result)
+    assert [t["projected"] for t in result["games"][0]["teams"]] == [11.0, 12.0]
