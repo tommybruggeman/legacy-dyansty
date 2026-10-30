@@ -274,6 +274,20 @@ export type TeamPage = {
   power?: { rank: number; of: number | null; move: number | null } | null;
   head_to_head: { wins: number; losses: number; ties: number; last: { week: number; me: number; them: number } } | null;
   lineup?: Lineup | null;
+  week?: TeamWeek | null;
+};
+
+// This week on a team page, refreshed every 15 seconds while games are on: each player's projection, live points,
+// live projection (points so far + projection for the game time left), game and stat line.
+export type WeekPlayer = { points: number; proj?: number | null; live_proj?: number | null; status?: BoxPlayer['status']; game?: NflGame | null; line?: BoxPlayer['line']; kickoff?: string | null };
+export type TeamWeek = {
+  week: number;
+  is_final: boolean;
+  score: number;
+  projected: number | null;
+  opponent: { name: string; score: number; projected: number | null } | null;
+  win_chance: number | null;
+  players: Record<string, WeekPlayer>;
 };
 
 export type BoxPlayer = {

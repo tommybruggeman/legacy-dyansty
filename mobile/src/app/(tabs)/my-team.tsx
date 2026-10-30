@@ -1,8 +1,8 @@
 import { useFocusEffect } from 'expo-router';
-import { useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { ErrorState, Loading } from '../../components/ScreenState';
-import { TeamView } from '../../components/team/TeamView';
+import { LIVE_REFRESH_MS, TeamView, isLive } from '../../components/team/TeamView';
 import { YourCalls } from '../../components/team/YourCalls';
 import { PendingBadge } from '../../components/trade/PendingBadge';
 import { Screen } from '../../components/ui';
@@ -10,7 +10,9 @@ import { type Expiring, type TeamPage, useApi } from '../../lib/api';
 
 // The owner portal: your own team page, with IR moves, the league cap view and keep-or-walk calls in the offseason.
 export default function MyTeam() {
-  const { data, error, loading, reload, refresh } = useApi<TeamPage>('/my-team');
+  const [live, setLive] = useState(false);
+  const { data, error, loading, reload, refresh } = useApi<TeamPage>('/my-team', live ? LIVE_REFRESH_MS : 0);
+  useEffect(() => setLive(isLive(data)), [data]);
   // Keep-or-walk calls, only from the final game to the June 30 rollover and until every one is made.
   const calls = useApi<{ calls: Expiring['calls']; sleeper_league_id: string }>('/my-team/calls');
 

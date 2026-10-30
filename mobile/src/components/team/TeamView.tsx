@@ -2,11 +2,11 @@ import { router, useFocusEffect } from 'expo-router';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import type { Pick, Player, TeamPage } from '../../lib/api';
+import type { Pick, Player, TeamPage, TeamWeek, WeekPlayer } from '../../lib/api';
 import { colors } from '../../lib/theme';
 import { PlayerFace } from '../PlayerFace';
 import { LineupSheet, type Picking, SlotChip } from './LineupSheet';
-import { Card, Note, Pill, Pos, Row, Segmented, SwipeTabs, Tile, Tiles, Title, money, ordinal, record, ui } from '../ui';
+import { Card, Note, Pill, Pos, Row, SwipeTabs, Tile, Tiles, Title, firstName, money, ordinal, record, ui } from '../ui';
 
 const TABS = ['Roster', 'Contracts', 'Picks'] as const;
 
@@ -16,6 +16,10 @@ function go(path: Parameters<typeof router.push>[0]) {
   openedHere = true;
   router.push(path);
 }
+
+// While any of this team's players is on the field, the page refreshes this often (the server scores at most every 15 s).
+export const LIVE_REFRESH_MS = 15_000;
+export const isLive = (team: TeamPage | null) => !!team?.week && !team.week.is_final && Object.values(team.week.players).some((p) => p.status === 'playing');
 
 // One owner's team with the same three tabs as My Team (league activity lives on League > Teams). Other owners' teams
 // are read only; trades are made in Sleeper.
@@ -36,7 +40,7 @@ export function TeamView({ team, eyebrow, badge, top, onChange }: { team: TeamPa
       <Title eyebrow={eyebrow ?? team.owner_name.toUpperCase()} badge={badge}>{team.team_name}</Title>
       {top}
       <TopTiles team={team} tab={tab} />
-      <Segmented options={TABS} value={tab} onChange={setTab} />
+      <UnderlineTabs value={tab} onChange={setTab} />
       <SwipeTabs
         options={TABS}
         value={tab}
@@ -78,12 +82,45 @@ function TopTiles({ team, tab }: { team: TeamPage; tab: (typeof TABS)[number] })
   }
   const power = team.power;
   const move = power?.move ? `${power.move > 0 ? '▲' : '▼'}${Math.abs(power.move)} this week` : null;
+  const wk = team.week;
+  if (wk) {
+    const started = Object.values(wk.players).some((p) => p.status === 'playing' || p.status === 'final');
+    const opp = wk.opponent;
+    const won = opp ? wk.score > opp.score : false;
+    return (
+      <Tiles>
+        <Tile label="RECORD" value={record(r.wins, r.losses, r.ties)} sub={`${ordinal(r.rank)} · ${r.standing_points} SP`} />
+        <Tile label={`WEEK ${wk.week}`} value={(wk.is_final || started ? wk.score : wk.projected ?? 0).toFixed(1)} tone={!wk.is_final && started ? 'live' : undefined}
+          sub={wk.is_final ? 'final' : started && wk.projected != null ? `proj ${wk.projected.toFixed(1)}` : 'projected'} />
+        {opp ? (
+          <Tile label={`VS ${firstName(opp.name).toUpperCase()}`}
+            value={wk.is_final ? (won ? 'Won' : wk.score < opp.score ? 'Lost' : 'Tied') : wk.win_chance != null ? `${wk.win_chance}%` : '—'}
+            sub={wk.is_final ? `by ${Math.abs(wk.score - opp.score).toFixed(1)}` : 'win odds'} />
+        ) : (
+          <Tile label="POWER RANK" value={power ? `#${power.rank}` : '—'} sub={move ?? (power?.of ? `of ${power.of} teams` : 'not ranked yet')} />
+        )}
+      </Tiles>
+    );
+  }
   return (
     <Tiles>
       <Tile label="RECORD" value={record(r.wins, r.losses, r.ties)} sub={`${ordinal(r.rank)} · ${r.standing_points} SP`} />
       <Tile label="PPG" value={r.pf_per_game != null ? r.pf_per_game.toFixed(1) : '—'} sub="avg / game" />
       <Tile label="POWER RANK" value={power ? `#${power.rank}` : '—'} sub={move ?? (power?.of ? `of ${power.of} teams` : 'not ranked yet')} />
     </Tiles>
+  );
+}
+
+// Slim text tabs with a gold underline (swipe the page to move between them too).
+function UnderlineTabs({ value, onChange }: { value: (typeof TABS)[number]; onChange: (v: (typeof TABS)[number]) => void }) {
+  return (
+    <View style={styles.tabs}>
+      {TABS.map((t) => (
+        <Pressable key={t} onPress={() => onChange(t)} hitSlop={8} style={[styles.tab, t === value && styles.tabOn]}>
+          <Text style={[styles.tabText, t === value && styles.tabTextOn]}>{t.toUpperCase()}</Text>
+        </Pressable>
+      ))}
+    </View>
   );
 }
 
@@ -95,7 +132,7 @@ function Face({ p, label, hurt }: { p: Player; label: string; hurt?: boolean }) 
 }
 
 
-function PlayerRow({ p, first, showSlot, chip, onEmpty }: { p: Player; first?: boolean; showSlot?: boolean; chip?: ReactNode; onEmpty?: () => void }) {
+function PlayerRow({ p, first, showSlot, chip, onEmpty, w, season }: { p: Player; first?: boolean; showSlot?: boolean; chip?: ReactNode; onEmpty?: () => void; w?: WeekPlayer; season: number }) {
   if (p.empty) {
     return (
       <Row first={first} onPress={onEmpty}>
@@ -111,41 +148,131 @@ function PlayerRow({ p, first, showSlot, chip, onEmpty }: { p: Player; first?: b
   const injury = p.injury ? INJURY_SHORT[p.injury.toLowerCase()] ?? p.injury.toUpperCase() : null;
   const tag = injury ? <Pill label={injury} tone="out" /> : p.is_rookie ? <Pill label="ROOKIE" tone="gold" /> : null;
   const label = showSlot && p.slot ? p.slot : p.pos;
-  const years = p.no_contract ? 0 : p.years_left;
+  const live = w?.status === 'playing';
   return (
-    <Row first={first} onPress={() => go(`/player/${p.player_id}`)}>
-      {chip}
-      <Face p={p} label={chip ? p.pos : label} hurt={!!injury} />
-      <View style={ui.flex}>
-        <View style={styles.nameLine}>
-          <Text style={[ui.name, styles.shrink]} numberOfLines={1}>{p.name}</Text>
-          {tag}
-        </View>
-        <View style={styles.subLine}>
-          <Text style={ui.sub}>{p.nfl_team || 'FA'}</Text>
-          {p.no_contract ? (
-            <Text style={ui.sub}>no contract</Text>
-          ) : (
-            <>
-              <View style={styles.pips}>
-                {Array.from({ length: Math.min(5, Math.max(3, years)) }, (_, i) => (
-                  <View key={i} style={[styles.pip, i < years && styles.pipOn]} />
+    <Pressable onPress={() => go(`/player/${p.player_id}`)}>
+      <View style={[styles.prow, first && styles.prowFirst, live && styles.prowLive]}>
+        <View style={styles.pmain}>
+          {chip}
+          <Face p={p} label={chip ? p.pos : label} hurt={!!injury} />
+          <View style={ui.flex}>
+            <View style={styles.nameLine}>
+              <Text style={[ui.name, styles.shrink]} numberOfLines={1}>{p.name}</Text>
+              {tag}
+            </View>
+            <GameText p={p} w={w} />
+            {w?.line?.length ? (
+              <Text style={styles.statLine}>
+                {w.line.map((s, i) => (
+                  <Text key={i} style={s.tone === 'good' ? styles.good : s.tone === 'bad' ? styles.bad : undefined}>{i ? ', ' : ''}{s.text}</Text>
                 ))}
-              </View>
-              <Text style={ui.sub}>{years} yr{years === 1 ? '' : 's'}</Text>
-            </>
-          )}
+              </Text>
+            ) : null}
+          </View>
+          <Points p={p} w={w} />
         </View>
+        <ContractFoot p={p} w={w} season={season} />
       </View>
-      <View style={ui.right}>
-        <Text style={styles.ppg}>
-          {p.ppg != null ? p.ppg.toFixed(1) : '—'}
-          <Text style={styles.ppgUnit}> PPG</Text>
-        </Text>
-        {p.no_contract ? null : <Text style={styles.salary}>{money(p.contract_salary)}</Text>}
-      </View>
-    </Row>
+    </Pressable>
   );
+}
+
+// The game: kickoff time before, the clock and score (with a football when his team has the ball) during, the result after.
+function GameText({ p, w }: { p: Player; w?: WeekPlayer }) {
+  const g = w?.game;
+  if (!w) return <Text style={ui.sub}>{p.nfl_team || 'FA'}</Text>;
+  if (w.status === 'bye') return <Text style={styles.game}>BYE</Text>;
+  const vs = g ? `${g.home ? 'vs' : '@'} ${g.opp}` : p.nfl_team || '';
+  if (g && (w.status === 'playing' || g.state === 'in')) {
+    return (
+      <View style={styles.gameRow}>
+        <View style={styles.dot} />
+        <Text style={[styles.game, styles.gameLive]} numberOfLines={1}>
+          <Text style={styles.clock}>{g.quarter > 4 ? 'OT' : `Q${g.quarter}`} {g.clock}</Text> {g.score}-{g.opp_score} {vs}
+        </Text>
+        {g.possession ? <View style={styles.ball}><View style={styles.lace} /></View> : null}
+      </View>
+    );
+  }
+  if (g && (w.status === 'final' || g.state === 'post')) {
+    const res = g.score > g.opp_score ? 'W' : g.score < g.opp_score ? 'L' : 'T';
+    return <Text style={styles.game} numberOfLines={1}><Text style={styles.finalWord}>Final</Text> {res} {g.score}-{g.opp_score} {vs}</Text>;
+  }
+  if (w.status === 'final') return <Text style={styles.game}>Final</Text>;
+  return <Text style={styles.game} numberOfLines={1}>{[w.kickoff ? kickoffText(w.kickoff) : null, vs].filter(Boolean).join(' ')}</Text>;
+}
+
+// Before kickoff his projection; during the game live points with the projection that follows the game;
+// after it his final points with the projection he started the day with.
+function Points({ p, w }: { p: Player; w?: WeekPlayer }) {
+  if (!w) {
+    return (
+      <View style={ui.right}>
+        <Text style={styles.big}>{p.ppg != null ? p.ppg.toFixed(1) : '—'}</Text>
+        <Text style={styles.under}>PPG</Text>
+      </View>
+    );
+  }
+  if (w.status === 'playing') {
+    return (
+      <View style={ui.right}>
+        <Text style={[styles.big, styles.bigLive]}>{w.points.toFixed(1)}</Text>
+        {w.live_proj != null ? <Text style={styles.under}>proj {w.live_proj.toFixed(1)}</Text> : null}
+      </View>
+    );
+  }
+  if (w.status === 'final') {
+    return (
+      <View style={ui.right}>
+        <Text style={styles.big}>{w.points.toFixed(1)}</Text>
+        {w.proj != null ? <Text style={styles.under}>proj {w.proj.toFixed(1)}</Text> : null}
+      </View>
+    );
+  }
+  return (
+    <View style={ui.right}>
+      <Text style={[styles.big, styles.bigPre]}>{w.status === 'bye' ? '—' : w.proj != null ? w.proj.toFixed(1) : '—'}</Text>
+      <Text style={styles.under}>PROJ</Text>
+    </View>
+  );
+}
+
+// Salary, years and the last season of the deal; on the right his season PPG, or once his game is done what each point cost.
+function ContractFoot({ p, w, season }: { p: Player; w?: WeekPlayer; season: number }) {
+  if (p.no_contract) {
+    return <View style={styles.foot}><Text style={styles.footText}>No contract</Text></View>;
+  }
+  const years = Math.max(p.years_left, 1);
+  const done = w?.status === 'final' && w.points > 0 && p.contract_salary > 0;
+  return (
+    <View style={styles.foot}>
+      <Text style={styles.footText} numberOfLines={1}>
+        <Text style={styles.footGold}>{dollars(p.contract_salary)}</Text> · {years} yr{years === 1 ? '' : 's'} · through {season + years - 1}
+      </Text>
+      <Text style={styles.footText} numberOfLines={1}>
+        {done ? <><Text style={styles.footGold}>${(p.contract_salary / w!.points).toFixed(2)} per point</Text> this week</> : p.ppg != null ? `${p.ppg.toFixed(1)} PPG this season` : 'no games yet'}
+      </Text>
+    </View>
+  );
+}
+
+// "$48" for whole dollars, "$12.5" otherwise.
+const dollars = (n: number) => `$${Number.isInteger(n) ? n : n.toFixed(1)}`;
+
+const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+// "Sun 11:00 AM" in the phone's own time zone.
+function kickoffText(iso: string) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const h = d.getHours() % 12 || 12;
+  return `${DAYS[d.getDay()]} ${h}:${String(d.getMinutes()).padStart(2, '0')} ${d.getHours() < 12 ? 'AM' : 'PM'}`;
+}
+
+function pointsLabel(week: TeamWeek | null | undefined) {
+  if (!week) return 'PPG · SALARY';
+  const ps = Object.values(week.players);
+  if (week.is_final || (ps.length && ps.every((p) => p.status === 'final' || p.status === 'bye'))) return `WEEK ${week.week} PTS`;
+  return ps.some((p) => p.status === 'playing' || p.status === 'final') ? 'LIVE PTS' : 'PROJ PTS';
 }
 
 function RosterTab({ team, onChange }: { team: TeamPage; onChange?: () => void }) {
@@ -154,6 +281,7 @@ function RosterTab({ team, onChange }: { team: TeamPage; onChange?: () => void }
   const [showBench, setShowBench] = useState(editing);
   const [picking, setPicking] = useState<Picking>(null);
   const { starters, bench, taxi, ir } = team.roster;
+  const week = team.week?.players ?? {};
   const slotChip = (i: number) => editing && lineup ? (
     <SlotChip label={lineup.slots[i]?.label ?? ''} locked={lineup.slots[i]?.locked} onPress={() => setPicking({ kind: 'slot', index: i })} />
   ) : undefined;
@@ -165,9 +293,9 @@ function RosterTab({ team, onChange }: { team: TeamPage; onChange?: () => void }
       {editing && lineup ? (
         <LineupSheet lineup={lineup} players={[...starters, ...bench]} picking={picking} onClose={() => setPicking(null)} onSaved={() => onChange?.()} />
       ) : null}
-      <Card title={editing ? `Week ${lineup!.week} lineup` : 'Starters'} right="PPG · SALARY">
+      <Card title={editing ? `Week ${lineup!.week} lineup` : 'Starters'} right={pointsLabel(team.week)}>
         {starters.length ? starters.map((p, i) => (
-          <PlayerRow key={p.player_id || `empty-${i}`} p={p} first={i === 0} showSlot chip={slotChip(i)}
+          <PlayerRow key={p.player_id || `empty-${i}`} p={p} first={i === 0} showSlot chip={slotChip(i)} w={week[p.player_id]} season={team.season}
             onEmpty={editing ? () => setPicking({ kind: 'slot', index: i }) : undefined} />
         )) : <Note>{lineup ? 'No lineup set yet.' : 'No lineup set in Sleeper.'}</Note>}
         {bench.length ? (
@@ -178,7 +306,7 @@ function RosterTab({ team, onChange }: { team: TeamPage; onChange?: () => void }
       </Card>
       {showBench ? (
         <Card title="Bench">
-          {bench.map((p, i) => <PlayerRow key={p.player_id} p={p} first={i === 0} chip={benchChip(p)} />)}
+          {bench.map((p, i) => <PlayerRow key={p.player_id} p={p} first={i === 0} chip={benchChip(p)} w={week[p.player_id]} season={team.season} />)}
         </Card>
       ) : null}
       <View style={styles.pair}>
@@ -243,11 +371,12 @@ function ContractsTab({ team }: { team: TeamPage }) {
                   <Text style={[ui.name, styles.shrink]} numberOfLines={1}>{p.name}</Text>
                   {tag ? <Pill label={tag} tone={tag === 'IR' ? 'out' : 'gold'} /> : null}
                 </View>
-                <Text style={[ui.sub, styles.subGap]}>
-                  {money(p.contract_salary)} · {years} yr{years === 1 ? '' : 's'} · {p.ppg != null ? `${p.ppg.toFixed(1)} PPG` : 'no games'}
-                </Text>
+                <Text style={[ui.sub, styles.subGap]}>{money(p.contract_salary)} · {years} yr{years === 1 ? '' : 's'}</Text>
               </View>
-              <Text style={styles.perDollar}>{p.per_dollar != null ? `${p.per_dollar.toFixed(2)} PPG / $` : '— PPG / $'}</Text>
+              <View style={ui.right}>
+                <Text style={styles.cPpg}>{p.ppg != null ? p.ppg.toFixed(1) : '—'}<Text style={styles.ppgUnit}> PPG</Text></Text>
+                <Text style={styles.perDollar}>{p.per_dollar != null ? `${p.per_dollar.toFixed(2)} PPG / $` : '— PPG / $'}</Text>
+              </View>
             </Row>
           );
         })}
@@ -329,14 +458,36 @@ const styles = StyleSheet.create({
   shrink: { flexShrink: 1 },
   subGap: { marginTop: 3 },
   bigSalary: { color: colors.gold, fontSize: 18, fontWeight: '800' },
-  perDollar: { color: colors.muted, fontSize: 11 },
-  subLine: { flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 3 },
-  pips: { flexDirection: 'row', gap: 3 },
-  pip: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#33402F' },
-  pipOn: { backgroundColor: colors.gold },
-  ppg: { color: colors.text, fontSize: 19, fontWeight: '800' },
+  perDollar: { color: colors.gold, fontSize: 11, fontWeight: '700', marginTop: 2 },
+  cPpg: { color: colors.text, fontSize: 18, fontWeight: '800' },
+  tabs: { flexDirection: 'row', gap: 22, borderBottomWidth: 1, borderBottomColor: '#22352B', marginBottom: 12, marginTop: 2 },
+  tab: { paddingVertical: 8 },
+  tabOn: { borderBottomWidth: 3, borderBottomColor: colors.gold, marginBottom: -1 },
+  tabText: { color: colors.muted, fontSize: 13, fontWeight: '800', letterSpacing: 0.6 },
+  tabTextOn: { color: colors.text },
+  prow: { paddingVertical: 10, paddingHorizontal: 4, borderTopWidth: 1, borderTopColor: '#22352B' },
+  prowFirst: { borderTopWidth: 0 },
+  prowLive: { borderLeftWidth: 3, borderLeftColor: colors.live, backgroundColor: 'rgba(76,195,138,0.08)', borderRadius: 6 },
+  pmain: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  game: { color: colors.muted, fontSize: 11.5, marginTop: 3 },
+  gameLive: { color: colors.text },
+  gameRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 3 },
+  dot: { width: 7, height: 7, borderRadius: 4, backgroundColor: colors.live },
+  clock: { color: colors.live, fontWeight: '800' },
+  finalWord: { fontWeight: '800' },
+  ball: { width: 13, height: 8, borderRadius: 6, backgroundColor: '#9A5A2B', justifyContent: 'center', alignItems: 'center' },
+  lace: { width: 5, height: 1, backgroundColor: '#fff' },
+  statLine: { color: '#D9D0BD', fontSize: 11.5, fontWeight: '600', marginTop: 3, lineHeight: 15 },
+  good: { color: colors.live, fontWeight: '800' },
+  bad: { color: '#EF7A7A', fontWeight: '800' },
+  big: { color: colors.text, fontSize: 21, fontWeight: '800' },
+  bigLive: { color: colors.live },
+  bigPre: { color: '#CFC6B4' },
+  under: { color: colors.muted, fontSize: 10, fontWeight: '700', marginTop: 2 },
+  foot: { flexDirection: 'row', justifyContent: 'space-between', gap: 8, backgroundColor: '#0B1D15', borderRadius: 8, paddingVertical: 4, paddingHorizontal: 8, marginTop: 8 },
+  footText: { color: colors.muted, fontSize: 10.5, flexShrink: 1 },
+  footGold: { color: colors.gold, fontWeight: '800' },
   ppgUnit: { color: colors.muted, fontSize: 10, fontWeight: '600' },
-  salary: { color: colors.gold, fontSize: 13, fontWeight: '700', marginTop: 1 },
   center: { textAlign: 'center', marginTop: 10 },
   pair: { flexDirection: 'row', gap: 8 },
   half: { flex: 1 },
