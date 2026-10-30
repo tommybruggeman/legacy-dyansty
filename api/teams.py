@@ -319,6 +319,9 @@ def contracts_view(players: list[dict[str, Any]], state: dict[str, Any], team_id
             years += 1
         dead.append({
             "player": _text(r.get("player_name")) or "Player", "amount": _f(r.get("amount")),
+            # Lets the app open the drop or trade this charge came from on the Activity page.
+            "player_id": _text(r.get("sleeper_player_id") or r.get("player_id")) or None,
+            "source": "trade" if r.get("adjustment_type") == "trade_retained_salary" else "drop",
             "years_left": years, "through": season + years - 1,
             "more": bool(later) and years == len(later) + 1,  # still charged in the last season loaded
         })

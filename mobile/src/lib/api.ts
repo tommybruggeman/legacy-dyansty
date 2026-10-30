@@ -257,7 +257,7 @@ export type TeamPage = {
   record: { wins: number; losses: number; ties: number; rank: number | null; standing_points: number; pf_per_game: number | null };
   cap: { space: number; by_year: CapYear[] };
   roster: { starters: Player[]; bench: Player[]; taxi: Player[]; ir: Player[]; count: number };
-  contracts: { biggest: Player[]; expiring: Player[]; all?: ValuedContract[]; dead_cap: { player: string; amount: number; years_left?: number; through?: number; more?: boolean }[] };
+  contracts: { biggest: Player[]; expiring: Player[]; all?: ValuedContract[]; dead_cap: { player: string; amount: number; years_left?: number; through?: number; more?: boolean; player_id?: string | null; source?: 'drop' | 'trade' }[] };
   picks: { owned: Pick[]; traded_away: Pick[] };
   activity: { kind: 'SIGN' | 'CUT'; player: string; at: string | null }[];
   moves?: { moves: number; trades: number };

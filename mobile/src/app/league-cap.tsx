@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { ErrorState, Loading } from '../components/ScreenState';
-import { Back, Bar, Card, Note, Row, Screen, Segmented, Tile, Tiles, Title, money, ordinal, ui } from '../components/ui';
+import { Back, Bar, Card, Row, Screen, Segmented, Title, money, ui } from '../components/ui';
 import { type TeamList, useApi } from '../lib/api';
 import { colors } from '../lib/theme';
 
@@ -20,20 +20,12 @@ export default function LeagueCap() {
   const selected = year ?? seasons[0];
   const index = Math.max(0, seasons.indexOf(selected));
   const rows = [...data.teams].sort((a, b) => (b.cap_by_year[index]?.space ?? 0) - (a.cap_by_year[index]?.space ?? 0));
-  const most = rows[0];
-  const myRank = rows.findIndex((t) => t.is_me) + 1;
-  const mine = rows.find((t) => t.is_me);
 
   return (
     <Screen loading={loading} onRefresh={reload}>
       <Back label="Contracts" />
       <Title>League cap</Title>
       <Segmented options={seasons} value={selected} onChange={setYear} />
-      <Tiles>
-        <Tile label="CAP" value={money(data.salary_cap)} sub="per team" />
-        <Tile label="MOST ROOM" value={money(most?.cap_by_year[index]?.space)} sub={most?.owner_name.split(' ')[0]} />
-        <Tile label="YOU" value={ordinal(myRank || null)} sub={mine ? `${money(mine.cap_by_year[index]?.space)} left` : undefined} />
-      </Tiles>
       <Card title={`Cap space in ${selected}`} right="space left">
         {rows.map((t, i) => {
           const y = t.cap_by_year[index];
@@ -49,7 +41,6 @@ export default function LeagueCap() {
           );
         })}
       </Card>
-      <Note>Shows who can take on salary. Tap an owner to see their contracts.</Note>
     </Screen>
   );
 }

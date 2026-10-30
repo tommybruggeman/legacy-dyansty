@@ -226,9 +226,15 @@ function ContractsTab({ team }: { team: TeamPage }) {
       {dead_cap.length ? (
         <Card title="Dead cap" right={<Text style={[ui.value, ui.gold]}>{money(dead_cap.reduce((s, d) => s + d.amount, 0))}</Text>}>
           {dead_cap.map((d, i) => (
-            <Row key={`${d.player}-${i}`} first={i === 0}>
+            <Row
+              key={`${d.player}-${i}`}
+              first={i === 0}
+              // Opens the drop (or trade, for retained salary) this charge came from.
+              onPress={d.player_id ? () => go({ pathname: '/activity', params: { player: d.player_id!, team: team.team_id, source: d.source ?? 'drop' } }) : undefined}
+            >
               <Text style={[ui.value, ui.flex]}>{d.player}</Text>
               <Text style={ui.value}>{d.years_left ? `${deadYears(d)} · ` : ''}{money(d.amount)}</Text>
+              {d.player_id ? <Text style={ui.sub}>›</Text> : null}
             </Row>
           ))}
         </Card>

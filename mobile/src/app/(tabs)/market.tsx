@@ -258,13 +258,14 @@ function FilterSheet({ open, onClose, filters, owners, positions, season, count,
   const ownerNames = Object.fromEntries(owners.map((o) => [o.team_id, o.is_mine ? 'You' : shortOwner(o.owner_name)]));
   const ends = [0, 1, 2].map((i) => String(season + i));
   return (
-    <Modal visible={open} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={styles.scrim} onPress={onClose} />
+    // iOS page sheet: swipe down (or tap Done) to close. Picks apply as you tap, so there's nothing to save.
+    <Modal visible={open} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <View style={[styles.sheet, { paddingBottom: insets.bottom + 12 }]}>
         <View style={styles.grab} />
         <View style={styles.sheetHead}>
-          <Text style={styles.sectionTitle}>Filters</Text>
           <Pressable onPress={onReset} hitSlop={10}><Text style={ui.link}>Reset</Text></Pressable>
+          <Text style={styles.sectionTitle}>Filters · {count}</Text>
+          <Pressable onPress={onClose} hitSlop={10}><Text style={ui.link}>Done</Text></Pressable>
         </View>
         <ScrollView style={styles.sheetBody}>
           <SheetChips label="POSITION" options={positions} {...multi('pos')} />
@@ -274,9 +275,6 @@ function FilterSheet({ open, onClose, filters, owners, positions, season, count,
           <SheetChips label="SALARY" options={SALARY} {...multi('salary')} />
           <SheetChips label="SORT" options={SORTS} picked={(o) => filters.sort === o} onTap={(o) => onChange({ ...filters, sort: o as Sort })} />
         </ScrollView>
-        <Pressable onPress={onClose} style={styles.plan}>
-          <Text style={styles.planText}>Show {count} players</Text>
-        </Pressable>
       </View>
     </Modal>
   );
@@ -295,11 +293,10 @@ const styles = StyleSheet.create({
   chipOn: { borderColor: colors.gold },
   chipText: { color: colors.muted, fontSize: 12, fontWeight: '700' },
   chipTextOn: { color: colors.gold },
-  scrim: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)' },
-  sheet: { backgroundColor: '#0C2419', borderTopLeftRadius: 22, borderTopRightRadius: 22, paddingHorizontal: 18, paddingTop: 10, maxHeight: '80%' },
+  sheet: { flex: 1, backgroundColor: '#0C2419', paddingHorizontal: 18, paddingTop: 10 },
   grab: { alignSelf: 'center', width: 40, height: 5, borderRadius: 3, backgroundColor: colors.line, marginBottom: 10 },
   sheetHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
-  sheetBody: { flexGrow: 0 },
+  sheetBody: { flex: 1 },
   sheetLabel: { color: colors.muted, fontSize: 11, fontWeight: '800', letterSpacing: 1, marginTop: 10, marginBottom: 8 },
   sectionTitle: { color: colors.text, fontSize: 18, fontWeight: '800' },
   grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 10, marginBottom: 12 },
