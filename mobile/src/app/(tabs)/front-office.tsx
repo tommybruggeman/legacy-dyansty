@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Markdown } from '../../components/frontoffice/Markdown';
 import { ErrorState, Loading } from '../../components/ScreenState';
-import { Pill } from '../../components/ui';
+import { Pill, useScrollTopOnTab } from '../../components/ui';
 import { type ChatEvent, type ChatMessage, type Conversation, type FoHeader, type FoMove, type FrontOffice, apiGet, apiStream, useApi } from '../../lib/api';
 import { colors } from '../../lib/theme';
 
@@ -30,6 +30,7 @@ export default function FrontOfficeScreen() {
   const navigation = useNavigation();
   // Bumped when a chat is closed, so an answer still streaming for it is dropped.
   const chat = useRef(0);
+  useScrollTopOnTab(scroll);
   const focusedChat = useRef(0);
 
   // Tapping the GM tab while already in a chat goes back to the GM homepage (tiles, brief, starters).

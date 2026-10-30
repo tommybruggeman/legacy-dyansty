@@ -1,6 +1,6 @@
-import { router } from 'expo-router';
-import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Animated, Dimensions, Easing, PanResponder, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import { router, useNavigation } from 'expo-router';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { Animated, Dimensions, Easing, PanResponder, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, type ScrollViewInstance, type StyleProp, type ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { colors } from '../lib/theme';
@@ -10,8 +10,11 @@ import { colors } from '../lib/theme';
 
 export function Screen({ children, loading, onRefresh }: { children: ReactNode; loading?: boolean; onRefresh?: () => void }) {
   const insets = useSafeAreaInsets();
+  const scroll = useRef<ScrollViewInstance>(null);
+  useScrollTopOnTab(scroll);
   return (
     <ScrollView
+      ref={scroll}
       style={styles.screen}
       contentContainerStyle={[styles.content, { paddingTop: insets.top + 8 }]}
       refreshControl={onRefresh ? <RefreshControl refreshing={!!loading} onRefresh={onRefresh} tintColor={colors.gold} /> : undefined}
@@ -19,6 +22,12 @@ export function Screen({ children, loading, onRefresh }: { children: ReactNode; 
       {children}
     </ScrollView>
   );
+}
+
+// Tapping a tab in the tab bar always opens that tab at the top. Pages outside the tabs never get tabPress, so they keep their place.
+export function useScrollTopOnTab(scroll: RefObject<ScrollViewInstance | null>) {
+  const navigation = useNavigation();
+  useEffect(() => navigation.addListener('tabPress' as never, () => scroll.current?.scrollTo({ y: 0, animated: false })), [navigation, scroll]);
 }
 
 export function Back({ label }: { label: string }) {
