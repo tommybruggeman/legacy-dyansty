@@ -3,6 +3,7 @@ import { useCallback, useRef } from 'react';
 
 import { ErrorState, Loading } from '../../components/ScreenState';
 import { TeamView } from '../../components/team/TeamView';
+import { PendingBadge } from '../../components/trade/PendingBadge';
 import { Screen } from '../../components/ui';
 import { type TeamPage, useApi } from '../../lib/api';
 
@@ -23,7 +24,7 @@ export default function MyTeam() {
 
   return (
     <Screen loading={loading} onRefresh={reload}>
-      <TeamView team={data} eyebrow="OWNER PORTAL" />
+      <TeamView team={data} eyebrow="OWNER PORTAL" badge={<PendingBadge />} />
     </Screen>
   );
 }

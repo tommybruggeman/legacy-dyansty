@@ -1,5 +1,5 @@
 import { router, useLocalSearchParams } from 'expo-router';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Headshot } from '../../components/Pictures';
 import { PointsChart } from '../../components/player/PointsChart';
@@ -33,6 +33,15 @@ export default function Player() {
   const eyebrow = [data.pos, data.nfl_team, data.age ? `AGE ${Math.floor(data.age)}` : null, c?.is_rookie ? 'ROOKIE' : null].filter(Boolean).join(' · ');
   const h: PlayerPage['health'] = data.health ?? { healthy: true, status: 'Healthy', detail: null, update: null, return: null, this_week: null, missed: [] };
   const missed = h.missed ?? [];
+  // Trade (another owner's player), Drop (yours) or Bid (free agent). Until the league leaves Sleeper, all three open Sleeper.
+  const ownerTeam = c?.team_id ?? data.rostered_by?.team_id ?? null;
+  const sleeper = () => data.sleeper_league_id && Linking.openURL(`https://sleeper.com/leagues/${data.sleeper_league_id}`);
+  const comingNext = () => Alert.alert('Coming next', 'Drops and waiver bids in the app come in the next update.');
+  const action = data.is_mine
+    ? { label: 'Drop', style: styles.pillDrop, onPress: data.transactions_enabled ? comingNext : sleeper }
+    : c || data.rostered_by
+      ? { label: '⇄ Trade', style: styles.pillTrade, onPress: data.transactions_enabled && ownerTeam ? () => router.push({ pathname: '/trade/[teamId]', params: { teamId: ownerTeam, add: data.player_id } }) : sleeper }
+      : { label: 'Bid', style: styles.pillBid, onPress: data.transactions_enabled ? comingNext : sleeper };
 
   return (
     <Screen loading={loading} onRefresh={reload}>
@@ -44,14 +53,10 @@ export default function Player() {
             <Text style={styles.eyebrow}>{eyebrow}</Text>
             <Text style={styles.name} numberOfLines={2}>{name}</Text>
             <View style={styles.pills}>
-              {data.is_mine ? (
-                <Text style={[styles.pill, styles.pillGold]}>YOURS</Text>
-              ) : c || data.rostered_by ? (
-                <Text style={[styles.pill, styles.pillLine]}>{(owner.split(' ')[0] || 'OWNED').toUpperCase()}</Text>
-              ) : (
-                <Text style={[styles.pill, styles.pillLine]}>FREE AGENT</Text>
-              )}
               <Text style={[styles.pill, h.healthy ? styles.pillOk : styles.pillOut]}>{h.healthy ? 'Healthy' : h.status}</Text>
+              <Pressable onPress={action.onPress} hitSlop={6}>
+                <Text style={[styles.pill, action.style]}>{action.label}</Text>
+              </Pressable>
             </View>
           </View>
         </View>
@@ -273,8 +278,9 @@ const styles = StyleSheet.create({
   name: { color: colors.text, fontSize: 26, fontWeight: '800', lineHeight: 30 },
   pills: { flexDirection: 'row', gap: 6 },
   pill: { fontSize: 11, fontWeight: '800', borderRadius: 10, overflow: 'hidden', paddingHorizontal: 8, paddingVertical: 3 },
-  pillGold: { color: colors.bg, backgroundColor: colors.gold },
-  pillLine: { color: colors.muted, borderWidth: 1, borderColor: '#2C5140' },
+  pillTrade: { color: colors.bg, backgroundColor: colors.gold },
+  pillDrop: { color: '#FFD9D9', backgroundColor: '#7A2F2F' },
+  pillBid: { color: '#D5E6FF', backgroundColor: '#2C4A6E' },
   pillOk: { color: colors.live, borderWidth: 1, borderColor: '#2F7A57' },
   pillOut: { color: '#E8826F', borderWidth: 1, borderColor: '#7A3F35' },
   tiles: { flexDirection: 'row', gap: 8 },

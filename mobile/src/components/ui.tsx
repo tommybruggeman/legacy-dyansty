@@ -29,12 +29,15 @@ export function Back({ label }: { label: string }) {
   );
 }
 
-export function Title({ children, eyebrow, right }: { children: ReactNode; eyebrow?: string; right?: ReactNode }) {
+export function Title({ children, eyebrow, right, badge }: { children: ReactNode; eyebrow?: string; right?: ReactNode; badge?: ReactNode }) {
   return (
     <View style={styles.titleRow}>
       <View style={styles.flex}>
         {eyebrow ? <Text style={styles.eyebrow}>{eyebrow}</Text> : null}
-        <Text style={styles.title} numberOfLines={1}>{children}</Text>
+        <View style={styles.titleLine}>
+          <Text style={[styles.title, styles.titleShrink]} numberOfLines={1}>{children}</Text>
+          {badge}
+        </View>
       </View>
       {right}
     </View>
@@ -216,6 +219,8 @@ export const ui = StyleSheet.create({
 });
 
 const styles = StyleSheet.create({
+  titleLine: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  titleShrink: { flexShrink: 1 },
   screen: { flex: 1, backgroundColor: colors.bg },
   content: { padding: 16, paddingBottom: 40 },
   flex: { flex: 1 },
