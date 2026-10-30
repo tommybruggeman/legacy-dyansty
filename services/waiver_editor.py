@@ -54,7 +54,7 @@ def render_waiver_card(client: Any, *, league_id: str, team_id: str, season: int
             except Exception as exc:
                 st.error(_error(exc))
 
-        claims = (client.table("waiver_claims").select("id,player_id,bid,status").eq("league_team_id", team_id)
+        claims = (client.table("app_waiver_claims").select("id,player_id,bid,status").eq("league_team_id", team_id)
                   .eq("status", "pending").execute().data or [])
         names = {p["player_id"]: p["name"] for p in players}
         for c in claims:

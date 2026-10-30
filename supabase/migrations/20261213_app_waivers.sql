@@ -1,6 +1,6 @@
 -- Pickups and drops in the app (playoffs on, then every week once the league leaves Sleeper).
 --
--- * FAAB bids (waiver_claims) are processed Wednesday and Sunday at 3:00 AM Eastern. Highest bid wins; a tie goes to
+-- * FAAB bids (app_waiver_claims) are processed Wednesday and Sunday at 3:00 AM Eastern. Highest bid wins; a tie goes to
 --   the earlier claim. The winner signs the player for this season at a salary equal to the bid ($1 minimum), the
 --   same rule the Sleeper sync used. FAAB lives in faab_ledger (a starting balance at cutover, minus each win).
 -- * Sunday from 3:00 AM Eastern to midnight, any free agent can be added straight away at $1 (no bid).
@@ -126,7 +126,7 @@ drop policy if exists faab_ledger_member_read on public.faab_ledger;
 create policy faab_ledger_member_read on public.faab_ledger for select to authenticated
  using(exists(select 1 from public.league_memberships m where m.league_id=faab_ledger.league_id and m.user_id=auth.uid()));
 
-create table if not exists public.waiver_claims(
+create table if not exists public.app_waiver_claims(
  id uuid primary key default gen_random_uuid(),
  league_id uuid not null references public.leagues(id),
  league_team_id uuid not null references public.league_teams(id),
@@ -144,17 +144,17 @@ create table if not exists public.waiver_claims(
  created_at timestamptz not null default clock_timestamp(),
  decided_at timestamptz
 );
-create unique index if not exists waiver_claims_one_open_idx on public.waiver_claims(league_team_id,player_id) where status='pending';
-create index if not exists waiver_claims_due_idx on public.waiver_claims(league_id,status,process_at);
-alter table public.waiver_claims enable row level security;
-revoke all on public.waiver_claims from public,anon,authenticated;
-grant select on public.waiver_claims to authenticated;
-grant select,insert,update on public.waiver_claims to service_role;
+create unique index if not exists app_waiver_claims_one_open_idx on public.app_waiver_claims(league_team_id,player_id) where status='pending';
+create index if not exists app_waiver_claims_due_idx on public.app_waiver_claims(league_id,status,process_at);
+alter table public.app_waiver_claims enable row level security;
+revoke all on public.app_waiver_claims from public,anon,authenticated;
+grant select on public.app_waiver_claims to authenticated;
+grant select,insert,update on public.app_waiver_claims to service_role;
 -- Open bids are private to the bidding team; once processed every bid is visible (the "N bids" view).
-drop policy if exists waiver_claims_read on public.waiver_claims;
-create policy waiver_claims_read on public.waiver_claims for select to authenticated
- using(exists(select 1 from public.league_memberships m where m.league_id=waiver_claims.league_id and m.user_id=auth.uid()
-              and (waiver_claims.status in('won','lost') or m.league_team_id=waiver_claims.league_team_id)));
+drop policy if exists app_waiver_claims_read on public.app_waiver_claims;
+create policy app_waiver_claims_read on public.app_waiver_claims for select to authenticated
+ using(exists(select 1 from public.league_memberships m where m.league_id=app_waiver_claims.league_id and m.user_id=auth.uid()
+              and (app_waiver_claims.status in('won','lost') or m.league_team_id=app_waiver_claims.league_team_id)));
 
 -- 4. Helpers.
 create or replace function public.faab_balance_private(p_league_id uuid,p_team_id uuid,p_season int) returns numeric
@@ -266,7 +266,7 @@ begin
  yr:=public.active_season_private(lid);
  perform pg_advisory_xact_lock(hashtextextended('waivers:'||lid,0));
  if public.player_has_live_contract_private(lid,pid,yr) then raise exception 'player_taken';end if;
- if exists(select 1 from public.waiver_claims where league_id=lid and player_id=pid and status='pending') then raise exception 'player_on_waivers';end if;
+ if exists(select 1 from public.app_waiver_claims where league_id=lid and player_id=pid and status='pending') then raise exception 'player_on_waivers';end if;
  if public.player_locked_this_week_private(pid) then raise exception 'player_locked';end if;
  if drop_pid is not null then perform public.owner_drop_private(lid,me,drop_pid,yr,k||':drop',actor,'Dropped for a free agent in the app');end if;
  if public.roster_room_private(lid,me,yr)<1 then raise exception 'roster_full';end if;
@@ -279,7 +279,7 @@ end$$;
 create or replace function public.place_waiver_claim_authenticated(p_request jsonb) returns jsonb
 language plpgsql security definer set search_path=pg_catalog,public as $$
 declare actor uuid:=public.require_authenticated_user();lid uuid:=(p_request->>'league_id')::uuid;me uuid;yr int;
- pid text:=p_request->>'player_id';amount numeric:=(p_request->>'bid')::numeric;drop_pid text:=nullif(p_request->>'drop_player_id','');c public.waiver_claims%rowtype;
+ pid text:=p_request->>'player_id';amount numeric:=(p_request->>'bid')::numeric;drop_pid text:=nullif(p_request->>'drop_player_id','');c public.app_waiver_claims%rowtype;
 begin
  perform public.app_switch_private(lid);
  me:=public.my_league_team_private(lid);
@@ -289,21 +289,21 @@ begin
  if amount>public.faab_balance_private(lid,me,yr) then raise exception 'bid_over_budget';end if;
  if public.player_has_live_contract_private(lid,pid,yr) then raise exception 'player_taken';end if;
  if drop_pid is not null and not public.team_holds_player_private(lid,me,drop_pid,yr) then raise exception 'drop_not_yours';end if;
- update public.waiver_claims set status='cancelled',decided_at=clock_timestamp(),note='Replaced by a new bid'
+ update public.app_waiver_claims set status='cancelled',decided_at=clock_timestamp(),note='Replaced by a new bid'
   where league_team_id=me and player_id=pid and status='pending';
- insert into public.waiver_claims(league_id,league_team_id,season,player_id,bid,drop_player_id,process_at,created_by)
+ insert into public.app_waiver_claims(league_id,league_team_id,season,player_id,bid,drop_player_id,process_at,created_by)
  values(lid,me,yr,pid,amount,drop_pid,public.next_waiver_run_private(),actor) returning * into c;
  return jsonb_build_object('claim_id',c.id,'process_at',c.process_at);
 end$$;
 
 create or replace function public.cancel_waiver_claim_authenticated(p_request jsonb) returns jsonb
 language plpgsql security definer set search_path=pg_catalog,public as $$
-declare actor uuid:=public.require_authenticated_user();c public.waiver_claims%rowtype;
+declare actor uuid:=public.require_authenticated_user();c public.app_waiver_claims%rowtype;
 begin
- select * into c from public.waiver_claims where id=(p_request->>'claim_id')::uuid for update;
+ select * into c from public.app_waiver_claims where id=(p_request->>'claim_id')::uuid for update;
  if c.id is null or c.status<>'pending' then raise exception 'claim_not_open';end if;
  if c.league_team_id is distinct from public.my_league_team_private(c.league_id) then raise exception 'not_your_claim';end if;
- update public.waiver_claims set status='cancelled',decided_at=clock_timestamp() where id=c.id;
+ update public.app_waiver_claims set status='cancelled',decided_at=clock_timestamp() where id=c.id;
  return jsonb_build_object('claim_id',c.id,'status','cancelled');
 end$$;
 
@@ -311,21 +311,21 @@ end$$;
 --    whose run time has passed. Highest bid first; a tie goes to the earlier claim.
 create or replace function public.process_due_waivers(p_league_id uuid) returns jsonb
 language plpgsql security definer set search_path=pg_catalog,public as $$
-declare c public.waiver_claims%rowtype;yr int;result jsonb;won int:=0;lost int:=0;failed int:=0;why text;
+declare c public.app_waiver_claims%rowtype;yr int;result jsonb;won int:=0;lost int:=0;failed int:=0;why text;
 begin
  if auth.uid() is not null and not exists(select 1 from public.league_memberships where league_id=p_league_id and user_id=auth.uid()) then
   raise exception 'not_a_member';end if;
  if not coalesce((select enabled from public.league_app_transactions where league_id=p_league_id),false) then return jsonb_build_object('processed',0);end if;
- if not exists(select 1 from public.waiver_claims where league_id=p_league_id and status='pending' and process_at<=now()) then return jsonb_build_object('processed',0);end if;
+ if not exists(select 1 from public.app_waiver_claims where league_id=p_league_id and status='pending' and process_at<=now()) then return jsonb_build_object('processed',0);end if;
  perform pg_advisory_xact_lock(hashtextextended('waivers:'||p_league_id,0));
- for c in select * from public.waiver_claims where league_id=p_league_id and status='pending' and process_at<=now()
+ for c in select * from public.app_waiver_claims where league_id=p_league_id and status='pending' and process_at<=now()
           order by bid desc,created_at for update loop
   yr:=c.season;why:=null;
   if public.player_has_live_contract_private(c.league_id,c.player_id,yr) then
-   update public.waiver_claims w set status='lost',decided_at=clock_timestamp(),
-     winning_team_id=(select x.league_team_id from public.waiver_claims x where x.league_id=c.league_id and x.player_id=c.player_id and x.status='won' and x.process_at=c.process_at limit 1),
-     winning_bid=(select x.bid from public.waiver_claims x where x.league_id=c.league_id and x.player_id=c.player_id and x.status='won' and x.process_at=c.process_at limit 1),
-     note=case when exists(select 1 from public.waiver_claims x where x.league_id=c.league_id and x.player_id=c.player_id and x.status='won' and x.process_at=c.process_at)
+   update public.app_waiver_claims w set status='lost',decided_at=clock_timestamp(),
+     winning_team_id=(select x.league_team_id from public.app_waiver_claims x where x.league_id=c.league_id and x.player_id=c.player_id and x.status='won' and x.process_at=c.process_at limit 1),
+     winning_bid=(select x.bid from public.app_waiver_claims x where x.league_id=c.league_id and x.player_id=c.player_id and x.status='won' and x.process_at=c.process_at limit 1),
+     note=case when exists(select 1 from public.app_waiver_claims x where x.league_id=c.league_id and x.player_id=c.player_id and x.status='won' and x.process_at=c.process_at)
                then 'Outbid' else 'Signed by another team' end where w.id=c.id;
    lost:=lost+1;continue;
   end if;
@@ -336,7 +336,7 @@ begin
   elsif c.drop_player_id is null and public.roster_room_private(c.league_id,c.league_team_id,yr)<1 then why:='Roster full';
   end if;
   if why is not null then
-   update public.waiver_claims set status='failed',decided_at=clock_timestamp(),note=why where id=c.id;failed:=failed+1;continue;
+   update public.app_waiver_claims set status='failed',decided_at=clock_timestamp(),note=why where id=c.id;failed:=failed+1;continue;
   end if;
   begin
    if c.drop_player_id is not null then
@@ -347,11 +347,11 @@ begin
      'notes','Won on waivers for $'||c.bid||' FAAB'),c.created_by);
    insert into public.faab_ledger(league_id,league_team_id,season,amount,reason,ref_id,note)
    values(c.league_id,c.league_team_id,yr,-c.bid,'waiver',c.id,'Waiver win') on conflict do nothing;
-   update public.waiver_claims set status='won',decided_at=clock_timestamp(),winning_team_id=c.league_team_id,winning_bid=c.bid,
+   update public.app_waiver_claims set status='won',decided_at=clock_timestamp(),winning_team_id=c.league_team_id,winning_bid=c.bid,
      contract_id=(result->>'contract_agreement_id')::uuid where id=c.id;
    won:=won+1;
   exception when others then
-   update public.waiver_claims set status='failed',decided_at=clock_timestamp(),note='Not processed: '||left(sqlerrm,120) where id=c.id;failed:=failed+1;
+   update public.app_waiver_claims set status='failed',decided_at=clock_timestamp(),note='Not processed: '||left(sqlerrm,120) where id=c.id;failed:=failed+1;
   end;
  end loop;
  return jsonb_build_object('processed',won+lost+failed,'won',won,'lost',lost,'failed',failed);

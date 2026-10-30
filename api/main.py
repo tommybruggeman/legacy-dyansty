@@ -860,7 +860,7 @@ def transactions(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str,
     data = trade_offers.center(rows, str(team["team_id"]), owner_of, teams.player_info(client, ids))
     data["results"] = [{**r, "line": trade_offers.result_line(r)} for r in data["results"]]
     try:
-        claims = (client.table("waiver_claims").select("*").eq("league_id", team["league_id"])
+        claims = (client.table("app_waiver_claims").select("*").eq("league_id", team["league_id"])
                   .order("created_at", desc=True).limit(300).execute().data or [])
     except Exception:
         claims = []
@@ -904,7 +904,7 @@ def waiver_sheet(player_id: str, owner: tuple[Client, Any] = Depends(owner_clien
     lid, me, season = ctx["league_id"], str(ctx["team_id"]), ctx["season"]
     now = datetime.now(timezone.utc)
     ledger = client.table("faab_ledger").select("amount").eq("league_id", lid).eq("league_team_id", me).eq("season", season).execute().data or []
-    mine = (client.table("waiver_claims").select("id,bid,drop_player_id").eq("league_team_id", me)
+    mine = (client.table("app_waiver_claims").select("id,bid,drop_player_id").eq("league_team_id", me)
             .eq("player_id", player_id).eq("status", "pending").limit(1).execute().data or [])
     roster = [r for r in state.get("roster", []) if str(r.get("league_team_id")) == me and r.get("contract_agreement_id")]
     ids = [str(r["contract_agreement_id"]) for r in roster]
