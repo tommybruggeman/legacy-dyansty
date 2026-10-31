@@ -15,6 +15,10 @@ A player coming off a major or moderate injury gets a note on what that injury d
 engine fit what owners actually agreed to slightly worse, so it informs the owner without moving the price.
 
 Each team's window (contending / middle / rebuilding) sets how much now and future count for it.
+
+Fair salary is what this league pays the k-th most valuable player, except at the very top: on nine seasons of the
+Brotherhood league's contracts (1,800, league_ai.contract_worth), the biggest cap hits returned about 80% of their
+price in real points, while smaller deals were priced right or cheap. So a top contract's fair salary is cut to that share.
 """
 from __future__ import annotations
 
@@ -28,6 +32,8 @@ NOW_WEIGHT = {"contending": 0.8, "middle": 0.5, "rebuilding": 0.2}
 INJURY_TILT = False    # multiply the market part by the injury history effect
 CONTRACT_WEIGHT = 0.5  # share of a contract's cap surplus or cost counted in the player's value
 POSITIONS = ("QB", "RB", "WR", "TE")
+TOP_SHARE = 0.12       # a cap hit this big a share of the average team's payroll is a top contract
+TOP_WORTH = 0.80       # what top contracts really returned per dollar (Brotherhood 2021-2025, walk-forward: 0.77-0.81)
 
 
 def market_value(p: PlayerStrength) -> float:
@@ -59,7 +65,10 @@ class Valuer:
         # fair salary by value rank: the k-th most valuable rostered player should cost about the k-th biggest cap hit
         capped = [p for p in self.players if _cap(p) > 0]
         hits = sorted((_cap(p) for p in capped), reverse=True)
-        self._fair_cap = {p.sleeper_id: hits[i] for i, p in enumerate(sorted(capped, key=lambda p: -self.base(p, "middle")))}
+        teams = len({p.team_id for p in capped}) or 1
+        top = TOP_SHARE * sum(hits) / teams
+        self._fair_cap = {p.sleeper_id: hits[i] * (TOP_WORTH if hits[i] >= top else 1.0)
+                          for i, p in enumerate(sorted(capped, key=lambda p: -self.base(p, "middle")))}
 
     def now(self, p: PlayerStrength) -> float:
         """This-season value, nudged by the rest-of-season schedule (playoff weeks weighted double) when it's known."""

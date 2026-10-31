@@ -189,3 +189,15 @@ class HabitFitTest(unittest.TestCase):
         self.assertIn("RB", _habit_fit(lg, "Bo", [_p("A", "r", "RB", 10.0)]))
         self.assertIsNone(_habit_fit(lg, "Bo", [_p("A", "w", "WR", 10.0)]))
         self.assertIsNone(_habit_fit(lg, "Nobody", [_p("A", "r", "RB", 10.0)]))
+
+
+class TopContractWorthTest(unittest.TestCase):
+    def test_top_cap_hits_are_fair_at_a_discount(self):
+        from league_ai.trade_value import TOP_WORTH, Valuer
+
+        star, mid, cheap = _p("A", "s", "WR", 20.0), _p("B", "m", "WR", 12.0), _p("B", "c", "WR", 5.0)
+        star.market_value, mid.market_value, cheap.market_value = 9000.0, 4000.0, 1000.0
+        star.cap_hit, mid.cap_hit, cheap.cap_hit = 40.0, 10.0, 2.0
+        v = Valuer([star, mid, cheap], {})
+        self.assertAlmostEqual(v._fair_cap["s"], 40.0 * TOP_WORTH)
+        self.assertEqual(v._fair_cap["c"], 2.0)
