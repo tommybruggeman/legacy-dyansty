@@ -33,3 +33,7 @@ architecture-reference/.git/
 .DS_Store
 __pycache__/
 *.pyc
+
+# Other leagues' spreadsheets (owner names; the repo is public)
+*.xlsx
+*.xls
