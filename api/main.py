@@ -1106,6 +1106,18 @@ def _risers(client: Client, ctx: dict[str, Any], week: int) -> list[dict[str, An
 _RISERS_LOGGED: set[tuple[str, int, int]] = set()
 
 
+def _league_live(client: Client, ctx: dict[str, Any], week: int, starts: dict[str, datetime], now: datetime) -> dict[int, dict[str, Any]]:
+    """Every Legacy team's score now and projected final this week (Shotgun watch and the top-5 line)."""
+    sid = ctx["sleeper_id"]
+    raw = league.sleeper.get(f"league/{sid}/matchups/{week}", ttl=league.LIVE_TTL) or []
+    ids = [p for r in raw for p in (r.get("starters") or []) if p and p != "0"]
+    info = teams.player_info(client, ids)
+    proj = cache.cached(("starter_proj", sid, ctx["season"], week), 1800, lambda: projections.week_projections(
+        client, sid, ctx["season"], week, ids, {p: _text(info.get(p, {}).get("position")) for p in ids},
+        {p: _text(info.get(p, {}).get("team")) for p in ids}))
+    return home.team_live(raw, info, starts, now, proj)
+
+
 def _game_day_bottom(client: Client, ctx: dict[str, Any], user: Any, week: int, current: dict[str, Any],
                      pics: dict[int, str | None], now: datetime) -> dict[str, Any]:
     """The bottom card of game-day Home: GM's Risers, the week's scoreboard, or Shotgun watch."""
@@ -1120,13 +1132,7 @@ def _game_day_bottom(client: Client, ctx: dict[str, Any], user: Any, week: int, 
             risers_log.log(client, league_id=ctx["league_id"], sleeper_id=sid, season=ctx["season"], week=week, rows=rows)
         return {"mode": "risers", "risers": [{**r, "is_mine": r["roster_id"] is not None and r["roster_id"] == my_roster} for r in rows]}
 
-    raw = league.sleeper.get(f"league/{sid}/matchups/{week}", ttl=league.LIVE_TTL) or []
-    ids = [p for r in raw for p in (r.get("starters") or []) if p and p != "0"]
-    info = teams.player_info(client, ids)
-    proj = cache.cached(("starter_proj", sid, ctx["season"], week), 1800, lambda: projections.week_projections(
-        client, sid, ctx["season"], week, ids, {p: _text(info.get(p, {}).get("position")) for p in ids},
-        {p: _text(info.get(p, {}).get("team")) for p in ids}))
-    live = home.team_live(raw, info, starts, now, proj)
+    live = _league_live(client, ctx, week, starts, now)
     if pick["mode"] == "scoreboard":
         return {"mode": "scoreboard", "scoreboard": home.scoreboard(current["games"], live, my_roster, pics),
                 "race": home.race(current["games"], my_roster, pics)}
@@ -1209,6 +1215,12 @@ def home_page(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, An
             out["lineup_issues"] = home.lineup_issues(players["me"])
             out["race"] = home.race(current["games"], my_roster, pics)
         if phase == "game_day":
+            try:  # the projected 5th-best final score this week (1 standings point for a top-5 week)
+                now_mt = datetime.now(front_office.LEAGUE_TZ)
+                live_all = _league_live(client, ctx, week, home.kickoffs(_nfl_week(client, ctx["season"], week)), now_mt)
+                out["top5_line"] = home.top5_line(live_all, final=current["is_final"])
+            except Exception as exc:
+                print(f"APP_HOME_TOP5_ERROR {type(exc).__name__}", flush=True)
             try:
                 out["bottom"] = _game_day_bottom(client, ctx, user, week, current, pics, datetime.now(front_office.LEAGUE_TZ))
             except Exception as exc:  # the old standings / race cards still show

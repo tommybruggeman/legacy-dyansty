@@ -599,6 +599,7 @@ export type HomeData = {
   lineup_issues?: LivePlayer[];
   race?: RaceRow[];
   bottom?: HomeBottom;
+  top5_line?: { line: number; final: boolean } | null;
   series?: { wins: number; losses: number; ties: number } | null;
   weeks_left?: number;
   bracket?: { round: number; week: number; label: string; games: { a: BracketSide; b: BracketSide; winner: number | null }[] }[];

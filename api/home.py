@@ -338,6 +338,18 @@ def team_live(rows: list[dict[str, Any]], info: dict[str, dict[str, Any]], start
     return out
 
 
+TOP_FIVE = 5
+
+
+def top5_line(live: dict[int, dict[str, Any]], final: bool = False, places: int = TOP_FIVE) -> dict[str, Any] | None:
+    """The score it takes to finish top 5 this week: the 5th-best projected final (the 5th-best score once final)."""
+    if len(live) < places:
+        return None
+    key = "score" if final else "projected"
+    finals = sorted((t[key] for t in live.values()), reverse=True)
+    return {"line": round(finals[places - 1], 1), "final": final}
+
+
 def scoreboard(games: list[dict[str, Any]], live: dict[int, dict[str, Any]], my_roster_id: int | None,
                pics: dict[int, str | None]) -> list[dict[str, Any]]:
     """Every Legacy game this week, mine first, each side with its score and starters left."""
