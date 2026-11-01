@@ -125,7 +125,7 @@ function Shotgun({ data }: { data: Shot }) {
   }
   return (
     <Card style={styles.shotCard}>
-      <Eyebrow title="SHOTGUN WATCH" tone={RED} right={<Pill label={`WITHIN ${data.window} PTS`} tone="out" />} />
+      <Eyebrow title="SHOTGUN WATCH" tone={RED} />
       <View style={styles.victim}>
         <Avatar uri={last.avatar} name={last.name} size={46} me={last.is_me} />
         <View style={ui.flex}>
