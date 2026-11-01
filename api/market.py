@@ -217,15 +217,22 @@ SALARY_CAPS = {"Under $5": 5, "Under $10": 10, "Under $20": 20}
 
 def filter_players(rows: list[dict[str, Any]], *, search: str = "", status: str = "All", pos: str = "All",
                    owner: str | None = None, salary: str = "Any", contract: str = "Any", sort: str = "Points",
-                   ends: int | None = None, season: int | None = None) -> list[dict[str, Any]]:
+                   ends: int | None = None, season: int | None = None,
+                   saved: Iterable[str] = ()) -> list[dict[str, Any]]:
     """The Players tab's filters, for the website. A name search always looks through the whole league.
 
     `ends` keeps contracts ending after that season (needs `season`, the current one), like the app's
-    "Contract ends" filter: after this season means 1 year left or fewer.
+    "Contract ends" filter: after this season means 1 year left or fewer. Status "★ Saved" keeps the
+    owner's starred players (`saved`), like the app's ★ Saved chip.
     """
+    saved = set(saved)
+
     def keep(p: dict[str, Any]) -> bool:
         if search.strip():
             if not name_matches(p["name"], search):
+                return False
+        elif status == "★ Saved":
+            if p["player_id"] not in saved:
                 return False
         elif status != "All" and (status == "Rostered") != bool(p["team_id"]):
             return False
@@ -345,11 +352,22 @@ def targets(ids: Iterable[str], state: dict[str, Any], my_team_id: str | None,
     return out
 
 
+def _names(items: list[str]) -> str:
+    return ", ".join(items[:-1]) + (" and " if len(items) > 1 else "") + items[-1]
+
+
 def strategy_question(saved: list[dict[str, Any]], season: int) -> str:
-    """The question the Plan button sends to the Front Office."""
+    """The question the Plan button sends to the Front Office. My own starred players are ones I'm
+    watching on my roster, not transfer targets, so the GM gets them as a separate list."""
     if not saved:
         return f"Plan my offseason after the {season} season."
-    names = [f"{t['name']} ({t['owner_name']})" if t.get("owner_name") else f"{t['name']} (free agent)" for t in saved]
-    listed = ", ".join(names[:-1]) + (" and " if len(names) > 1 else "") + names[-1]
-    return (f"Plan my offseason. My transfer targets are {listed}. "
-            "Which ones should I go after, in what order, and should I trade for each now or wait for the auction?")
+    others = [t for t in saved if not t.get("is_mine")]
+    mine = [t["name"] for t in saved if t.get("is_mine")]
+    watching = f"On my own roster I'm keeping an eye on {_names(mine)}." if mine else ""
+    if not others:
+        return (f"Plan my offseason. {watching} "
+                "Should I keep, extend, start or trade each of them?")
+    names = [f"{t['name']} ({t['owner_name']})" if t.get("owner_name") else f"{t['name']} (free agent)" for t in others]
+    question = (f"Plan my offseason. My transfer targets are {_names(names)}. "
+                "Which ones should I go after, in what order, and should I trade for each now or wait for the auction?")
+    return f"{question} {watching}" if watching else question

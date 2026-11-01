@@ -177,9 +177,13 @@ export default function Player() {
           <Text style={styles.askText}>Ask the Front Office about {name.split(' ').slice(-1)[0]}</Text>
         </Pressable>
 
-        {!data.is_mine && id ? (
+        {id ? (
           <Pressable onPress={() => toggle(id)} style={[styles.button, isTarget(id) && styles.saved]}>
-            <Text style={[styles.buttonText, isTarget(id) && styles.savedText]}>{isTarget(id) ? '★ Saved as a transfer target' : '☆ Save as a transfer target'}</Text>
+            <Text style={[styles.buttonText, isTarget(id) && styles.savedText]}>
+              {data.is_mine
+                ? (isTarget(id) ? '★ Saved' : '☆ Save')
+                : (isTarget(id) ? '★ Saved as a transfer target' : '☆ Save as a transfer target')}
+            </Text>
           </Pressable>
         ) : null}
 

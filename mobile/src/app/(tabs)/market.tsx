@@ -54,11 +54,9 @@ function PlayerTile({ id, name, pos, team, ppg, points, line, tag, mine }: {
         <PlayerFace name={name} team={team} pos={pos} size={48} />
         <View style={styles.tileTopRight}>
           {tag ? <Pill label={tag.label} tone={tag.tone} /> : null}
-          {mine ? null : (
-            <Pressable onPress={() => toggle(id)} hitSlop={10} style={[styles.star, saved && styles.starOn]}>
-              <Text style={[styles.starText, saved && styles.starTextOn]}>{saved ? '★' : '☆'}</Text>
-            </Pressable>
-          )}
+          <Pressable onPress={() => toggle(id)} hitSlop={10} style={[styles.star, saved && styles.starOn]}>
+            <Text style={[styles.starText, saved && styles.starTextOn]}>{saved ? '★' : '☆'}</Text>
+          </Pressable>
         </View>
       </View>
       <Text style={styles.tileName} numberOfLines={1}>{name}</Text>
