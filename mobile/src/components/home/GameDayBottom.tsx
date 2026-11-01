@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { type HomeBottom, type Riser, type ShotgunRow } from '../../lib/api';
 import { colors } from '../../lib/theme';
@@ -107,19 +107,11 @@ type Shot = NonNullable<Extract<HomeBottom, { mode: 'shotgun' }>['shotgun']>;
 
 const who = (r: ShotgunRow) => (r.is_me ? 'You' : firstName(r.name));
 
-// A small gold beer can (drawn with views, no image), tipped 45 degrees like it's being shotgunned.
-function BeerCan({ size = 22 }: { size?: number }) {
-  const w = size * 0.62;
-  return (
-    <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center', transform: [{ rotate: '45deg' }] }}>
-      <View style={{ width: w * 0.8, height: size * 0.1, borderTopLeftRadius: 2, borderTopRightRadius: 2, backgroundColor: '#C9C9C9' }} />
-      <View style={{ width: w, height: size * 0.86, borderRadius: w * 0.18, backgroundColor: colors.gold, overflow: 'hidden' }}>
-        <View style={{ height: size * 0.07, backgroundColor: '#9A7333', marginTop: size * 0.04 }} />
-        <View style={{ position: 'absolute', left: w * 0.18, top: size * 0.2, width: w * 0.14, height: size * 0.45, borderRadius: w, backgroundColor: '#F1D9A8', opacity: 0.8 }} />
-        <View style={{ position: 'absolute', left: 0, right: 0, bottom: size * 0.05, height: size * 0.07, backgroundColor: '#9A7333' }} />
-      </View>
-    </View>
-  );
+// A cracked-open silver beer can (blue band, red stripe), tipped over with a few drops spilling (assets/beer-can.png, drawn for this card).
+const BEER_CAN = require('../../../assets/beer-can.png');
+
+function BeerCan({ size = 30 }: { size?: number }) {
+  return <Image source={BEER_CAN} style={{ width: size, height: size }} />;
 }
 
 function ShotTitle({ title, right }: { title: string; right?: React.ReactNode }) {
@@ -235,7 +227,7 @@ const styles = StyleSheet.create({
   shotCard: { borderWidth: 1, borderColor: RED },
   shotHead: { alignItems: 'center', justifyContent: 'center' },
   shotRight: { position: 'absolute', right: 0 },
-  shotTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 1 },
+  shotTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1 },
   shotTitle: { color: colors.text, fontSize: 16, fontWeight: '900', letterSpacing: 1.4, flexShrink: 1 },
   victim: {
     flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 12, padding: 12, borderRadius: 14,
