@@ -2,7 +2,7 @@ import { router, useFocusEffect } from 'expo-router';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { GameDayBottom } from '../../components/home/GameDayBottom';
+import { GameDayBottom, Scoreboard } from '../../components/home/GameDayBottom';
 import { Avatar, Headshot, type Ring } from '../../components/Pictures';
 import { ErrorState, Loading } from '../../components/ScreenState';
 import { Bar, Card, Pill, Screen, firstName, money, ordinal, record, ui } from '../../components/ui';
@@ -454,7 +454,9 @@ function GameDay({ data }: { data: HomeData }) {
   return (
     <>
       <LiveHero data={data} title={title} />
-      <PlayerHeads title="YOUR PLAYERS RIGHT NOW" right={anyPlaying(data) ? 'Live' : undefined} players={now} sub={statusLine} />
+      {data.bottom?.mode === 'shotgun' && data.bottom.scoreboard?.length
+        ? <Scoreboard games={data.bottom.scoreboard} week={data.week} />
+        : <PlayerHeads title="YOUR PLAYERS RIGHT NOW" right={anyPlaying(data) ? 'Live' : undefined} players={now} sub={statusLine} />}
       {data.bottom ? <GameDayBottom bottom={data.bottom} week={data.week} />
         : <Race rows={data.race ?? []} title={g.is_final ? 'TOP 5 · FINAL' : 'TOP 5 RACE · LIVE'} window="top" />}
       <AskBar placeholder="How is my week going?" />

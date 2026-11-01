@@ -70,7 +70,7 @@ function Risers({ rows, week }: { rows: Riser[]; week: number }) {
 
 // ---- Sunday scoreboard -------------------------------------------------------
 
-function Scoreboard({ games, week }: { games: Extract<HomeBottom, { mode: 'scoreboard' }>['scoreboard']; week: number }) {
+export function Scoreboard({ games, week }: { games: Extract<HomeBottom, { mode: 'scoreboard' }>['scoreboard']; week: number }) {
   return (
     <Card>
       <Eyebrow
@@ -123,26 +123,27 @@ function Shotgun({ data }: { data: Shot }) {
       </Card>
     );
   }
-  const line = data.needs
-    ? `${last.is_me ? 'You need' : 'Needs'} ${pts(data.needs.points)} to pass ${firstName(data.needs.to_pass)}`
-    : 'Lowest projected score in Legacy';
   return (
     <Card style={styles.shotCard}>
-      <Eyebrow title="SHOTGUN WATCH" tone={RED} right={<Pill label={`WITHIN ${data.window} PTS`} tone="out" />} />
+      <Eyebrow title="SHOTGUN WATCH" tone={RED} />
       <View style={styles.victim}>
         <Avatar uri={last.avatar} name={last.name} size={46} me={last.is_me} />
         <View style={ui.flex}>
           <Text style={styles.victimName}>{who(last)}</Text>
-          <Text style={styles.sub}>Projected {pts(last.projected)} · now {pts(last.score)} · {last.left ? `${last.left} left` : 'done'}</Text>
-          <Text style={styles.victimLine}>{line}</Text>
+        </View>
+        <View style={styles.vStat}><Text style={styles.vLabel}>PROJ</Text><Text style={styles.vNum}>{pts(last.projected)}</Text></View>
+        <View style={styles.vStat}><Text style={styles.vLabel}>NOW</Text><Text style={[styles.vNum, styles.dim]}>{pts(last.score)}</Text></View>
+        <View style={styles.vStat}>
+          <Text style={styles.vLabel}>LEFT</Text>
+          {last.frozen ? <Text style={styles.frozen}>FROZEN</Text> : <Text style={styles.leftText}>{last.playing ? '● ' : ''}{last.left} left</Text>}
         </View>
       </View>
-      <Zone title={`IN DANGER · WITHIN ${data.window} PROJECTED PTS`} rows={data.danger} safe={data.safe} />
+      <Zone rows={data.danger} safe={data.safe} />
     </Card>
   );
 }
 
-function Zone({ title, rows, safe = [], muted }: { title: string; rows: ShotgunRow[]; safe?: ShotgunRow[]; muted?: boolean }) {
+function Zone({ title, rows, safe = [], muted }: { title?: string; rows: ShotgunRow[]; safe?: ShotgunRow[]; muted?: boolean }) {
   const Row = ({ r, out }: { r: ShotgunRow; out?: boolean }) => (
     <View style={[styles.zRow, out && styles.faded]}>
       <Avatar uri={r.avatar} name={r.name} size={22} me={r.is_me} />
@@ -156,8 +157,8 @@ function Zone({ title, rows, safe = [], muted }: { title: string; rows: ShotgunR
   );
   return (
     <>
-      <Text style={[styles.zone, muted && styles.dim]}>{title}</Text>
-      <View style={styles.zHead}>
+      {title ? <Text style={[styles.zone, muted && styles.dim]}>{title}</Text> : null}
+      <View style={[styles.zHead, !title && styles.zHeadTop]}>
         <Text style={[styles.zName, styles.zHeadText, styles.left]}>OWNER</Text>
         <Text style={[styles.zNum, styles.zHeadText]}>PROJ</Text>
         <Text style={[styles.zNum, styles.zHeadText]}>NOW</Text>
@@ -206,13 +207,16 @@ const styles = StyleSheet.create({
   // shotgun
   shotCard: { borderWidth: 1, borderColor: RED },
   victim: {
-    flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 12, padding: 12, borderRadius: 14,
+    flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 12, padding: 12, borderRadius: 14,
     backgroundColor: 'rgba(169,74,74,0.16)', borderWidth: 1, borderColor: 'rgba(224,138,138,0.4)',
   },
   victimName: { color: colors.text, fontSize: 20, fontWeight: '800' },
-  victimLine: { color: RED, fontSize: 11, fontWeight: '700', marginTop: 2 },
+  vStat: { alignItems: 'flex-end', gap: 3, minWidth: 40 },
+  vLabel: { color: colors.muted, fontSize: 9, fontWeight: '800', letterSpacing: 0.8 },
+  vNum: { color: colors.text, fontSize: 15, fontWeight: '800' },
   zone: { color: '#E0A95A', fontSize: 11, fontWeight: '800', letterSpacing: 0.6, marginTop: 14, marginBottom: 2 },
   zHead: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 30, marginTop: 4 },
+  zHeadTop: { marginTop: 14 },
   zHeadText: { color: colors.muted, fontSize: 9, fontWeight: '800', letterSpacing: 0.8, textAlign: 'right' },
   zRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 7, borderTopWidth: 1, borderTopColor: colors.row },
   zName: { flex: 1, color: colors.text, fontSize: 13, fontWeight: '700' },

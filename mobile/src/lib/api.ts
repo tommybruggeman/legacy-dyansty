@@ -579,7 +579,7 @@ export type HomeBottom =
   | { mode: 'shotgun'; shotgun: {
       window: number; locked: boolean; last: ShotgunRow; danger: ShotgunRow[]; safe: ShotgunRow[];
       needs: { points: number; to_pass: string } | null;
-    } | null };
+    } | null; scoreboard?: { matchup_id: number; teams: BoardSide[]; mine: boolean }[] };
 export type HomeData = {
   phase: 'game_day' | 'recap' | 'playoffs' | 'decisions' | 'draft_prep';
   season: number;
