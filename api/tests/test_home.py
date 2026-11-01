@@ -181,3 +181,10 @@ def test_risers_rank_by_rise_and_skip_noise():
     assert [r["player_id"] for r in rows] == ["a", "b", "c"]   # d: one game, e: out, f: below his average
     assert rows[0]["owner"] == "Nando" and rows[0]["last"] == 14.0 and rows[1]["is_mine"]
     assert rows[2]["owner"] is None and rows[2]["rise"] == 5.6
+
+
+def test_top5_line_projected_then_final():
+    live = {i: {"score": float(100 - i), "projected": float(130 - 3 * i)} for i in range(1, 11)}
+    assert home.top5_line(live) == {"line": 115.0, "final": False}
+    assert home.top5_line(live, final=True) == {"line": 95.0, "final": True}
+    assert home.top5_line({1: live[1]}) is None

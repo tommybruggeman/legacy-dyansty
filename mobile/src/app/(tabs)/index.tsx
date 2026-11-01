@@ -97,9 +97,27 @@ function Badges({ items }: { items: [string, string][] }) {
   );
 }
 
-function Hero({ title, pill, me, them, week, matchupId, meLabel, themLabel, badges, showScores = true, proj }: {
+// Both sides' win odds on one small bar under VS: your share in gold on the left, theirs on the right.
+function SplitOdds({ odds }: { odds: [number, number] }) {
+  const [mine, theirs] = odds;
+  return (
+    <View style={styles.odds}>
+      <View style={styles.oddsNums}>
+        <Text style={styles.oddsMine}>{mine}%</Text>
+        <Text style={styles.oddsTheirs}>{theirs}%</Text>
+      </View>
+      <View style={styles.oddsTrack}>
+        <View style={[styles.oddsFill, { width: `${Math.max(0, Math.min(100, mine))}%` }]} />
+      </View>
+      <Text style={styles.oddsLabel}>WIN ODDS</Text>
+    </View>
+  );
+}
+
+function Hero({ title, pill, me, them, week, matchupId, meLabel, themLabel, badges, showScores = true, proj, odds }: {
   title: string; pill?: ReactNode; me: HomeSide; them?: HomeSide | null; week: number; matchupId?: number;
   meLabel?: string; themLabel?: string; badges: [string, string][]; showScores?: boolean; proj?: [number, number] | null;
+  odds?: [number, number] | null;
 }) {
   const total = me.score + (them?.score ?? 0);
   const ahead = me.score >= (them?.score ?? 0);
@@ -118,19 +136,23 @@ function Hero({ title, pill, me, them, week, matchupId, meLabel, themLabel, badg
         <Eyebrow right={pill}>{title}</Eyebrow>
         <View style={styles.vs}>
           <Side s={me} label={meLabel ?? 'You'} lead={!total || ahead} projected={proj?.[0]} />
-          <Text style={styles.vsText}>VS</Text>
+          <View style={styles.vsMid}>
+            <Text style={styles.vsText}>VS</Text>
+            {odds ? <SplitOdds odds={odds} /> : null}
+          </View>
           <Side s={them} label={themLabel ?? (them ? firstName(them.name) : 'Bye')} lead={!total || !ahead} projected={them ? proj?.[1] : undefined} />
         </View>
         <View style={styles.bar}><Bar fraction={total ? me.score / total : 0.5} /></View>
-        <Badges items={badges} />
+        {badges.length ? <Badges items={badges} /> : null}
       </Card>
     </Pressable>
   );
 }
 
-// The game-week Hero with each side's live projected total (same numbers as the game page). Top 5 is
-// only meaningful once most games are in, so until Sunday 3:00 PM Mountain the middle badge shows win odds.
-function LiveHero({ data, title, left: toPlay }: { data: HomeData; title: string; left: number }) {
+// The game-week Hero with each side's live projected total (same numbers as the game page), both sides'
+// win odds on a split bar under VS, and the projected top-5 line at the bottom (the 5th-best projected
+// final score in the league this week; a top-5 week is worth a standings point).
+function LiveHero({ data, title }: { data: HomeData; title: string }) {
   const g = data.game!;
   const me = g.me!;
   const final = !!g.is_final;
@@ -139,10 +161,9 @@ function LiveHero({ data, title, left: toPlay }: { data: HomeData; title: string
   const mine = box ? sides.findIndex((t) => t.roster_id === me.roster_id) : -1;
   const proj: [number, number] | null = !final && mine >= 0 && sides.length === 2
     ? [sides[mine].projected ?? sides[mine].score, sides[1 - mine].projected ?? sides[1 - mine].score] : null;
-  const odds = mine >= 0 && box?.win_chance ? box.win_chance[mine] : null;
-  const middle: [string, string] = final || topFiveTime()
-    ? [me.top5 ? '✓' : '✗', 'IN TOP 5']
-    : [odds != null ? `${odds}%` : '—', 'WIN ODDS'];
+  const odds: [number, number] | null = !final && mine >= 0 && box?.win_chance && g.them
+    ? [box.win_chance[mine], box.win_chance[1 - mine]] : null;
+  const line = data.top5_line;
   return (
     <Hero
       title={title}
@@ -152,25 +173,10 @@ function LiveHero({ data, title, left: toPlay }: { data: HomeData; title: string
       week={data.week}
       matchupId={g.matchup_id}
       proj={proj}
-      badges={[[ordinal(me.rank), 'HIGH SCORE'], middle, [String(toPlay), 'LEFT TO PLAY']]}
+      odds={odds}
+      badges={line ? [[line.line.toFixed(1), line.final ? 'TOP-5 LINE' : 'PROJ. TOP-5 LINE']] : []}
     />
   );
-}
-
-// True from Sunday 3:00 PM Mountain until the week turns over (Monday and Tuesday count too).
-function topFiveTime(now = new Date()) {
-  const y = now.getUTCFullYear();
-  const nthSunday = (month: number, n: number) => {
-    const first = new Date(Date.UTC(y, month, 1));
-    return 1 + ((7 - first.getUTCDay()) % 7) + 7 * (n - 1);
-  };
-  // US daylight time: 2nd Sunday of March to 1st Sunday of November, switching at 2 AM local (9 AM / 8 AM UTC).
-  const dstStart = Date.UTC(y, 2, nthSunday(2, 2), 9);
-  const dstEnd = Date.UTC(y, 10, nthSunday(10, 1), 8);
-  const offset = now.getTime() >= dstStart && now.getTime() < dstEnd ? 6 : 7;
-  const mt = new Date(now.getTime() - offset * 3_600_000);
-  const day = mt.getUTCDay();
-  return (day === 0 && mt.getUTCHours() >= 15) || day === 1 || day === 2;
 }
 
 const ring = (p: LivePlayer): Ring => (p.status === 'playing' ? 'live' : p.status === 'final' ? 'done' : 'wait');
@@ -447,7 +453,7 @@ function GameDay({ data }: { data: HomeData }) {
     .sort((a, b) => order(a) - order(b) || b.points - a.points).slice(0, 3);
   return (
     <>
-      <LiveHero data={data} title={title} left={left(mine)} />
+      <LiveHero data={data} title={title} />
       <PlayerHeads title="YOUR PLAYERS RIGHT NOW" right={anyPlaying(data) ? 'Live' : undefined} players={now} sub={statusLine} />
       {data.bottom ? <GameDayBottom bottom={data.bottom} week={data.week} />
         : <Race rows={data.race ?? []} title={g.is_final ? 'TOP 5 · FINAL' : 'TOP 5 RACE · LIVE'} window="top" />}
@@ -686,6 +692,14 @@ const styles = StyleSheet.create({
   gap: { marginTop: 8 },
   vs: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 12 },
   vsText: { color: colors.muted, fontWeight: '800' },
+  vsMid: { alignItems: 'center', flex: 1 },
+  odds: { width: 96, marginTop: 10 },
+  oddsNums: { flexDirection: 'row', justifyContent: 'space-between' },
+  oddsMine: { color: colors.gold, fontSize: 13, fontWeight: '800' },
+  oddsTheirs: { color: colors.muted, fontSize: 13, fontWeight: '800' },
+  oddsTrack: { height: 6, borderRadius: 3, backgroundColor: '#3A4A42', overflow: 'hidden', marginTop: 4 },
+  oddsFill: { height: '100%', backgroundColor: colors.gold },
+  oddsLabel: { color: colors.muted, fontSize: 9, fontWeight: '800', letterSpacing: 1, textAlign: 'center', marginTop: 5 },
   side: { alignItems: 'center', gap: 6, width: 130 },
   sideName: { color: colors.text, fontWeight: '800', fontSize: 15 },
   score: { color: colors.text, fontSize: 30, fontWeight: '800' },
