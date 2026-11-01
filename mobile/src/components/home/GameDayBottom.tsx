@@ -123,9 +123,6 @@ function Shotgun({ data }: { data: Shot }) {
       </Card>
     );
   }
-  const line = data.needs
-    ? `${last.is_me ? 'You need' : 'Needs'} ${pts(data.needs.points)} to pass ${firstName(data.needs.to_pass)}`
-    : 'Lowest projected score in Legacy';
   return (
     <Card style={styles.shotCard}>
       <Eyebrow title="SHOTGUN WATCH" tone={RED} right={<Pill label={`WITHIN ${data.window} PTS`} tone="out" />} />
@@ -133,7 +130,6 @@ function Shotgun({ data }: { data: Shot }) {
         <Avatar uri={last.avatar} name={last.name} size={46} me={last.is_me} />
         <View style={ui.flex}>
           <Text style={styles.victimName}>{who(last)}</Text>
-          <Text style={styles.victimLine}>{line}</Text>
         </View>
         <View style={styles.vStat}><Text style={styles.vLabel}>PROJ</Text><Text style={styles.vNum}>{pts(last.projected)}</Text></View>
         <View style={styles.vStat}><Text style={styles.vLabel}>NOW</Text><Text style={[styles.vNum, styles.dim]}>{pts(last.score)}</Text></View>
@@ -215,7 +211,6 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(169,74,74,0.16)', borderWidth: 1, borderColor: 'rgba(224,138,138,0.4)',
   },
   victimName: { color: colors.text, fontSize: 20, fontWeight: '800' },
-  victimLine: { color: RED, fontSize: 11, fontWeight: '700', marginTop: 2 },
   vStat: { alignItems: 'flex-end', gap: 3, minWidth: 40 },
   vLabel: { color: colors.muted, fontSize: 9, fontWeight: '800', letterSpacing: 0.8 },
   vNum: { color: colors.text, fontSize: 15, fontWeight: '800' },
