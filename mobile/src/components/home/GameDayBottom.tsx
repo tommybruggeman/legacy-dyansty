@@ -18,7 +18,7 @@ const RED = '#E08A8A';
 
 export function GameDayBottom({ bottom, week }: { bottom: HomeBottom; week: number }) {
   if (bottom.mode === 'risers') return bottom.risers.length ? <Risers rows={bottom.risers} week={week} /> : null;
-  if (bottom.mode === 'scoreboard') return <Scoreboard games={bottom.scoreboard} race={bottom.race} week={week} />;
+  if (bottom.mode === 'scoreboard') return <Scoreboard games={bottom.scoreboard} week={week} />;
   return bottom.shotgun ? <Shotgun data={bottom.shotgun} /> : null;
 }
 
@@ -70,7 +70,7 @@ function Risers({ rows, week }: { rows: Riser[]; week: number }) {
 
 // ---- Sunday scoreboard -------------------------------------------------------
 
-function Scoreboard({ games, race, week }: { games: Extract<HomeBottom, { mode: 'scoreboard' }>['scoreboard']; race: Extract<HomeBottom, { mode: 'scoreboard' }>['race']; week: number }) {
+function Scoreboard({ games, week }: { games: Extract<HomeBottom, { mode: 'scoreboard' }>['scoreboard']; week: number }) {
   return (
     <Card>
       <Eyebrow
@@ -97,16 +97,6 @@ function Scoreboard({ games, race, week }: { games: Extract<HomeBottom, { mode: 
           );
         })}
       </ScrollView>
-      {race.length ? (
-        <View style={styles.top5}>
-          <Text style={styles.top5Label}>TOP 5</Text>
-          {race.map((r, i) => (
-            <View key={r.roster_id} style={[styles.top5Face, i >= 5 && styles.faded, i === 5 && styles.top5Cut]}>
-              <Avatar uri={r.avatar} name={r.name} size={22} me={r.is_me} />
-            </View>
-          ))}
-        </View>
-      ) : null}
     </Card>
   );
 }
@@ -213,10 +203,6 @@ const styles = StyleSheet.create({
   gameName: { color: colors.text, fontSize: 12, fontWeight: '700', flex: 1 },
   gameScore: { color: colors.text, fontSize: 13, fontWeight: '800' },
   gameFoot: { color: colors.live, fontSize: 9, fontWeight: '800', letterSpacing: 0.5, marginTop: 6 },
-  top5: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 12, flexWrap: 'wrap' },
-  top5Label: { color: colors.muted, fontSize: 10, fontWeight: '800', letterSpacing: 0.6, marginRight: 2 },
-  top5Face: {},
-  top5Cut: { borderLeftWidth: 1, borderLeftColor: '#E0A95A', borderStyle: 'dashed', paddingLeft: 6, marginLeft: 2 },
   // shotgun
   shotCard: { borderWidth: 1, borderColor: RED },
   victim: {
