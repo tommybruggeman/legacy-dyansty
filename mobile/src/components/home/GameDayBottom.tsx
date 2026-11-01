@@ -70,7 +70,7 @@ function Risers({ rows, week }: { rows: Riser[]; week: number }) {
 
 // ---- Sunday scoreboard -------------------------------------------------------
 
-function Scoreboard({ games, week }: { games: Extract<HomeBottom, { mode: 'scoreboard' }>['scoreboard']; week: number }) {
+export function Scoreboard({ games, week }: { games: Extract<HomeBottom, { mode: 'scoreboard' }>['scoreboard']; week: number }) {
   return (
     <Card>
       <Eyebrow
@@ -133,8 +133,13 @@ function Shotgun({ data }: { data: Shot }) {
         <Avatar uri={last.avatar} name={last.name} size={46} me={last.is_me} />
         <View style={ui.flex}>
           <Text style={styles.victimName}>{who(last)}</Text>
-          <Text style={styles.sub}>Projected {pts(last.projected)} · now {pts(last.score)} · {last.left ? `${last.left} left` : 'done'}</Text>
           <Text style={styles.victimLine}>{line}</Text>
+        </View>
+        <View style={styles.vStat}><Text style={styles.vLabel}>PROJ</Text><Text style={styles.vNum}>{pts(last.projected)}</Text></View>
+        <View style={styles.vStat}><Text style={styles.vLabel}>NOW</Text><Text style={[styles.vNum, styles.dim]}>{pts(last.score)}</Text></View>
+        <View style={styles.vStat}>
+          <Text style={styles.vLabel}>LEFT</Text>
+          {last.frozen ? <Text style={styles.frozen}>FROZEN</Text> : <Text style={styles.leftText}>{last.playing ? '● ' : ''}{last.left} left</Text>}
         </View>
       </View>
       <Zone title={`IN DANGER · WITHIN ${data.window} PROJECTED PTS`} rows={data.danger} safe={data.safe} />
@@ -206,11 +211,14 @@ const styles = StyleSheet.create({
   // shotgun
   shotCard: { borderWidth: 1, borderColor: RED },
   victim: {
-    flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 12, padding: 12, borderRadius: 14,
+    flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 12, padding: 12, borderRadius: 14,
     backgroundColor: 'rgba(169,74,74,0.16)', borderWidth: 1, borderColor: 'rgba(224,138,138,0.4)',
   },
   victimName: { color: colors.text, fontSize: 20, fontWeight: '800' },
   victimLine: { color: RED, fontSize: 11, fontWeight: '700', marginTop: 2 },
+  vStat: { alignItems: 'flex-end', gap: 3, minWidth: 40 },
+  vLabel: { color: colors.muted, fontSize: 9, fontWeight: '800', letterSpacing: 0.8 },
+  vNum: { color: colors.text, fontSize: 15, fontWeight: '800' },
   zone: { color: '#E0A95A', fontSize: 11, fontWeight: '800', letterSpacing: 0.6, marginTop: 14, marginBottom: 2 },
   zHead: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 30, marginTop: 4 },
   zHeadText: { color: colors.muted, fontSize: 9, fontWeight: '800', letterSpacing: 0.8, textAlign: 'right' },

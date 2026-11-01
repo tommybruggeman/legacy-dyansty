@@ -1136,7 +1136,8 @@ def _game_day_bottom(client: Client, ctx: dict[str, Any], user: Any, week: int, 
     if pick["mode"] == "scoreboard":
         return {"mode": "scoreboard", "scoreboard": home.scoreboard(current["games"], live, my_roster, pics),
                 "race": home.race(current["games"], my_roster, pics)}
-    return {"mode": "shotgun", "shotgun": home.shotgun(live, ctx["names"], pics, my_roster, pick["window"])}
+    return {"mode": "shotgun", "shotgun": home.shotgun(live, ctx["names"], pics, my_roster, pick["window"]),
+            "scoreboard": home.scoreboard(current["games"], live, my_roster, pics)}
 
 
 def _text(value: Any) -> str:
