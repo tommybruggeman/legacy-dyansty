@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { type HomeBottom, type Riser, type ShotgunRow } from '../../lib/api';
 import { colors } from '../../lib/theme';
@@ -107,12 +107,31 @@ type Shot = NonNullable<Extract<HomeBottom, { mode: 'shotgun' }>['shotgun']>;
 
 const who = (r: ShotgunRow) => (r.is_me ? 'You' : firstName(r.name));
 
+// A cracked-open silver beer can (blue band, red stripe), tipped over with a few drops spilling (assets/beer-can.png, drawn for this card).
+const BEER_CAN = require('../../../assets/beer-can.png');
+
+function BeerCan({ size = 30 }: { size?: number }) {
+  return <Image source={BEER_CAN} style={{ width: size, height: size }} />;
+}
+
+function ShotTitle({ title, right }: { title: string; right?: React.ReactNode }) {
+  return (
+    <View style={styles.shotHead}>
+      <View style={styles.shotTitleRow}>
+        <BeerCan />
+        <Text style={styles.shotTitle}>{title}</Text>
+      </View>
+      {right ? <View style={styles.shotRight}>{right}</View> : null}
+    </View>
+  );
+}
+
 function Shotgun({ data }: { data: Shot }) {
   const { last, locked } = data;
   if (locked) {
     return (
       <Card style={styles.shotCard}>
-        <Eyebrow title="SHOTGUN WATCH · LOCKED" tone={RED} right={<Pill label="FINAL" tone="out" />} />
+        <ShotTitle title="SHOTGUN WATCH · LOCKED" right={<Pill label="FINAL" tone="out" />} />
         <View style={styles.lock}>
           <Avatar uri={last.avatar} name={last.name} size={64} me={last.is_me} />
           <Text style={styles.lockName}>{last.is_me ? "You're shotgunning" : `${firstName(last.name)} is shotgunning`}</Text>
@@ -125,7 +144,7 @@ function Shotgun({ data }: { data: Shot }) {
   }
   return (
     <Card style={styles.shotCard}>
-      <Eyebrow title="SHOTGUN WATCH" tone={RED} />
+      <ShotTitle title="SHOTGUN WATCH" />
       <View style={styles.victim}>
         <Avatar uri={last.avatar} name={last.name} size={46} me={last.is_me} />
         <View style={ui.flex}>
@@ -206,6 +225,10 @@ const styles = StyleSheet.create({
   gameFoot: { color: colors.live, fontSize: 9, fontWeight: '800', letterSpacing: 0.5, marginTop: 6 },
   // shotgun
   shotCard: { borderWidth: 1, borderColor: RED },
+  shotHead: { alignItems: 'center', justifyContent: 'center' },
+  shotRight: { position: 'absolute', right: 0 },
+  shotTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1 },
+  shotTitle: { color: colors.text, fontSize: 16, fontWeight: '900', letterSpacing: 1.4, flexShrink: 1 },
   victim: {
     flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 12, padding: 12, borderRadius: 14,
     backgroundColor: 'rgba(169,74,74,0.16)', borderWidth: 1, borderColor: 'rgba(224,138,138,0.4)',
