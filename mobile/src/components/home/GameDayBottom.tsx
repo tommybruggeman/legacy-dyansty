@@ -107,12 +107,39 @@ type Shot = NonNullable<Extract<HomeBottom, { mode: 'shotgun' }>['shotgun']>;
 
 const who = (r: ShotgunRow) => (r.is_me ? 'You' : firstName(r.name));
 
+// A small red beer can (drawn with views, no image), tipped 45 degrees like it's being shotgunned.
+function BeerCan({ size = 22 }: { size?: number }) {
+  const w = size * 0.62;
+  return (
+    <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center', transform: [{ rotate: '45deg' }] }}>
+      <View style={{ width: w * 0.8, height: size * 0.1, borderTopLeftRadius: 2, borderTopRightRadius: 2, backgroundColor: '#C9C9C9' }} />
+      <View style={{ width: w, height: size * 0.86, borderRadius: w * 0.18, backgroundColor: RED, overflow: 'hidden' }}>
+        <View style={{ height: size * 0.07, backgroundColor: '#B86A6A', marginTop: size * 0.04 }} />
+        <View style={{ position: 'absolute', left: w * 0.18, top: size * 0.2, width: w * 0.14, height: size * 0.45, borderRadius: w, backgroundColor: '#F6C3C3', opacity: 0.8 }} />
+        <View style={{ position: 'absolute', left: 0, right: 0, bottom: size * 0.05, height: size * 0.07, backgroundColor: '#B86A6A' }} />
+      </View>
+    </View>
+  );
+}
+
+function ShotTitle({ title, right }: { title: string; right?: React.ReactNode }) {
+  return (
+    <View style={styles.between}>
+      <View style={styles.shotTitleRow}>
+        <BeerCan />
+        <Text style={styles.shotTitle}>{title}</Text>
+      </View>
+      {right ?? null}
+    </View>
+  );
+}
+
 function Shotgun({ data }: { data: Shot }) {
   const { last, locked } = data;
   if (locked) {
     return (
       <Card style={styles.shotCard}>
-        <Eyebrow title="SHOTGUN WATCH · LOCKED" tone={RED} right={<Pill label="FINAL" tone="out" />} />
+        <ShotTitle title="SHOTGUN WATCH · LOCKED" right={<Pill label="FINAL" tone="out" />} />
         <View style={styles.lock}>
           <Avatar uri={last.avatar} name={last.name} size={64} me={last.is_me} />
           <Text style={styles.lockName}>{last.is_me ? "You're shotgunning" : `${firstName(last.name)} is shotgunning`}</Text>
@@ -125,7 +152,7 @@ function Shotgun({ data }: { data: Shot }) {
   }
   return (
     <Card style={styles.shotCard}>
-      <Eyebrow title="SHOTGUN WATCH" tone={RED} />
+      <ShotTitle title="SHOTGUN WATCH" />
       <View style={styles.victim}>
         <Avatar uri={last.avatar} name={last.name} size={46} me={last.is_me} />
         <View style={ui.flex}>
@@ -206,6 +233,8 @@ const styles = StyleSheet.create({
   gameFoot: { color: colors.live, fontSize: 9, fontWeight: '800', letterSpacing: 0.5, marginTop: 6 },
   // shotgun
   shotCard: { borderWidth: 1, borderColor: RED },
+  shotTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 1 },
+  shotTitle: { color: RED, fontSize: 16, fontWeight: '900', letterSpacing: 1.4, flexShrink: 1 },
   victim: {
     flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 12, padding: 12, borderRadius: 14,
     backgroundColor: 'rgba(169,74,74,0.16)', borderWidth: 1, borderColor: 'rgba(224,138,138,0.4)',
