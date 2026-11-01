@@ -13,8 +13,7 @@ const first = (name: string) => name.split(' ')[0];
 const LIVE_REFRESH_MS = 30_000;
 
 
-// Built from the phone Weekly Matchups design: week picker, three summary
-// tiles, your game pinned first (Scorebug cards), gold rank = a Top 5 score this week.
+// Built from the phone Weekly Matchups design: week picker, your game pinned first (Scorebug cards), gold rank = a Top 5 score this week.
 // Tapping a game opens its box score.
 export function MatchupsView() {
   const [week, setWeek] = useState<number | null>(null);
@@ -56,34 +55,10 @@ export function MatchupsView() {
         </View>
       </View>
 
-      {data.summary ? (
-        <View style={styles.tiles}>
-          <Tile label="HIGH SCORE" value={data.summary.high.score.toFixed(2)} sub={first(data.summary.high.name)} />
-          <Tile label="TOP 5 LINE" value={data.summary.cut.score.toFixed(2)} sub={first(data.summary.cut.name)} />
-          <Tile
-            label="CLOSEST"
-            value={data.summary.closest_margin.toFixed(2)}
-            sub={`${first(data.summary.closest.teams[0].name)} v ${first(data.summary.closest.teams[1].name)}`}
-          />
-        </View>
-      ) : (
-        <Text style={styles.note}>No scores yet this week.</Text>
-      )}
-
       {mine ? <GameCard game={mine} week={shown} myId={data.my_roster_id} weekFinal={data.is_final} isMine /> : null}
       {others.map((game) => (
         <GameCard key={game.matchup_id} game={game} week={shown} myId={data.my_roster_id} weekFinal={data.is_final} />
       ))}
-    </View>
-  );
-}
-
-function Tile({ label, value, sub }: { label: string; value: string; sub: string }) {
-  return (
-    <View style={styles.tile}>
-      <Text style={styles.tileLabel}>{label}</Text>
-      <Text style={styles.tileValue}>{value}</Text>
-      <Text style={styles.tileSub} numberOfLines={1}>{sub}</Text>
     </View>
   );
 }
@@ -142,11 +117,6 @@ const styles = StyleSheet.create({
   arrow: { color: colors.gold, fontSize: 22, fontWeight: '700' },
   dim: { opacity: 0.3 },
   weekText: { color: colors.text, fontSize: 16 },
-  tiles: { flexDirection: 'row', gap: 8 },
-  tile: { flex: 1, borderWidth: 1, borderColor: colors.line, borderRadius: 14, backgroundColor: colors.row, padding: 10, alignItems: 'center' },
-  tileLabel: { color: colors.muted, fontSize: 11, fontWeight: '700', letterSpacing: 1 },
-  tileValue: { color: colors.gold, fontSize: 20, fontWeight: '800', marginTop: 4 },
-  tileSub: { color: colors.text, fontSize: 13, fontWeight: '600', marginTop: 2 },
   card: { borderRadius: 16, backgroundColor: colors.row, overflow: 'hidden', borderWidth: 1, borderColor: '#1B2E24' },
   myCard: { borderColor: colors.gold, borderWidth: 1.5 },
   liveEdge: { position: 'absolute', left: 0, top: 0, bottom: 0, width: 4, backgroundColor: colors.live, zIndex: 1 },
@@ -169,5 +139,4 @@ const styles = StyleSheet.create({
   badge: { fontSize: 11, fontWeight: '800', letterSpacing: 1, paddingHorizontal: 10, paddingVertical: 3, borderRadius: 10, overflow: 'hidden' },
   liveBadge: { color: colors.live, backgroundColor: '#163626' },
   finalBadge: { color: colors.muted, backgroundColor: colors.row },
-  note: { color: colors.muted, fontSize: 13, textAlign: 'center' },
 });
