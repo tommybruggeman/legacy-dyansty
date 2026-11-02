@@ -166,8 +166,9 @@ def test_remaining_projection_and_team_live():
 def test_scoreboard_puts_my_game_first():
     games = [{"matchup_id": 1, "teams": [{"roster_id": 1, "name": "Nick", "score": 98.2}, {"roster_id": 2, "name": "Dylan", "score": 90.4}]},
              {"matchup_id": 2, "teams": [{"roster_id": 4, "name": "Nando", "score": 71.9}, {"roster_id": 3, "name": "Tommy", "score": 84.6}]}]
-    board = home.scoreboard(games, {3: {"left": 4}}, 3, {})
+    board = home.scoreboard(games, {3: {"left": 4, "projected": 101.5}}, 3, {})
     assert board[0]["mine"] and board[0]["teams"][0]["name"] == "Tommy" and board[0]["teams"][0]["left"] == 4
+    assert board[0]["teams"][0]["projected"] == 101.5 and board[0]["teams"][1]["projected"] is None
     assert board[1]["teams"][0]["name"] == "Nick"
 
 

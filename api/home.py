@@ -352,11 +352,12 @@ def top5_line(live: dict[int, dict[str, Any]], final: bool = False, places: int 
 
 def scoreboard(games: list[dict[str, Any]], live: dict[int, dict[str, Any]], my_roster_id: int | None,
                pics: dict[int, str | None]) -> list[dict[str, Any]]:
-    """Every Legacy game this week, mine first, each side with its score and starters left."""
+    """Every Legacy game this week, mine first, each side with its score, starters left and projected final."""
     out = []
     for g in games:
         sides = [{"roster_id": t["roster_id"], "name": t["name"], "score": t["score"], "top5": bool(t.get("top5")),
-                  "left": live.get(t["roster_id"], {}).get("left", 0), "is_me": t["roster_id"] == my_roster_id,
+                  "left": live.get(t["roster_id"], {}).get("left", 0),
+                  "projected": live.get(t["roster_id"], {}).get("projected"), "is_me": t["roster_id"] == my_roster_id,
                   "avatar": pics.get(t["roster_id"])} for t in g.get("teams") or []]
         sides.sort(key=lambda s: (not s["is_me"], -s["score"]))
         out.append({"matchup_id": g.get("matchup_id"), "teams": sides, "mine": any(s["is_me"] for s in sides)})

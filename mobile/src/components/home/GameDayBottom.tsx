@@ -92,7 +92,13 @@ export function Scoreboard({ games, week }: { games: Extract<HomeBottom, { mode:
                   </View>
                 );
               })}
-              <Text style={[styles.gameFoot, !left && styles.dim]}>{left ? `● ${g.teams.map((t) => t.left).join(' · ')} LEFT` : 'FINAL'}</Text>
+              {left ? (
+                <Text style={styles.gameProj} numberOfLines={1}>
+                  <Text style={styles.liveDot}>● </Text>PROJ {g.teams.map((t) => pts(t.projected ?? t.score)).join(' – ')}
+                </Text>
+              ) : (
+                <Text style={[styles.gameFoot, styles.dim]}>FINAL</Text>
+              )}
             </Pressable>
           );
         })}
@@ -223,6 +229,9 @@ const styles = StyleSheet.create({
   gameName: { color: colors.text, fontSize: 12, fontWeight: '700', flex: 1 },
   gameScore: { color: colors.text, fontSize: 13, fontWeight: '800' },
   gameFoot: { color: colors.live, fontSize: 9, fontWeight: '800', letterSpacing: 0.5, marginTop: 6 },
+  // live tiles: projected finals, smaller and fainter than FINAL so the scores stay the focus
+  gameProj: { color: colors.muted, opacity: 0.75, fontSize: 7, fontWeight: '700', letterSpacing: 0.4, marginTop: 7 },
+  liveDot: { color: colors.live, opacity: 1 },
   // shotgun
   shotCard: { borderWidth: 1, borderColor: RED },
   shotHead: { alignItems: 'center', justifyContent: 'center' },
