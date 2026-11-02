@@ -230,7 +230,7 @@ const styles = StyleSheet.create({
   gameScore: { color: colors.text, fontSize: 13, fontWeight: '800' },
   gameFoot: { color: colors.live, fontSize: 9, fontWeight: '800', letterSpacing: 0.5, marginTop: 6 },
   // live tiles: projected finals, smaller and fainter than FINAL so the scores stay the focus
-  gameProj: { color: colors.muted, opacity: 0.75, fontSize: 8, fontWeight: '700', letterSpacing: 0.4, marginTop: 7 },
+  gameProj: { color: colors.muted, opacity: 0.75, fontSize: 7, fontWeight: '700', letterSpacing: 0.4, marginTop: 7 },
   liveDot: { color: colors.live, opacity: 1 },
   // shotgun
   shotCard: { borderWidth: 1, borderColor: RED },
