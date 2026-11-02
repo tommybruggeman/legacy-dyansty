@@ -22,7 +22,8 @@ jobs:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
       - uses: google-github-actions/setup-gcloud@v2
       - name: APIs
-        run: gcloud services enable compute.googleapis.com secretmanager.googleapis.com --project "$PROJECT"
+        # Turned on once by the project owner; the deploy account may not be allowed to turn APIs on itself.
+        run: gcloud services enable compute.googleapis.com secretmanager.googleapis.com --project "$PROJECT" || echo "APIs not changed (already on, or turned on by the owner)"
       - name: Secrets
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
