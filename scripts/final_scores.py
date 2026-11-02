@@ -80,7 +80,12 @@ def cross_check(client: Any, season: int, week: int, lines: dict[str, Any]) -> l
                 total += 1
                 same += abs(ours - float(theirs or 0)) <= TOLERANCE
         if total:
-            out.append(f"  league {n}: {same}/{total} player scores match Sleeper ({same / total:.1%})")
+            from scoring.espn_check import key_gaps
+            from scoring.shadow import stat_lines
+            ids = {str(p) for row in rows for p in (row.get("players_points") or {})}
+            gaps = key_gaps(lines, stat_lines(season, week, _get_json), scoring, ids)
+            out.append(f"  league {n}: {same}/{total} player scores match Sleeper ({same / total:.1%}); stats that differ from "
+                       f"Sleeper's lines: " + (", ".join(f"{k} ({c})" for k, c in gaps.most_common(8)) or "none"))
     return out
 
 
