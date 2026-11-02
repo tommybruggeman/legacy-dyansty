@@ -11,7 +11,7 @@ on:
       check:
         description: Which check to run
         type: choice
-        options: [odds_backtest, odds_trial, odds_grade, start_sit_grade, practice_test, weekly_cards, shadow_scoring, live_projection_study, espn_feed_check]
+        options: [odds_backtest, odds_trial, odds_grade, start_sit_grade, practice_test, weekly_cards, shadow_scoring, live_projection_study, espn_feed_check, final_scores_check]
         default: odds_backtest
 
 jobs:
@@ -46,5 +46,7 @@ jobs:
             live_projection_study) python -m scoring.live_projection_study ;;
             # the ESPN stat feed (live watcher's source) scored with our engine vs Sleeper on recent finished weeks
             espn_feed_check) python -m scoring.espn_check --weeks 3 ;;
+            # official finals from nflverse scored by our engine vs Sleeper, every finished week (saves nothing)
+            final_scores_check) python -m scripts.final_scores --dry ;;
             *) python -m league_ai.playoff_odds ;;
           esac
