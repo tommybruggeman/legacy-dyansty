@@ -448,6 +448,7 @@ function GameDay({ data }: { data: HomeData }) {
             {g.them ? <Text style={styles.needs}>{ahead ? `${firstName(g.them.name)} needs ${pts(gap)} to pass you` : `You need ${pts(gap)} to win`}</Text> : null}
           </Card>
         ) : null}
+        {data.bottom?.mode === 'shotgun' && data.bottom.scoreboard?.length ? <Scoreboard games={data.bottom.scoreboard} week={data.week} /> : null}
         {data.bottom ? <GameDayBottom bottom={data.bottom} week={data.week} /> : <Race rows={data.race ?? []} title="TOP 5 RACE" window="bubble" />}
         <AskBar placeholder="What do I need tonight?" />
       </>
