@@ -54,3 +54,12 @@ jobs:
               --scopes cloud-platform --metadata-from-file startup-script=deploy/live-watcher/startup.sh
           fi
           gcloud compute instances describe "$VM" --project "$PROJECT" --zone "$ZONE" --format 'value(status,machineType.basename())'
+      - name: Check the watcher started
+        run: |
+          # Boot takes a few minutes (packages, clone, venv). Print only the boot result and the watcher's start line.
+          for i in $(seq 1 20); do
+            out=$(gcloud compute instances get-serial-port-output "$VM" --project "$PROJECT" --zone "$ZONE" 2>/dev/null || true)
+            if echo "$out" | grep -q "startup-script exit status"; then break; fi
+            sleep 30
+          done
+          echo "$out" | grep -oE "startup-script exit status [0-9]+|live watcher \((main|backup)\) started|Started legacy-watcher.service[^ ]*" | sort | uniq -c
