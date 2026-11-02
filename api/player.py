@@ -13,18 +13,18 @@ from typing import Any, Iterable
 
 from concurrent.futures import ThreadPoolExecutor
 
-from api import cache, projections, props, sleeper
+from api import cache, nfl_live, projections, props, sleeper
 from api.home import EASTERN
 from api.teams import _f, _text
 from league_ai import injury_outlook
 from league_ai.nfl_data import (
     add_weather,
     bye_weeks_from_games,
-    current_week_from_games,
     defense_vs_position,
     matchup_label,
     season_games,
     team_code,
+    team_next_week,
     week_matchups,
 )
 
@@ -75,6 +75,61 @@ def nfl_line(row: dict[str, Any] | None, pos: str) -> dict[str, Any] | None:
             "pass_yds": _int(row.get("passing_yards")), "pass_td": _int(row.get("passing_tds")), "ints": _int(row.get("interceptions")),
         })
     return line
+
+
+# Sleeper weekly stat keys -> the nfl_player_stats columns the page reads.
+SLEEPER_TO_NFL = {
+    "pass_cmp": "completions", "pass_att": "attempts", "pass_yd": "passing_yards", "pass_td": "passing_tds", "pass_int": "interceptions",
+    "rush_att": "carries", "rush_yd": "rushing_yards", "rush_td": "rushing_tds",
+    "rec_tgt": "targets", "rec": "receptions", "rec_yd": "receiving_yards", "rec_td": "receiving_tds",
+}
+
+
+def sleeper_nfl_row(stats: dict[str, Any] | None, week: int, game: dict[str, Any] | None) -> dict[str, Any] | None:
+    """A finished game's line from Sleeper's live weekly stats, shaped like an nfl_player_stats row.
+
+    Used for a game the nightly nflverse load hasn't picked up yet; None when he didn't play.
+    """
+    if not projections.played(stats):
+        return None
+    row: dict[str, Any] = {dst: _n(stats.get(src)) for src, dst in SLEEPER_TO_NFL.items()}
+    snaps, team_snaps = _n(stats.get("off_snp")), _n(stats.get("tm_off_snp"))
+    row.update({
+        "week": week, "source": "sleeper",
+        "offense_pct": round(snaps / team_snaps, 3) if snaps and team_snaps else None,
+        "opponent": (game or {}).get("opp"), "is_home": (game or {}).get("home"),
+    })
+    return row
+
+
+def finished_open_weeks(season: int, team: str, open_weeks: Iterable[int], games_for: Any = None) -> dict[int, dict[str, Any]]:
+    """Week -> his team's game, for weeks Sleeper hasn't closed yet where that game is final on ESPN's scoreboard.
+
+    Byes, games not played yet and games still going are left out, so a half-played game never
+    lands in the log or the season averages.
+    """
+    games_for = games_for or (lambda w: nfl_live.week_games(season, w, False))
+    code = team_code(team)
+    out: dict[int, dict[str, Any]] = {}
+    for week in open_weeks:
+        game = (games_for(week) or {}).get(code) if code else None
+        if game and game.get("state") == "post":
+            out[week] = game
+    return out
+
+
+def sleeper_rows(season: int, player_id: str, finished: dict[int, dict[str, Any]], nfl_rows: list[dict[str, Any]], lines_for: Any = None) -> list[dict[str, Any]]:
+    """Stat rows for finished games the nightly nflverse load doesn't have yet, from Sleeper's weekly stats."""
+    lines_for = lines_for or (lambda w: projections.week_lines("stats", season, w, 120))
+    have = {int(r["week"]) for r in nfl_rows if r.get("week") is not None}
+    out = []
+    for week, game in sorted(finished.items()):
+        if week in have:
+            continue
+        row = sleeper_nfl_row(((lines_for(week) or {}).get(player_id) or {}).get("stats"), week, game)
+        if row:
+            out.append(row)
+    return out
 
 
 def _opp_label(home: bool | None, opp: str) -> str:
@@ -264,8 +319,10 @@ def contract_history(rows: list[dict[str, Any]], years_left: dict[str, int] | No
 
 
 def next_game(games: list[dict[str, Any]], season: int, team: str, pos: str, dvp: dict | None, bye_week: int | None) -> dict[str, Any] | None:
-    week = current_week_from_games(games)
-    if not week or not team:
+    if not team:
+        return None
+    week = team_next_week(games, team)  # past this week once his own game is final
+    if not week:
         return None
     team = team_code(team)
     if bye_week == week:
@@ -455,8 +512,15 @@ def page_extras(
     years_left: dict[str, int],
     salary: float | None,
     player_info: Any,
+    finished: dict[int, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Everything beyond the basic contract card, read side by side."""
+    """Everything beyond the basic contract card, read side by side.
+
+    last_week is the last week Sleeper has closed. finished holds later weeks (Sleeper still has them
+    open) where his game is already final: they're in league_weeks and get a stat line here.
+    """
+    finished = {w: g for w, g in (finished or {}).items() if w > last_week}
+    open_weeks = sorted(finished)
     team = _text(meta.get("team"))
     jobs = {
         "nfl": lambda: load_nfl_rows(client, player_id, season),
@@ -467,7 +531,7 @@ def page_extras(
         "history": lambda: load_history(client, league_id, player_id),
         "ranks": lambda: _safe(lambda: load_ranks(client, league_id, sleeper_id, last_week, player_info), {}),
         "dvp": lambda: _safe(lambda: defense_vs_position(client, season), {}) if pos in DVP_POSITIONS else {},
-        "week_ranks": lambda: weekly_ranks(sleeper_id, season, last_week, player_id, pos),
+        "week_ranks": lambda: weekly_ranks(sleeper_id, season, last_week, player_id, pos, open_weeks),
     }
     futures = {k: cache.pool.submit(f) for k, f in jobs.items()}
     got = {k: _safe(f.result, None) for k, f in futures.items()}
@@ -475,6 +539,8 @@ def page_extras(
     games = got["games"] or []
     bye = bye_weeks_from_games(games).get(team_code(team)) if team else None
     nfl_rows = got["nfl"] or []
+    if finished:
+        nfl_rows = nfl_rows + (_safe(lambda: sleeper_rows(season, player_id, finished, nfl_rows), []) or [])
     log = game_log(league_weeks, nfl_rows, schedule_by_week(games, team), bye, pos)
     week_ranks = got["week_ranks"] or {}
     for g in log:
@@ -512,17 +578,22 @@ def page_extras(
     }
 
 
-def weekly_scores(sleeper_id: str, season: int, last_week: int, player_id: str, pos: str) -> dict[int, dict[str, Any]]:
-    """Week -> {label: his position rank ("RB7"), points}, scored with league rules across every NFL player."""
+def weekly_scores(sleeper_id: str, season: int, last_week: int, player_id: str, pos: str, open_weeks: Iterable[int] = ()) -> dict[int, dict[str, Any]]:
+    """Week -> {label: his position rank ("RB7"), points}, scored with league rules across every NFL player.
+
+    Weeks after last_week (open_weeks) are still being played, so they're re-read instead of cached for the day.
+    """
+    weeks = list(range(1, last_week + 1)) + sorted(w for w in set(open_weeks) if w > last_week)
+
     def one(week: int) -> dict[str, Any] | None:
-        return projections.week_ranks(sleeper_id, season, week, True, {player_id: pos}).get(player_id)
+        return projections.week_ranks(sleeper_id, season, week, week <= last_week, {player_id: pos}).get(player_id)
     with ThreadPoolExecutor(max_workers=6) as pool:
-        rows = list(pool.map(lambda w: _safe(lambda: one(w), None), range(1, last_week + 1)))
-    return {w: r for w, r in zip(range(1, last_week + 1), rows) if r}
+        rows = list(pool.map(lambda w: _safe(lambda: one(w), None), weeks))
+    return {w: r for w, r in zip(weeks, rows) if r}
 
 
-def weekly_ranks(sleeper_id: str, season: int, last_week: int, player_id: str, pos: str) -> dict[int, str]:
-    return {w: r["label"] for w, r in weekly_scores(sleeper_id, season, last_week, player_id, pos).items() if r.get("label")}
+def weekly_ranks(sleeper_id: str, season: int, last_week: int, player_id: str, pos: str, open_weeks: Iterable[int] = ()) -> dict[int, str]:
+    return {w: r["label"] for w, r in weekly_scores(sleeper_id, season, last_week, player_id, pos, open_weeks).items() if r.get("label")}
 
 
 def with_unrostered_points(league_weeks: list[dict[str, Any]], scores: dict[int, dict[str, Any]]) -> list[dict[str, Any]]:

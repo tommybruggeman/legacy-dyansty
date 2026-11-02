@@ -129,6 +129,13 @@ class NflData:
         if not game:
             return None
         pos = str(position or "").upper()
+        final = game.get("final_score")
+        if final:
+            # Thursday/Sunday game already played while Monday night is still to come: it's his latest game, not an upcoming one.
+            result = "won" if final["team"] > final["opponent"] else "lost" if final["team"] < final["opponent"] else "tied"
+            return {"week": week, "already_played": True,
+                    "matchup": f"ALREADY PLAYED: W{week} {'vs' if game.get('home') else 'at'} {game['opponent']}, {team} {result} {final['team']}-{final['opponent']}. "
+                               "This is his latest game (its stats are in the weekly log), not an upcoming one."}
         rating = defense_vs_position(self.client, season).get((game["opponent"], pos))
         out: dict[str, Any] = {"week": week, "matchup": matchup_note(pos, game, rating), "gameday": game.get("gameday"), "kickoff_et": game.get("gametime"),
                                "vegas_implied_team_points": game.get("implied_points"), "weather": weather_text(game),

@@ -75,6 +75,8 @@ def bye_weeks_from_games(rows: list[dict[str, Any]]) -> dict[str, int]:
 # change at most once a day, so the chat, the Front Office page and the tools share one read.
 _CACHE: dict[tuple[Any, ...], tuple[float, Any]] = {}
 CACHE_SECONDS = 6 * 3600
+GAMES_CACHE_SECONDS = 15 * 60
+STATS_CACHE_SECONDS = 2 * 3600  # game-night stat loads reach matchup ratings within two hours
 
 
 def _cached(key: tuple[Any, ...], loader: Any, ttl: int = CACHE_SECONDS) -> Any:
@@ -99,7 +101,8 @@ def season_games(client: Any, season: int) -> list[dict[str, Any]]:
         except Exception:
             return []
 
-    return _cached(("games", int(season)), load)
+    # Short cache: scores land through the day on game days, and "this week" depends on them.
+    return _cached(("games", int(season)), load, ttl=GAMES_CACHE_SECONDS)
 
 
 def bye_weeks(client: Any, season: int) -> dict[str, int]:
@@ -111,6 +114,25 @@ def current_week_from_games(rows: list[dict[str, Any]]) -> int | None:
     """Earliest week that still has an unplayed game (None once the regular season is over)."""
     open_weeks = [int(r["week"]) for r in rows if r.get("week") is not None and r.get("home_score") is None]
     return min(open_weeks) if open_weeks else None
+
+
+def team_next_week(rows: list[dict[str, Any]], team: Any) -> int | None:
+    """The week of a team's next unplayed game: past the league's current week once its own game is final.
+
+    None once the team has no unplayed game left. A bye week between counts as the next week
+    when it comes before the next game, so callers can still say "on bye".
+    """
+    week = current_week_from_games(rows)
+    if week is None:
+        return None
+    code = team_code(team)
+    own = sorted(int(r["week"]) for r in rows if r.get("week") is not None and r.get("home_score") is None
+                 and code in (team_code(r.get("home_team")), team_code(r.get("away_team"))))
+    if not own:
+        return None
+    played_this_week = any(int(r.get("week") or 0) == week and r.get("home_score") is not None
+                           and code in (team_code(r.get("home_team")), team_code(r.get("away_team"))) for r in rows)
+    return week + 1 if played_this_week and own[0] > week else week
 
 
 def week_matchups(rows: list[dict[str, Any]], week: int) -> dict[str, dict[str, Any]]:
@@ -131,10 +153,15 @@ def week_matchups(rows: list[dict[str, Any]], week: int) -> dict[str, dict[str, 
             implied_home = round(float(total) / 2 + float(spread) / 2, 1)
             implied_away = round(float(total) / 2 - float(spread) / 2, 1)
         shared = {"gameday": r.get("gameday"), "gametime": r.get("gametime"), "roof": r.get("roof") or None, "stadium": r.get("stadium")}
+        final = r.get("home_score") is not None and r.get("away_score") is not None
         if r.get("wind") is not None or r.get("temp") is not None:  # nflverse fills these once the game is played
             shared["weather"] = {"temp_f": r.get("temp"), "wind_mph": r.get("wind"), "precip_in": None, "source": "game record"}
         out[home] = {"opponent": away, "home": True, "implied_points": implied_home, **shared}
         out[away] = {"opponent": home, "home": False, "implied_points": implied_away, **shared}
+        if final:  # already played (Thursday/Sunday games while Monday night is still to come)
+            hs, aw = int(float(r["home_score"])), int(float(r["away_score"]))
+            out[home]["final_score"] = {"team": hs, "opponent": aw}
+            out[away]["final_score"] = {"team": aw, "opponent": hs}
     return out
 
 
@@ -276,7 +303,7 @@ def season_stat_rows(client: Any, season: int) -> list[dict[str, Any]]:
             return []
         return rows
 
-    return _cached(("stats", int(season)), load)
+    return _cached(("stats", int(season)), load, ttl=STATS_CACHE_SECONDS)
 
 
 def defense_vs_position(client: Any, season: int) -> dict[tuple[str, str], dict[str, Any]]:

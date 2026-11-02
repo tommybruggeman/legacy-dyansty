@@ -47,6 +47,17 @@ SLEEPER_PLAYERS = {
 }
 
 
+class RunArgsTests(unittest.TestCase):
+    def test_only_takes_a_comma_list(self):
+        import argparse
+
+        from pipeline.nfl_data.run import _loaders
+
+        self.assertEqual(_loaders("stats, games"), {"stats", "games"})
+        with self.assertRaises(argparse.ArgumentTypeError):
+            _loaders("stats,nope")
+
+
 class CommonTests(unittest.TestCase):
     def test_normalize_name(self):
         self.assertEqual(normalize_name("Ja'Marr Chase"), "jamarr chase")

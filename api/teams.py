@@ -548,10 +548,16 @@ def ir_rows(state: dict[str, Any], team_id: str) -> list[dict[str, Any]]:
     ]
 
 
-def weekly_points(sleeper_id: str, weeks: int, player_id: str) -> list[dict[str, Any]]:
+OPEN_WEEK_TTL = 60
+
+
+def weekly_points(sleeper_id: str, weeks: int, player_id: str, open_from: int | None = None) -> list[dict[str, Any]]:
+    """Week 1..weeks of his league points and whether he started. Weeks from open_from on are still being
+    played (Sleeper hasn't closed them), so their matchups are re-read every minute instead of once a day."""
     out = []
     for week in range(1, weeks + 1):
-        rows = sleeper.get(f"league/{sleeper_id}/matchups/{week}", ttl=86400) or []
+        ttl = OPEN_WEEK_TTL if open_from is not None and week >= open_from else 86400
+        rows = sleeper.get(f"league/{sleeper_id}/matchups/{week}", ttl=ttl) or []
         row = next((r for r in rows if player_id in (r.get("players") or []) or player_id in (r.get("players_points") or {})), None)
         points = (row or {}).get("players_points", {}).get(player_id)
         started = bool(row) and player_id in (row.get("starters") or [])

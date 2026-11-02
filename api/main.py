@@ -538,10 +538,19 @@ def player_page(player_id: str, owner: tuple[Client, Any] = Depends(owner_client
         raise HTTPException(status_code=502, detail="Couldn't load league contracts. Try again.")
     weeks = league.last_scored_week(ctx["sleeper_id"])
     meta = teams.player_info(client, [player_id]).get(player_id, {})
-    league_weeks = teams.weekly_points(ctx["sleeper_id"], weeks, player_id)
+    # Sleeper closes a week only after Monday night, so a game that's already final shows from the open week.
+    finished: dict[int, dict[str, Any]] = {}
+    try:
+        finished = player.finished_open_weeks(ctx["season"], str(meta.get("team") or ""), range(weeks + 1, league.current_week() + 1))
+    except Exception:
+        pass
+    open_weeks = sorted(finished)
+    league_weeks = teams.weekly_points(ctx["sleeper_id"], max([weeks, *open_weeks]), player_id, open_from=weeks + 1)
+    if open_weeks:  # a bye or unplayed open week before a finished one stays out
+        league_weeks = [w for w in league_weeks if w["week"] <= weeks or w["week"] in finished]
     if any(w["points"] is None for w in league_weeks) and meta.get("position"):
         try:
-            scores = player.weekly_scores(ctx["sleeper_id"], ctx["season"], weeks, player_id, str(meta["position"]))
+            scores = player.weekly_scores(ctx["sleeper_id"], ctx["season"], weeks, player_id, str(meta["position"]), open_weeks)
             league_weeks = player.with_unrostered_points(league_weeks, scores)
         except Exception:
             pass
@@ -553,7 +562,7 @@ def player_page(player_id: str, owner: tuple[Client, Any] = Depends(owner_client
         client, league_id=ctx["league_id"], sleeper_id=ctx["sleeper_id"], season=ctx["season"], player_id=player_id,
         meta=meta, pos=result["pos"], league_weeks=league_weeks, last_week=weeks,
         years_left={c["team_id"]: c["years_left"]} if c else {}, salary=c["salary"] if c else None,
-        player_info=teams.player_info,
+        player_info=teams.player_info, finished=finished,
     )
     if c is None:
         # No contract row, but Sleeper may still have him on a roster (a new rookie pick, a pickup not synced yet).

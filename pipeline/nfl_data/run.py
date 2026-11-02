@@ -3,6 +3,8 @@
     python -m pipeline.nfl_data.run                 # everything, current + 3 prior seasons of stats
     python -m pipeline.nfl_data.run --only players  # one loader
     python -m pipeline.nfl_data.run --seasons 2026  # stats for given seasons only
+    python -m pipeline.nfl_data.run --only stats,games  # several loaders
+    python -m pipeline.nfl_data.run --game-night    # stats + scores, current season only (game-night refresh)
 """
 from __future__ import annotations
 
@@ -239,33 +241,51 @@ def sync_prospects(client: Any, crosswalk: Crosswalk, seasons: list[int]) -> int
     return written
 
 
+LOADERS = ("players", "stats", "games", "values", "injuries", "injury_history", "prospects", "situational")
+
+
+def _loaders(value: str) -> set[str]:
+    names = {v.strip() for v in value.split(",") if v.strip()}
+    bad = names - set(LOADERS)
+    if bad or not names:
+        raise argparse.ArgumentTypeError(f"unknown loader(s): {', '.join(sorted(bad)) or value!r}; pick from {', '.join(LOADERS)}")
+    return names
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--only", choices=["players", "stats", "games", "values", "injuries", "injury_history", "prospects", "situational"], default=None)
+    parser.add_argument("--only", type=_loaders, default=None,
+                        help="one loader or a comma list: " + ",".join(LOADERS))
     parser.add_argument("--seasons", nargs="*", type=int, default=None)
+    parser.add_argument("--game-night", action="store_true",
+                        help="quick refresh after games finish: stats and scores for the current season only")
     args = parser.parse_args(argv)
+    if args.game_night:
+        args.only = args.only or {"stats", "games"}
+        args.seasons = args.seasons or [current_nfl_season()]
 
     client = service_client()
     crosswalk = load_crosswalk()
     print(f"[nfl_data] crosswalk: {len(crosswalk.frame)} players", flush=True)
     seasons = args.seasons or default_seasons()
+    picked = lambda name: args.only is None or name in args.only  # noqa: E731
 
     ok = True
-    if args.only in (None, "players"):
+    if picked("players"):
         ok &= _run(client, "sleeper_players", lambda: sync_players(client, crosswalk))
-    if args.only in (None, "stats"):
+    if picked("stats"):
         ok &= _run(client, "nflverse_stats", lambda: sync_stats(client, crosswalk, seasons))
-    if args.only in (None, "games"):
+    if picked("games"):
         ok &= _run(client, "nflverse_games", lambda: sync_games(client, seasons))
-    if args.only in (None, "values"):
+    if picked("values"):
         ok &= _run(client, "dynastyprocess_values", lambda: sync_values(client, crosswalk))
-    if args.only in (None, "injuries"):
+    if picked("injuries"):
         ok &= _run(client, "injuries", lambda: sync_injuries(client, crosswalk, seasons))
-    if args.only in (None, "injury_history"):
+    if picked("injury_history"):
         ok &= _run(client, "injury_history", lambda: sync_injury_history(client, crosswalk, seasons))
-    if args.only in (None, "situational"):
+    if picked("situational"):
         ok &= _run(client, "situational_splits", lambda: sync_situational(client, seasons, crosswalk))
-    if args.only in (None, "prospects"):
+    if picked("prospects"):
         ok &= _run(client, "cfbd_prospects", lambda: sync_prospects(client, crosswalk, seasons))
     return 0 if ok else 1
 
