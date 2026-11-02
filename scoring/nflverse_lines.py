@@ -58,6 +58,12 @@ def stat_line(row: Mapping[str, Any]) -> dict[str, float]:
         v = sum(_num(row.get(c)) for c in cols)
         if v:
             stats[key] = v
+    # nflverse counts a touchdown as a first down; the scoring rules (Sleeper's convention) don't, so take them out.
+    for fd, td in (("rush_fd", "rush_td"), ("rec_fd", "rec_td"), ("pass_fd", "pass_td")):
+        if fd in stats:
+            stats[fd] = max(0.0, stats[fd] - stats.get(td, 0.0))
+            if not stats[fd]:
+                del stats[fd]
     if stats.get("pass_att"):
         stats["pass_inc"] = max(0.0, stats["pass_att"] - stats.get("pass_cmp", 0.0))
     if stats:
