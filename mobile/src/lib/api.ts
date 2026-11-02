@@ -371,6 +371,7 @@ export type PlayerPage = {
     best?: { week: number; points: number; opp: string } | null;
   };
   game_log: GameLogRow[];
+  live?: boolean; // one of his games is being played right now
   next_game: {
     week: number;
     bye: boolean;
@@ -412,6 +413,7 @@ export type GameLogRow = {
   status: 'started' | 'bench' | 'out' | 'bye' | 'free_agent';
   points: number | null;
   rank?: string | null;
+  live?: boolean; // game still going: points and line update every refresh
   line: {
     carries: number; rush_yds: number; rush_td: number;
     targets: number; rec: number; rec_yds: number; rec_td: number;

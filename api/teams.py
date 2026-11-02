@@ -548,7 +548,7 @@ def ir_rows(state: dict[str, Any], team_id: str) -> list[dict[str, Any]]:
     ]
 
 
-OPEN_WEEK_TTL = 60
+OPEN_WEEK_TTL = 15  # same as the live team page
 
 
 def weekly_points(sleeper_id: str, weeks: int, player_id: str, open_from: int | None = None) -> list[dict[str, Any]]:

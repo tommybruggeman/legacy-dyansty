@@ -102,25 +102,27 @@ def sleeper_nfl_row(stats: dict[str, Any] | None, week: int, game: dict[str, Any
     return row
 
 
-def finished_open_weeks(season: int, team: str, open_weeks: Iterable[int], games_for: Any = None) -> dict[int, dict[str, Any]]:
-    """Week -> his team's game, for weeks Sleeper hasn't closed yet where that game is final on ESPN's scoreboard.
-
-    Byes, games not played yet and games still going are left out, so a half-played game never
-    lands in the log or the season averages.
-    """
+def open_week_games(season: int, team: str, open_weeks: Iterable[int], games_for: Any = None) -> dict[int, dict[str, Any]]:
+    """Week -> his team's game, for weeks Sleeper hasn't closed yet where that game has kicked off
+    (ESPN scoreboard state "in" or "post"). Byes and games not started yet are left out."""
     games_for = games_for or (lambda w: nfl_live.week_games(season, w, False))
     code = team_code(team)
     out: dict[int, dict[str, Any]] = {}
     for week in open_weeks:
         game = (games_for(week) or {}).get(code) if code else None
-        if game and game.get("state") == "post":
+        if game and game.get("state") in ("in", "post"):
             out[week] = game
     return out
 
 
+def live_weeks(games: dict[int, dict[str, Any]]) -> set[int]:
+    """Weeks whose game is still being played (left out of season averages until final)."""
+    return {w for w, g in games.items() if g.get("state") == "in"}
+
+
 def sleeper_rows(season: int, player_id: str, finished: dict[int, dict[str, Any]], nfl_rows: list[dict[str, Any]], lines_for: Any = None) -> list[dict[str, Any]]:
-    """Stat rows for finished games the nightly nflverse load doesn't have yet, from Sleeper's weekly stats."""
-    lines_for = lines_for or (lambda w: projections.week_lines("stats", season, w, 120))
+    """Stat rows for open-week games (live or final) the nightly nflverse load doesn't have yet, from Sleeper's weekly stats."""
+    lines_for = lines_for or (lambda w: projections.week_lines("stats", season, w, nfl_live.LIVE_TTL if finished.get(w, {}).get("state") == "in" else 120))
     have = {int(r["week"]) for r in nfl_rows if r.get("week") is not None}
     out = []
     for week, game in sorted(finished.items()):
@@ -517,10 +519,12 @@ def page_extras(
     """Everything beyond the basic contract card, read side by side.
 
     last_week is the last week Sleeper has closed. finished holds later weeks (Sleeper still has them
-    open) where his game is already final: they're in league_weeks and get a stat line here.
+    open) where his game has kicked off: they're in league_weeks and get a stat line here. A game
+    still going is marked live and stays out of the season numbers until it's final.
     """
     finished = {w: g for w, g in (finished or {}).items() if w > last_week}
     open_weeks = sorted(finished)
+    live = live_weeks(finished)
     team = _text(meta.get("team"))
     jobs = {
         "nfl": lambda: load_nfl_rows(client, player_id, season),
@@ -545,6 +549,13 @@ def page_extras(
     week_ranks = got["week_ranks"] or {}
     for g in log:
         g["rank"] = week_ranks.get(g["week"]) if g["status"] in ("started", "bench", "free_agent") else None
+        if g["week"] in live:
+            g["live"] = True
+            detail = (finished.get(g["week"]) or {}).get("detail")
+            if detail and g["status"] not in ("bye", "out"):
+                g["opp"] = f"{g['opp']} · {detail}".strip(" ·")
+    done = [g for g in log if not g.get("live")]
+    league_weeks = [w for w in league_weeks if int(w["week"]) not in live]
     upcoming = _safe(lambda: next_game(games, season, team, pos, got["dvp"], bye), None)
     if upcoming and not upcoming.get("bye"):
         upcoming["projected"] = _safe(lambda: projections.week_projections(client, sleeper_id, season, upcoming["week"], [player_id], {player_id: pos}, {player_id: team}).get(player_id), None)
@@ -554,17 +565,17 @@ def page_extras(
         injury = _safe(lambda: injury_name(meta, got["espn"], got["practice"] or []), None)
         estimate = _safe(lambda: injury_estimate(load_injury_episodes(client, injury), pos, injury), None) if injury else None
     scored = [w["points"] for w in league_weeks if w.get("points")]
-    best = max((g for g in log if g.get("points") is not None and g["status"] in ("started", "bench")), key=lambda g: g["points"], default=None)
+    best = max((g for g in done if g.get("points") is not None and g["status"] in ("started", "bench")), key=lambda g: g["points"], default=None)
     ppg = sum(scored) / len(scored) if scored else None
     rank = (got["ranks"] or {}).get(player_id)
-    started = sum(1 for g in log if g["status"] == "started")
-    played = sum(1 for g in log if g["status"] in ("started", "bench"))
+    started = sum(1 for g in done if g["status"] == "started")
+    played = sum(1 for g in done if g["status"] in ("started", "bench"))
     return {
         "bye_week": bye,
         "nfl_season": season_tiles(nfl_rows, pos),
         "league_season": {
             "ppg": round(ppg, 1) if ppg is not None else None,
-            "ppg_started": _avg([g["points"] for g in log if g["status"] == "started" and g["points"] is not None]),
+            "ppg_started": _avg([g["points"] for g in done if g["status"] == "started" and g["points"] is not None]),
             "rank": rank,
             "started": started,
             "played": played,
@@ -572,6 +583,7 @@ def page_extras(
             "best": {"week": best["week"], "points": best["points"], "opp": best["opp"]} if best else None,
         },
         "game_log": log,
+        "live": bool(live),
         "next_game": upcoming,
         "health": health(meta, got["espn"], got["practice"] or [], got["episodes"] or [], season, estimate),
         "history": contract_history(got["history"] or [], years_left),

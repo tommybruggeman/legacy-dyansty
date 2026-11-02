@@ -538,10 +538,11 @@ def player_page(player_id: str, owner: tuple[Client, Any] = Depends(owner_client
         raise HTTPException(status_code=502, detail="Couldn't load league contracts. Try again.")
     weeks = league.last_scored_week(ctx["sleeper_id"])
     meta = teams.player_info(client, [player_id]).get(player_id, {})
-    # Sleeper closes a week only after Monday night, so a game that's already final shows from the open week.
+    # Sleeper closes a week only after Monday night, so his game shows from the open week once it kicks off
+    # (live, refreshed like the team page) and stays out of his averages until it's final.
     finished: dict[int, dict[str, Any]] = {}
     try:
-        finished = player.finished_open_weeks(ctx["season"], str(meta.get("team") or ""), range(weeks + 1, league.current_week() + 1))
+        finished = player.open_week_games(ctx["season"], str(meta.get("team") or ""), range(weeks + 1, league.current_week() + 1))
     except Exception:
         pass
     open_weeks = sorted(finished)
@@ -554,7 +555,8 @@ def player_page(player_id: str, owner: tuple[Client, Any] = Depends(owner_client
             league_weeks = player.with_unrostered_points(league_weeks, scores)
         except Exception:
             pass
-    result = teams.player_detail(player_id, state, meta, league_weeks, ctx["team_id"])
+    live = player.live_weeks(finished)
+    result = teams.player_detail(player_id, state, meta, [w for w in league_weeks if w["week"] not in live], ctx["team_id"])
     if result is None:
         raise HTTPException(status_code=404, detail="Player not found.")
     c = result.get("contract")

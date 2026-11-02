@@ -102,15 +102,18 @@ def test_active_counts_as_healthy_and_injury_estimate():
     assert not hurt["healthy"] and hurt["estimate"]["median_games"] == 2
 
 
-def test_finished_open_weeks_keep_only_final_games():
+def test_open_week_games_keep_started_games_and_flag_live_ones():
     boards = {
-        8: {"BUF": {"state": "post", "opp": "BAL", "home": True}, "SEA": {"state": "pre", "opp": "CHI", "home": True}},
+        8: {"BUF": {"state": "post", "opp": "BAL", "home": True}, "SEA": {"state": "pre", "opp": "CHI", "home": True},
+            "DET": {"state": "in", "opp": "MIN", "home": True, "detail": "3rd 4:12"}},
         9: {"BUF": {"state": "pre", "opp": "MIA", "home": False}},
     }
-    got = player.finished_open_weeks(2026, "BUF", [8, 9], games_for=boards.get)
-    assert list(got) == [8] and got[8]["opp"] == "BAL"
-    assert player.finished_open_weeks(2026, "SEA", [8], games_for=boards.get) == {}  # Monday night still to come
-    assert player.finished_open_weeks(2026, "KC", [8], games_for=boards.get) == {}   # bye / no game
+    got = player.open_week_games(2026, "BUF", [8, 9], games_for=boards.get)
+    assert list(got) == [8] and got[8]["opp"] == "BAL" and player.live_weeks(got) == set()
+    assert player.open_week_games(2026, "SEA", [8], games_for=boards.get) == {}  # Monday night still to come
+    assert player.open_week_games(2026, "KC", [8], games_for=boards.get) == {}   # bye / no game
+    live = player.open_week_games(2026, "DET", [8], games_for=boards.get)
+    assert player.live_weeks(live) == {8}
 
 
 def test_sleeper_rows_fill_a_final_game_nflverse_lacks():
@@ -138,3 +141,23 @@ def test_next_game_moves_past_a_game_already_played_this_week():
     assert player.next_game(games, 2026, "TEN", "RB", {}, None)["week"] == 9
     assert player.next_game(games, 2026, "TEN", "RB", {}, None)["opp"] == "HOU"
     assert player.next_game(games, 2026, "SEA", "RB", {}, None)["week"] == 8
+
+
+def test_live_game_shows_in_log_but_not_in_season_numbers(monkeypatch):
+    from api import projections
+
+    monkeypatch.setattr(projections, "week_lines", lambda kind, s, w, ttl: {"17": {"stats": {"gp": 1, "pass_cmp": 9, "pass_att": 14, "pass_yd": 120, "off_snp": 30, "tm_off_snp": 30}}})
+    monkeypatch.setattr(projections, "week_ranks", lambda sid, s, w, final, pos: {})
+
+    class NoDb:
+        def table(self, *a):
+            raise RuntimeError("no db")
+
+    weeks = [{"week": 7, "points": 20.0, "started": True}, {"week": 8, "points": 9.5, "started": True}]
+    out = player.page_extras(NoDb(), league_id="L", sleeper_id="S", season=2026, player_id="17", meta={"team": "BUF"}, pos="QB",
+                             league_weeks=weeks, last_week=7, years_left={}, salary=None, player_info=lambda c, ids: {},
+                             finished={8: {"state": "in", "opp": "BAL", "home": True, "detail": "3rd 4:12"}})
+    top = out["game_log"][0]
+    assert out["live"] is True and top["live"] and top["week"] == 8 and top["opp"] == "vs BAL · 3rd 4:12"
+    assert top["line"]["pass_yds"] == 120 and top["points"] == 9.5
+    assert out["league_season"]["ppg"] == 20.0 and out["league_season"]["started"] == 1  # the live week 8 start counts once final
