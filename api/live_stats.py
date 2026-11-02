@@ -2,7 +2,7 @@
 
 The watcher reads ESPN's free feed every few seconds and saves one row per NFL game in live_stat_lines:
 its players' stat lines in our stat keys, plus the game's state. The server reads those rows (shared by
-every owner, at most once per TTL seconds) and scores it with our engine, so live points come from our own
+every owner, at most once per TTL seconds) and scores them with our engine, so live points come from our own
 pipeline instead of Sleeper's. Sleeper stays the fallback until a week has our lines.
 
 Finished weeks read final_stat_lines instead: the official lines (nflverse, our own copy) saved and locked by the
