@@ -90,11 +90,82 @@ def _short(name: str) -> str:
     return (parts[0][0] + "".join(parts[1:])).lower().replace("'", "").replace("-", "")
 
 
-def box_lines(summary: Mapping[str, Any] | None) -> dict[str, dict[str, Any]]:
+class Names:
+    """Finds a box score player from the abbreviated names in play text ('J.Allen', 'Ja.Williams', 'A.St. Brown')."""
+
+    def __init__(self) -> None:
+        self.people: dict[str, list[tuple[str, str, str]]] = {}  # team -> [(id, first, last)]
+
+    def add(self, team: str, aid: str, display: str) -> None:
+        parts = re.sub(r"\s+(jr|sr|ii|iii|iv|v)\.?$", "", display.strip(), flags=re.IGNORECASE).split()
+        if len(parts) >= 2 and all(a != aid for a, _, _ in self.people.get(team, [])):
+            self.people.setdefault(team, []).append((aid, _letters(parts[0]), _letters("".join(parts[1:]))))
+
+    def find(self, team: str, short: str | None) -> str | None:
+        if not short or "." not in short:
+            return None
+        first, _, last = short.partition(".")
+        first, last = _letters(first), _letters(last)
+        hits = [a for a, f, l in self.people.get(team, []) if l == last and f.startswith(first)]
+        return hits[0] if len(hits) == 1 else None
+
+
+def _letters(text: str) -> str:
+    return re.sub(r"[^a-z]", "", text.lower())
+
+
+NAME = r"([A-Z][A-Za-z'-]*\.\s?(?:St\.\s?)?[A-Z][\w'-]+)"
+RUSHER = re.compile(r"^(?:\([^)]*\)\s*)*" + NAME)
+RECEIVER = re.compile(r"\bpass\b[^.]*?\bto\s+" + NAME)
+PASSER = re.compile(r"^(?:\([^)]*\)\s*)*" + NAME + r"\s+pass\b")
+
+
+def first_downs(summary: Mapping[str, Any] | None, names: Names, include_td: bool = True) -> list[tuple[str, str]]:
+    """(ESPN athlete id, stat key) for each rushing or receiving first down (and the passer's passing first down),
+    read from the play by play: a gain at least as long as the distance to go, or a touchdown when include_td."""
+    out = []
+    for team, play in _plays(summary):
+        kind = str((play.get("type") or {}).get("text") or "").lower()
+        text = str(play.get("text") or "")
+        if "no play" in text.lower() or "penalty" in kind or "two-point" in text.lower() or "kneel" in kind:
+            continue
+        td = "touchdown" in kind
+        rush = kind.startswith("rush")
+        catch = kind.startswith("pass reception") or kind == "passing touchdown"
+        if not (rush or catch):
+            continue
+        start = play.get("start") or {}
+        distance, yards = start.get("distance"), play.get("statYardage")
+        try:
+            gained = float(yards) >= float(distance) and float(distance) > 0
+        except (TypeError, ValueError):
+            gained = False
+        if td:
+            gained = include_td
+        if not gained:
+            continue
+        if rush:
+            m = RUSHER.search(text)
+            aid = names.find(team, m.group(1)) if m else None
+            if aid:
+                out.append((aid, "rush_fd"))
+        else:
+            m, q = RECEIVER.search(text), PASSER.search(text)
+            aid = names.find(team, m.group(1)) if m else None
+            if aid:
+                out.append((aid, "rec_fd"))
+            qid = names.find(team, q.group(1)) if q else None
+            if qid:
+                out.append((qid, "pass_fd"))
+    return out
+
+
+def box_lines(summary: Mapping[str, Any] | None, include_td: bool = True) -> dict[str, dict[str, Any]]:
     """ESPN athlete id -> {stats, team, name}: every player's box score line from one game summary,
-    plus successful two-point conversions read from the play text."""
+    plus first downs and successful two-point conversions read from the play by play."""
     out: dict[str, dict[str, Any]] = {}
     by_short: dict[tuple[str, str], str] = {}
+    names = Names()
     for team_box in ((summary or {}).get("boxscore") or {}).get("players") or []:
         team = team_code(team_box.get("team"))
         for cat in team_box.get("statistics") or []:
@@ -116,9 +187,15 @@ def box_lines(summary: Mapping[str, Any] | None) -> dict[str, dict[str, Any]]:
                 for name in (athlete.get("shortName"), athlete.get("displayName")):
                     if name:
                         by_short[(team, _short(str(name)))] = aid
+                names.add(team, aid, str(athlete.get("displayName") or ""))
+    for line in out.values():
+        for key in ("rush_fd", "rec_fd", "pass_fd"):
+            line["stats"][key] = 0
+    for aid, key in first_downs(summary, names, include_td):
+        out[aid]["stats"][key] += 1
     for team, passer, catcher, rusher in two_points(summary):
         for name, key in ((passer, "pass_2pt"), (catcher, "rec_2pt"), (rusher, "rush_2pt")):
-            aid = by_short.get((team, _short(name))) if name else None
+            aid = (by_short.get((team, _short(name))) or names.find(team, name.replace(" ", ""))) if name else None
             if aid:
                 stats = out[aid]["stats"]
                 stats[key] = stats.get(key, 0) + 1
@@ -163,13 +240,14 @@ def two_points(summary: Mapping[str, Any] | None) -> list[tuple[str, str | None,
     return out
 
 
-def week_lines(summaries: Iterable[Mapping[str, Any]], to_ours: Callable[[str, Mapping[str, Any]], tuple[str, str] | None]) -> tuple[dict[str, dict[str, Any]], int]:
+def week_lines(summaries: Iterable[Mapping[str, Any]], to_ours: Callable[[str, Mapping[str, Any]], tuple[str, str] | None],
+               include_td: bool = True) -> tuple[dict[str, dict[str, Any]], int]:
     """Our player id -> {stats, pos} across every game summary. to_ours(espn id, line) -> (our id, position)
     or None when the player can't be matched. Returns the lines and how many ESPN players went unmatched."""
     out: dict[str, dict[str, Any]] = {}
     unmatched = 0
     for summary in summaries:
-        for aid, line in box_lines(summary).items():
+        for aid, line in box_lines(summary, include_td).items():
             hit = to_ours(aid, line)
             if not hit:
                 unmatched += 1

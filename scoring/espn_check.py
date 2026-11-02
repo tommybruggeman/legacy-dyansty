@@ -20,11 +20,12 @@ from scoring.engine import player_points
 from scoring.shadow import SLEEPER, _fetch, report, score_season, stat_lines
 
 
-def espn_week(season: int, week: int, idmap: espn_feed.IdMap, get_json=_fetch) -> tuple[dict[str, dict[str, Any]], dict[str, int]]:
+def espn_week(season: int, week: int, idmap: espn_feed.IdMap, get_json=_fetch) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
     board = get_json(f"{espn_feed.ESPN}/scoreboard?seasontype=2&week={week}&dates={season}") or {}
     games = espn_feed.games(board)
     summaries = [get_json(f"{espn_feed.ESPN}/summary?event={g['id']}") for g in games]
     lines, unmatched = espn_feed.week_lines([s for s in summaries if s], idmap)
+    no_td, _ = espn_feed.week_lines([s for s in summaries if s], idmap, include_td=False)
     unknown = Counter()  # ESPN box score keys we don't map yet (category.key)
     for s in summaries:
         for team_box in ((s or {}).get("boxscore") or {}).get("players") or []:
@@ -34,7 +35,7 @@ def espn_week(season: int, week: int, idmap: espn_feed.IdMap, get_json=_fetch) -
                     for k, _ in espn_feed._split(str(key), "0/0" if "/" in key else "0-0" if "-" in key else "0"):
                         if k not in mapping:
                             unknown[f"{cat.get('name')}.{k}"] += 1
-    return lines, {"games": len(games), "summaries": sum(1 for s in summaries if s), "unmatched": unmatched,
+    return lines, {"games": len(games), "summaries": sum(1 for s in summaries if s), "unmatched": unmatched, "no_td": no_td,
                    "unknown": ", ".join(k for k, _ in unknown.most_common(12))}
 
 
@@ -65,10 +66,12 @@ def run(client: Any, weeks: int, get_json=_fetch) -> list[str]:
     idmap = espn_feed.IdMap(players, crosswalk)
     check_weeks = [w for w in range(max(1, now_week - weeks), now_week) if w >= 1]
     espn: dict[int, dict[str, dict[str, Any]]] = {}
+    no_td: dict[int, dict[str, dict[str, Any]]] = {}
     out = [f"ESPN feed check: season {season}, weeks {check_weeks[0] if check_weeks else '-'}-{check_weeks[-1] if check_weeks else '-'}; "
            f"{len(idmap.by_espn)} players with an ESPN id"]
     for w in check_weeks:
         espn[w], meta = espn_week(season, w, idmap, get_json)
+        no_td[w] = meta["no_td"]
         out.append(f"  week {w}: {meta['summaries']}/{meta['games']} game summaries, {len(espn[w])} players matched, {meta['unmatched']} unmatched (mostly defenders/specialists); unmapped keys: {meta['unknown'] or 'none'}")
 
     leagues = client.table("leagues").select("id, sleeper_league_id").execute().data or []
@@ -82,16 +85,19 @@ def run(client: Any, weeks: int, get_json=_fetch) -> list[str]:
         if int(info.get("season") or 0) != season:
             continue
         scoring = load_settings(client, str(lg["id"])).scoring_settings or info.get("scoring_settings") or {}
+        out.append(f"league {n} scored rules: " + ", ".join(f"{k}={v:g}" for k, v in sorted(scoring.items()) if isinstance(v, (int, float)) and v))
         matchups = {w: get_json(f"{SLEEPER}/v1/league/{sid}/matchups/{w}") or [] for w in check_weeks}
         res = score_season(season, lambda w: matchups.get(w, []) if w in espn else [], lambda w: espn.get(w, {}), scoring, max(check_weeks or [0]))
         out += [f"league {n} (ESPN lines) " + line if i == 0 else line for i, line in enumerate(report(res))]
         # Which rules the two feeds disagree on, over this league's rostered players.
         gaps: Counter = Counter()
+        gaps_no_td: Counter = Counter()
         point_gaps = []
         for w in check_weeks:
             theirs = stat_lines(season, w, get_json)
             ids = {str(p) for row in matchups[w] for p in (row.get("players_points") or {})}
             gaps += key_gaps(espn[w], theirs, scoring, ids)
+            gaps_no_td += key_gaps(no_td[w], theirs, scoring, ids)
             for pid in ids:
                 if pid in espn[w] and pid in theirs:
                     a = player_points(espn[w][pid]["stats"], scoring, espn[w][pid]["pos"])
@@ -100,6 +106,7 @@ def run(client: Any, weeks: int, get_json=_fetch) -> list[str]:
         off = [g for g in point_gaps if abs(g) > 0.011]
         out.append(f"  ESPN vs Sleeper stat lines, same rules: {len(point_gaps) - len(off)}/{len(point_gaps)} players equal; "
                    f"rules that differ most: " + (", ".join(f"{k} ({c})" for k, c in gaps.most_common(8)) or "none"))
+        out.append("  same, counting first downs without touchdowns: " + (", ".join(f"{k} ({c})" for k, c in gaps_no_td.most_common(8)) or "none"))
     return out
 
 
