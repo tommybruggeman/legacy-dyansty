@@ -30,6 +30,23 @@ LAYOUTS: dict[int, list[tuple[int, int, Any, Any, int | None]]] = {
         (3, 7, ("w", 5), ("w", 6), 1), (3, 8, ("l", 5), ("l", 6), 3)],
 }
 
+# Loser bracket layouts, by how many teams miss the playoffs; slots are seeds within the loser bracket (1 = the best
+# team that missed). Winners move on, like Sleeper's consolation bracket. Rounds past the playoff rounds are dropped.
+LOSER_LAYOUTS: dict[int, list[tuple[int, int, Any, Any, int | None]]] = {
+    2: [(1, 1, 1, 2, None)],
+    4: [(1, 1, 1, 4, None), (1, 2, 2, 3, None), (2, 3, ("w", 1), ("w", 2), None), (2, 4, ("l", 1), ("l", 2), None)],
+    6: [(1, 1, 3, 6, None), (1, 2, 4, 5, None), (2, 3, 1, ("w", 2), None), (2, 4, 2, ("w", 1), None),
+        (3, 5, ("w", 3), ("w", 4), None)],
+    8: LAYOUTS[8],
+}
+
+# App matchup ids for loser-bracket games sit above the winners bracket's, so the two never share one.
+LOSER_MATCHUP_OFFSET = 100
+
+
+def loser_layout(count: int, rounds: int) -> list[tuple[int, int, Any, Any, int | None]]:
+    return [g[:4] + (None,) for g in LOSER_LAYOUTS.get(count, []) if g[0] <= rounds]
+
 
 def round_weeks(start: int, rounds: int, round_type: int) -> dict[int, list[int]]:
     """Round -> its weeks. Sleeper's playoff_round_type: 0 one week each, 1 a two-week final, 2 two weeks each."""
@@ -42,10 +59,11 @@ def round_weeks(start: int, rounds: int, round_type: int) -> dict[int, list[int]
 
 
 def build_bracket(seeds: list[int], points: Mapping[tuple[int, int], float], done: Callable[[int], bool],
-                  weeks: Mapping[int, list[int]]) -> list[dict[str, Any]]:
-    """Sleeper-shaped winners bracket. seeds: roster ids, best first. points: (week, roster_id) -> score.
+                  weeks: Mapping[int, list[int]], layout: list[tuple[int, int, Any, Any, int | None]] | None = None,
+                  ) -> list[dict[str, Any]]:
+    """Sleeper-shaped bracket (winners by default). seeds: roster ids, best first. points: (week, roster_id) -> score.
     done(round) says whether that round's weeks are final, so a winner can be named."""
-    layout = LAYOUTS.get(len(seeds)) or LAYOUTS[4]
+    layout = layout if layout is not None else (LAYOUTS.get(len(seeds)) or LAYOUTS[4])
     seed_of = {rid: i + 1 for i, rid in enumerate(seeds)}
     games: dict[int, dict[str, Any]] = {}
 
@@ -64,6 +82,8 @@ def build_bracket(seeds: list[int], points: Mapping[tuple[int, int], float], don
             game["t1_from"] = {top[0]: top[1]}
         if isinstance(bottom, tuple):
             game["t2_from"] = {bottom[0]: bottom[1]}
+        if rnd not in weeks:
+            continue
         if t1 and t2 and done(rnd):
             s1 = sum(points.get((w, t1), 0.0) for w in weeks[rnd])
             s2 = sum(points.get((w, t2), 0.0) for w in weeks[rnd])
@@ -124,17 +144,31 @@ def build(*, season: int, own_from: int, current_week: int, league: Mapping[str,
 
     out: dict[int, list[dict[str, Any]]] = {}
     seeds: list[int] | None = None
+    losers: list[int] = []
     points: dict[tuple[int, int], float] = {}
 
     def resolved(before: int) -> list[dict[str, Any]]:  # rounds that ended before `before` name their winners
         return build_bracket(seeds or [], points, lambda r: max(weeks_by_round[r]) < before, weeks_by_round)
 
+    def losers_resolved(before: int) -> list[dict[str, Any]]:
+        layout = loser_layout(len(losers), rounds)
+        if not layout:
+            return []
+        return build_bracket(losers, points, lambda r: max(weeks_by_round[r]) < before, weeks_by_round, layout)
+
+    def seed_all(own: dict[int, list[dict[str, Any]]]) -> list[int]:
+        nonlocal losers
+        order = standings_for(own)
+        losers = order[playoff_teams:]
+        return order[:playoff_teams]
+
     for week in range(own_from, min(current_week, last_week) + 1):
         lines, raw = lines_for(week), {int(r["roster_id"]): r for r in sleeper_rows(week) if r.get("roster_id") is not None}
         if week >= playoff_start:
             if seeds is None:
-                seeds = standings_for(out)[:playoff_teams]
+                seeds = seed_all(out)
             pairs: dict[int, Any] = week_pairs(resolved(week), week, weeks_by_round)
+            pairs.update({rid: LOSER_MATCHUP_OFFSET + m for rid, m in week_pairs(losers_resolved(week), week, weeks_by_round).items()})
         else:
             pairs = {rid: r.get("matchup_id") for rid, r in raw.items()}
         rows = []
@@ -145,9 +179,11 @@ def build(*, season: int, own_from: int, current_week: int, league: Mapping[str,
             points[(week, rid)] = rows[-1]["points"]
         out[week] = rows
     if seeds is None and current_week >= playoff_start and own_from <= playoff_start:
-        seeds = standings_for(out)[:playoff_teams]
+        seeds = seed_all(out)
     bracket = resolved(current_week) if seeds else None
-    return {"weeks": out, "bracket": bracket, "playoff_start": playoff_start, "weeks_by_round": weeks_by_round}
+    loser_bracket = losers_resolved(current_week) if seeds else None
+    return {"weeks": out, "bracket": bracket, "losers_bracket": loser_bracket, "playoff_start": playoff_start,
+            "weeks_by_round": weeks_by_round}
 
 
 def app_rosters(client: Any, league_id: str, season: int, roster_of_team: Mapping[str, int]) -> list[dict[str, Any]]:
@@ -207,6 +243,8 @@ def sync(client: Any, league_id: str, sleeper_id: str, season: int) -> None:
             sleeper.put(f"league/{sleeper_id}/matchups/{week}", rows)
         if result["bracket"] is not None:
             sleeper.put(f"league/{sleeper_id}/winners_bracket", result["bracket"])
+        if result.get("losers_bracket") is not None:
+            sleeper.put(f"league/{sleeper_id}/losers_bracket", result["losers_bracket"])
         return {"weeks": sorted(result["weeks"])}
 
     cache.cached(("own_league", league_id, sleeper_id), 15, load)

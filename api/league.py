@@ -5,7 +5,7 @@ from typing import Any
 
 import pandas as pd
 
-from api import sleeper
+from api import playoffs, sleeper
 from season_engine import SeasonResolver
 from services.app_context import _aggregate_standings, _standings_rank, as_number, STANDINGS_SORT
 from services.matchups_view import build_games, week_summary
@@ -165,6 +165,30 @@ def matchups(sleeper_id: str, names: dict[int, str], week: int, my_roster_id: in
         "games": games,
         "summary": summary,
     }
+
+
+def playoff_last_week(sleeper_id: str) -> int:
+    """The last week of the playoffs: the Matchups week picker stops here."""
+    try:
+        return playoffs.last_week(sleeper.get(f"league/{sleeper_id}") or {})
+    except Exception:
+        return 18
+
+
+def playoff_view(sleeper_id: str, names: dict[int, str], week: int, my_roster_id: int | None,
+                 avatars: dict[int, Any] | None = None) -> dict[str, Any] | None:
+    """The bracket view for a playoff week (None for regular-season weeks). Shared by the app and the website."""
+    info = sleeper.get(f"league/{sleeper_id}") or {}
+    if week < playoffs.settings_of(info)["start"]:
+        return None
+    scored, current = last_scored_week(sleeper_id), current_week()
+    return playoffs.build(
+        week=week, league=info, standings=standings(sleeper_id, names, my_roster_id)["rows"], names=names,
+        rows_for=lambda w: sleeper.get(f"league/{sleeper_id}/matchups/{w}", ttl=86400 if w <= scored else LIVE_TTL) or [],
+        winners=sleeper.get(f"league/{sleeper_id}/winners_bracket", ttl=600),
+        losers=sleeper.get(f"league/{sleeper_id}/losers_bracket", ttl=600),
+        last_scored=scored, current_week=current, my_roster_id=my_roster_id, avatars=avatars,
+    )
 
 
 def sleeper_owners(sleeper_id: str) -> dict[str, int]:

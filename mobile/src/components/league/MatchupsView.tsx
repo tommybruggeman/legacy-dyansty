@@ -6,6 +6,7 @@ import { Avatar } from '../Pictures';
 import { ErrorState, Loading } from '../ScreenState';
 import { type Game, type Matchups as MatchupsData, type MatchupTeam, prefetch, useApi } from '../../lib/api';
 import { colors } from '../../lib/theme';
+import { PlayoffsView } from './PlayoffsView';
 
 const first = (name: string) => name.split(' ')[0];
 
@@ -24,7 +25,7 @@ export function MatchupsView() {
   // background, so the week arrows open instantly.
   const path = (w: number) => (w === data?.current_week ? '/matchups' : `/matchups?week=${w}`);
   const go = (w: number) => setWeek(w === data?.current_week ? null : w);
-  const near = data ? [data.week - 1, data.week + 1].filter((w) => w >= 1 && w <= Math.min(18, data.current_week)) : [];
+  const near = data ? [data.week - 1, data.week + 1].filter((w) => w >= 1 && w <= Math.min(data.last_week ?? 18, data.current_week)) : [];
   useEffect(() => {
     if (near.length) prefetch(near.map(path));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -34,6 +35,7 @@ export function MatchupsView() {
   if (error && !data) return <ErrorState message={error} onRetry={reload} />;
   if (!data) return null;
 
+  const last = data.last_week ?? 18;
   const mine = data.games.find((g) => g.teams.some((t) => t.roster_id === data.my_roster_id));
   const others = data.games.filter((g) => g !== mine);
   const shown = data.week;
@@ -49,14 +51,15 @@ export function MatchupsView() {
             <Text style={[styles.arrow, shown <= 1 && styles.dim]}>‹</Text>
           </Pressable>
           <Text style={styles.weekText}>Week {shown}</Text>
-          <Pressable disabled={shown >= 18} onPress={() => go(shown + 1)} hitSlop={10}>
-            <Text style={[styles.arrow, shown >= 18 && styles.dim]}>›</Text>
+          <Pressable disabled={shown >= last} onPress={() => go(shown + 1)} hitSlop={10}>
+            <Text style={[styles.arrow, shown >= last && styles.dim]}>›</Text>
           </Pressable>
         </View>
       </View>
 
-      {mine ? <GameCard game={mine} week={shown} myId={data.my_roster_id} weekFinal={data.is_final} isMine /> : null}
-      {others.map((game) => (
+      {data.playoffs ? <PlayoffsView view={data.playoffs} /> : null}
+      {!data.playoffs && mine ? <GameCard game={mine} week={shown} myId={data.my_roster_id} weekFinal={data.is_final} isMine /> : null}
+      {!data.playoffs && others.map((game) => (
         <GameCard key={game.matchup_id} game={game} week={shown} myId={data.my_roster_id} weekFinal={data.is_final} />
       ))}
     </View>

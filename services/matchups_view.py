@@ -434,3 +434,149 @@ def box_score_html(game: dict) -> str:
         '</style>'
         f'<div class="bx-wrap">{sides}</div>'
     )
+
+
+# ------------------------------------------------------------
+# Playoff weeks (same view as the app, from api.playoffs):
+# a mini bracket on top, this round's games (your game and the
+# title game in gold), then the loser bracket as compact rows.
+# ------------------------------------------------------------
+
+PLAYOFF_CSS = """
+<style>
+.po-wrap{display:flex;flex-direction:column;gap:12px;color:#F5EBD7}
+.po-note{color:#C8BEAD;font-size:13px;opacity:.85}
+.po-tree{display:flex;align-items:center;gap:8px;background:#0C1F17;border-radius:16px;padding:12px}
+.po-col{flex:1;display:flex;flex-direction:column;gap:6px;min-width:0}
+.po-head{color:#C8BEAD;font-size:10px;font-weight:800;letter-spacing:1px}
+.po-tg{background:#112B20;border-radius:10px;padding:4px 8px;border:1px solid #1D3328}
+.po-tg.lit{border-color:#C89B4A}.po-tg.cup{background:#2A2414}
+.po-ts{display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:700;color:#C8BEAD;padding:3px 0}
+.po-ts b{margin-left:auto;color:#F5EBD7}.po-ts.me{color:#F5EBD7}.po-ph{color:#8f8a7c;font-size:12px;padding:6px 0}
+.po-conn{width:12px;height:60px;border:2px solid #2B3A2F;border-left:0;border-radius:0 8px 8px 0}
+.po-cup{font-size:24px}
+.po-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px}
+.po-lbl{color:#C89B4A;font-size:11px;font-weight:800;letter-spacing:1.3px;margin:0 4px 6px}.po-lbl.big{color:#E2BC5B;font-size:12px}
+.po-card{position:relative;border-radius:16px;background:#0E201A;border:1px solid #1B2E24;overflow:hidden}
+.po-card.big{background:linear-gradient(135deg,#2C2512,#132D20)}.po-card.mine{border:1.5px solid #C89B4A}
+.po-card.live:before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:#4CC38A}
+.po-row{display:flex;align-items:center;gap:10px;padding:11px 14px 9px 16px}
+.po-lost{opacity:.5}
+.po-seed{width:24px;height:24px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;flex:none;
+  background:#173225;border:1px solid rgba(200,155,74,.5);color:#C89B4A;font-size:11px;font-weight:900}
+.po-seed.s{width:20px;height:20px;font-size:10px;color:#C8BEAD;border-color:#2B3A2F}
+.po-name{flex:1;min-width:0}.po-name b{font-size:16px;font-weight:800}
+.po-you{font-size:9.5px;font-weight:800;letter-spacing:.6px;color:#C89B4A;background:#2A2A1A;border-radius:6px;padding:2px 6px;margin-left:6px}
+.po-rec{font-size:11px;color:#C8BEAD;opacity:.6;margin-left:6px}
+.po-legs{display:block;font-size:11px;color:#C8BEAD;opacity:.6}
+.po-score{font-size:21px;font-weight:900}.po-score.pre{opacity:.4}
+.po-losers{background:#0C1F17;border-radius:14px;padding:10px 14px}
+.po-lh{display:flex;justify-content:space-between;color:#C8BEAD;font-size:11px;font-weight:800;letter-spacing:1.3px;margin-bottom:4px}
+.po-lh span{opacity:.6;letter-spacing:0;font-weight:600}
+.po-mini{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #18291F;font-size:13px}
+.po-mini:last-of-type{border-bottom:0}
+.po-side{flex:1;display:flex;align-items:center;gap:6px;color:#C8BEAD;font-weight:700}.po-side.r{justify-content:flex-end}
+.po-side em{font-style:normal;color:#F5EBD7;font-weight:800;margin:0 4px}
+.po-bye{font-size:11.5px;color:#C8BEAD;opacity:.6;margin-top:6px}
+</style>
+"""
+
+
+def _po_first(slot: dict) -> str:
+    return html.escape(_first_name(slot.get("name") or ""))
+
+
+def _po_seed(n, small: bool = False) -> str:
+    return f'<span class="po-seed{" s" if small else ""}">{n if n else "–"}</span>'
+
+
+def _po_tree(view: dict) -> str:
+    rounds = sorted({g["round"] for g in view["tree"]})
+    last = rounds[-1] if rounds else 0
+    out = ['<div class="po-tree">']
+    for i, r in enumerate(rounds):
+        games = [g for g in view["tree"] if g["round"] == r and (r != last or g.get("place") in (1, None))]
+        if i:
+            out.append('<div class="po-conn"></div>')
+        weeks = games[0]["weeks"] if games else []
+        wk = f"WK {weeks[0]}-{weeks[-1]}" if len(weeks) > 1 else f"WK {weeks[0]}" if weeks else ""
+        head = "FINAL" if r == last else (games[0]["label"].upper() + "S" if games else "")
+        out.append(f'<div class="po-col"><div class="po-head">{head} · {wk}</div>')
+        for g in games:
+            cls = "po-tg" + (" lit" if g["mine"] else "") + (" cup" if g.get("place") == 1 else "")
+            out.append(f'<div class="{cls}">')
+            for t in g["teams"]:
+                if "roster_id" not in t:
+                    out.append(f'<div class="po-ph">{html.escape(t.get("placeholder") or "TBD")}</div>')
+                    continue
+                lost = g["winner"] is not None and g["winner"] != t["roster_id"]
+                champ = g.get("place") == 1 and g["state"] == "final" and g["winner"] == t["roster_id"]
+                score = "" if g["state"] == "pre" else f'<b>{t["score"]:.0f}</b>'
+                out.append(f'<div class="po-ts{" me" if t["is_me"] else ""}{" po-lost" if lost else ""}">'
+                           f'{_po_seed(t["seed"], True)}{_po_first(t)}{" 🏆" if champ else ""}{score}</div>')
+            out.append("</div>")
+        out.append("</div>")
+    out.append('<div class="po-cup">🏆</div></div>')
+    return "".join(out)
+
+
+def _po_card(g: dict, leg_text: str) -> str:
+    # Gold for the title game and for your game on the road to it (a 3rd-place game just gets the gold border).
+    big = g.get("place") == 1 or (g["mine"] and g.get("place") is None)
+    label = g["label"].upper()
+    title = f"🏆 {label}" if g.get("place") == 1 else f"YOUR {label}" if g["mine"] else label
+    cls = "po-card" + (" big" if big else "") + (" mine" if g["mine"] else "") + (" live" if g["state"] == "live" else "")
+    rows = []
+    for t in g["teams"]:
+        if "roster_id" not in t:
+            rows.append(f'<div class="po-row">{_po_seed(None)}<span class="po-ph">{html.escape(t.get("placeholder") or "To be decided")}</span></div>')
+            continue
+        lost = g["winner"] is not None and g["winner"] != t["roster_id"]
+        legs = ""
+        if len(g["weeks"]) > 1 and g["state"] != "pre":
+            legs = " · ".join(f'Wk {w} {"–" if t["legs"][i] is None else format(t["legs"][i], ".1f")}' for i, w in enumerate(g["weeks"]))
+            legs = f'<span class="po-legs">{legs}</span>'
+        you = '<span class="po-you">YOU</span>' if t["is_me"] else ""
+        rec = f'<span class="po-rec">{html.escape(t["record"])}</span>' if t.get("record") else ""
+        arrow = " ◀" if g["winner"] == t["roster_id"] else ""
+        rows.append(f'<div class="po-row{" po-lost" if lost else ""}">{_po_seed(t["seed"])}'
+                    f'<div class="po-name"><b>{_po_first(t)}</b>{you}{rec}{legs}</div>'
+                    f'<span class="po-score{" pre" if g["state"] == "pre" else ""}">{t["score"]:.2f}{arrow}</span></div>')
+    return (f'<div><div class="po-lbl{" big" if big else ""}">{title}{leg_text}</div>'
+            f'<div class="{cls}">{"".join(rows)}</div></div>')
+
+
+def _po_losers(view: dict) -> str:
+    out = [f'<div class="po-losers"><div class="po-lh">LOSER BRACKET<span>Round {view["round"]}</span></div>']
+    for g in view["losers"]:
+        sides = []
+        for k, t in enumerate(g["teams"]):
+            right = k == 1
+            if "roster_id" not in t:
+                sides.append(f'<div class="po-side{" r" if right else ""}"><span class="po-ph">{html.escape(t.get("placeholder") or "TBD")}</span></div>')
+                continue
+            lost = g["winner"] is not None and g["winner"] != t["roster_id"]
+            score = "" if g["state"] == "pre" else f'<em>{t["score"]:.1f}</em>'
+            bits = [_po_seed(t["seed"], True), _po_first(t), score]
+            if right:
+                bits.reverse()
+            sides.append(f'<div class="po-side{" r" if right else ""}{" po-lost" if lost else ""}">{"".join(bits)}</div>')
+        out.append(f'<div class="po-mini">{sides[0]}<span style="opacity:.5">–</span>{sides[1]}</div>')
+    if view["byes"]:
+        out.append(f'<div class="po-bye">Bye: {", ".join(_po_first(t) for t in view["byes"])}</div>')
+    out.append("</div>")
+    return "".join(out)
+
+
+def playoff_html(view: dict) -> str:
+    """The playoff week view (api.playoffs.build) as HTML for the website."""
+    leg_text = f' · WEEK {view["leg"]} OF {view["legs"]}' if view["legs"] > 1 else ""
+    parts = [PLAYOFF_CSS, '<div class="po-wrap">']
+    if view["projected"]:
+        parts.append(f'<div class="po-note">If the season ended today. Seeds lock after week {view["start"] - 1}.</div>')
+    parts.append(_po_tree(view))
+    parts.append('<div class="po-grid">' + "".join(_po_card(g, leg_text) for g in view["games"]) + "</div>")
+    if view["losers"]:
+        parts.append(_po_losers(view))
+    parts.append("</div>")
+    return "".join(parts)
