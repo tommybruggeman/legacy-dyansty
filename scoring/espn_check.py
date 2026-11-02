@@ -25,7 +25,7 @@ def espn_week(season: int, week: int, idmap: espn_feed.IdMap, get_json=_fetch) -
     games = espn_feed.games(board)
     summaries = [get_json(f"{espn_feed.ESPN}/summary?event={g['id']}") for g in games]
     lines, unmatched = espn_feed.week_lines([s for s in summaries if s], idmap)
-    no_td, _ = espn_feed.week_lines([s for s in summaries if s], idmap, include_td=False)
+    no_td, _ = espn_feed.week_lines([s for s in summaries if s], idmap, include_td=True)
     unknown = Counter()  # ESPN box score keys we don't map yet (category.key)
     for s in summaries:
         for team_box in ((s or {}).get("boxscore") or {}).get("players") or []:
@@ -40,14 +40,15 @@ def espn_week(season: int, week: int, idmap: espn_feed.IdMap, get_json=_fetch) -
 
 
 def key_gaps(ours: Mapping[str, Mapping[str, Any]], theirs: Mapping[str, Mapping[str, Any]], scoring: Mapping[str, Any], ids: set[str]) -> Counter:
-    """Scoring keys whose stat differs between the two feeds, counted over the given players."""
+    """Scoring keys whose stat differs between the two feeds, counted over the given players ('key+' when ESPN's is higher)."""
     keys = [k for k, w in scoring.items() if isinstance(w, (int, float)) and w]
     out: Counter = Counter()
     for pid in ids:
         a, b = (ours.get(pid) or {}).get("stats") or {}, (theirs.get(pid) or {}).get("stats") or {}
         for k in keys:
-            if abs(float(a.get(k) or 0) - float(b.get(k) or 0)) > 1e-6:
-                out[k] += 1
+            d = float(a.get(k) or 0) - float(b.get(k) or 0)
+            if abs(d) > 1e-6:
+                out[k + ("+" if d > 0 else "-")] += 1
     return out
 
 
@@ -106,7 +107,7 @@ def run(client: Any, weeks: int, get_json=_fetch) -> list[str]:
         off = [g for g in point_gaps if abs(g) > 0.011]
         out.append(f"  ESPN vs Sleeper stat lines, same rules: {len(point_gaps) - len(off)}/{len(point_gaps)} players equal; "
                    f"rules that differ most: " + (", ".join(f"{k} ({c})" for k, c in gaps.most_common(8)) or "none"))
-        out.append("  same, counting first downs without touchdowns: " + (", ".join(f"{k} ({c})" for k, c in gaps_no_td.most_common(8)) or "none"))
+        out.append("  same, counting touchdowns as first downs: " + (", ".join(f"{k} ({c})" for k, c in gaps_no_td.most_common(8)) or "none"))
     return out
 
 

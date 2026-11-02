@@ -24,7 +24,8 @@ KEYS = {
     "rushing": {"rushingAttempts": "rush_att", "rushingYards": "rush_yd", "rushingTouchdowns": "rush_td", "longRushing": "rush_lng"},
     "receiving": {"receptions": "rec", "receivingYards": "rec_yd", "receivingTouchdowns": "rec_td", "receivingTargets": "rec_tgt",
                   "longReception": "rec_lng"},
-    "fumbles": {"fumbles": "fum", "fumblesLost": "fum_lost", "fumblesRecovered": "fum_rec"},
+    # ESPN's fumblesRecovered includes a player falling on his own fumble, which isn't a scoring fumble recovery
+    "fumbles": {"fumbles": "fum", "fumblesLost": "fum_lost"},
     "kicking": {"fieldGoalsMade": "fgm", "fieldGoalAttempts": "fga", "extraPointsMade": "xpm", "extraPointAttempts": "xpa", "longFieldGoalMade": "fgm_lng"},
     "kickReturns": {"kickReturns": "kr", "kickReturnYards": "kr_yd", "kickReturnTouchdowns": "kr_td"},
     "puntReturns": {"puntReturns": "pr", "puntReturnYards": "pr_yd", "puntReturnTouchdowns": "pr_td"},
@@ -120,9 +121,10 @@ RECEIVER = re.compile(r"\bpass\b[^.]*?\bto\s+" + NAME)
 PASSER = re.compile(r"^(?:\([^)]*\)\s*)*" + NAME + r"\s+pass\b")
 
 
-def first_downs(summary: Mapping[str, Any] | None, names: Names, include_td: bool = True) -> list[tuple[str, str]]:
+def first_downs(summary: Mapping[str, Any] | None, names: Names, include_td: bool = False) -> list[tuple[str, str]]:
     """(ESPN athlete id, stat key) for each rushing or receiving first down (and the passer's passing first down),
-    read from the play by play: a gain at least as long as the distance to go, or a touchdown when include_td."""
+    read from the play by play: a gain at least as long as the distance to go. Touchdowns don't count unless
+    include_td (graded against Sleeper's official numbers: without them 4 of 443 players differ on catches, with them 65)."""
     out = []
     for team, play in _plays(summary):
         kind = str((play.get("type") or {}).get("text") or "").lower()
@@ -160,7 +162,7 @@ def first_downs(summary: Mapping[str, Any] | None, names: Names, include_td: boo
     return out
 
 
-def box_lines(summary: Mapping[str, Any] | None, include_td: bool = True) -> dict[str, dict[str, Any]]:
+def box_lines(summary: Mapping[str, Any] | None, include_td: bool = False) -> dict[str, dict[str, Any]]:
     """ESPN athlete id -> {stats, team, name}: every player's box score line from one game summary,
     plus first downs and successful two-point conversions read from the play by play."""
     out: dict[str, dict[str, Any]] = {}
@@ -241,7 +243,7 @@ def two_points(summary: Mapping[str, Any] | None) -> list[tuple[str, str | None,
 
 
 def week_lines(summaries: Iterable[Mapping[str, Any]], to_ours: Callable[[str, Mapping[str, Any]], tuple[str, str] | None],
-               include_td: bool = True) -> tuple[dict[str, dict[str, Any]], int]:
+               include_td: bool = False) -> tuple[dict[str, dict[str, Any]], int]:
     """Our player id -> {stats, pos} across every game summary. to_ours(espn id, line) -> (our id, position)
     or None when the player can't be matched. Returns the lines and how many ESPN players went unmatched."""
     out: dict[str, dict[str, Any]] = {}

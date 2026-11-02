@@ -6,7 +6,8 @@ league/{id}/matchups/{week} and league/{id}/winners_bracket and hands them to ap
 that reads matchups (Matchups, box scores, Home, Shotgun, standings) shows the app's numbers without its own code path.
 
 - Lineups: league_lineups (the week's saved row, else the latest earlier one, else Sleeper's lineup that week).
-- Points: our scoring engine (scoring/engine.py) over Sleeper's public weekly stat lines, with the league's saved rules.
+- Points: our scoring engine (scoring/engine.py) over our live watcher's stat lines for the week being played
+  (api/live_stats.py, from ESPN's free feed), else Sleeper's public weekly stat lines, with the league's saved rules.
 - Pairings: regular-season weeks keep Sleeper's schedule; playoff weeks come from our bracket.
 - Bracket: seeds are our standings (2 per win, 1 per top-5 week, points-for tiebreaker) through the last regular week.
   Higher score wins; a tie goes to the higher seed.
@@ -15,7 +16,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Iterable, Mapping
 
-from api import lineups
+from api import lineups, live_stats
 from scoring import engine
 from scoring.shadow import stat_lines
 
@@ -179,10 +180,17 @@ def sync(client: Any, league_id: str, sleeper_id: str, season: int) -> None:
         start = int((info.get("settings") or {}).get("playoff_week_start") or 15)
         own_from = int(switch.get("own_from_week") or start)
         current = league.current_week()
+        from league_ai.settings_store import load_settings
         if not switch.get("enabled") or current < own_from:
             sleeper.drop(f"league/{sleeper_id}/")
+            # Still on Sleeper: while the week is being played, live points come from our own watcher's stat lines
+            # (scored by our engine) when it's running, which runs well ahead of Sleeper's live numbers.
+            ours = live_stats.fresh_lines(client, season, current)
+            if ours and current > league.last_scored_week(sleeper_id):
+                rules = load_settings(client, league_id).scoring_settings or (info.get("scoring_settings") or {})
+                rows = sleeper.raw(f"league/{sleeper_id}/matchups/{current}", ttl=league.LIVE_TTL) or []
+                sleeper.put(f"league/{sleeper_id}/matchups/{current}", live_stats.rescore(rows, ours, rules))
             return {"weeks": []}
-        from league_ai.settings_store import load_settings
         settings = load_settings(client, league_id)
         teams = client.table("league_teams").select("id,sleeper_roster_id").eq("league_id", league_id).execute().data or []
         roster_of_team = {str(t["id"]): int(t["sleeper_roster_id"]) for t in teams if t.get("sleeper_roster_id") is not None}
@@ -200,7 +208,8 @@ def sync(client: Any, league_id: str, sleeper_id: str, season: int) -> None:
             team_of_roster={rid: tid for tid, rid in roster_of_team.items()},
             saved=saved, scoring=settings.scoring_settings or {}, slots=lineups.starter_slots(settings.roster_positions),
             sleeper_rows=lambda w: sleeper.raw(f"league/{sleeper_id}/matchups/{w}", ttl=league.LIVE_TTL if w == current else 3600) or [],
-            lines_for=lambda w: stat_lines(season, w, get_json=lambda url: sleeper.get_url(url, ttl=league.LIVE_TTL if w == current else 3600)),
+            lines_for=lambda w: {**stat_lines(season, w, get_json=lambda url: sleeper.get_url(url, ttl=league.LIVE_TTL if w == current else 3600)),
+                                 **(live_stats.fresh_lines(client, season, w) if w == current else {})},
             standings_for=standings_for,
         )
         for week, rows in result["weeks"].items():
