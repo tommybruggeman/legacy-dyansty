@@ -12,7 +12,7 @@
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       },
-      "buildNumber": "48"
+      "buildNumber": "49"
     },
     "android": {
       "adaptiveIcon": {
@@ -35,6 +35,13 @@
           "imageWidth": 8,
           "resizeMode": "contain",
           "backgroundColor": "#071A12"
+        }
+      ],
+      [
+        "expo-widgets",
+        {
+          "enablePushNotifications": true,
+          "frequentUpdates": true
         }
       ]
     ],

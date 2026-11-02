@@ -7,6 +7,7 @@ import { Avatar, Headshot, type Ring } from '../../components/Pictures';
 import { ErrorState, Loading } from '../../components/ScreenState';
 import { Bar, Card, Pill, Screen, firstName, money, ordinal, record, ui } from '../../components/ui';
 import { type BoxScore, type HomeData, type HomeSide, type LivePlayer, type RaceRow, type RookieDeal, type TableRow, apiSend, prefetch, useApi } from '../../lib/api';
+import { syncLiveActivity } from '../../lib/liveActivity';
 import { colors } from '../../lib/theme';
 
 // Home changes with the calendar: last week's recap (Tue-Wed), a preview
@@ -28,6 +29,10 @@ export default function Home() {
   const { data, error, loading, reload, refresh } = useApi<HomeData>('/home', live ? 60_000 : 0);
   const isLive = data?.phase === 'game_day' || data?.phase === 'playoffs';
   useEffect(() => setLive(isLive), [isLive]);
+  // Game days: start or refresh the lock screen Live Activity for my matchup (iPhone only).
+  useEffect(() => {
+    if (data?.phase === 'game_day' || data?.phase === 'playoffs') syncLiveActivity();
+  }, [data]);
   // Once Home is up, warm the other tabs so they open instantly.
   const warmed = useRef(false);
   useEffect(() => {

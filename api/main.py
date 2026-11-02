@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from supabase import Client, create_client
 
 from api import box_score as box_score_mod
-from api import activity, cache, front_office, home, league, lineups, market, nfl_live, own_league, player, projections, teams, trade_feed, trade_offers, waivers
+from api import activity, cache, front_office, home, league, lineups, live_activity, market, nfl_live, own_league, player, projections, teams, trade_feed, trade_offers, waivers
 from league_ai import risers as risers_log
 from season_engine import SeasonResolver
 from services.season_rollover_owner_ui import OwnerRolloverDecisionError, OwnerRolloverDecisionService
@@ -145,6 +145,70 @@ def save_push_token(body: PushToken, owner: tuple[Client, Any] = Depends(owner_c
     except Exception as exc:
         print(f"APP_PUSH_TOKEN_ERROR {type(exc).__name__}", flush=True)
         raise HTTPException(status_code=503, detail="Alerts aren't switched on yet.")
+    return {"ok": True}
+
+
+class LiveActivityToken(BaseModel):
+    activity_id: str
+    push_token: str
+    week: int
+    matchup_id: int
+
+
+def _my_live_game(client: Client, user: Any) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """This week's box score of my game (None when I have no game this week)."""
+    ctx = _season_context(client, user)
+    week = league.current_week()
+    current = league.matchups(ctx["sleeper_id"], ctx["names"], week, ctx["sleeper_roster_id"])
+    mine = home.my_game(current["games"], ctx["sleeper_roster_id"])
+    if not mine or not mine.get("matchup_id"):
+        return ctx, None
+    return ctx, box_score_mod.game(client, ctx, week, int(mine["matchup_id"]), _league_team_rows(client, ctx["league_id"]))
+
+
+@app.get("/live-activity")
+def live_activity_now(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """What the lock screen Live Activity starts with, and whether my matchup is live right now."""
+    client, user = owner
+    ctx, result = _my_live_game(client, user)
+    if not result:
+        return {"live": False}
+    props = live_activity.props(result, ctx["sleeper_roster_id"])
+    return {"live": live_activity.is_live(result) and props is not None, "week": result["week"], "matchup_id": result["matchup_id"],
+            "url": live_activity.deep_link(result["week"], result["matchup_id"]), "props": props}
+
+
+@app.post("/me/live-activity")
+def save_live_activity(body: LiveActivityToken, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """The running Live Activity's push token, so the game-day watcher can send it score updates."""
+    client, user = owner
+    token = body.push_token.strip().lower()
+    if not token or len(token) > 400 or any(c not in "0123456789abcdef" for c in token):
+        raise HTTPException(status_code=400, detail="Not a Live Activity push token.")
+    team = resolve_team(client, user)
+    if team.get("sleeper_roster_id") is None:
+        raise HTTPException(status_code=404, detail="This account isn't linked to a team yet.")
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        client.table("live_activities").upsert({
+            "activity_id": body.activity_id[:200], "user_id": user.id, "league_id": team["league_id"],
+            "roster_id": int(team["sleeper_roster_id"]), "week": body.week, "matchup_id": body.matchup_id,
+            "push_token": token, "updated_at": now, "ended_at": None,
+        }, on_conflict="activity_id").execute()
+    except Exception as exc:
+        print(f"APP_LIVE_ACTIVITY_ERROR {type(exc).__name__}", flush=True)
+        raise HTTPException(status_code=503, detail="Lock screen scores aren't switched on yet.")
+    return {"ok": True}
+
+
+@app.post("/me/live-activity/{activity_id}/end")
+def end_live_activity(activity_id: str, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """The phone ended or dismissed it: stop sending updates."""
+    client, user = owner
+    try:
+        client.table("live_activities").update({"ended_at": datetime.now(timezone.utc).isoformat()}).eq("activity_id", activity_id).eq("user_id", user.id).execute()
+    except Exception as exc:
+        print(f"APP_LIVE_ACTIVITY_ERROR {type(exc).__name__}", flush=True)
     return {"ok": True}
 
 

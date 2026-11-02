@@ -1,0 +1,47 @@
+name: Live Activity watcher
+
+# Keeps owners' lock screen Live Activities (live matchup scores) current during NFL game windows.
+# Free on this public repo. The watcher idles cheaply when nobody has a Live Activity running.
+# Times are UTC and start early enough for both daylight and standard time.
+# Needs repo secrets APNS_KEY_P8 and APNS_KEY_ID (see api/apns.py); without them it exits right away.
+on:
+  schedule:
+    - cron: "17 16 * * 0"   # Sunday early + late afternoon games (runs ~6h)
+    - cron: "17 22 * * 0"   # Sunday night (queues behind the first run, runs ~6h)
+    - cron: "37 23 * * 1"   # Monday night
+    - cron: "37 23 * * 4"   # Thursday night
+    - cron: "17 16 * * 6"   # Saturday (late-season Saturday games; idles otherwise)
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: How long to watch (max 350)
+        default: "350"
+
+concurrency:
+  group: live-activity-watcher
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 358
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: api/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r api/requirements.txt "httpx[http2]" "pyjwt[crypto]"
+
+      - name: Watch
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          APNS_KEY_P8: ${{ secrets.APNS_KEY_P8 }}
+          APNS_KEY_ID: ${{ secrets.APNS_KEY_ID }}
+          MAX_MINUTES: ${{ inputs.minutes || '350' }}
+        run: python scripts/live_activity_watcher.py
