@@ -82,6 +82,16 @@ def test_strategy_question_names_each_target():
     assert market.strategy_question([], 2026) == "Plan my offseason after the 2026 season."
 
 
+
+def test_strategy_question_keeps_my_own_stars_apart_from_targets():
+    saved = [{"name": "Bijan Robinson", "owner_name": "Nick", "is_mine": False},
+             {"name": "Davante Adams", "owner_name": "Tommy", "is_mine": True}]
+    q = market.strategy_question(saved, 2026)
+    assert "My transfer targets are Bijan Robinson (Nick)." in q
+    assert "keeping an eye on Davante Adams" in q and "Davante Adams (Tommy)" not in q
+    only_mine = market.strategy_question(saved[1:], 2026)
+    assert "transfer targets" not in only_mine and "Davante Adams" in only_mine
+
 TEAMS = [
     {"team_id": "t1", "owner_name": "Nick", "team_name": "Nick's", "roster_id": 1},
     {"team_id": "t2", "owner_name": "Tommy", "team_name": "Tommy's", "roster_id": 2},
@@ -132,6 +142,8 @@ def test_filter_players_contract_ends_and_saved_free_agents():
     # A saved free agent past the cut still comes back so the Saved chip finds him.
     kept = market.all_players(POOL, STATE, PPG, TEAMS, ROSTERS, "t2", fa_limit=1, keep_ids=["9"])["players"]
     assert "9" in {p["player_id"] for p in kept}
+    # ★ Saved keeps starred players, my own included.
+    assert sorted(p["name"] for p in market.filter_players(rows, status="★ Saved", saved=["2", "8"])) == ["Bryce Young", "Davante Adams"]
 
 
 def test_all_players_without_a_kicker_slot():

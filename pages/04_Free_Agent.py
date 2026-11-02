@@ -798,7 +798,8 @@ with open_market_tab:
 
 
 @st.cache_data(ttl=120, show_spinner=False)
-def _cached_league_players(league_id: str, team_id: str, active_season: int, context_generation: int, _ppg) -> dict:
+def _cached_league_players(league_id: str, team_id: str, active_season: int, context_generation: int, _ppg,
+                           saved_ids: tuple[str, ...] = ()) -> dict:
     """The app's Market > Players list (api.market.all_players), so the website and app show the same players."""
     client = _sb(st.session_state.get("sb_access_token"))
     season = SeasonResolver(client).get_active_season(league_id)
@@ -810,15 +811,40 @@ def _cached_league_players(league_id: str, team_id: str, active_season: int, con
         app_teams.league_teams(client, league_id),
         rosters,
         team_id,
+        keep_ids=list(saved_ids),
     )
+
+
+def _saved_player_ids(league_id: str) -> list[str] | None:
+    """This owner's starred players (the app's ★ Saved list, table market_targets), or None if unavailable."""
+    try:
+        return app_market.target_ids(_sb(st.session_state.get("sb_access_token")), league_id)
+    except Exception:
+        return None
+
+
+def _sync_saved_players(league_id: str, before: list[str], after: list[str]) -> None:
+    """Star and unstar on the server so the app's ★ Saved chip shows the same players."""
+    client = _sb(st.session_state.get("sb_access_token"))
+    try:
+        for pid in set(after) - set(before):
+            app_market.save_target(client, league_id, pid)
+        for pid in set(before) - set(after):
+            app_market.drop_target(client, league_id, pid)
+    except Exception:
+        st.error("Couldn't save your starred players. Try again in a minute.")
+        return
+    st.rerun()
 
 
 with league_players_tab:
     st.subheader("League Players")
     st.caption("Every rostered player plus the best free agents. Searching a name looks through the whole league.")
+    lp_saved = _saved_player_ids(context.league_id)
     try:
         league_players = _cached_league_players(
             context.league_id, str(context.league_team_id or ""), active_season, context_generation, ppg_state,
+            tuple(lp_saved or ()),
         )
     except Exception:
         league_players = None
@@ -835,7 +861,8 @@ with league_players_tab:
                 lp_search = st.text_input("Search player", placeholder="🔍  Search every player", key="league_players_search")
             with lp_status_col:
                 lp_status = st.segmented_control(
-                    "Status", ["Free agents", "Rostered", "All"], default="Free agents", key="league_players_status",
+                    "Status", ["Free agents", "Rostered", *(["★ Saved"] if lp_saved is not None else []), "All"],
+                    default="Free agents", key="league_players_status",
                 ) or "Free agents"
             with lp_owner_col:
                 lp_owner = st.selectbox("Owner", ["Everyone", *owners], key="league_players_owner",
@@ -850,11 +877,23 @@ with league_players_tab:
                                            key="league_players_contract")
             with lp_sort_col:
                 lp_sort = st.selectbox("Sort", ["Points", "PPG", "Value per $", "Youngest"], key="league_players_sort")
+            if lp_saved is not None:
+                lp_names = {p["player_id"]: f"{p['name']} · {p['pos']}" for p in league_players["players"]}
+                # Keyed on the saved list, so a star added in the app shows here on the next load.
+                lp_starred = st.multiselect(
+                    "★ Saved players", list(lp_names), default=[pid for pid in lp_saved if pid in lp_names],
+                    format_func=lambda pid: lp_names.get(pid, pid), placeholder="Star any player, yours included",
+                    key=f"league_players_saved_{hash(tuple(lp_saved))}",
+                )
+                if set(lp_starred) != {pid for pid in lp_saved if pid in lp_names}:
+                    _sync_saved_players(context.league_id, [pid for pid in lp_saved if pid in lp_names], lp_starred)
 
         lp_rows = app_market.filter_players(
             league_players["players"], search=lp_search, status=lp_status, pos=lp_pos,
             owner=None if lp_owner == "Everyone" else lp_owner, salary=lp_salary, contract=lp_contract, sort=lp_sort,
+            saved=lp_saved or (),
         )
+        lp_star = set(lp_saved or ())
         lp_rank = _season_label(league_players["season"] if league_players["season_started"] else league_players["last_season"])
 
         def _lp_owner(p: dict) -> str:
@@ -875,7 +914,7 @@ with league_players_tab:
         if lp_rows:
             lp_visible = lp_rows[:150]
             _render_html_table(pd.DataFrame([{
-                "Player": p["name"],
+                "Player": f"★ {p['name']}" if p["player_id"] in lp_star else p["name"],
                 "Pos": p["pos"],
                 "NFL": p["nfl_team"],
                 "Owner": _lp_owner(p),
@@ -885,14 +924,15 @@ with league_players_tab:
                 "Notes": _lp_note(p) or "",
             } for p in lp_visible]))
             _render_player_cards([
-                (p["pos"], p["name"], f"{_lp_owner(p)} · {_lp_contract(p)}" if p["team_id"] else f"{p['nfl_team']} · Free agent",
+                (p["pos"], f"★ {p['name']}" if p["player_id"] in lp_star else p["name"], f"{_lp_owner(p)} · {_lp_contract(p)}" if p["team_id"] else f"{p['nfl_team']} · Free agent",
                  [(_ppg_text(p["rank_ppg"]), lp_rank, True)])
                 for p in lp_visible
             ])
             if len(lp_rows) > len(lp_visible):
                 st.caption(f"Showing the top {len(lp_visible)}. Search or filter to narrow the list.")
         else:
-            st.info("No players match these filters.")
+            st.info("Star players in ★ Saved players above to see them here." if lp_status == "★ Saved" and not lp_star
+                    else "No players match these filters.")
 
 
 with expiring_tab:
