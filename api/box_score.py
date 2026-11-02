@@ -83,6 +83,8 @@ def add_projections(client: Any, ctx: dict[str, Any], week: int, final: bool, re
         lines, scoring = {}, {}
     if not final:  # our watcher's live lines (ESPN feed) run ahead of Sleeper's; use them for the stat line and breakdown
         lines = {**lines, **live_stats.fresh_lines(client, season, week)}
+    else:  # finished weeks: our official copy (nflverse) when the daily job has saved it
+        lines = {**lines, **live_stats.final_lines(client, season, week)}
     try:
         games = games_job.result()
     except Exception:

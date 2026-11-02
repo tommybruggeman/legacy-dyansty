@@ -6,8 +6,9 @@ league/{id}/matchups/{week} and league/{id}/winners_bracket and hands them to ap
 that reads matchups (Matchups, box scores, Home, Shotgun, standings) shows the app's numbers without its own code path.
 
 - Lineups: league_lineups (the week's saved row, else the latest earlier one, else Sleeper's lineup that week).
-- Points: our scoring engine (scoring/engine.py) over our live watcher's stat lines for the week being played
-  (api/live_stats.py, from ESPN's free feed), else Sleeper's public weekly stat lines, with the league's saved rules.
+- Points: our scoring engine (scoring/engine.py) with the league's saved rules, over our own stat lines: the official
+  copy for finished weeks (nflverse, scripts/final_scores.py) and the live watcher's for the week being played
+  (ESPN's free feed). Sleeper's public weekly lines are only the fallback.
 - Pairings: regular-season weeks keep Sleeper's schedule; playoff weeks come from our bracket.
 - Bracket: seeds are our standings (2 per win, 1 per top-5 week, points-for tiebreaker) through the last regular week.
   Higher score wins; a tie goes to the higher seed.
@@ -169,6 +170,18 @@ def app_rosters(client: Any, league_id: str, season: int, roster_of_team: Mappin
     return list(out.values())
 
 
+def week_lines(client: Any, season: int, week: int, current: int) -> Mapping[str, Mapping[str, Any]]:
+    """The stat lines an app week is scored from: our official copy for finished weeks (nflverse, saved daily and
+    locked), our live watcher's lines for the week being played, and Sleeper's public lines only as a fallback."""
+    from api import league, sleeper
+    if week < current:
+        official = live_stats.final_lines(client, season, week)
+        if official:
+            return official
+    fallback = stat_lines(season, week, get_json=lambda url: sleeper.get_url(url, ttl=league.LIVE_TTL if week == current else 3600))
+    return {**fallback, **(live_stats.fresh_lines(client, season, week) if week == current else {})}
+
+
 def sync(client: Any, league_id: str, sleeper_id: str, season: int) -> None:
     """Rebuild the app's weeks for one league and hand them to api.sleeper (shared by every owner for LIVE_TTL)."""
     from api import cache, league, sleeper  # here, not at import time: api.league reads api.sleeper too
@@ -208,8 +221,7 @@ def sync(client: Any, league_id: str, sleeper_id: str, season: int) -> None:
             team_of_roster={rid: tid for tid, rid in roster_of_team.items()},
             saved=saved, scoring=settings.scoring_settings or {}, slots=lineups.starter_slots(settings.roster_positions),
             sleeper_rows=lambda w: sleeper.raw(f"league/{sleeper_id}/matchups/{w}", ttl=league.LIVE_TTL if w == current else 3600) or [],
-            lines_for=lambda w: {**stat_lines(season, w, get_json=lambda url: sleeper.get_url(url, ttl=league.LIVE_TTL if w == current else 3600)),
-                                 **(live_stats.fresh_lines(client, season, w) if w == current else {})},
+            lines_for=lambda w: week_lines(client, season, w, current),
             standings_for=standings_for,
         )
         for week, rows in result["weeks"].items():

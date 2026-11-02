@@ -4,6 +4,9 @@ The watcher reads ESPN's free feed every few seconds and saves one row per NFL g
 its players' stat lines in our stat keys, plus the game's state. The server reads those rows (shared by
 every owner, at most once per TTL seconds) and scores it with our engine, so live points come from our own
 pipeline instead of Sleeper's. Sleeper stays the fallback until a week has our lines.
+
+Finished weeks read final_stat_lines instead: the official lines (nflverse, our own copy) saved and locked by the
+daily final-scores job.
 """
 from __future__ import annotations
 
@@ -77,3 +80,19 @@ def rescore(rows: list[Mapping[str, Any]], lines: Mapping[str, Mapping[str, Any]
         out.append({**row, "starters_points": starters_points, "players_points": players_points,
                     "points": round(sum(starters_points), 2), "custom_points": None})
     return out
+
+
+FINAL_TABLE = "final_stat_lines"
+FINAL_TTL = 3600
+
+
+def final_lines(client: Any, season: int, week: int) -> dict[str, dict[str, Any]]:
+    """player id -> {stats, pos}: the week's official lines from our own copy (scripts/final_scores.py), empty until
+    the daily job has saved the week."""
+    def load() -> dict[str, Any]:
+        rows = (client.table(FINAL_TABLE).select("lines").eq("season", season).eq("week", week).limit(1).execute().data or [])
+        return dict(rows[0].get("lines") or {}) if rows else {}
+    try:
+        return cache.cached((FINAL_TABLE, season, week), FINAL_TTL, load)
+    except Exception:
+        return {}
