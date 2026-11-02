@@ -151,7 +151,7 @@ def build(*, season: int, own_from: int, current_week: int, league: Mapping[str,
         return build_bracket(seeds or [], points, lambda r: max(weeks_by_round[r]) < before, weeks_by_round)
 
     def losers_resolved(before: int) -> list[dict[str, Any]]:
-        layout = loser_layout(len(losers), rounds)
+        layout = loser_layout(len(losers), rounds) if settings.get("loser_bracket", True) else []
         if not layout:
             return []
         return build_bracket(losers, points, lambda r: max(weeks_by_round[r]) < before, weeks_by_round, layout)
@@ -211,15 +211,19 @@ def sync(client: Any, league_id: str, sleeper_id: str, season: int) -> None:
     def load() -> dict[str, Any]:
         switch = (client.table("league_app_transactions").select("enabled,own_from_week")
                   .eq("league_id", league_id).limit(1).execute().data or [{}])[0]
-        info = sleeper.raw(f"league/{sleeper_id}") or {}
-        start = int((info.get("settings") or {}).get("playoff_week_start") or 15)
+        from api import playoffs
+        from league_ai.settings_store import load_settings
+        settings = load_settings(client, league_id)
+        rules = playoffs.rules_of(settings)  # our playoff format (Settings), not Sleeper's
+        start = rules["playoff_week_start"]
+        info = {"settings": {"playoff_week_start": start, "playoff_teams": rules["playoff_teams"],
+                             "playoff_round_type": 2 if rules["playoff_round_weeks"] == 2 else 0,
+                             "loser_bracket": rules["loser_bracket"]}}
         own_from = int(switch.get("own_from_week") or start)
         current = league.current_week()
         if not switch.get("enabled") or current < own_from:
             sleeper.drop(f"league/{sleeper_id}/")
             return {"weeks": []}
-        from league_ai.settings_store import load_settings
-        settings = load_settings(client, league_id)
         teams = client.table("league_teams").select("id,sleeper_roster_id").eq("league_id", league_id).execute().data or []
         roster_of_team = {str(t["id"]): int(t["sleeper_roster_id"]) for t in teams if t.get("sleeper_roster_id") is not None}
         saved = (client.table("league_lineups").select("league_team_id,week,slots")

@@ -228,14 +228,19 @@ def matchups(
     owner: tuple[Client, Any] = Depends(owner_client),
 ) -> dict[str, Any]:
     sleeper_id, names, my_roster_id = _league_context(*owner)
-    last_week = league.playoff_last_week(sleeper_id)
+    league_id = resolve_team(*owner)["league_id"]
+    try:
+        rules = cache.cached(("playoff_rules", league_id), 300, lambda: league.playoff_rules(owner[0], league_id))
+    except Exception:
+        rules = playoffs.rules_of({})
+    last_week = playoffs.last_week(rules)
     shown = min(week or league.current_week(), last_week)
     result = league.matchups(sleeper_id, names, shown, my_roster_id)
     result["current_week"] = min(league.current_week(), last_week)
     result["last_week"] = last_week
     try:  # playoff weeks: our bracket, never Sleeper's made-up regular-season pairings
         pics = home.avatars(league.sleeper.get(f"league/{sleeper_id}/users") or [], league.sleeper.get(f"league/{sleeper_id}/rosters") or [])
-        view = league.playoff_view(sleeper_id, names, shown, my_roster_id, pics)
+        view = league.playoff_view(sleeper_id, names, shown, my_roster_id, rules, pics)
     except Exception as exc:
         print(f"APP_PLAYOFFS_ERROR {type(exc).__name__}", flush=True)
         view = None

@@ -2,9 +2,11 @@
 
 Sleeper keeps handing out regular-season pairings for playoff weeks, so Matchups never reads those. Instead:
 - Seeds are our standings (2 per win, 1 per top-5 week, points-for tiebreaker), the same order the Standings page shows.
-- Brackets are Sleeper's own once it has filled them in (or the app's, when the app runs the playoffs: api.own_league
-  hands its brackets to api.sleeper as overrides). Until then they are projected from today's standings.
-- A round can last more than one week (Sleeper's playoff_round_type); its score is the sum of its weeks.
+- The format is ours, from Settings (league_ai_settings: playoff teams, first playoff week, weeks per round, loser
+  bracket), never Sleeper's league settings or brackets, so the app stays independent of Sleeper.
+- Brackets are built here from our seeds and scores (the same build api.own_league uses when the app runs the
+  playoffs). Before the regular season ends they are projected from today's standings.
+- A round can last more than one week; its score is the sum of its weeks.
 
 Kept free of FastAPI and Streamlit so both the app server and the website use the same answer.
 """
@@ -16,31 +18,27 @@ from api import own_league
 from services.matchups_view import _team_points
 
 
-def settings_of(league: Mapping[str, Any]) -> dict[str, Any]:
-    s = league.get("settings") or {}
-    start = int(s.get("playoff_week_start") or 15)
-    teams = int(s.get("playoff_teams") or 4)
-    teams = teams if teams in own_league.LAYOUTS else 4
+def rules_of(settings: Any) -> dict[str, Any]:
+    """Our playoff format from league_ai_settings (a LeagueAISettings or a plain dict)."""
+    get = (lambda k, d: settings.get(k, d)) if isinstance(settings, Mapping) else (lambda k, d: getattr(settings, k, d))
+    teams = int(get("playoff_teams", 4) or 4)
+    return {"playoff_teams": teams if teams in own_league.LAYOUTS else 4,
+            "playoff_week_start": int(get("playoff_week_start", 15) or 15),
+            "playoff_round_weeks": max(1, min(2, int(get("playoff_round_weeks", 2) or 2))),
+            "loser_bracket": bool(get("loser_bracket", True))}
+
+
+def settings_of(rules: Mapping[str, Any]) -> dict[str, Any]:
+    start, teams = int(rules["playoff_week_start"]), int(rules["playoff_teams"])
     rounds = max(r for r, *_ in own_league.LAYOUTS[teams])
-    weeks = own_league.round_weeks(start, rounds, int(s.get("playoff_round_type") or 0))
-    num_teams = int(s.get("num_teams") or 0)
-    return {"start": start, "teams": teams, "rounds": rounds, "weeks": weeks, "num_teams": num_teams,
+    weeks = own_league.round_weeks(start, rounds, 2 if int(rules["playoff_round_weeks"]) == 2 else 0)
+    return {"start": start, "teams": teams, "rounds": rounds, "weeks": weeks, "loser_bracket": bool(rules["loser_bracket"]),
             "last_week": max(w for ws in weeks.values() for w in ws)}
 
 
-def last_week(league: Mapping[str, Any]) -> int:
+def last_week(rules: Mapping[str, Any]) -> int:
     """The last week of the playoffs (the Matchups week picker stops here)."""
-    return settings_of(league)["last_week"]
-
-
-def _filled(bracket: Any) -> list[dict[str, Any]] | None:
-    """A Sleeper bracket only counts once its first round has teams in it."""
-    if not isinstance(bracket, list) or not bracket:
-        return None
-    first = [g for g in bracket if int(g.get("r") or 0) == 1]
-    if not first or not all(g.get("t1") and g.get("t2") for g in first):
-        return None
-    return bracket
+    return settings_of(rules)["last_week"]
 
 
 def round_name(r: int, rounds: int, place: Any) -> str:
@@ -55,17 +53,16 @@ def round_name(r: int, rounds: int, place: Any) -> str:
 
 
 def build(
-    *, week: int, league: Mapping[str, Any], standings: list[Mapping[str, Any]], names: Mapping[int, str],
-    rows_for: Callable[[int], list[Mapping[str, Any]]], winners: Any, losers: Any,
-    last_scored: int, current_week: int, my_roster_id: int | None,
+    *, week: int, rules: Mapping[str, Any], standings: list[Mapping[str, Any]], names: Mapping[int, str],
+    rows_for: Callable[[int], list[Mapping[str, Any]]], last_scored: int, current_week: int, my_roster_id: int | None,
     avatars: Mapping[int, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Everything the playoff view needs for one week, or None for a regular-season week.
 
-    standings: our standings rows (rank order, regular season only). rows_for(week): that week's Sleeper-shaped
-    matchup rows (only asked for weeks that have started). winners / losers: Sleeper's brackets (may be empty).
+    rules: rules_of(league_ai_settings). standings: our standings rows (rank order, regular season only).
+    rows_for(week): that week's matchup rows, used for points only (asked only for weeks that have started).
     """
-    cfg = settings_of(league)
+    cfg = settings_of(rules)
     if week < cfg["start"]:
         return None
     week = min(week, cfg["last_week"])
@@ -79,7 +76,7 @@ def build(
 
     # Points for every playoff week that has started: (week, roster) -> score.
     points: dict[tuple[int, int], float] = {}
-    sleeper_mid: dict[tuple[int, int], Any] = {}
+    row_mid: dict[tuple[int, int], Any] = {}
     for w in sorted({w for ws in weeks.values() for w in ws}):
         if w > current_week:
             continue
@@ -87,17 +84,16 @@ def build(
             if row.get("roster_id") is None:
                 continue
             points[(w, int(row["roster_id"]))] = _team_points(dict(row))
-            sleeper_mid[(w, int(row["roster_id"]))] = row.get("matchup_id")
+            row_mid[(w, int(row["roster_id"]))] = row.get("matchup_id")
 
     def done(r: int) -> bool:
         return max(weeks[r]) <= last_scored
 
     playoff_seeds = order[:cfg["teams"]]
     loser_seeds = order[cfg["teams"]:]
-    win_bracket = _filled(winners) or (own_league.build_bracket(playoff_seeds, points, done, weeks)
-                                       if len(playoff_seeds) == cfg["teams"] else [])
-    loser_bracket = _filled(losers) or own_league.build_bracket(
-        loser_seeds, points, done, weeks, own_league.loser_layout(len(loser_seeds), cfg["rounds"]))
+    win_bracket = own_league.build_bracket(playoff_seeds, points, done, weeks) if len(playoff_seeds) == cfg["teams"] else []
+    loser_bracket = own_league.build_bracket(
+        loser_seeds, points, done, weeks, own_league.loser_layout(len(loser_seeds), cfg["rounds"])) if cfg["loser_bracket"] else []
 
     def team(rid: int | None, r: int) -> dict[str, Any] | None:
         if not rid:
@@ -133,7 +129,7 @@ def build(
             winner = t1["roster_id"] if t1["score"] >= t2["score"] else t2["roster_id"]
         mid = None
         if t1 and t2 and week in weeks[r]:
-            a, b = sleeper_mid.get((week, t1["roster_id"])), sleeper_mid.get((week, t2["roster_id"]))
+            a, b = row_mid.get((week, t1["roster_id"])), row_mid.get((week, t2["roster_id"]))
             mid = a if a is not None and a == b else None
         return {
             "bracket": kind, "round": r, "m": int(game.get("m") or 0),

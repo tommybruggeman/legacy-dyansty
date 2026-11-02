@@ -1516,11 +1516,13 @@ with title_col:
 with week_col:
 
     # The picker stops at the last playoff week (no made-up games after the title game).
+    from api import league as api_league
+    from api import playoffs as api_playoffs
     try:
-        from api import league as api_league
-        _last_week = api_league.playoff_last_week(SLEEPER_LEAGUE_ID)
+        _playoff_rules = api_league.playoff_rules(sb, str(league_id))
     except Exception:
-        _last_week = 18
+        _playoff_rules = api_playoffs.rules_of({})
+    _last_week = api_playoffs.last_week(_playoff_rules)
 
     week_options = list(
         range(1, _last_week + 1)
@@ -1593,12 +1595,12 @@ try:
     # Sleeper's made-up regular-season pairings. Same view as the app.
     playoff_view = None
     try:
-        from api import league as api_league
         playoff_view = api_league.playoff_view(
             SLEEPER_LEAGUE_ID,
             _roster_id_to_owner_name(str(league_id), SLEEPER_LEAGUE_ID),
             selected_week,
             int(_my_roster_id()) if _my_roster_id() is not None else None,
+            _playoff_rules,
         )
     except Exception as exc:
         print(f"WEB_PLAYOFFS_ERROR {type(exc).__name__}", flush=True)

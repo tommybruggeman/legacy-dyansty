@@ -1,6 +1,6 @@
 from api import own_league, playoffs
 
-LEAGUE = {"settings": {"playoff_week_start": 15, "playoff_teams": 4, "playoff_round_type": 2, "num_teams": 10}}
+RULES = playoffs.rules_of({"playoff_teams": 4, "playoff_week_start": 15, "playoff_round_weeks": 2, "loser_bracket": True})
 STANDINGS = [{"roster_id": r, "wins": 14 - r, "losses": r, "ties": 0} for r in range(1, 11)]
 NAMES = {r: f"Owner {r}" for r in range(1, 11)}
 
@@ -16,9 +16,9 @@ def rows(week):
     return out
 
 
-def view(week, current, scored, winners=None, losers=None, me=2):
-    return playoffs.build(week=week, league=LEAGUE, standings=STANDINGS, names=NAMES, rows_for=rows,
-                          winners=winners or [], losers=losers or [], last_scored=scored, current_week=current, my_roster_id=me)
+def view(week, current, scored, me=2, rules=RULES):
+    return playoffs.build(week=week, rules=rules, standings=STANDINGS, names=NAMES, rows_for=rows,
+                          last_scored=scored, current_week=current, my_roster_id=me)
 
 
 def test_regular_season_week_is_not_a_playoff_week():
@@ -50,13 +50,17 @@ def test_two_week_rounds_add_up_and_name_the_winner():
     assert loser_r2 == [(5, 8), (6, 7)]
 
 
-def test_sleeper_brackets_win_once_filled():
-    winners = [{"r": 1, "m": 1, "t1": 1, "t2": 3}, {"r": 1, "m": 2, "t1": 2, "t2": 4},
-               {"r": 2, "m": 3, "t1": None, "t2": None, "t1_from": {"w": 1}, "t2_from": {"w": 2}, "p": 1}]
-    v = view(15, 15, 14, winners=winners)
-    assert {tuple(t["roster_id"] for t in g["teams"]) for g in v["games"]} == {(1, 3), (2, 4)}
-    # both teams share Sleeper's matchup id 1 in week 15 only for 1 v 2, so 1 v 3 has no box score link
-    assert all(g["matchup_id"] is None for g in v["games"])
+def test_format_is_ours_from_settings():
+    one_week = playoffs.rules_of({"playoff_teams": 4, "playoff_week_start": 15, "playoff_round_weeks": 1, "loser_bracket": False})
+    assert playoffs.last_week(one_week) == 16 and playoffs.last_week(RULES) == 18
+    v = view(16, 9, 8, rules=one_week)
+    assert v["round_name"] == "Championship" and v["legs"] == 1 and v["losers"] == [] and v["byes"] == []
+
+
+def test_settings_object_defaults():
+    from league_ai.settings_store import LeagueAISettings
+    r = playoffs.rules_of(LeagueAISettings(league_id="x", playoff_teams=4))
+    assert r == {"playoff_teams": 4, "playoff_week_start": 15, "playoff_round_weeks": 2, "loser_bracket": True}
 
 
 def test_legacy_cards_for_old_app_builds():

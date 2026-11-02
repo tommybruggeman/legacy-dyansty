@@ -167,26 +167,22 @@ def matchups(sleeper_id: str, names: dict[int, str], week: int, my_roster_id: in
     }
 
 
-def playoff_last_week(sleeper_id: str) -> int:
-    """The last week of the playoffs: the Matchups week picker stops here."""
-    try:
-        return playoffs.last_week(sleeper.get(f"league/{sleeper_id}") or {})
-    except Exception:
-        return 18
+def playoff_rules(client: Any, league_id: str) -> dict[str, Any]:
+    """Our playoff format from Settings (league_ai_settings), never Sleeper's."""
+    from league_ai.settings_store import load_settings
+    return playoffs.rules_of(load_settings(client, league_id))
 
 
-def playoff_view(sleeper_id: str, names: dict[int, str], week: int, my_roster_id: int | None,
+def playoff_view(sleeper_id: str, names: dict[int, str], week: int, my_roster_id: int | None, rules: dict[str, Any],
                  avatars: dict[int, Any] | None = None) -> dict[str, Any] | None:
-    """The bracket view for a playoff week (None for regular-season weeks). Shared by the app and the website."""
-    info = sleeper.get(f"league/{sleeper_id}") or {}
-    if week < playoffs.settings_of(info)["start"]:
+    """The bracket view for a playoff week (None for regular-season weeks). Shared by the app and the website.
+    Sleeper is only the score feed here (matchup rows for points); seeds and brackets are ours."""
+    if week < int(rules["playoff_week_start"]):
         return None
     scored, current = last_scored_week(sleeper_id), current_week()
     return playoffs.build(
-        week=week, league=info, standings=standings(sleeper_id, names, my_roster_id)["rows"], names=names,
+        week=week, rules=rules, standings=standings(sleeper_id, names, my_roster_id)["rows"], names=names,
         rows_for=lambda w: sleeper.get(f"league/{sleeper_id}/matchups/{w}", ttl=86400 if w <= scored else LIVE_TTL) or [],
-        winners=sleeper.get(f"league/{sleeper_id}/winners_bracket", ttl=600),
-        losers=sleeper.get(f"league/{sleeper_id}/losers_bracket", ttl=600),
         last_scored=scored, current_week=current, my_roster_id=my_roster_id, avatars=avatars,
     )
 
