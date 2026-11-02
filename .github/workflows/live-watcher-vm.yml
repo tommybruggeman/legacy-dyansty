@@ -1,0 +1,55 @@
+name: Live stats watcher VM
+
+# Creates (or refreshes) the free Google e2-micro that runs the main game-day live stats watcher all season.
+# Always-free tier: one e2-micro in us-central1 with a 30 GB standard disk. The Supabase settings go to Google
+# Secret Manager from this repo's secrets (nobody pastes a key), and the VM reads them at boot
+# (deploy/live-watcher/startup.sh). Safe to run again: it updates the secrets and restarts the watcher.
+on:
+  workflow_dispatch:
+
+jobs:
+  vm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PROJECT: legacy-dynasty-25024
+      ZONE: us-central1-a
+      VM: legacy-live-watcher
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: APIs
+        run: gcloud services enable compute.googleapis.com secretmanager.googleapis.com --project "$PROJECT"
+      - name: Secrets
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          put() {
+            gcloud secrets describe "$1" --project "$PROJECT" >/dev/null 2>&1 || gcloud secrets create "$1" --project "$PROJECT" --replication-policy automatic
+            printf '%s' "$2" | gcloud secrets versions add "$1" --project "$PROJECT" --data-file=- >/dev/null
+          }
+          put legacy-supabase-url "$SUPABASE_URL"
+          put legacy-supabase-service-key "$SUPABASE_SERVICE_ROLE_KEY"
+          NUM=$(gcloud projects describe "$PROJECT" --format 'value(projectNumber)')
+          SA="$NUM-compute@developer.gserviceaccount.com"
+          for s in legacy-supabase-url legacy-supabase-service-key; do
+            gcloud secrets add-iam-policy-binding "$s" --project "$PROJECT" --member "serviceAccount:$SA" --role roles/secretmanager.secretAccessor >/dev/null
+          done
+      - name: VM
+        run: |
+          if gcloud compute instances describe "$VM" --project "$PROJECT" --zone "$ZONE" >/dev/null 2>&1; then
+            gcloud compute instances add-metadata "$VM" --project "$PROJECT" --zone "$ZONE" --metadata-from-file startup-script=deploy/live-watcher/startup.sh
+            gcloud compute instances reset "$VM" --project "$PROJECT" --zone "$ZONE" --quiet
+          else
+            # e2-micro + 30 GB pd-standard in us-central1 = Google's always-free tier. No external IP charges apply
+            # to an ephemeral IP on a free-tier VM; it only makes outbound calls (ESPN, Supabase).
+            gcloud compute instances create "$VM" --project "$PROJECT" --zone "$ZONE" \
+              --machine-type e2-micro --boot-disk-size 30GB --boot-disk-type pd-standard \
+              --image-family debian-12 --image-project debian-cloud \
+              --scopes cloud-platform --metadata-from-file startup-script=deploy/live-watcher/startup.sh
+          fi
+          gcloud compute instances describe "$VM" --project "$PROJECT" --zone "$ZONE" --format 'value(status,machineType.basename())'

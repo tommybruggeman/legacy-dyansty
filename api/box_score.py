@@ -7,7 +7,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Iterable
 
-from api import cache, home, league, nfl_live, projections, teams
+from api import cache, home, league, live_stats, nfl_live, projections, teams
 from api.front_office import LEAGUE_TZ
 
 PROJ_TTL = 900
@@ -81,6 +81,10 @@ def add_projections(client: Any, ctx: dict[str, Any], week: int, final: bool, re
         lines, scoring = lines_job.result(), scoring_job.result()
     except Exception:
         lines, scoring = {}, {}
+    if not final:  # our watcher's live lines (ESPN feed) run ahead of Sleeper's; use them for the stat line and breakdown
+        lines = {**lines, **live_stats.fresh_lines(client, season, week)}
+    else:  # finished weeks: our official copy (nflverse) when the daily job has saved it
+        lines = {**lines, **live_stats.final_lines(client, season, week)}
     try:
         games = games_job.result()
     except Exception:

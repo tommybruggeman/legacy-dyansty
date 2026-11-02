@@ -1,0 +1,30 @@
+name: Final scores
+
+# Saves every finished NFL week's official stat lines as our own copy (scripts/final_scores.py: nflverse's free
+# stats, ESPN as backup), re-saves them daily for stat corrections, locks them three days after the week, and
+# cross-checks every league against Sleeper. Free on this public repo; prints counts only.
+on:
+  schedule:
+    - cron: "40 10 * * *"   # daily, after nflverse's overnight refresh
+  workflow_dispatch:
+    inputs:
+      dry:
+        description: Check only, save nothing
+        type: boolean
+        default: false
+
+jobs:
+  finals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install supabase requests pandas
+      - name: Save finals
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python -m scripts.final_scores ${{ inputs.dry && '--dry' || '' }}
