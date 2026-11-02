@@ -1,4 +1,5 @@
 import { router, useLocalSearchParams } from 'expo-router';
+import { useEffect, useState } from 'react';
 import { Alert, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Headshot } from '../../components/Pictures';
@@ -6,6 +7,7 @@ import { PointsChart } from '../../components/player/PointsChart';
 import { ErrorState, Loading } from '../../components/ScreenState';
 import { Back, Screen, money } from '../../components/ui';
 import { apiGet, apiSend, type PlayerPage, type WaiverSheet, useApi } from '../../lib/api';
+import { LIVE_REFRESH_MS } from '../../components/team/TeamView';
 import { colors } from '../../lib/theme';
 import { useTargets } from '../../lib/targets';
 
@@ -16,7 +18,10 @@ export { ScreenError as ErrorBoundary } from '../../components/ScreenState';
 // contract history and health.
 export default function Player() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { data, error, loading, reload } = useApi<PlayerPage>(`/players/${id}`);
+  const [live, setLive] = useState(false);
+  // While his game is on, refresh as often as the team page does.
+  const { data, error, loading, reload } = useApi<PlayerPage>(`/players/${id}`, live ? LIVE_REFRESH_MS : 0);
+  useEffect(() => setLive(!!data?.live), [data]);
   const { isTarget, toggle } = useTargets();
 
   if (loading && !data) return <Loading />;

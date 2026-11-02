@@ -284,6 +284,20 @@ class ByeWeekTests(unittest.TestCase):
 
 
 class MatchupTests(unittest.TestCase):
+    def test_week_matchups_marks_games_already_played(self):
+        from league_ai.nfl_data import team_next_week, week_matchups
+
+        rows = [{"week": 8, "home_team": "CIN", "away_team": "TEN", "home_score": 43, "away_score": 36},
+                {"week": 8, "home_team": "SEA", "away_team": "CHI", "home_score": None, "away_score": None},
+                {"week": 9, "home_team": "TEN", "away_team": "HOU", "home_score": None, "away_score": None},
+                {"week": 10, "home_team": "CIN", "away_team": "PIT", "home_score": None, "away_score": None}]
+        games = week_matchups(rows, 8)
+        self.assertEqual(games["TEN"]["final_score"], {"team": 36, "opponent": 43})
+        self.assertNotIn("final_score", games["SEA"])
+        self.assertEqual(team_next_week(rows, "TEN"), 9)
+        self.assertEqual(team_next_week(rows, "CIN"), 9)  # bye in week 9 comes before its next game
+        self.assertEqual(team_next_week(rows, "SEA"), 8)
+
     def test_week_matchups_implied_points(self):
         from league_ai.nfl_data import current_week_from_games, week_matchups
 
@@ -373,6 +387,31 @@ class ToolMatchupTests(unittest.TestCase):
             allen = tool_get_player_profile(data, "Josh Allen")
             self.assertEqual(allen["bye_week"], 2)
             self.assertIn("ON BYE", allen["this_week"]["matchup"])
+        finally:
+            nfl_data._CACHE.clear()
+
+
+class ToolAlreadyPlayedTests(unittest.TestCase):
+    def test_this_week_says_a_finished_game_is_his_latest_not_upcoming(self):
+        import league_ai.nfl_data as nfl_data
+        from league_ai.tools.nfl import NflData, tool_get_player_profile
+        from tests.test_league_ai_tools import PLAYERS, FakeQuery
+
+        games = [{"season": 2026, "game_type": "REG", "week": 1, "home_team": "TB", "away_team": "ATL", "home_score": 20, "away_score": 31},
+                 {"season": 2026, "game_type": "REG", "week": 1, "home_team": "BUF", "away_team": "CAR", "home_score": None, "away_score": None},
+                 {"season": 2026, "game_type": "REG", "week": 2, "home_team": "ATL", "away_team": "BUF", "home_score": None, "away_score": None}]
+
+        class Client:
+            tables = {"nfl_players": PLAYERS, "nfl_games": games, "nfl_player_stats": [], "nfl_market_values": [], "nfl_injuries": [], "nfl_practice_reports": []}
+            def table(self, name): return FakeQuery(self.tables.get(name, []))
+
+        nfl_data._CACHE.clear()
+        try:
+            data = NflData(Client(), league_state=fixture_state())
+            week = tool_get_player_profile(data, "Bijan Robinson")["this_week"]
+            self.assertTrue(week["already_played"])
+            self.assertIn("ALREADY PLAYED: W1 at TB, ATL won 31-20", week["matchup"])
+            self.assertNotIn("already_played", tool_get_player_profile(data, "Josh Allen")["this_week"])
         finally:
             nfl_data._CACHE.clear()
 

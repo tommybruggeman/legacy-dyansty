@@ -100,3 +100,64 @@ def test_active_counts_as_healthy_and_injury_estimate():
     assert est["median_games"] == 2 and est["text"].startswith("Hamstring: usually 2 games out")
     hurt = player.health({"injury_status": "Questionable"}, None, [], [], 2026, est)
     assert not hurt["healthy"] and hurt["estimate"]["median_games"] == 2
+
+
+def test_open_week_games_keep_started_games_and_flag_live_ones():
+    boards = {
+        8: {"BUF": {"state": "post", "opp": "BAL", "home": True}, "SEA": {"state": "pre", "opp": "CHI", "home": True},
+            "DET": {"state": "in", "opp": "MIN", "home": True, "detail": "3rd 4:12"}},
+        9: {"BUF": {"state": "pre", "opp": "MIA", "home": False}},
+    }
+    got = player.open_week_games(2026, "BUF", [8, 9], games_for=boards.get)
+    assert list(got) == [8] and got[8]["opp"] == "BAL" and player.live_weeks(got) == set()
+    assert player.open_week_games(2026, "SEA", [8], games_for=boards.get) == {}  # Monday night still to come
+    assert player.open_week_games(2026, "KC", [8], games_for=boards.get) == {}   # bye / no game
+    live = player.open_week_games(2026, "DET", [8], games_for=boards.get)
+    assert player.live_weeks(live) == {8}
+
+
+def test_sleeper_rows_fill_a_final_game_nflverse_lacks():
+    finished = {8: {"state": "post", "opp": "BAL", "home": True}}
+    lines = {8: {"17": {"stats": {"gp": 1, "pass_cmp": 21, "pass_att": 30, "pass_yd": 287, "pass_td": 3, "pass_int": 0,
+                                  "rush_att": 6, "rush_yd": 41, "off_snp": 64, "tm_off_snp": 64}}}}
+    rows = player.sleeper_rows(2026, "17", finished, [], lines_for=lines.get)
+    assert len(rows) == 1 and rows[0]["source"] == "sleeper"
+    line = player.nfl_line(rows[0], "QB")
+    assert (line["comp"], line["att"], line["pass_yds"], line["pass_td"], line["carries"], line["snap_pct"]) == (21, 30, 287, 3, 6, 100)
+    log = player.game_log([{"week": 8, "points": 31.2, "started": True}], rows, {}, None, "QB")
+    assert log[0]["status"] == "started" and log[0]["opp"] == "vs BAL"
+    # nflverse already has it: no duplicate; didn't play: no row
+    assert player.sleeper_rows(2026, "17", finished, [{"week": 8}], lines_for=lines.get) == []
+    assert player.sleeper_rows(2026, "99", finished, [], lines_for=lines.get) == []
+
+
+def test_next_game_moves_past_a_game_already_played_this_week():
+    games = [
+        {"week": 8, "home_team": "CIN", "away_team": "TEN", "home_score": 43, "away_score": 36},
+        {"week": 8, "home_team": "SEA", "away_team": "CHI", "home_score": None, "away_score": None},
+        {"week": 9, "home_team": "TEN", "away_team": "HOU", "home_score": None, "away_score": None, "gameday": "2026-11-08", "gametime": "13:00"},
+        {"week": 9, "home_team": "SEA", "away_team": "LA", "home_score": None, "away_score": None},
+    ]
+    assert player.next_game(games, 2026, "TEN", "RB", {}, None)["week"] == 9
+    assert player.next_game(games, 2026, "TEN", "RB", {}, None)["opp"] == "HOU"
+    assert player.next_game(games, 2026, "SEA", "RB", {}, None)["week"] == 8
+
+
+def test_live_game_shows_in_log_but_not_in_season_numbers(monkeypatch):
+    from api import projections
+
+    monkeypatch.setattr(projections, "week_lines", lambda kind, s, w, ttl: {"17": {"stats": {"gp": 1, "pass_cmp": 9, "pass_att": 14, "pass_yd": 120, "off_snp": 30, "tm_off_snp": 30}}})
+    monkeypatch.setattr(projections, "week_ranks", lambda sid, s, w, final, pos: {})
+
+    class NoDb:
+        def table(self, *a):
+            raise RuntimeError("no db")
+
+    weeks = [{"week": 7, "points": 20.0, "started": True}, {"week": 8, "points": 9.5, "started": True}]
+    out = player.page_extras(NoDb(), league_id="L", sleeper_id="S", season=2026, player_id="17", meta={"team": "BUF"}, pos="QB",
+                             league_weeks=weeks, last_week=7, years_left={}, salary=None, player_info=lambda c, ids: {},
+                             finished={8: {"state": "in", "opp": "BAL", "home": True, "detail": "3rd 4:12"}})
+    top = out["game_log"][0]
+    assert out["live"] is True and top["live"] and top["week"] == 8 and top["opp"] == "vs BAL · 3rd 4:12"
+    assert top["line"]["pass_yds"] == 120 and top["points"] == 9.5
+    assert out["league_season"]["ppg"] == 20.0 and out["league_season"]["started"] == 1  # the live week 8 start counts once final

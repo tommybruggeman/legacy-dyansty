@@ -1,4 +1,5 @@
 import { useLocalSearchParams } from 'expo-router';
+import { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { Headshot } from '../../components/Pictures';
@@ -6,6 +7,7 @@ import { STATUS, lineText, pts } from '../../components/player/format';
 import { ErrorState, Loading } from '../../components/ScreenState';
 import { Back, Screen } from '../../components/ui';
 import { type PlayerPage, useApi } from '../../lib/api';
+import { LIVE_REFRESH_MS } from '../../components/team/TeamView';
 import { colors } from '../../lib/theme';
 
 export { ScreenError as ErrorBoundary } from '../../components/ScreenState';
@@ -15,7 +17,10 @@ export { ScreenError as ErrorBoundary } from '../../components/ScreenState';
 // It reads the same /players response, so it opens instantly from cache.
 export default function PlayerGames() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { data, error, loading, reload } = useApi<PlayerPage>(`/players/${id}`);
+  const [live, setLive] = useState(false);
+  // While his game is on, refresh as often as the team page does.
+  const { data, error, loading, reload } = useApi<PlayerPage>(`/players/${id}`, live ? LIVE_REFRESH_MS : 0);
+  useEffect(() => setLive(!!data?.live), [data]);
 
   if (loading && !data) return <Loading />;
   if (error && !data) return <ErrorState message={error} onRetry={reload} />;
@@ -67,7 +72,9 @@ export default function PlayerGames() {
                 <View style={styles.colPts}>
                   <Text style={[styles.points, !on && styles.pointsOff]}>{pts(g.points)}</Text>
                   {g.status !== 'bye' ? (
-                    <Text style={[styles.status, on ? styles.statusOn : g.status === 'out' ? styles.statusOut : null]}>{STATUS[g.status]}</Text>
+                    <Text style={[styles.status, g.live ? styles.statusLive : on ? styles.statusOn : g.status === 'out' ? styles.statusOut : null]}>
+                      {g.live ? `LIVE · ${STATUS[g.status]}` : STATUS[g.status]}
+                    </Text>
                   ) : null}
                   {g.rank ? <Text style={styles.rank}>{g.rank} that week</Text> : null}
                 </View>
@@ -113,6 +120,7 @@ const styles = StyleSheet.create({
   status: { color: colors.muted, fontSize: 10, fontWeight: '700' },
   statusOn: { color: colors.gold },
   statusOut: { color: '#E8826F' },
+  statusLive: { color: colors.live },
   rank: { color: colors.muted, fontSize: 10, marginTop: 1 },
   note: { color: colors.muted, fontSize: 12, lineHeight: 18 },
 });
