@@ -35,8 +35,8 @@ jobs:
           }
           put legacy-supabase-url "$SUPABASE_URL"
           put legacy-supabase-service-key "$SUPABASE_SERVICE_ROLE_KEY"
-          NUM=$(gcloud projects describe "$PROJECT" --format 'value(projectNumber)')
-          SA="$NUM-compute@developer.gserviceaccount.com"
+          # The VM's default service account, read through the Compute API (no Resource Manager API needed).
+          SA=$(gcloud compute project-info describe --project "$PROJECT" --format 'value(defaultServiceAccount)')
           for s in legacy-supabase-url legacy-supabase-service-key; do
             gcloud secrets add-iam-policy-binding "$s" --project "$PROJECT" --member "serviceAccount:$SA" --role roles/secretmanager.secretAccessor >/dev/null
           done
