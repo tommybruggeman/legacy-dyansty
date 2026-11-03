@@ -31,6 +31,19 @@ def main() -> int:
     lid, sid = str(league["id"]), str(league["sleeper_league_id"])
     shared = fill_from_sleeper(client, _state(client, lid, season), sid, lid)
     teams = client.table("league_teams").select("id, owner_name, team_name, sleeper_roster_id").eq("league_id", lid).execute().data or []
+    from collections import Counter
+
+    from services.team_roster_state import state_roster
+    roster = state_roster(shared)
+    print("contract types:", dict(Counter(str(r.get("contract_type")) for r in roster)), flush=True)
+    print("expiring by type:", dict(Counter(str(r.get("contract_type")) for r in roster if int(r.get("contract_years_left") or 1) <= 1)), flush=True)
+    try:
+        board = client.table("rookie_draft_board_assignments").select("player_id, draft_year, draft_round").eq("league_id", lid).limit(2000).execute().data or []
+        ids = {str(r.get("sleeper_player_id") or r.get("player_id") or "") for r in roster}
+        print(f"draft board rows: {len(board)}, on rosters now: {sum(1 for b in board if str(b.get('player_id')) in ids)}, "
+              f"by year: {dict(Counter(int(b.get('draft_year') or 0) for b in board))}", flush=True)
+    except Exception as exc:
+        print(f"draft board read failed: {type(exc).__name__}", flush=True)
     out, problems, rooms, heats, ratios, counts = {}, [], [], [], [], []
     for n, t in enumerate([t for t in teams if t.get("sleeper_roster_id") is not None], start=1):
         o = runtime.Owner(user_id=str(uuid.uuid5(uuid.UUID(STAND_IN), str(t["id"]))), league_id=lid, league_team_id=str(t["id"]), season=season,
