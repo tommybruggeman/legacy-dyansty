@@ -11,11 +11,13 @@ TOPICS = ("trade", "lineup", "waivers", "contracts", "draft", "strategy", "looku
 
 _RULES: list[tuple[str, tuple[str, ...]]] = [
     ("trade", ("trade", "deal for", "offer", "package", "buy low", "sell high", "deadline", "straight up", "straight swap", "swap", "in return")),
-    ("lineup", ("start", "sit ", "bench", "lineup", "flex", "who do i play", "streamer", "stream ")),
+    ("strategy", ("contender", "rebuild", "retool", "window", "long term", "long-term", "next season", "next year", "offseason", "auction",
+                  "free agency", "3 year", "three year", "2-3", "plan for", "season plan", "future")),
+    ("lineup", (" start", "sit ", "bench", "lineup", "flex", "who do i play", "streamer", "stream ")),
     ("waivers", ("waiver", "pick up", "pickup", "free agent", "faab", "add ", "drop ")),
     ("contracts", ("contract", "cap ", "salary", "extension", "cut ", "release", "dead cap", "tag")),
     ("draft", ("draft", "rookie", "prospect", "pick ")),
-    ("strategy", ("contender", "rebuild", "retool", "window", "plan", "long term", "dynasty value", "worth")),
+    ("strategy", ("plan", "dynasty value", "worth")),
 ]
 _LOOKUP = re.compile(r"^(what('?s| is| are)|how (much|many)|who('?s| is| are) (on|my)|when|list|show|which team)\b")
 _SWAP = re.compile(r"^[a-z.'\- ]{3,40} for [a-z.'\- ]{3,40}\??$")  # "Waddle for Devonta Smith?"

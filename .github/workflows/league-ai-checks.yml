@@ -4,14 +4,15 @@ name: League AI checks
 # start/sit graded on every saved lineup, the free pre-deploy practice test,
 # shadow scoring (our own scoring engine vs Sleeper's scores on every finished week),
 # the live projection study (which mid-game projection update predicts final scores best),
-# and the ESPN feed check (our live stat source scored by our engine vs Sleeper).
+# the ESPN feed check (our live stat source scored by our engine vs Sleeper),
+# and the future plan check (plan_future for every owner).
 on:
   workflow_dispatch:
     inputs:
       check:
         description: Which check to run
         type: choice
-        options: [odds_backtest, odds_trial, odds_grade, start_sit_grade, practice_test, weekly_cards, shadow_scoring, live_projection_study, espn_feed_check, final_scores_check]
+        options: [odds_backtest, odds_trial, odds_grade, start_sit_grade, practice_test, weekly_cards, shadow_scoring, live_projection_study, espn_feed_check, final_scores_check, future_plan_check]
         default: odds_backtest
 
 jobs:
@@ -24,7 +25,7 @@ jobs:
         with:
           python-version: "3.13"
       - run: pip install supabase requests pandas
-      - if: inputs.check == 'start_sit_grade' || inputs.check == 'practice_test' || inputs.check == 'weekly_cards'
+      - if: inputs.check == 'start_sit_grade' || inputs.check == 'practice_test' || inputs.check == 'weekly_cards' || inputs.check == 'future_plan_check'
         run: pip install -r api/requirements.txt
       - if: inputs.check == 'live_projection_study'
         run: pip install pyarrow numpy
@@ -48,5 +49,15 @@ jobs:
             espn_feed_check) python -m scoring.espn_check --weeks 3 ;;
             # official finals from nflverse scored by our engine vs Sleeper, every finished week (saves nothing)
             final_scores_check) python -m scripts.final_scores --dry ;;
+            # plan_future for every owner (counts only in the log); the full answers are printed encrypted for review
+            future_plan_check)
+              FUTURE_OUT=/tmp/future.json.gz python -m league_ai.future_check || status=$?
+              if [ -f /tmp/future.json.gz ]; then
+                openssl rand -hex 32 > /tmp/k
+                echo "ENCRYPTED_KEY $(openssl pkeyutl -encrypt -pubin -inkey league_ai/checks_public_key.pem -pkeyopt rsa_padding_mode:oaep -in /tmp/k | base64 -w0)"
+                echo "ENCRYPTED_DATA $(openssl enc -aes-256-cbc -pbkdf2 -salt -pass file:/tmp/k -in /tmp/future.json.gz | base64 -w0)"
+                rm -f /tmp/k /tmp/future.json.gz
+              fi
+              exit ${status:-0} ;;
             *) python -m league_ai.playoff_odds ;;
           esac

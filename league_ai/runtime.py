@@ -58,6 +58,7 @@ TOOL_STATUS = {
     "get_playoff_odds": "Simulating the rest of the season",
     "get_pickup_odds": "Simulating the season with him on your roster",
     "get_matchup_odds": "Working out your odds to win this week",
+    "plan_future": "Mapping out your next three seasons and free-agent classes",
 }
 
 
@@ -281,6 +282,7 @@ def chat_tools(client: Any, owner: Owner, *, state: Mapping[str, Any], rules: Ma
         free_agent=lambda name: next((free_agent_strength(client, r, owner.season, owner.league_team_id) for r in nfl.find_players(name, limit=1)), None),
         roster_rules=lambda: (rules_from(rules, load_settings(client, owner.league_id)),
                               *season_mode(league.get("sleeper_league_id"), week, playoff_week())),
+        future=lambda: future_inputs(client, owner, state, rules),
         log_ideas=lambda out: threading.Thread(target=idea_log.log, daemon=True, kwargs={
             "client": client, "league_id": owner.league_id, "user_id": owner.user_id, "conversation_id": conversation_id(),
             "question": question(), "out": out}).start(),
@@ -300,6 +302,28 @@ def chat_tools(client: Any, owner: Owner, *, state: Mapping[str, Any], rules: Ma
     return build_registry(client, league_state=state, salary_cap=rules.get("salary_cap", 225), dead_cap_pct=float(rules.get("default_dead_cap_pct", 50) or 50),
                           week_projection=week_projection,
                           extra=[*history_tools(client, owner.league_id), *owner.memory(client).tools(), *ledger.tools(), *finder, *(extra or [])])
+
+
+def future_inputs(client: Any, owner: Owner, state: Mapping[str, Any], rules: Mapping[str, Any]) -> dict[str, Any]:
+    """What plan_future needs beyond the trade finder's league: the cap, dead cap owed in later seasons, pick rows, max deal length."""
+    dead: dict[str, dict[int, float]] = {}
+    try:
+        rows = (client.table("dead_cap_obligations").select("league_team_id, season, amount, status").eq("league_id", owner.league_id)
+                .gt("season", int(owner.season)).in_("status", ["planned", "active"]).limit(2000).execute().data or [])
+        for r in rows:
+            by = dead.setdefault(str(r.get("league_team_id")), {})
+            by[int(r["season"])] = by.get(int(r["season"]), 0.0) + float(r.get("amount") or 0)
+    except Exception:
+        pass   # no read access or no table: plan without later dead cap
+    try:
+        max_years = int(float(rules.get("max_contract_years") or 4))
+    except (TypeError, ValueError):
+        max_years = 4
+    return {"salary_cap": float(rules.get("salary_cap") or 225), "dead_future": dead, "picks": list(state.get("draft_picks") or []),
+            "max_years": max(1, min(max_years, 6))}
+
+
+UNSAVED_ERRORS = frozenset({"disabled", "missing_api_key", "league_state_unavailable"})
 
 
 @dataclass
@@ -327,6 +351,10 @@ def chat_turn(client: Any, owner: Owner, *, question: str, history: list[dict[st
         full = [*history, {"role": "user", "content": question}, *({"role": "user", "content": a} for a in added),
                 {"role": "assistant", "content": result.text}]
         conversation_id = owner.memory(client).save_conversation(conversation_id, full)
+    elif result.error_code not in UNSAVED_ERRORS and question.strip():
+        # keep the question that didn't get an answer, so "try again" / "restart" picks it back up (the next
+        # question joins it as one user turn) instead of starting from nothing
+        conversation_id = owner.memory(client).save_conversation(conversation_id, [*history, {"role": "user", "content": question}])
     record_usage(client, row_from_trace(result.trace, league_id=owner.league_id, user_id=owner.user_id, feature="chat",
                                         topic=question_topic(question), conversation_id=conversation_id))
     notes_changed = any(name in ("remember", "forget") for name in result.trace.tool_calls)
