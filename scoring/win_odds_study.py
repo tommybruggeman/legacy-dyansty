@@ -18,7 +18,6 @@ from __future__ import annotations
 import os
 from collections import defaultdict
 from math import erf, log, sqrt
-from typing import Any
 
 SCALES = [round(0.6 + 0.05 * i, 2) for i in range(21)]   # 0.60 .. 1.60
 METHODS = ("form", "proj_raw", "proj_cal", "blend_20", "blend_40")
