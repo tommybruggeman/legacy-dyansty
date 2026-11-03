@@ -2,7 +2,7 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import { ErrorState, Loading } from '../components/ScreenState';
 import { Back, Bar, Card, Note, Pill, Pos, Row, Screen, Tile, Tiles, Title, ui } from '../components/ui';
-import { type Accuracy, type FrontOffice, useApi } from '../lib/api';
+import { type Accuracy, type FrontOffice, type ProjectionCard, useApi } from '../lib/api';
 import { colors } from '../lib/theme';
 
 const LABEL: Record<string, string> = { start_sit: 'START/SIT', trade: 'TRADE CALLS', pickup: 'PICKUPS' };
@@ -46,6 +46,7 @@ export default function ReportCard() {
         ))}
       </Card>
       {card.accuracy ? <AccuracyCards a={card.accuracy} /> : null}
+      {card.projections ? <ProjectionCards c={card.projections} /> : null}
       {card.lessons.length ? (
         <Card>
           <Text style={styles.eyebrow}>WHAT IT LEARNED</Text>
@@ -114,6 +115,58 @@ function AccuracyCards({ a }: { a: Accuracy }) {
               </View>
             </Row>
           ))}
+        </Card>
+      ) : null}
+    </>
+  );
+}
+
+const pts = (x: number) => x.toFixed(1);
+const SHOW = ['QB', 'RB', 'WR', 'TE', 'K'];
+
+// Weekly projections vs what players really scored, and the position factors learned from it.
+function ProjectionCards({ c }: { c: ProjectionCard }) {
+  const player = c.overall.as_shown ?? c.overall.calibrated;
+  const team = c.overall.team_calibrated;
+  const before = c.overall.shown;
+  const weeks = c.by_week.slice(-6).reverse();
+  const scaled = SHOW.filter((p) => c.factors[p] != null && Math.abs(c.factors[p] - 1) >= 0.02);
+  if (!player) return null;
+  return (
+    <>
+      <Card title={`Weekly projections, ${c.season}`} right={`${player.n} players graded`}>
+        <Text style={ui.sub}>Every projection compared with the real score once the games are final.</Text>
+        <View style={styles.vs}>
+          <View style={ui.flex}>
+            <Text style={styles.big}>{pts(player.mae)}</Text>
+            <Text style={ui.sub}>avg miss per player</Text>
+          </View>
+          {team ? (
+            <View style={ui.flex}>
+              <Text style={styles.big}>{pts(team.mae)}</Text>
+              <Text style={ui.sub}>avg miss per team</Text>
+            </View>
+          ) : null}
+        </View>
+        {before ? <Note>{`Before learning from results the miss was ${pts(before.mae)} per player, and projections ran ${pts(Math.abs(before.bias))} pts ${before.bias < 0 ? 'high' : 'low'}.`}</Note> : null}
+        {scaled.length ? (
+          <Note>{`Learned so far: ${scaled.map((p) => `${p} ${Math.round(100 * c.factors[p])}%`).join(' · ')} of the raw projection. Retuned every morning.`}</Note>
+        ) : null}
+      </Card>
+      {weeks.length ? (
+        <Card title="Projection miss by week">
+          {weeks.map((r, i) => {
+            const m = r.as_shown ?? r.calibrated;
+            return m ? (
+              <Row key={r.week} first={i === 0}>
+                <Text style={[ui.value, styles.week]}>Wk {r.week}</Text>
+                <View style={ui.flex}>
+                  <Text style={ui.value}>{pts(m.mae)} pts per player{r.team_calibrated ? ` · ${pts(r.team_calibrated.mae)} per team` : ''}</Text>
+                  <Text style={ui.sub}>{m.bias < 0 ? `ran ${pts(-m.bias)} high` : `ran ${pts(m.bias)} low`}{r.shown ? ` · ${pts(r.shown.mae)} before learning` : ''}</Text>
+                </View>
+              </Row>
+            ) : null;
+          })}
         </Card>
       ) : null}
     </>
