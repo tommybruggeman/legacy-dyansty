@@ -11,7 +11,7 @@ on:
       check:
         description: Which check to run
         type: choice
-        options: [odds_backtest, odds_trial, odds_grade, start_sit_grade, practice_test, weekly_cards, shadow_scoring, live_projection_study, espn_feed_check, final_scores_check]
+        options: [odds_backtest, odds_trial, odds_grade, start_sit_grade, practice_test, weekly_cards, shadow_scoring, live_projection_study, espn_feed_check, final_scores_check, projection_accuracy]
         default: odds_backtest
 
 jobs:
@@ -24,7 +24,7 @@ jobs:
         with:
           python-version: "3.13"
       - run: pip install supabase requests pandas
-      - if: inputs.check == 'start_sit_grade' || inputs.check == 'practice_test' || inputs.check == 'weekly_cards'
+      - if: inputs.check == 'start_sit_grade' || inputs.check == 'practice_test' || inputs.check == 'weekly_cards' || inputs.check == 'projection_accuracy'
         run: pip install -r api/requirements.txt
       - if: inputs.check == 'live_projection_study'
         run: pip install pyarrow numpy
@@ -48,5 +48,7 @@ jobs:
             espn_feed_check) python -m scoring.espn_check --weeks 3 ;;
             # official finals from nflverse scored by our engine vs Sleeper, every finished week (saves nothing)
             final_scores_check) python -m scripts.final_scores --dry ;;
+            # weekly projections vs real scores, and whether learned corrections would help (saves nothing)
+            projection_accuracy) python -m scoring.projection_accuracy ;;
             *) python -m league_ai.playoff_odds ;;
           esac
