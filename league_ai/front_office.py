@@ -188,12 +188,32 @@ def build_player_strengths(client: Any, state: Mapping[str, Any], season: int) -
 
 def power_rankings(client: Any, state: Mapping[str, Any], season: int, roster_positions: list[str], actual_ppg: Mapping[str, float] | None = None,
                    byes: Mapping[str, int] | None = None, week: int | None = None,
-                   games: Mapping[str, Mapping[str, Any]] | None = None, dvp: Mapping[tuple[str, str], Mapping[str, Any]] | None = None, situational: Any = None) -> list[TeamPower]:
+                   games: Mapping[str, Mapping[str, Any]] | None = None, dvp: Mapping[tuple[str, str], Mapping[str, Any]] | None = None, situational: Any = None,
+                   week_points: Callable[[list[PlayerStrength]], Mapping[str, float]] | None = None) -> list[TeamPower]:
     """games: NFL team -> this week's game (league_ai.nfl_data.week_matchups); dvp: (defense, position) -> rating;
-    situational: league_ai.team_context.Situational (blitz / box tendencies), optional."""
+    situational: league_ai.team_context.Situational (blitz / box tendencies), optional.
+    week_points: players -> sleeper id -> this week's calibrated projection (api.projections.week_projections); when given,
+    it replaces the form-based week_now for everyone it projects."""
     players = build_player_strengths(client, state, season)
     apply_matchups(players, games or {}, dvp or {}, situational)
+    if week_points:
+        use_projections(players, week_points(players))
     return compute_power(players, state.get("teams", []), roster_positions, actual_ppg, byes=byes, week=week)
+
+
+SD_A, SD_B = 2.0, 0.4   # a player's spread from his projection: 2 x sqrt(points) + 0.4 (scoring/live_projection_study.py)
+
+
+def use_projections(players: list[PlayerStrength], points: Mapping[str, float]) -> None:
+    """This week's number from the projection (Sleeper's line in league scoring, matchup-tilted and calibrated) instead of
+    recent form. Graded on every league game 2024-26 (scoring/win_odds_study.py): win odds from projections were right
+    about the favorite 62% of the time (Brier 0.233) vs 55% from form (0.258, worse than a coin flip)."""
+    for p in players:
+        pts = points.get(p.sleeper_id)
+        if pts is None:
+            continue
+        p.week_now = round(float(pts), 2)
+        p.week_sd = round(SD_A * max(float(pts), 0.0) ** 0.5 + SD_B, 2)
 
 
 def apply_matchups(players: list[PlayerStrength], games: Mapping[str, Mapping[str, Any]], dvp: Mapping[tuple[str, str], Mapping[str, Any]], situational: Any = None) -> None:

@@ -42,3 +42,14 @@ def test_projected_kicker_long_field_goals_count_in_split_buckets():
     assert player_points({"fgm": 2.0, "fga": 2.4, "fgm_40_49": 1.5, "xpm": 2}, rules, "K") == round(6 + 2.5 - 0.4 + 2, 2)
     # a real line with its own buckets is scored as given
     assert player_points({"fgm": 2, "fgm_40_49": 1, "fgm_50_59": 1, "fgmiss": 1}, rules, "K") == 8.0
+
+
+def test_front_office_week_number_comes_from_the_projection_when_there_is_one():
+    from league_ai.front_office import use_projections
+    from league_ai.power import PlayerStrength
+
+    a = PlayerStrength("1", "A", "RB", "t", "o", now=14.0, dynasty=0, available=True, week_now=15.0, spread=6.0)
+    b = PlayerStrength("2", "B", "WR", "t", "o", now=9.0, dynasty=0, available=True, week_now=9.5)
+    use_projections([a, b], {"1": 16.0})
+    assert a.week_now == 16.0 and a.week_sd == round(2 * 4 + 0.4, 2)
+    assert b.week_now == 9.5 and b.week_sd is None   # no projection: keeps the form number

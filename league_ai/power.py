@@ -59,6 +59,7 @@ class PlayerStrength:
     week_now: float | None = None  # now adjusted for this week's matchup; None = no matchup data
     matchup: str | None = None
     spread: float | None = None  # week-to-week standard deviation of fantasy points; None = too few games
+    week_sd: float | None = None  # this week's spread from the projection (set with week_now when a projection exists)
 
     def score(self, key: str) -> float:
         value = getattr(self, key)
