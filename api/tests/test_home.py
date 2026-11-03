@@ -208,3 +208,13 @@ def test_top5_line_projected_then_final():
     assert home.top5_line(live) == {"line": 115.0, "final": False}
     assert home.top5_line(live, final=True) == {"line": 95.0, "final": True}
     assert home.top5_line({1: live[1]}) is None
+
+
+def test_home_week_holds_monday_night_until_midnight():
+    gamedays = {9: "2026-11-02", 10: "2026-11-09"}
+    assert home.schedule_week(gamedays, date(2026, 11, 2)) == 9    # Monday night, games over
+    assert home.schedule_week(gamedays, date(2026, 11, 3)) == 10   # Tuesday (Pacific) -> recap of 9
+    assert home.phase(date(2026, 11, 2), "in_season", 9, 15) == "game_day"
+    assert home.phase(date(2026, 11, 3), "in_season", 10, 15) == "recap"
+    assert home.schedule_week(gamedays, date(2026, 11, 10)) is None
+    assert home.schedule_week({}, date(2026, 11, 2)) is None
