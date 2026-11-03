@@ -42,6 +42,7 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           APNS_KEY_P8: ${{ secrets.APNS_KEY_P8 }}
-          APNS_KEY_ID: ${{ secrets.APNS_KEY_ID }}
+          # The key id is not secret (only the .p8 is); the fallback is the 2026-11-02 "Legacy Live Scores" key.
+          APNS_KEY_ID: ${{ secrets.APNS_KEY_ID || 'M4JQR79FN5' }}
           MAX_MINUTES: ${{ inputs.minutes || '350' }}
         run: python scripts/live_activity_watcher.py
