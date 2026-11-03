@@ -33,6 +33,7 @@ LEAN_CAP = 1.25
 TARGETS_PER_CLASS = 8
 OPTION_KEEP_MARGIN = 0.0  # option surplus above this -> the owner keeps him
 POS = ("QB", "RB", "WR", "TE")
+UNKNOWN_ROUND = 2         # rookie deals with no draft-board row (older classes) get this round's option price
 
 
 def _salary(p: Any) -> float:
@@ -100,9 +101,11 @@ def pay_up_leans(players: Iterable[Any], fair: Mapping[str, float]) -> dict[str,
 
 def _option_kept(p: Any, worth: "Worth", rules: Rules) -> float | None:
     """The option salary if this rookie deal's option is worth picking up when it ends (else None)."""
-    rnd = int(getattr(p, "rookie_round", 0) or 0)
-    if getattr(p, "contract_type", None) != "rookie" or rnd not in ROOKIE_OPTION or rules.option_years <= 0:
+    if getattr(p, "contract_type", None) != "rookie" or rules.option_years <= 0:
         return None
+    rnd = int(getattr(p, "rookie_round", 0) or 0)
+    if rnd not in ROOKIE_OPTION:
+        rnd = UNKNOWN_ROUND   # drafted before the app's draft board: price the option at the middle round's
     end = _years(p)   # the option seasons are seasons end .. end + option_years - 1 from now
     surplus = sum(worth(p, end + y) - ROOKIE_OPTION[rnd] for y in range(rules.option_years))
     return ROOKIE_OPTION[rnd] if surplus > OPTION_KEEP_MARGIN else None
@@ -187,6 +190,11 @@ def plan(*, players: list[Any], teams: Mapping[str, Mapping[str, Any]], slots: l
             "core": [f"{p.name} {p.position}, age {round(p.age + k) if p.age else '?'}, ${kept.get(p.sleeper_id, _salary(p)):g}, "
                      f"worth ~${worth.get(p.sleeper_id, 0.0):.0f}, signed through {_through(p)}" for p in core],
             "salary_coming_off_after": round(light.get(year, 0.0), 2),
+            "rookie_options_due": [
+                f"{p.name}: {'pick up' if p.sleeper_id in kept else 'let walk'} the "
+                f"${ROOKIE_OPTION.get(int(getattr(p, 'rookie_round', 0) or 0), ROOKIE_OPTION[UNKNOWN_ROUND]):g} option "
+                f"(worth ~${W(p, k):.0f} in {year}{'' if getattr(p, 'rookie_round', None) else '; draft round unknown, priced as a 2nd'})"
+                for p in by_team.get(asker, []) if getattr(p, "contract_type", None) == "rookie" and _years(p) == k] or None,
         })
 
         # the class: contracts ending after season + k - 1, minus kept rookie options, plus likely cuts before this auction
