@@ -25,6 +25,13 @@ export default function FrontOfficeScreen() {
   const [partial, setPartial] = useState('');
   const [problem, setProblem] = useState<string | null>(null);
   const [typing, setTyping] = useState(false);
+  // A question sent while the GM is still answering waits here and goes out
+  // the moment that answer lands, so the box never locks.
+  const [queued, setQueued] = useState<string | null>(null);
+  const queuedRef = useRef<string | null>(null);
+  const busy = useRef(false);
+  const convoRef = useRef<string | null>(null);
+  convoRef.current = conversationId;
   const scroll = useRef<ScrollViewInstance>(null);
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
@@ -44,6 +51,9 @@ export default function FrontOfficeScreen() {
     setDraft('');
     setTyping(false);
     setThinking(false);
+    busy.current = false;
+    queuedRef.current = null;
+    setQueued(null);
     setPartial('');
     setProblem(null);
     scroll.current?.scrollTo({ y: 0, animated: false });
@@ -63,9 +73,17 @@ export default function FrontOfficeScreen() {
       .catch((e) => setProblem(e?.message ?? 'Couldn’t open that chat.'));
   }, [c]);
 
-  const send = async (input: string, convo: string | null = conversationId) => {
+  const send = async (input: string, convo: string | null = convoRef.current) => {
     const question = input.trim();
-    if (!question || thinking) return;
+    if (!question) return;
+    if (busy.current) {
+      // Still answering: hold this one (a newer one replaces it) and clear the box.
+      queuedRef.current = question;
+      setQueued(question);
+      setDraft('');
+      return;
+    }
+    busy.current = true;
     setDraft('');
     setProblem(null);
     setMessages((m) => [...m, { role: 'user', content: question }]);
@@ -91,15 +109,23 @@ export default function FrontOfficeScreen() {
         } else if (event.e === 'done') {
           if (event.ok) setMessages((m) => [...m, { role: 'assistant', content: event.text }]);
           else setProblem(event.text);
-          if (event.conversation_id) setConversationId(event.conversation_id);
+          if (event.conversation_id) {
+            convoRef.current = event.conversation_id;
+            setConversationId(event.conversation_id);
+          }
         }
       });
     } catch (e: any) {
       if (chat.current === mine) setProblem(e?.message ?? 'Something went wrong.');
     } finally {
       if (chat.current === mine) {
+        busy.current = false;
         setThinking(false);
         setPartial('');
+        const next = queuedRef.current;
+        queuedRef.current = null;
+        setQueued(null);
+        if (next) send(next, convoRef.current);
       }
     }
   };
@@ -112,6 +138,7 @@ export default function FrontOfficeScreen() {
     asked.current = `${at}:${q}`;
     setMessages([]);
     setConversationId(null);
+    convoRef.current = null;
     send(q, null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q, at]);
@@ -188,6 +215,15 @@ export default function FrontOfficeScreen() {
             <Text style={styles.thinkingText}>{status}…</Text>
           </View>
         ) : null}
+        {queued ? (
+          <Pressable
+            onPress={() => { queuedRef.current = null; setQueued(null); setDraft(queued); }}
+            style={[styles.mine, styles.queued]}
+          >
+            <Text style={styles.mineText}>{queued}</Text>
+            <Text style={styles.queuedNote}>Sends when the GM finishes · tap to edit</Text>
+          </Pressable>
+        ) : null}
         {problem ? <Text style={styles.problem}>{problem}</Text> : null}
       </ScrollView>
 
@@ -209,14 +245,14 @@ export default function FrontOfficeScreen() {
           onBlur={() => setTyping(focusedChat.current === chat.current && !!draft.trim())}
           placeholder={data.ai_ready ? 'Ask your assistant GM…' : 'The Assistant GM is off for now'}
           placeholderTextColor={colors.muted}
-          editable={data.ai_ready && !thinking}
+          editable={data.ai_ready}
           style={styles.input}
           multiline
           onSubmitEditing={() => send(draft)}
           blurOnSubmit
           returnKeyType="send"
         />
-        <Pressable onPress={() => send(draft)} disabled={!draft.trim() || thinking} style={[styles.sendButton, (!draft.trim() || thinking) && styles.sendOff]}>
+        <Pressable onPress={() => send(draft)} disabled={!draft.trim() || !data.ai_ready} style={[styles.sendButton, (!draft.trim() || !data.ai_ready) && styles.sendOff]}>
           <Text style={styles.sendText}>↑</Text>
         </Pressable>
       </View>
@@ -341,6 +377,8 @@ const styles = StyleSheet.create({
   gm: { color: colors.gold, fontWeight: '800', fontSize: 12, marginBottom: 4 },
   thinking: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   thinkingText: { color: colors.muted, fontSize: 14 },
+  queued: { opacity: 0.6 },
+  queuedNote: { color: colors.bg, fontSize: 11, marginTop: 4, opacity: 0.8 },
   problem: { color: '#E39A9A', fontSize: 13, textAlign: 'center', marginTop: 4 },
   sleeper: { marginTop: 10, backgroundColor: colors.gold, borderRadius: 12, paddingVertical: 10, alignItems: 'center' },
   sleeperText: { color: colors.bg, fontWeight: '800', fontSize: 14 },
