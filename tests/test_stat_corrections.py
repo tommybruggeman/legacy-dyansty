@@ -73,3 +73,21 @@ def test_record_corrections_saves_and_pushes(monkeypatch):
     assert any(c["team_id"] == "t2" and "loss" in c["results"] for c in saved["changes"])
     assert pushed and pushed[0]["data"]["url"] == "/activity?correction=c1" and "Week 9" in pushed[0]["body"]
     assert "pushed to 1 phones" in out[-1]
+
+
+def test_new_lines_are_not_corrections():
+    old = {"a": line(rec=1)}
+    new = {"a": line(rec=1), "DEN": {"stats": {"sack": 3}, "pos": "DEF"}}
+    assert corrections.changed_players(old, new) == set()
+    assert corrections.team_changes({1: ["a", "DEN"]}, old, new, {"sack": 1.0, "rec": 1.0}) == []
+
+
+def test_def_lines_from_team_stats():
+    from scoring import nflverse_lines
+    rows = [{"season_type": "REG", "week": "5", "team": "LA", "opponent_team": "SF", "def_sacks": "3", "def_interceptions": "1",
+             "def_tds": "1", "fumble_recovery_tds": "0", "passing_yards": "250", "sack_yards_lost": "10", "rushing_yards": "80"},
+            {"season_type": "REG", "week": "5", "team": "SF", "opponent_team": "LA", "def_sacks": "1", "passing_yards": "300",
+             "sack_yards_lost": "21", "rushing_yards": "100"}]
+    lines = nflverse_lines.def_lines(rows, 5, {"LAR": 17, "SF": 24})
+    assert lines["LAR"]["stats"] == {"sack": 3.0, "int": 1.0, "def_td": 1.0, "yds_allow": 379.0, "pts_allow": 17.0, "gp": 1}
+    assert lines["SF"]["stats"]["yds_allow"] == 320.0 and lines["SF"]["pos"] == "DEF"

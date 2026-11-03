@@ -14,9 +14,10 @@ EPS = 0.005
 
 
 def changed_players(old: Mapping[str, Mapping[str, Any]], new: Mapping[str, Mapping[str, Any]]) -> set[str]:
-    """Player ids whose stat line differs between the two saves (added or removed lines count)."""
+    """Player ids whose stat line differs between the two saves. A line only in the new save isn't a correction (it's
+    a line we didn't keep before, like team defenses before they were added); a line that disappeared is."""
     out = set()
-    for pid in set(old) | set(new):
+    for pid in old:
         a, b = (old.get(pid) or {}).get("stats") or {}, (new.get(pid) or {}).get("stats") or {}
         keys = set(a) | set(b)
         if any(abs(float(a.get(k) or 0) - float(b.get(k) or 0)) > 1e-9 for k in keys):

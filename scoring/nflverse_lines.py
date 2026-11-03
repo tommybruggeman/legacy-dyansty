@@ -12,6 +12,9 @@ import io
 from typing import Any, Callable, Iterable, Mapping
 
 STATS_URL = "https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_{season}.csv"
+TEAM_URL = "https://github.com/nflverse/nflverse-data/releases/download/stats_team/stats_team_week_{season}.csv"
+# nflverse team code -> ours (Sleeper's team defense ids)
+TEAM_IDS = {"LA": "LAR"}
 POSITIONS = {"QB", "RB", "WR", "TE", "K"}
 
 # nflverse column -> our stat key (straight copies)
@@ -118,3 +121,45 @@ class GsisMap:
                 self.by_gsis[gsis] = str(sid)
                 return str(sid)
         return None
+
+
+# Team defense: nflverse team column -> our stat key
+DEF_COLUMNS = {
+    "def_sacks": "sack", "def_interceptions": "int", "fumble_recovery_opp": "fum_rec", "def_safeties": "safe",
+    "def_fumbles_forced": "ff", "special_teams_tds": "def_st_td",
+}
+DEF_SUMS = {"def_td": ("def_tds", "fumble_recovery_tds"), "blk_kick": ("def_punt_blocks", "def_fg_blocks", "def_pat_blocks")}
+
+
+def team_code(code: str) -> str:
+    return TEAM_IDS.get(code, code)
+
+
+def def_lines(team_rows: Iterable[Mapping[str, Any]], week: int, points_allowed: Mapping[str, float],
+              season_type: str = "REG") -> dict[str, dict[str, Any]]:
+    """Team defense lines for one week, keyed by our team id: the defense's own stats from nflverse's team stats,
+    points allowed from the final scores (points_allowed: our team id -> the opponent's score), and yards allowed
+    from the opponent's offense (passing yards net of sacks plus rushing yards)."""
+    rows = [r for r in team_rows if str(r.get("season_type") or "REG") == season_type and int(_num(r.get("week"))) == week]
+    by_team = {team_code(str(r.get("team") or "")): r for r in rows}
+    out: dict[str, dict[str, Any]] = {}
+    for team, row in by_team.items():
+        if not team:
+            continue
+        stats: dict[str, float] = {}
+        for col, key in DEF_COLUMNS.items():
+            v = _num(row.get(col))
+            if v:
+                stats[key] = v
+        for key, cols in DEF_SUMS.items():
+            v = sum(_num(row.get(c)) for c in cols)
+            if v:
+                stats[key] = v
+        opp = by_team.get(team_code(str(row.get("opponent_team") or "")))
+        if opp is not None:
+            stats["yds_allow"] = _num(opp.get("passing_yards")) - _num(opp.get("sack_yards_lost")) + _num(opp.get("rushing_yards"))
+        if team in points_allowed:
+            stats["pts_allow"] = float(points_allowed[team])
+        stats["gp"] = 1
+        out[team] = {"stats": stats, "pos": "DEF"}
+    return out

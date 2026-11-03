@@ -91,6 +91,15 @@ def cross_check(client: Any, season: int, week: int, lines: dict[str, Any]) -> l
             gaps = key_gaps(lines, stat_lines(season, week, _get_json), scoring, ids)
             out.append(f"  league {n}: {same}/{total} player scores match Sleeper ({same / total:.1%}); stats that differ from "
                        f"Sleeper's lines: " + (", ".join(f"{k} ({c})" for k, c in gaps.most_common(8)) or "none"))
+            theirs = stat_lines(season, week, _get_json)
+            defs = [pid for pid, line in theirs.items() if line.get("pos") == "DEF"]
+            if defs and any(k.startswith(("pts_allow", "yds_allow", "sack", "int", "def_", "fum_rec", "safe", "blk_kick", "ff"))
+                            for k, v in scoring.items() if v):
+                d_same = sum(abs(player_points((lines.get(p) or {}).get("stats"), scoring, "DEF")
+                                 - player_points(theirs[p]["stats"], scoring, "DEF")) <= TOLERANCE for p in defs)
+                d_gaps = key_gaps(lines, theirs, scoring, set(defs))
+                out.append(f"  league {n}: team defenses {d_same}/{len(defs)} match Sleeper; stats that differ: "
+                           + (", ".join(f"{k} ({c})" for k, c in d_gaps.most_common(8)) or "none"))
     return out
 
 
@@ -206,6 +215,11 @@ def main() -> int:
         print(f"nflverse unavailable ({type(exc).__name__}); ESPN finals only", flush=True)
         rows = []
     published = nflverse_lines.weeks_in(rows)
+    try:  # team defense lines (sacks, takeaways, TDs, yards allowed) come from nflverse's team stats
+        team_rows = nflverse_lines.read_rows(fetch_text(nflverse_lines.TEAM_URL.format(season=season)))
+    except Exception as exc:
+        print(f"nflverse team stats unavailable ({type(exc).__name__}); no team defense lines", flush=True)
+        team_rows = []
     players = _get_json(f"{SLEEPER}/players/nfl") or {}
     try:
         crosswalk = Crosswalk.from_csv(fetch_text(CROSSWALK_URL))
@@ -215,26 +229,29 @@ def main() -> int:
     espn_ids = espn_feed.IdMap(players, crosswalk)
 
     try:
-        saved = {int(r["week"]): r for r in client.table(TABLE).select("week,locked,source").eq("season", season).execute().data or []}
+        saved = {int(r["week"]): {**r, "has_def": r.get("DEN") is not None} for r in
+                 client.table(TABLE).select("week,locked,source,lines->DEN").eq("season", season).execute().data or []}
     except Exception:  # table not created yet (dry runs before the SQL)
         saved = {}
     print(f"season {season}: current week {current}; nflverse has weeks {sorted(published) or 'none'}", flush=True)
     for week in range(1, min(current, 18) + 1):
-        if (saved.get(week) or {}).get("locked"):
-            continue
+        if (saved.get(week) or {}).get("locked") and (saved.get(week) or {}).get("has_def"):
+            continue  # locked weeks saved before team defense lines existed are filled in once
         week_board = _get_json(f"{espn_feed.ESPN}/scoreboard?seasontype=2&week={week}&dates={season}") or {}
         done, last_kick = week_status(week_board)
         if not done:
             continue
-        if week in published:
+        if week in published and (not team_rows or week in nflverse_lines.weeks_in(team_rows)):
             lines, unmatched = nflverse_lines.week_lines(rows, week, gsis)
+            lines.update(nflverse_lines.def_lines(team_rows, week, espn_feed.points_allowed(week_board)))
             source = "nflverse"
         else:
             summaries = [_get_json(f"{espn_feed.ESPN}/summary?event={g['id']}") for g in espn_feed.games(week_board)]
             raw, unmatched = espn_feed.week_lines([s for s in summaries if s], espn_ids)
             lines = {pid: line for pid, line in raw.items() if line.get("pos") in nflverse_lines.POSITIONS}
             source = "espn"
-        locked = bool(last_kick and now - last_kick >= LOCK_AFTER + timedelta(hours=4) and source == "nflverse")
+        has_def = any(line.get("pos") == "DEF" for line in lines.values())
+        locked = bool(last_kick and now - last_kick >= LOCK_AFTER + timedelta(hours=4) and source == "nflverse" and has_def)
         print(f"week {week}: {len(lines)} players from {source}, {unmatched} unmatched" + (", locked" if locked else ""), flush=True)
         prev = saved.get(week) or {}
         if prev.get("source") == "nflverse" and source == "nflverse":  # an NFL stat correction, not the first save
