@@ -1,0 +1,43 @@
+name: Live stats watcher (backup)
+
+# Backup for the game-day live stats watcher (scripts/live_watcher.py). The main watcher runs all season on a free
+# Google e2-micro (deploy/live-watcher/); this one starts with each NFL game window, stands by while the main one is
+# saving, and takes over if it stops. Free on this public repo. Times are UTC, early enough for both daylight and
+# standard time.
+on:
+  schedule:
+    - cron: "12 16 * * 0"   # Sunday early + late afternoon games (runs ~6h)
+    - cron: "12 22 * * 0"   # Sunday night (queues behind the first run)
+    - cron: "32 23 * * 1"   # Monday night
+    - cron: "32 23 * * 4"   # Thursday night
+    - cron: "12 16 * * 6"   # Saturday (late-season Saturday games; naps otherwise)
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: How long to watch (max 350)
+        default: "350"
+      role:
+        description: backup (stand by while the main watcher saves) or main (always save)
+        default: backup
+
+concurrency:
+  group: live-stats-watcher
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 358
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install supabase requests pandas
+      - name: Watch
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          ROLE: ${{ inputs.role || 'backup' }}
+          MAX_MINUTES: ${{ inputs.minutes || '350' }}
+        run: python scripts/live_watcher.py

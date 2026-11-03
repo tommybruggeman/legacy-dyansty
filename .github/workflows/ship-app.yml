@@ -71,9 +71,9 @@ jobs:
           cp api/Dockerfile Dockerfile
           gcloud builds submit --project "$PROJECT" --tag "$IMG" --suppress-logs
       - name: Deploy
-        # No min-instances: the server must stay on the free tier.
+        # No min-instances, at most 3 copies: the server must stay on the free tier.
         run: |
-          gcloud run deploy legacy-api --project "$PROJECT" --region "$REGION" --image "$IMG" --cpu-boost --quiet
+          gcloud run deploy legacy-api --project "$PROJECT" --region "$REGION" --image "$IMG" --cpu-boost --max-instances 3 --quiet
           URL=$(gcloud run services describe legacy-api --project "$PROJECT" --region "$REGION" --format 'value(status.url)')
           curl -fsS "$URL/health"
 
