@@ -23,6 +23,7 @@ TOOLS: tuple[tuple[str, str, str, str], ...] = (
     ("contracts", "✍️", "Contracts", "Look up any player's current deal"),
     ("add_drop", "➕", "Add / Drop", "Manual add, or release with dead cap"),
     ("trades", "🔁", "Trades", "Record or fix a trade"),
+    ("scores", "⚖️", "Scores", "Fix a score, set a lineup, finalize a week"),
     ("sync", "🔄", "Sleeper sync", "Pause, resume and check the 15-minute sync"),
     ("rollover", "📅", "Season rollover", "Move the league to next season"),
     ("ai", "🧠", "League AI", "Scoring sync, house rules and weekly report"),
