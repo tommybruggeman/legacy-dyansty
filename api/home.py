@@ -311,7 +311,7 @@ def bottom_mode(now: datetime, starts: dict[str, datetime]) -> dict[str, Any]:
     day = local.weekday()
     if day in (3, 4, 5):
         return {"mode": "risers"}
-    if day == 0:
+    if day == 0 or (day == 1 and now.astimezone(HOME_TZ).weekday() == 0):  # Monday holds until midnight Pacific
         return {"mode": "shotgun", "window": SHOTGUN_WINDOWS["monday"]}
     if day != 6:
         return {"mode": "scoreboard"}
