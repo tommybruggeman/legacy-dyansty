@@ -42,9 +42,6 @@ LOSER_LAYOUTS: dict[int, list[tuple[int, int, Any, Any, int | None]]] = {
     8: LAYOUTS[8],
 }
 
-# (sleeper league id, week) -> the week's rows before commissioner fixes, from the latest sync (what finalizing saves).
-UNFIXED: dict[tuple[str, int], list[dict[str, Any]]] = {}
-
 # App matchup ids for loser-bracket games sit above the winners bracket's, so the two never share one.
 LOSER_MATCHUP_OFFSET = 100
 
@@ -110,12 +107,17 @@ def week_pairs(bracket: Iterable[Mapping[str, Any]], week: int, weeks: Mapping[i
 
 
 def team_row(roster: Mapping[str, Any], slots: list[str], saved: list[Mapping[str, Any]], sleeper_row: Mapping[str, Any] | None,
-             lines: Mapping[str, Mapping[str, Any]], scoring: Mapping[str, Any], matchup_id: int | None) -> dict[str, Any]:
-    """One team's Sleeper-shaped matchup row for an app week."""
+             lines: Mapping[str, Mapping[str, Any]], scoring: Mapping[str, Any], matchup_id: int | None,
+             past: bool = False) -> dict[str, Any]:
+    """One team's Sleeper-shaped matchup row for an app week. past=True for a finished week: its lineup stands as it
+    was played, even for a player dropped or moved to taxi/IR since, so later roster moves never change its score."""
     players = [str(p) for p in roster.get("players") or []]
     benched = {str(p) for p in (roster.get("taxi") or []) + (roster.get("reserve") or [])}
     eligible = {p for p in players if p not in benched}
     sleeper_starters = [str(p) for p in (sleeper_row or {}).get("starters") or []]
+    if past:
+        eligible |= {str(x.get("player_id")) for r in saved[:1] for x in r.get("slots") or [] if x.get("player_id")}
+        eligible |= {p for p in sleeper_starters if p not in ("", "0")}
     ids = lineups.effective(slots, list(saved), sleeper_starters, eligible)
     starters = [pid or "0" for pid in ids]
     starters_points = [engine.lineup_points([pid], lines, scoring) for pid in starters]
@@ -130,19 +132,11 @@ def team_row(roster: Mapping[str, Any], slots: list[str], saved: list[Mapping[st
 def build(*, season: int, own_from: int, current_week: int, league: Mapping[str, Any], rosters: list[Mapping[str, Any]],
           team_of_roster: Mapping[int, str], saved: list[Mapping[str, Any]], scoring: Mapping[str, Any], slots: list[str],
           sleeper_rows: Callable[[int], list[Mapping[str, Any]]], lines_for: Callable[[int], Mapping[str, Mapping[str, Any]]],
-          standings_for: Callable[[dict[int, list[dict[str, Any]]]], list[int]],
-          finals: Mapping[int, Any] | None = None, fixes: Iterable[Mapping[str, Any]] = ()) -> dict[str, Any]:
-    """Every app-owned week up to the current one: {"weeks": {week: rows}, "bracket": [...] or None, "unfixed": ...}.
+          standings_for: Callable[[dict[int, list[dict[str, Any]]]], list[int]]) -> dict[str, Any]:
+    """Every app-owned week up to the current one: {"weeks": {week: rows}, "bracket": [...] or None}.
 
     standings_for(own_rows_so_far) returns roster ids in standings order through the last regular week.
-    finals: week -> the rows saved when the commissioner finalized that week (served as they are). fixes:
-    commissioner score fixes, applied on top of every week (api/commissioner.py). "unfixed" holds each week's rows
-    before fixes: what finalizing a week saves, so a fix can still be removed later.
     """
-    from api import commissioner
-    finals = dict(finals or {})
-    fixes = list(fixes or [])
-    unfixed: dict[int, list[dict[str, Any]]] = {}
     settings = league.get("settings") or {}
     playoff_start = int(settings.get("playoff_week_start") or 15)
     playoff_teams = int(settings.get("playoff_teams") or 4)
@@ -184,25 +178,19 @@ def build(*, season: int, own_from: int, current_week: int, league: Mapping[str,
             pairs.update({rid: LOSER_MATCHUP_OFFSET + m for rid, m in week_pairs(losers_resolved(week), week, weeks_by_round).items()})
         else:
             pairs = {rid: r.get("matchup_id") for rid, r in raw.items()}
-        if finals.get(week):  # finalized and saved: the frozen rows
-            rows = [dict(r) for r in finals[week]]
-        else:
-            rows = []
-            for roster in rosters:
-                rid = int(roster["roster_id"])
-                team_saved = [r for r in saved_by_team.get(team_of_roster.get(rid, ""), []) if int(r.get("week") or 0) <= week]
-                rows.append(team_row(roster, slots, team_saved, raw.get(rid), lines, scoring, pairs.get(rid)))
-        unfixed[week] = [dict(r) for r in rows]
-        rows = commissioner.apply_fixes(rows, fixes, week, team_of_roster)
-        for row in rows:
-            points[(week, int(row["roster_id"]))] = row["points"]
+        rows = []
+        for roster in rosters:
+            rid = int(roster["roster_id"])
+            team_saved = [r for r in saved_by_team.get(team_of_roster.get(rid, ""), []) if int(r.get("week") or 0) <= week]
+            rows.append(team_row(roster, slots, team_saved, raw.get(rid), lines, scoring, pairs.get(rid), past=week < current_week))
+            points[(week, rid)] = rows[-1]["points"]
         out[week] = rows
     if seeds is None and current_week >= playoff_start and own_from <= playoff_start:
         seeds = seed_all(out)
     bracket = resolved(current_week) if seeds else None
     loser_bracket = losers_resolved(current_week) if seeds else None
     return {"weeks": out, "bracket": bracket, "losers_bracket": loser_bracket, "playoff_start": playoff_start,
-            "weeks_by_round": weeks_by_round, "unfixed": unfixed}
+            "weeks_by_round": weeks_by_round}
 
 
 def app_rosters(client: Any, league_id: str, season: int, roster_of_team: Mapping[str, int]) -> list[dict[str, Any]]:
@@ -271,8 +259,6 @@ def sync(client: Any, league_id: str, sleeper_id: str, season: int) -> None:
                 sleeper.put(f"league/{sleeper_id}/matchups/{week}", rows)
             return [int(r["roster_id"]) for r in league.standings(sleeper_id, {}, None)["rows"]]
 
-        from api import commissioner
-        commish = commissioner.load(client, league_id, season)
         result = build(
             season=season, own_from=own_from, current_week=current, league=info,
             rosters=app_rosters(client, league_id, season, roster_of_team),
@@ -281,10 +267,7 @@ def sync(client: Any, league_id: str, sleeper_id: str, season: int) -> None:
             sleeper_rows=lambda w: sleeper.raw(f"league/{sleeper_id}/matchups/{w}", ttl=league.LIVE_TTL if w == current else 3600) or [],
             lines_for=lambda w: week_lines(client, season, w, current),
             standings_for=standings_for,
-            finals=commish["finals"], fixes=commish["fixes"],
         )
-        for week, rows in result["unfixed"].items():
-            UNFIXED[(sleeper_id, week)] = rows
         for week, rows in result["weeks"].items():
             sleeper.put(f"league/{sleeper_id}/matchups/{week}", rows)
         if result["bracket"] is not None:
