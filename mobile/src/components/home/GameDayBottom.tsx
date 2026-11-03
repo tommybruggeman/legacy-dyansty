@@ -6,7 +6,7 @@ import { type HomeBottom, type Riser, type ShotgunRow } from '../../lib/api';
 import { colors } from '../../lib/theme';
 import { Avatar } from '../Pictures';
 import { PlayerFace } from '../PlayerFace';
-import { Card, Pill, firstName, ui } from '../ui';
+import { Card, firstName, ui } from '../ui';
 
 // The bottom of game-day Home, picked by the server from the clock:
 // GM's Risers Thu-Sat, the week's scoreboard on Sunday, then Shotgun watch
@@ -137,7 +137,6 @@ function Shotgun({ data }: { data: Shot }) {
   if (locked) {
     return (
       <Card style={styles.shotCard}>
-        <ShotTitle title="SHOTGUN WATCH · LOCKED" right={<Pill label="FINAL" tone="out" />} />
         <View style={styles.lock}>
           <Avatar uri={last.avatar} name={last.name} size={64} me={last.is_me} />
           <Text style={styles.lockName}>{last.is_me ? "You're shotgunning" : `${firstName(last.name)} is shotgunning`}</Text>
