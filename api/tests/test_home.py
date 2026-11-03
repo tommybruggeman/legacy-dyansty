@@ -218,3 +218,10 @@ def test_home_week_holds_monday_night_until_midnight():
     assert home.phase(date(2026, 11, 3), "in_season", 10, 15) == "recap"
     assert home.schedule_week(gamedays, date(2026, 11, 10)) is None
     assert home.schedule_week({}, date(2026, 11, 2)) is None
+
+
+def test_shotgun_holds_until_midnight_pacific():
+    late_monday = datetime(2026, 11, 3, 5, 45, tzinfo=timezone.utc)   # 12:45 AM Tue ET, 9:45 PM Mon PT
+    assert home.bottom_mode(late_monday, {})["mode"] == "shotgun"
+    tuesday = datetime(2026, 11, 3, 8, 30, tzinfo=timezone.utc)       # 12:30 AM Tue PT
+    assert home.bottom_mode(tuesday, {})["mode"] == "scoreboard"
