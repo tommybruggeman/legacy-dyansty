@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from supabase import Client, create_client
 
 from api import box_score as box_score_mod
-from api import activity, cache, front_office, home, league, lineups, live_activity, market, nfl_live, own_league, player, projections, teams, trade_feed, trade_offers, waivers
+from api import activity, cache, front_office, home, league, lineups, live_activity, market, nfl_live, own_league, player, playoffs, projections, teams, trade_feed, trade_offers, waivers
 from league_ai import risers as risers_log
 from season_engine import SeasonResolver
 from services.season_rollover_owner_ui import OwnerRolloverDecisionError, OwnerRolloverDecisionService
@@ -228,8 +228,27 @@ def matchups(
     owner: tuple[Client, Any] = Depends(owner_client),
 ) -> dict[str, Any]:
     sleeper_id, names, my_roster_id = _league_context(*owner)
-    result = league.matchups(sleeper_id, names, week or league.current_week(), my_roster_id)
-    result["current_week"] = league.current_week()
+    league_id = resolve_team(*owner)["league_id"]
+    try:
+        rules = cache.cached(("playoff_rules", league_id), 300, lambda: league.playoff_rules(owner[0], league_id))
+    except Exception:
+        rules = playoffs.rules_of({})
+    last_week = playoffs.last_week(rules)
+    shown = min(week or league.current_week(), last_week)
+    result = league.matchups(sleeper_id, names, shown, my_roster_id)
+    result["current_week"] = min(league.current_week(), last_week)
+    result["last_week"] = last_week
+    try:  # playoff weeks: our bracket, never Sleeper's made-up regular-season pairings
+        pics = home.avatars(league.sleeper.get(f"league/{sleeper_id}/users") or [], league.sleeper.get(f"league/{sleeper_id}/rosters") or [])
+        view = league.playoff_view(sleeper_id, names, shown, my_roster_id, rules, pics)
+    except Exception as exc:
+        print(f"APP_PLAYOFFS_ERROR {type(exc).__name__}", flush=True)
+        view = None
+    if view is not None:
+        result["playoffs"] = view
+        result["games"] = playoffs.legacy_games(view)
+        result["summary"] = None
+        return result
     try:
         _add_card_owners(sleeper_id, names, my_roster_id, result)
     except Exception as exc:

@@ -5,7 +5,7 @@ from typing import Any
 
 import pandas as pd
 
-from api import sleeper
+from api import playoffs, sleeper
 from season_engine import SeasonResolver
 from services.app_context import _aggregate_standings, _standings_rank, as_number, STANDINGS_SORT
 from services.matchups_view import build_games, week_summary
@@ -165,6 +165,26 @@ def matchups(sleeper_id: str, names: dict[int, str], week: int, my_roster_id: in
         "games": games,
         "summary": summary,
     }
+
+
+def playoff_rules(client: Any, league_id: str) -> dict[str, Any]:
+    """Our playoff format from Settings (league_ai_settings), never Sleeper's."""
+    from league_ai.settings_store import load_settings
+    return playoffs.rules_of(load_settings(client, league_id))
+
+
+def playoff_view(sleeper_id: str, names: dict[int, str], week: int, my_roster_id: int | None, rules: dict[str, Any],
+                 avatars: dict[int, Any] | None = None) -> dict[str, Any] | None:
+    """The bracket view for a playoff week (None for regular-season weeks). Shared by the app and the website.
+    Sleeper is only the score feed here (matchup rows for points); seeds and brackets are ours."""
+    if week < int(rules["playoff_week_start"]):
+        return None
+    scored, current = last_scored_week(sleeper_id), current_week()
+    return playoffs.build(
+        week=week, rules=rules, standings=standings(sleeper_id, names, my_roster_id)["rows"], names=names,
+        rows_for=lambda w: sleeper.get(f"league/{sleeper_id}/matchups/{w}", ttl=86400 if w <= scored else LIVE_TTL) or [],
+        last_scored=scored, current_week=current, my_roster_id=my_roster_id, avatars=avatars,
+    )
 
 
 def sleeper_owners(sleeper_id: str) -> dict[str, int]:

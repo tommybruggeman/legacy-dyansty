@@ -40,6 +40,11 @@ class LeagueAISettings:
     top_scorer_bonus_points: int = 1
     top_scorer_bonus_count: int = 5
     playoff_teams: int = 6
+    # Playoff format, ours (not Sleeper's): first playoff week, weeks per round (scores add up), and whether the
+    # teams that miss the playoffs play a loser bracket.
+    playoff_week_start: int = 15
+    playoff_round_weeks: int = 2
+    loser_bracket: bool = True
     standings_tiebreaker: str = "season points for"
     trade_deadline: str = ""
     house_rules: str = ""
@@ -87,10 +92,19 @@ def load_settings(client: Any, league_id: str) -> LeagueAISettings:
     return LeagueAISettings.from_row(rows[0] if rows else None, str(league_id))
 
 
+# Added after the table was made (sql/playoff-settings.sql); saving still works before that SQL has run.
+NEWER_COLUMNS = ("playoff_week_start", "playoff_round_weeks", "loser_bracket")
+
+
 def save_settings(client: Any, settings: LeagueAISettings) -> None:
     row = settings.to_row()
     row["updated_at"] = datetime.now(timezone.utc).isoformat()
-    client.table(TABLE).upsert(row, on_conflict="league_id").execute()
+    try:
+        client.table(TABLE).upsert(row, on_conflict="league_id").execute()
+    except Exception as exc:
+        if not any(col in str(exc) for col in NEWER_COLUMNS):
+            raise
+        client.table(TABLE).upsert({k: v for k, v in row.items() if k not in NEWER_COLUMNS}, on_conflict="league_id").execute()
 
 
 def fetch_sleeper_scoring(sleeper_league_id: str, *, get_json=None) -> dict[str, Any]:
@@ -121,6 +135,9 @@ def apply_sleeper_scoring(settings: LeagueAISettings, sleeper_payload: dict[str,
     league_settings = sleeper_payload.get("league_settings") or {}
     if league_settings.get("playoff_teams"):
         settings.playoff_teams = int(league_settings["playoff_teams"])
+    if league_settings.get("playoff_week_start"):  # a one-time copy; the app's own value is what everything reads
+        settings.playoff_week_start = int(league_settings["playoff_week_start"])
+        settings.playoff_round_weeks = 2 if int(league_settings.get("playoff_round_type") or 0) == 2 else 1
     if league_settings.get("trade_deadline") not in (None, "", 99):
         settings.trade_deadline = f"week {league_settings['trade_deadline']}"
     return settings

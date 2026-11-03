@@ -202,6 +202,24 @@ export type Matchups = {
   my_roster_id: number | null;
   games: Game[];
   summary: { high: MatchupTeam; cut: MatchupTeam; closest: Game; closest_margin: number } | null;
+  last_week?: number;
+  playoffs?: PlayoffWeek;
+};
+
+// Playoff weeks on League > Matchups: our bracket (seeded by our standings), never Sleeper's made-up pairings.
+export type PlayoffTeam = {
+  roster_id: number; name: string; seed: number | null; record: string | null; avatar?: string | null;
+  is_me: boolean; score: number; legs: (number | null)[];
+};
+export type PlayoffSlot = PlayoffTeam | { placeholder: string | null };
+export type PlayoffGame = {
+  bracket: 'winners' | 'losers'; round: number; m: number; label: string; place: number | null; weeks: number[];
+  state: 'pre' | 'live' | 'final'; teams: [PlayoffSlot, PlayoffSlot]; winner: number | null; matchup_id: number | null; mine: boolean;
+};
+export type PlayoffWeek = {
+  week: number; round: number; rounds: number; leg: number; legs: number; round_name: string; projected: boolean;
+  start: number; last_week: number; tree: PlayoffGame[]; games: PlayoffGame[]; losers: PlayoffGame[];
+  byes: PlayoffTeam[]; champion: PlayoffTeam | null;
 };
 
 export type CapYear = { season: number; used: number; space: number; dead_cap: number };

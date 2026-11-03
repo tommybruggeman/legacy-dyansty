@@ -24,7 +24,7 @@ from services.app_context import (
     last_scored_week,
     resolve_my_team,
 )
-from services.matchups_view import box_score_html, build_games, matchup_cards_html
+from services.matchups_view import box_score_html, build_games, matchup_cards_html, playoff_html
 
 
 ICON = Path(__file__).resolve().parents[1] / "assets" / "page_icon.png"
@@ -1515,8 +1515,17 @@ with title_col:
 
 with week_col:
 
+    # The picker stops at the last playoff week (no made-up games after the title game).
+    from api import league as api_league
+    from api import playoffs as api_playoffs
+    try:
+        _playoff_rules = api_league.playoff_rules(sb, str(league_id))
+    except Exception:
+        _playoff_rules = api_playoffs.rules_of({})
+    _last_week = api_playoffs.last_week(_playoff_rules)
+
     week_options = list(
-        range(1, 26)
+        range(1, _last_week + 1)
     )
 
 
@@ -1528,7 +1537,7 @@ with week_col:
     current_index = (
         week_options.index(current_week)
         if current_week in week_options
-        else 0
+        else len(week_options) - 1
     )
 
 
@@ -1582,12 +1591,38 @@ try:
 
     loading_box.empty()
 
+    # Playoff weeks: our bracket (seeded by our standings), never
+    # Sleeper's made-up regular-season pairings. Same view as the app.
+    playoff_view = None
+    try:
+        playoff_view = api_league.playoff_view(
+            SLEEPER_LEAGUE_ID,
+            _roster_id_to_owner_name(str(league_id), SLEEPER_LEAGUE_ID),
+            selected_week,
+            int(_my_roster_id()) if _my_roster_id() is not None else None,
+            _playoff_rules,
+        )
+    except Exception as exc:
+        print(f"WEB_PLAYOFFS_ERROR {type(exc).__name__}", flush=True)
+
 
     # ========================================================
     # Empty week
     # ========================================================
 
-    if not games:
+    if playoff_view is not None:
+
+        st.markdown(
+            playoff_html(playoff_view),
+            unsafe_allow_html=True,
+        )
+
+        # Box scores once the playoffs are really being played
+        # (Sleeper pairs the playoff teams itself by then).
+        if not playoff_view["projected"] and selected_week <= current_nfl_week() and games:
+            _render_box_score(games, selected_week)
+
+    elif not games:
 
         st.markdown(
             (
