@@ -6,6 +6,11 @@ Runs daily (.github/workflows/final-scores.yml). For each week of the current se
 week is re-saved each day so NFL stat corrections land, then locked three days after its last game; a locked
 week never changes again (the commissioner can still finalize or fix by hand later).
 
+Stat corrections: when a re-save of official lines changes a starter's points in a league, that league gets one
+saved correction (stat_corrections: old and new totals, the players and stats that changed, and any result it
+flipped) and a push to everyone in the league that opens Activity. Scores, records, top-5 weeks and the bracket all
+follow from the corrected lines on their own; nobody edits a score by hand.
+
 Then it cross-checks every league against Sleeper: each rostered player's points from our lines and our engine
 vs Sleeper's, so any gap shows up while Sleeper is still running alongside.
 
@@ -20,7 +25,7 @@ import argparse
 import os
 import sys
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Mapping
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -86,6 +91,102 @@ def cross_check(client: Any, season: int, week: int, lines: dict[str, Any]) -> l
             gaps = key_gaps(lines, stat_lines(season, week, _get_json), scoring, ids)
             out.append(f"  league {n}: {same}/{total} player scores match Sleeper ({same / total:.1%}); stats that differ from "
                        f"Sleeper's lines: " + (", ".join(f"{k} ({c})" for k, c in gaps.most_common(8)) or "none"))
+            theirs = stat_lines(season, week, _get_json)
+            defs = [pid for pid, line in theirs.items() if line.get("pos") == "DEF"]
+            if defs and any(k.startswith(("pts_allow", "yds_allow", "sack", "int", "def_", "fum_rec", "safe", "blk_kick", "ff"))
+                            for k, v in scoring.items() if v):
+                d_same = sum(abs(player_points((lines.get(p) or {}).get("stats"), scoring, "DEF")
+                                 - player_points(theirs[p]["stats"], scoring, "DEF")) <= TOLERANCE for p in defs)
+                d_gaps = key_gaps(lines, theirs, scoring, set(defs))
+                out.append(f"  league {n}: team defenses {d_same}/{len(defs)} match Sleeper; stats that differ: "
+                           + (", ".join(f"{k} ({c})" for k, c in d_gaps.most_common(8)) or "none"))
+    return out
+
+
+CORRECTIONS = "stat_corrections"
+
+
+def week_starters(client: Any, league_id: str, season: int, week: int, rows: list[Mapping[str, Any]]) -> dict[int, list[str]]:
+    """roster id -> the week's starters: the app lineup for weeks the app runs (switch on), else Sleeper's."""
+    from api import lineups
+    starters = {int(r["roster_id"]): [str(p) for p in r.get("starters") or []] for r in rows if r.get("roster_id") is not None}
+    try:
+        switch = (client.table("league_app_transactions").select("enabled,own_from_week").eq("league_id", league_id)
+                  .limit(1).execute().data or [{}])[0]
+    except Exception:
+        switch = {}
+    if not switch.get("enabled") or week < int(switch.get("own_from_week") or 15):
+        return starters
+    from league_ai.settings_store import load_settings
+    slots = lineups.starter_slots(load_settings(client, league_id).roster_positions)
+    teams = client.table("league_teams").select("id,sleeper_roster_id").eq("league_id", league_id).execute().data or []
+    saved = (client.table("league_lineups").select("league_team_id,week,slots").eq("league_id", league_id)
+             .eq("season", season).lte("week", week).order("week", desc=True).execute().data or [])
+    for t in teams:
+        if t.get("sleeper_roster_id") is None:
+            continue
+        rid = int(t["sleeper_roster_id"])
+        mine = [r for r in saved if str(r["league_team_id"]) == str(t["id"])]
+        ids = {str(x.get("player_id")) for r in mine[:1] for x in r.get("slots") or [] if x.get("player_id")} | set(starters.get(rid, []))
+        starters[rid] = [p or "0" for p in lineups.effective(slots, mine, starters.get(rid, []), ids)]
+    return starters
+
+
+def record_corrections(client: Any, season: int, week: int, old: dict[str, Any], new: dict[str, Any], dry: bool) -> list[str]:
+    """Save and push a correction for every league where the new official lines moved a starter's points."""
+    import hashlib
+    import json
+
+    from league_ai.settings_store import load_settings
+    from scoring import corrections
+    from scripts.notify_trades import send
+
+    out = []
+    seen: set[str] = set()
+    for n, lg in enumerate(client.table("leagues").select("id, sleeper_league_id").execute().data or [], start=1):
+        sid = str(lg.get("sleeper_league_id") or "")
+        if not sid or sid in seen:
+            continue
+        seen.add(sid)
+        info = _get_json(f"{SLEEPER}/league/{sid}") or {}
+        if int(info.get("season") or 0) != season:
+            continue
+        lid = str(lg["id"])
+        scoring = load_settings(client, lid).scoring_settings or info.get("scoring_settings") or {}
+        rows = _get_json(f"{SLEEPER}/league/{sid}/matchups/{week}") or []
+        starters = week_starters(client, lid, season, week, rows)
+        teams = corrections.team_changes(starters, old, new, scoring)
+        if not teams:
+            continue
+        before, after = corrections.totals(starters, old, scoring), corrections.totals(starters, new, scoring)
+        results = corrections.flips(before, after, {int(r["roster_id"]): r.get("matchup_id") for r in rows if r.get("roster_id") is not None})
+        team_of = {int(t["sleeper_roster_id"]): str(t["id"]) for t in
+                   client.table("league_teams").select("id,sleeper_roster_id").eq("league_id", lid).execute().data or []
+                   if t.get("sleeper_roster_id") is not None}
+        changes = [{**t, "team_id": team_of.get(int(t["team"])), "roster_id": int(t["team"]), "results": results.get(t["team"], [])}
+                   for t in teams]
+        for team, res in results.items():  # a team whose result flipped only because its opponent's score moved
+            if team not in {c["roster_id"] for c in changes}:
+                changes.append({"team_id": team_of.get(int(team)), "roster_id": int(team), "old": before.get(team), "new": after.get(team),
+                                "players": [], "results": res})
+        key = "statfix:" + hashlib.sha1(json.dumps([season, week, changes], sort_keys=True, default=str).encode()).hexdigest()[:20]
+        flipped = sum(1 for c in changes if c["results"])
+        out.append(f"  league {n}: stat correction week {week}: {len(teams)} teams' scores changed, {flipped} with a result change")
+        if dry:
+            continue
+        sent = {r["key"] for r in client.table("push_sent").select("key").eq("league_id", lid).eq("key", key).execute().data or []}
+        if key in sent:
+            continue
+        saved = (client.table(CORRECTIONS).insert({"league_id": lid, "season": season, "week": week, "changes": changes})
+                 .execute().data or [{}])[0]
+        tokens = [r["token"] for r in client.table("push_tokens").select("token").eq("league_id", lid).execute().data or []]
+        messages = [{"to": tok, "body": corrections.push_body(week, len(teams)), "sound": "default",
+                     "data": {"url": f"/activity?correction={saved.get('id', '')}"}} for tok in tokens]
+        dead = send(messages) if messages else []
+        if dead:
+            client.table("push_tokens").delete().in_("token", dead).execute()
+        client.table("push_sent").upsert({"league_id": lid, "key": key}, on_conflict="league_id,key").execute()
+        out.append(f"    saved; pushed to {len(messages) - len(dead)} phones")
     return out
 
 
@@ -114,6 +215,11 @@ def main() -> int:
         print(f"nflverse unavailable ({type(exc).__name__}); ESPN finals only", flush=True)
         rows = []
     published = nflverse_lines.weeks_in(rows)
+    try:  # team defense lines (sacks, takeaways, TDs, yards allowed) come from nflverse's team stats
+        team_rows = nflverse_lines.read_rows(fetch_text(nflverse_lines.TEAM_URL.format(season=season)))
+    except Exception as exc:
+        print(f"nflverse team stats unavailable ({type(exc).__name__}); no team defense lines", flush=True)
+        team_rows = []
     players = _get_json(f"{SLEEPER}/players/nfl") or {}
     try:
         crosswalk = Crosswalk.from_csv(fetch_text(CROSSWALK_URL))
@@ -123,27 +229,39 @@ def main() -> int:
     espn_ids = espn_feed.IdMap(players, crosswalk)
 
     try:
-        saved = {int(r["week"]): r for r in client.table(TABLE).select("week,locked").eq("season", season).execute().data or []}
+        saved = {int(r["week"]): {**r, "has_def": r.get("DEN") is not None} for r in
+                 client.table(TABLE).select("week,locked,source,lines->DEN").eq("season", season).execute().data or []}
     except Exception:  # table not created yet (dry runs before the SQL)
         saved = {}
     print(f"season {season}: current week {current}; nflverse has weeks {sorted(published) or 'none'}", flush=True)
     for week in range(1, min(current, 18) + 1):
-        if (saved.get(week) or {}).get("locked"):
-            continue
+        if (saved.get(week) or {}).get("locked") and (saved.get(week) or {}).get("has_def"):
+            continue  # locked weeks saved before team defense lines existed are filled in once
         week_board = _get_json(f"{espn_feed.ESPN}/scoreboard?seasontype=2&week={week}&dates={season}") or {}
         done, last_kick = week_status(week_board)
         if not done:
             continue
-        if week in published:
+        if week in published and (not team_rows or week in nflverse_lines.weeks_in(team_rows)):
             lines, unmatched = nflverse_lines.week_lines(rows, week, gsis)
+            lines.update(nflverse_lines.def_lines(team_rows, week, espn_feed.points_allowed(week_board)))
             source = "nflverse"
         else:
             summaries = [_get_json(f"{espn_feed.ESPN}/summary?event={g['id']}") for g in espn_feed.games(week_board)]
             raw, unmatched = espn_feed.week_lines([s for s in summaries if s], espn_ids)
             lines = {pid: line for pid, line in raw.items() if line.get("pos") in nflverse_lines.POSITIONS}
             source = "espn"
-        locked = bool(last_kick and now - last_kick >= LOCK_AFTER + timedelta(hours=4) and source == "nflverse")
+        has_def = any(line.get("pos") == "DEF" for line in lines.values())
+        locked = bool(last_kick and now - last_kick >= LOCK_AFTER + timedelta(hours=4) and source == "nflverse" and has_def)
         print(f"week {week}: {len(lines)} players from {source}, {unmatched} unmatched" + (", locked" if locked else ""), flush=True)
+        prev = saved.get(week) or {}
+        if prev.get("source") == "nflverse" and source == "nflverse":  # an NFL stat correction, not the first save
+            try:
+                old_lines = (client.table(TABLE).select("lines").eq("season", season).eq("week", week).limit(1)
+                             .execute().data or [{}])[0].get("lines") or {}
+                for line in record_corrections(client, season, week, old_lines, lines, args.dry):
+                    print(line, flush=True)
+            except Exception as exc:
+                print(f"  stat correction check failed: {type(exc).__name__}", flush=True)
         for line in cross_check(client, season, week, lines):
             print(line, flush=True)
         if not args.dry and lines:

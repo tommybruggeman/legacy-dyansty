@@ -1349,6 +1349,11 @@ elif section == "League Tools":
         ) or "Add player"
         tool = "Manual Add" if add_or_drop == "Add player" else "Manual Drop"
 
+    if picked == "lineups":
+        from services.commissioner_lineups_ui import render_commissioner_lineups
+
+        render_commissioner_lineups(sb_client, active_league_id, canonical_season)
+
     if tool == "Season Rollover":
         render_season_rollover_control(sb_client, active_league_id, league_name)
 
