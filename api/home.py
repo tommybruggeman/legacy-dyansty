@@ -20,6 +20,9 @@ ROSTER_MAX = 22
 GAME_DAYS = {3, 4, 5, 6, 0}  # Thu-Mon (Monday=0)
 ROUND_NAMES = {1: "Semifinal", 2: "Final"}
 EASTERN = ZoneInfo("America/New_York")
+# Home's day flips at midnight Pacific, so Monday night's final screen stays up
+# until the West Coast's Monday is over (Tommy, 2026-11-02).
+HOME_TZ = ZoneInfo("America/Los_Angeles")
 # nflverse team codes that differ from Sleeper's.
 NFLVERSE_TEAMS = {"LA": "LAR"}
 
@@ -44,6 +47,20 @@ def phase(today: date, league_status: str | None, week: int, playoff_start: int 
     if (today.month, today.day) <= (ROLLOVER_MONTH, ROLLOVER_DAY):
         return "decisions"
     return "draft_prep"
+
+
+def schedule_week(gamedays: dict[int, str], today: date) -> int | None:
+    """The NFL week Home shows, from our own schedule: the first week whose last game
+    day is today or later. Monday night's week holds until that day is over, then
+    the next week starts. None when the schedule is missing or the season is over."""
+    for week in sorted(gamedays):
+        try:
+            last = date.fromisoformat(str(gamedays[week])[:10])
+        except ValueError:
+            continue
+        if last >= today:
+            return week
+    return None
 
 
 def rollover_deadline(today: date) -> date:
@@ -294,7 +311,7 @@ def bottom_mode(now: datetime, starts: dict[str, datetime]) -> dict[str, Any]:
     day = local.weekday()
     if day in (3, 4, 5):
         return {"mode": "risers"}
-    if day == 0:
+    if day == 0 or (day == 1 and now.astimezone(HOME_TZ).weekday() == 0):  # Monday holds until midnight Pacific
         return {"mode": "shotgun", "window": SHOTGUN_WINDOWS["monday"]}
     if day != 6:
         return {"mode": "scoreboard"}

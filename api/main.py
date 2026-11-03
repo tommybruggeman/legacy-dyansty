@@ -439,7 +439,7 @@ def _team_week(client: Client, ctx: dict[str, Any], roster_id: int | None) -> di
     this week's opponent. None when the team has no game this week."""
     if roster_id is None:
         return None
-    week = league.current_week()
+    week = _home_week(client, ctx["season"], datetime.now(home.HOME_TZ).date())  # same week as Home: Monday's holds until midnight Pacific
     final = week <= league.last_scored_week(ctx["sleeper_id"])
 
     def load() -> dict[str, Any] | None:
@@ -1238,6 +1238,25 @@ def _text(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _home_week(client: Client, season: int, today: date) -> int:
+    """Home's week from our own NFL schedule (it holds Monday night's week until midnight
+    Pacific); Sleeper's week only when the schedule isn't loaded or the season is over."""
+    def load() -> dict[int, str]:
+        rows = client.table("nfl_games").select("week,gameday").eq("season", season).execute().data or []
+        last: dict[int, str] = {}
+        for r in rows:
+            wk, day = r.get("week"), str(r.get("gameday") or "")[:10]
+            if wk is not None and int(wk) <= 18 and day and day > last.get(int(wk), ""):
+                last[int(wk)] = day
+        return last
+    try:
+        week = home.schedule_week(cache.cached(("nfl_gamedays", season), 3600, load), today)
+    except Exception as exc:
+        print(f"APP_HOME_WEEK_ERROR {type(exc).__name__}", flush=True)
+        week = None
+    return week or league.current_week()
+
+
 @app.get("/home")
 def home_page(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
     client, user = owner
@@ -1247,8 +1266,8 @@ def home_page(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, An
     sid, names, my_roster = ctx["sleeper_id"], ctx["names"], ctx["sleeper_roster_id"]
     sleeper_league = league.sleeper.get(f"league/{sid}") or {}
     playoff_start = int((sleeper_league.get("settings") or {}).get("playoff_week_start") or 15)
-    week = league.current_week()
-    today = datetime.now(front_office.LEAGUE_TZ).date()
+    today = datetime.now(home.HOME_TZ).date()
+    week = _home_week(client, ctx["season"], today)
     phase = home.phase(today, sleeper_league.get("status"), week, playoff_start)
 
     rows, states, standings_rows, cap = _league_teams(client, ctx)
