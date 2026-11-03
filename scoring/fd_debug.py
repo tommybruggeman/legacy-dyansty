@@ -1,9 +1,8 @@
-"""Debug: first downs from ESPN's play by play vs Sleeper's, for one finished week. For every player whose rush/rec
+"""First downs from ESPN's play by play (the live feed) vs Sleeper's, for one finished week (default: last week). For every player whose rush/rec
 first downs differ, prints the plays of his that we read and how each was judged. NFL play text only (public)."""
 from __future__ import annotations
 
 import sys
-from collections import Counter
 
 from scoring import espn_feed
 from scoring.shadow import SLEEPER, _fetch, stat_lines
@@ -12,7 +11,9 @@ from scoring.shadow import SLEEPER, _fetch, stat_lines
 def main() -> None:
     from pipeline.nfl_data.common import fetch_text
     from pipeline.nfl_data.crosswalk import CROSSWALK_URL, Crosswalk
-    season, week = int(sys.argv[1]), int(sys.argv[2])
+    state = _fetch(f"{SLEEPER}/v1/state/nfl") or {}
+    season = int(sys.argv[1]) if len(sys.argv) > 2 else int(state.get("season") or 0)
+    week = int(sys.argv[2]) if len(sys.argv) > 2 else max(1, int(state.get("week") or 2) - 1)
     players = _fetch(f"{SLEEPER}/v1/players/nfl") or {}
     idmap = espn_feed.IdMap(players, Crosswalk.from_csv(fetch_text(CROSSWALK_URL)))
     board = _fetch(f"{espn_feed.ESPN}/scoreboard?seasontype=2&week={week}&dates={season}") or {}

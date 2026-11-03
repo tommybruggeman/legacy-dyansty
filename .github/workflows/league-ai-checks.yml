@@ -11,7 +11,7 @@ on:
       check:
         description: Which check to run
         type: choice
-        options: [odds_backtest, odds_trial, odds_grade, start_sit_grade, practice_test, weekly_cards, shadow_scoring, live_projection_study, espn_feed_check, final_scores_check, fd_debug]
+        options: [odds_backtest, odds_trial, odds_grade, start_sit_grade, practice_test, weekly_cards, shadow_scoring, live_projection_study, espn_feed_check, final_scores_check, fd_check]
         default: odds_backtest
 
 jobs:
@@ -48,6 +48,7 @@ jobs:
             espn_feed_check) python -m scoring.espn_check --weeks 3 ;;
             # official finals from nflverse scored by our engine vs Sleeper, every finished week (saves nothing)
             final_scores_check) python -m scripts.final_scores --dry ;;
-            fd_debug) python -m scoring.fd_debug 2026 8 ;;
+            # first downs read from ESPN's play by play vs Sleeper's, game by game, for last week (prints the plays behind each gap)
+            fd_check) python -m scoring.fd_debug ;;
             *) python -m league_ai.playoff_odds ;;
           esac
