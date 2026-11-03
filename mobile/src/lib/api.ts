@@ -561,6 +561,9 @@ export type ChatEvent =
   | { e: 'text'; d: string }
   | { e: 'reset' }
   | { e: 'round' }
+  | { e: 'job'; question: string; conversation_id: string | null }
+  | { e: 'none' }
+  | { e: 'added'; text: string }
   | ({ e: 'done' } & ChatReply);
 export type Conversations = { conversations: { id: string; title: string; updated_at: string | null }[] };
 export type Conversation = { id: string; title: string; messages: ChatMessage[] };
