@@ -1144,6 +1144,31 @@ def front_office_chat_stream(body: ChatRequest, owner: tuple[Client, Any] = Depe
                              headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
 
 
+class ChatAddRequest(BaseModel):
+    text: str
+
+
+@app.post("/front-office/chat/add")
+def front_office_chat_add(body: ChatAddRequest, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """More context typed while the GM is still answering: it goes into that same answer.
+    {"added": false} means the answer already finished, so the app sends it as a new question instead."""
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Type something first.")
+    if len(text) > 2000:
+        raise HTTPException(status_code=400, detail="That's too long. Keep it under 2,000 characters.")
+    return {"added": front_office.tell(_front_office(*owner), text)}
+
+
+@app.post("/front-office/chat/resume")
+def front_office_chat_resume(owner: tuple[Client, Any] = Depends(owner_client)) -> StreamingResponse:
+    """The owner's latest answer, replayed and followed to the end: for coming back after the app closed mid-answer.
+    No AI call and no daily-question charge here; the answer was already paid for."""
+    session = _front_office(*owner)
+    return StreamingResponse(front_office.resume_stream(session), media_type="application/x-ndjson",
+                             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+
+
 @app.get("/front-office/conversations")
 def front_office_conversations(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
     session = _front_office(*owner)

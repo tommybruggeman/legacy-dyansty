@@ -1,20 +1,31 @@
 import { router, useLocalSearchParams, useNavigation } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator, Keyboard, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, type ScrollViewInstance, StyleSheet, Text, TextInput, View,
+  ActivityIndicator, AppState, Keyboard, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, type ScrollViewInstance, StyleSheet, Text, TextInput, View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Markdown } from '../../components/frontoffice/Markdown';
 import { ErrorState, Loading } from '../../components/ScreenState';
 import { Pill, useScrollTopOnTab } from '../../components/ui';
-import { type ChatEvent, type ChatMessage, type Conversation, type FoHeader, type FoMove, type FrontOffice, apiGet, apiStream, useApi } from '../../lib/api';
+import { type ChatEvent, type ChatMessage, type Conversation, type FoHeader, type FoMove, type FrontOffice, apiGet, apiSend, apiStream, useApi } from '../../lib/api';
+import { clearLastChat, saveLastChat } from '../../lib/lastChat';
 import { colors } from '../../lib/theme';
+
+// Resolves right away when the app is on screen, otherwise the next time it comes back.
+function whenOnScreen(): Promise<void> {
+  if (AppState.currentState === 'active') return Promise.resolve();
+  return new Promise((resolve) => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') { sub.remove(); resolve(); }
+    });
+  });
+}
 
 // The Assistant GM: three tiles, this week's lineup moves and the report card,
 // starter questions, then the chat. Trades are made in Sleeper, so trade answers link straight there.
 export default function FrontOfficeScreen() {
-  const { c, q, at } = useLocalSearchParams<{ c?: string; q?: string; at?: string }>();
+  const { c, q, at, resume } = useLocalSearchParams<{ c?: string; q?: string; at?: string; resume?: string }>();
   const { data, error, loading, reload } = useApi<FrontOffice>('/front-office');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
@@ -25,6 +36,11 @@ export default function FrontOfficeScreen() {
   const [partial, setPartial] = useState('');
   const [problem, setProblem] = useState<string | null>(null);
   const [typing, setTyping] = useState(false);
+  // Something sent in the split second after an answer finished goes out as the next question.
+  const queuedRef = useRef<string | null>(null);
+  const busy = useRef(false);
+  const convoRef = useRef<string | null>(null);
+  convoRef.current = conversationId;
   const scroll = useRef<ScrollViewInstance>(null);
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
@@ -44,64 +60,171 @@ export default function FrontOfficeScreen() {
     setDraft('');
     setTyping(false);
     setThinking(false);
+    busy.current = false;
+    queuedRef.current = null;
     setPartial('');
     setProblem(null);
+    clearLastChat();
     scroll.current?.scrollTo({ y: 0, animated: false });
   }), [navigation]);
 
+  // Leaving the app mid-chat starts the 30-minute "drop me back in" clock.
+  const inChat = useRef(false);
+  inChat.current = messages.length > 0 || thinking;
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state !== 'active' && inChat.current) saveLastChat({ id: convoRef.current, pending: busy.current });
+    });
+    return () => sub.remove();
+  }, []);
+
   // Opening a past chat (c=id) or starting a new one (c=new) from the chats list.
+  // resume=1 (reopening the app mid-answer) then picks that answer back up from the server.
   useEffect(() => {
     if (!c) return;
     setProblem(null);
+    const pickUp = () => { if (resume === '1' && !busy.current) follow(chat.current, null); };
     if (c === 'new') {
       setMessages([]);
       setConversationId(null);
+      convoRef.current = null;
+      pickUp();
       return;
     }
     apiGet<Conversation>(`/front-office/conversations/${c}`)
-      .then((convo) => { setMessages(convo.messages); setConversationId(convo.id); })
-      .catch((e) => setProblem(e?.message ?? 'Couldn’t open that chat.'));
-  }, [c]);
+      .then((convo) => { setMessages(convo.messages); setConversationId(convo.id); convoRef.current = convo.id; })
+      .catch((e) => setProblem(e?.message ?? 'Couldn’t open that chat.'))
+      .finally(pickUp);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [c, at]);
 
-  const send = async (input: string, convo: string | null = conversationId) => {
+  // One answer's events, from a fresh question or from picking one back up.
+  const listen = (mine: number) => {
+    let answer = '';
+    let stale = false; // picked up an answer this chat already shows
+    return (event: ChatEvent) => {
+      if (chat.current !== mine || stale) return;
+      if (event.e === 'job') {
+        setStatus('Picking up where the GM left off');
+        setMessages((m) => {
+          const last = m[m.length - 1];
+          if (last?.role === 'assistant' && m[m.length - 2]?.content === event.question) {
+            stale = true;
+            return m;
+          }
+          return last?.role === 'user' && last.content === event.question ? m : [...m, { role: 'user', content: event.question }];
+        });
+      } else if (event.e === 'added') {
+        setMessages((m) => [...m, { role: 'user', content: event.text }]);
+      } else if (event.e === 'none') {
+        stale = true;
+      } else if (event.e === 'status') {
+        setStatus(event.text);
+        setPartial('');
+      } else if (event.e === 'text') {
+        answer += event.d;
+        setPartial(answer);
+      } else if (event.e === 'reset') {
+        answer = '';
+        setPartial('');
+      } else if (event.e === 'round' && answer) {
+        answer += '\n\n';
+      } else if (event.e === 'done') {
+        if (event.ok) setMessages((m) => [...m, { role: 'assistant', content: event.text }]);
+        else setProblem(event.text);
+        if (event.conversation_id) {
+          convoRef.current = event.conversation_id;
+          setConversationId(event.conversation_id);
+        }
+        saveLastChat({ id: event.conversation_id ?? convoRef.current, pending: false });
+      }
+    };
+  };
+
+  // Wrap up an answer (or a failed one), then send whatever was typed while it ran.
+  const finish = (mine: number) => {
+    if (chat.current !== mine) return;
+    busy.current = false;
+    setThinking(false);
+    setPartial('');
+    const next = queuedRef.current;
+    queuedRef.current = null;
+    if (next) send(next, convoRef.current);
+  };
+
+  // The answer keeps going on the server if the phone locks or the app closes.
+  // Follow it from the start (once the app is back on screen) until it's done.
+  const follow = async (mine: number, question: string | null) => {
+    busy.current = true;
+    setThinking(true);
+    setStatus('Picking up where the GM left off');
+    setPartial('');
+    let got: ChatEvent['e'] | null = null;
+    try {
+      await whenOnScreen();
+      await apiStream<ChatEvent>('/front-office/chat/resume', {}, (event) => {
+        got = event.e;
+        listen(mine)(event);
+      });
+      if (got === 'none' && question && chat.current === mine) {
+        setDraft(question);
+        setProblem('That answer got lost while the app was closed. Tap send to ask again.');
+      }
+    } catch (e: any) {
+      if (chat.current === mine) setProblem(e?.message ?? 'Something went wrong.');
+    } finally {
+      finish(mine);
+    }
+  };
+
+  const send = async (input: string, convo: string | null = convoRef.current) => {
     const question = input.trim();
-    if (!question || thinking) return;
+    if (!question) return;
+    if (busy.current) {
+      // Still answering: this goes straight into the answer the GM is working on,
+      // and shows up in the chat as soon as the GM has it.
+      setDraft('');
+      try {
+        const { added } = await apiSend<{ added: boolean }>('POST', '/front-office/chat/add', { text: question });
+        if (!added) {
+          // That answer just finished: ask this as the next question.
+          if (busy.current) queuedRef.current = question;
+          else send(question);
+        }
+      } catch (e: any) {
+        setDraft(question);
+        setProblem(e?.message ?? 'Couldn’t send that. Try again.');
+      }
+      return;
+    }
+    busy.current = true;
     setDraft('');
     setProblem(null);
     setMessages((m) => [...m, { role: 'user', content: question }]);
     setThinking(true);
     setStatus('Reading your roster');
     setPartial('');
-    let answer = '';
     const mine = chat.current;
+    saveLastChat({ id: convo, pending: true });
+    let started = false;
+    let done = false;
+    const onEvent = listen(mine);
     try {
       await apiStream<ChatEvent>('/front-office/chat/stream', { question, conversation_id: convo }, (event) => {
-        if (chat.current !== mine) return;
-        if (event.e === 'status') {
-          setStatus(event.text);
-          setPartial('');
-        } else if (event.e === 'text') {
-          answer += event.d;
-          setPartial(answer);
-        } else if (event.e === 'reset') {
-          answer = '';
-          setPartial('');
-        } else if (event.e === 'round' && answer) {
-          answer += '\n\n';
-        } else if (event.e === 'done') {
-          if (event.ok) setMessages((m) => [...m, { role: 'assistant', content: event.text }]);
-          else setProblem(event.text);
-          if (event.conversation_id) setConversationId(event.conversation_id);
-        }
+        started = true;
+        if (event.e === 'done') done = true;
+        onEvent(event);
       });
     } catch (e: any) {
-      if (chat.current === mine) setProblem(e?.message ?? 'Something went wrong.');
-    } finally {
-      if (chat.current === mine) {
-        setThinking(false);
-        setPartial('');
+      if (started && !done && chat.current === mine) {
+        // The connection dropped mid-answer (phone locked, app in the background).
+        // The server is still on it: pick it back up when the app is on screen again.
+        follow(mine, question);
+        return;
       }
+      if (chat.current === mine) setProblem(e?.message ?? 'Something went wrong.');
     }
+    finish(mine);
   };
 
   // A question typed on Home (q) starts a fresh chat and sends right away;
@@ -112,6 +235,7 @@ export default function FrontOfficeScreen() {
     asked.current = `${at}:${q}`;
     setMessages([]);
     setConversationId(null);
+    convoRef.current = null;
     send(q, null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q, at]);
@@ -209,14 +333,14 @@ export default function FrontOfficeScreen() {
           onBlur={() => setTyping(focusedChat.current === chat.current && !!draft.trim())}
           placeholder={data.ai_ready ? 'Ask your assistant GM…' : 'The Assistant GM is off for now'}
           placeholderTextColor={colors.muted}
-          editable={data.ai_ready && !thinking}
+          editable={data.ai_ready}
           style={styles.input}
           multiline
           onSubmitEditing={() => send(draft)}
           blurOnSubmit
           returnKeyType="send"
         />
-        <Pressable onPress={() => send(draft)} disabled={!draft.trim() || thinking} style={[styles.sendButton, (!draft.trim() || thinking) && styles.sendOff]}>
+        <Pressable onPress={() => send(draft)} disabled={!draft.trim() || !data.ai_ready} style={[styles.sendButton, (!draft.trim() || !data.ai_ready) && styles.sendOff]}>
           <Text style={styles.sendText}>↑</Text>
         </Pressable>
       </View>

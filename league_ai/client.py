@@ -105,6 +105,13 @@ def _usage(trace: Trace, response: Any) -> None:
             pass
 
 
+def added_note(added: list[str]) -> str:
+    """What the owner typed while the GM was still working, as a note in the conversation."""
+    lines = "\n\n".join(a.strip() for a in added if a.strip())
+    return ("The owner sent this while you were working on your answer. Fold it in and answer everything they've asked "
+            f"as one reply (don't mention that it arrived mid-answer):\n\n{lines}")
+
+
 class ClaudeClient:
     def __init__(self, config: LeagueAIConfig | None = None, sdk_client: Any | None = None) -> None:
         self.config = config or load_config()
@@ -158,6 +165,7 @@ class ClaudeClient:
         max_tool_calls: int | None = None,
         on_event: Callable[[str, Any], None] | None = None,
         turn_effort: str | None = None,
+        inbox: Callable[[bool], list[str]] | None = None,
     ) -> ClientResult:
         """Run the tool loop. With on_event, text streams as ("text", delta),
         each model round starts with ("round", n), each tool call is announced
@@ -166,7 +174,12 @@ class ClaudeClient:
 
         turn_effort sets effort for this question only, as a per-message effort change
         placed before the latest user message, which keeps the cached league pack valid.
-        A fixed LEAGUE_AI_EFFORT wins over it."""
+        A fixed LEAGUE_AI_EFFORT wins over it.
+
+        inbox(final) returns anything the owner typed while this answer was being worked on.
+        It's read after every lookup round and folded into that round; when the model has
+        finished, inbox(True) either returns late additions (and the model reworks its answer
+        with them, after a ("reset", None)) or closes the inbox for good."""
         trace = Trace(model=self.config.model)
         start = time.perf_counter()
         limit = self.config.max_tool_calls if max_tool_calls is None else max_tool_calls
@@ -225,7 +238,15 @@ class ClaudeClient:
                     best_text = text_out
                 tool_uses = [b for b in content if _block_attr(b, "type") == "tool_use"]
                 if trace.stop_reason != "tool_use" or not tool_uses:
-                    break
+                    added = inbox(True) if inbox else []
+                    if not added:
+                        break
+                    # the owner added something while the answer was being written: rework it with that in mind
+                    history.append({"role": "assistant", "content": _content_to_api(content) or [{"type": "text", "text": round_text or "..."}]})
+                    history.append({"role": "user", "content": added_note(added)})
+                    kept_text = text_out = best_text = ""
+                    _emit(on_event, "reset", None)
+                    continue
                 if all(_block_attr(b, "name") in SILENT_TOOLS for b in tool_uses) or len(round_text) >= KEEP_TEXT_CHARS:
                     # the answer came with a bookkeeping call (log/remember), or the model reasoned before a
                     # lookup: keep it, since the next round often builds on it ("with the caveats above")
@@ -244,6 +265,9 @@ class ClaudeClient:
                         _emit(on_event, "tool", name)
                         result_text = tools.call(name, _block_attr(block, "input") or {}) if tools else "{}"
                     results.append({"type": "tool_result", "tool_use_id": _block_attr(block, "id"), "content": result_text})
+                added = inbox(False) if inbox else []
+                if added:
+                    results.append({"type": "text", "text": added_note(added)})
                 history.append({"role": "user", "content": results})
                 if trace.rounds > limit + 2:
                     ended_on_tools = True
