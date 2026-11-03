@@ -5,7 +5,7 @@ The Ship app workflow runs this first and stops the deploy when it fails. It che
    were, and above START_SIT_FLOOR.
 2. Playoff odds: the 2-season backtest Brier score stays under the limits (weeks 1-5 and week 6 on).
 3. Trade builder and roster tools for every owner: find_trade_targets returns cap-legal ladders, a named-player
-   price comes back (a ladder or "nothing fair" with the closest tries), plan_roster_moves and get_playoff_odds answer.
+   price comes back (a ladder or "nothing fair" with the closest tries), plan_roster_moves, plan_future and get_playoff_odds answer.
 Prints counts and rates only (the repo and its Actions logs are public).
 """
 from __future__ import annotations
@@ -97,6 +97,23 @@ def _call(tools: Any, name: str, **kw: Any) -> dict[str, Any] | None:
     return out if isinstance(out, dict) else {"result": out}
 
 
+def future_problems(out: Mapping[str, Any], cap: float) -> list[str]:
+    """plan_future sanity: it answers, room never tops the cap, every season and class is there, targets have prices."""
+    if "error" in out:
+        return ["plan_future error"]
+    fails = []
+    seasons, classes = out.get("seasons") or [], out.get("free_agent_classes") or []
+    if len(seasons) < 2 or len(classes) < 2:
+        fails.append("plan_future is missing seasons or auction classes")
+    if any(float(x.get("room") or 0) > cap + 0.01 for x in seasons):
+        fails.append("plan_future shows more room than the cap")
+    if not (classes and classes[0].get("targets")):
+        fails.append("plan_future found no targets in the next auction")
+    if any(int(t.get("likely_price") or 0) < 1 or not t.get("suggested_years") for c in classes for t in c.get("targets") or []):
+        fails.append("plan_future target without a price or length")
+    return fails
+
+
 def check_tools(client: Any, league: Mapping[str, Any], season: int) -> list[str]:
     from api import front_office as fo_api
     from league_ai import runtime
@@ -105,7 +122,7 @@ def check_tools(client: Any, league: Mapping[str, Any], season: int) -> list[str
     lid, sid = str(league["id"]), str(league["sleeper_league_id"])
     shared = fill_from_sleeper(client, _state(client, lid, season), sid, lid)
     teams = client.table("league_teams").select("id, owner_name, team_name, sleeper_roster_id").eq("league_id", lid).execute().data or []
-    counts = {"owners": 0, "idea_lists": 0, "ideas": 0, "ladders": 0, "targets_priced": 0, "roster_plans": 0, "odds": 0}
+    counts = {"owners": 0, "idea_lists": 0, "ideas": 0, "ladders": 0, "targets_priced": 0, "roster_plans": 0, "future_plans": 0, "fa_targets": 0, "odds": 0}
     from bisect import bisect_right
 
     from league_ai.acceptance import accepted_shares
@@ -163,6 +180,12 @@ def check_tools(client: Any, league: Mapping[str, Any], season: int) -> list[str
                 fails.append(f"team {n}: plan_roster_moves error")
             else:
                 counts["roster_plans"] += 1
+        future = _call(tools, "plan_future")
+        if future is not None:
+            fails += [f"team {n}: {f}" for f in future_problems(future, float(s.rules().get("salary_cap") or 225))]
+            if "error" not in future:
+                counts["future_plans"] += 1
+                counts["fa_targets"] += sum(len(c.get("targets") or []) for c in future.get("free_agent_classes") or [])
         odds = _call(tools, "get_playoff_odds")
         if odds is not None and "error" not in odds and odds.get("odds"):
             total = sum(odds["odds"].values())

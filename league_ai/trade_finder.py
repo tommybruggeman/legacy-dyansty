@@ -456,13 +456,15 @@ def trade_finder_tools(load: Callable[[], tuple[League, Mapping[str, float], str
                        outcomes: Callable[..., list[Mapping[str, Any]]] | None = None, current_season: int | None = None,
                        odds: Callable[[], Any] | None = None, free_agent: Callable[[str], PlayerStrength | None] | None = None,
                        roster_rules: Callable[[], tuple[Any, bool, float]] | None = None,
-                       log_ideas: Callable[[Mapping[str, Any]], Any] | None = None) -> list[ToolSpec]:
+                       log_ideas: Callable[[Mapping[str, Any]], Any] | None = None,
+                       future: Callable[[], Mapping[str, Any]] | None = None) -> list[ToolSpec]:
     """load() -> (League, cap space by team id, asker team id); called once per answer that needs it.
     history: LeagueHistory for completed trades; outcomes(partner=None) -> this owner's recorded trade outcomes.
     odds() -> a playoff_odds.OddsModel (or None), so a judged trade comes with both teams' playoff odds before and after.
     free_agent(name) -> that player valued like a rostered one (None if not found), for pickup questions.
     roster_rules() -> (roster_moves.Rules from the league's settings, offseason?, share of the season left).
-    log_ideas(answer) saves the ideas shown, so the learning job can see which ones turned into real trades (league_ai.idea_log)."""
+    log_ideas(answer) saves the ideas shown, so the learning job can see which ones turned into real trades (league_ai.idea_log).
+    future() -> {"salary_cap", "dead_future" (team -> season -> dead cap owed), "picks" (draft pick rows), "max_years"} for plan_future."""
     cache: dict[str, Any] = {}
 
     def profiles() -> dict[str, dict[str, Any]]:
@@ -631,6 +633,18 @@ def trade_finder_tools(load: Callable[[], tuple[League, Mapping[str, float], str
         return plan(lg.players, cache["asker"], rules, offseason=offseason, season=int(current_season or 0), season_left=left,
                     fair_cap=getattr(valuer, "_fair_cap", {}))
 
+    def future_plan(position: str | None = None) -> dict[str, Any]:
+        from league_ai.future_plan import plan as plan_seasons
+
+        lg = league(None)
+        rules, _, _ = roster_rules()
+        extra = dict(future() or {})
+        valuer = Valuer(lg.players, {tid: lg.window(tid) for tid in lg.teams})
+        return plan_seasons(players=lg.players, teams=lg.teams, slots=lg.slots, asker=cache["asker"], season=int(current_season or 0),
+                            salary_cap=float(extra.get("salary_cap") or 225), fair=getattr(valuer, "_fair_cap", {}), rules=rules,
+                            dead_future=extra.get("dead_future") or {}, picks=extra.get("picks") or [],
+                            max_years=int(extra.get("max_years") or 4), focus=position)
+
     windows_schema = {"type": "object", "additionalProperties": {"type": "string", "enum": list(WINDOWS)},
                       "description": "owner name -> contending / middle / rebuilding, for any team whose plans you know from the owner or league notes; "
                                      "otherwise each window is worked out from playoff odds (or standings and lineup), roster age and trading habits"}
@@ -700,7 +714,20 @@ def trade_finder_tools(load: Callable[[], tuple[League, Mapping[str, float], str
         "Use for cut, drop, dead cap, taxi, IR, rookie option and 'how do I clear cap' questions.",
         {"type": "object", "properties": {}},
         moves,
-    )] if roster_rules is not None else [])
+    )] if roster_rules is not None else []) + ([ToolSpec(
+        "plan_future",
+        "This owner's next three seasons in one call: cap room, dead cap and salary still signed each season (with rank in the league), "
+        "the core under contract and its holes, and each upcoming auction's free-agent class (contracts ending league-wide, rookie deals "
+        "likely kept on option left out, likely cap casualties added) ranked for this owner, each with age that season, worth, likely "
+        "price (market heat and the eager rivals' habits), the contract length with the most surplus that keeps deals staggered, and "
+        "rivals with the most room. Also the picks this owner holds and has traded away, and the seasons the team projects as a "
+        "contender. Use for multi-season plans, 'who should I target in free agency / the auction', 'how do I become a contender', "
+        "'when is my window', and staggering contracts.",
+        {"type": "object", "properties": {
+            "position": {"type": "string", "enum": ["QB", "RB", "WR", "TE"], "description": "only this position's targets"},
+        }},
+        future_plan,
+    )] if roster_rules is not None and future is not None else [])
 
 
 SIMS_NOTE = "5,000 simulated rest-of-seasons"
