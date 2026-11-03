@@ -1,7 +1,7 @@
 import unittest
 from types import SimpleNamespace
 
-from league_ai.future_plan import best_length, lineup_worth, pay_up_leans, plan
+from league_ai.future_plan import Worth, best_length, lineup_worth, pay_up_leans, plan
 from league_ai.roster_moves import Rules
 from league_ai.routing import effort_for, topic
 
@@ -78,8 +78,10 @@ class PiecesTest(unittest.TestCase):
     def test_young_player_gets_a_longer_deal_than_an_old_one(self):
         young = P("y", "B", "WR", 23, 20, 1)
         old = P("o", "B", "WR", 31, 20, 1)
-        fair = {"y": 20.0, "o": 20.0}
-        self.assertGreater(best_length(young, fair, 1, 18, 4, {}, 2026)[0], best_length(old, fair, 1, 18, 4, {}, 2026)[0])
+        filler = [P(f"f{i}", "C", "WR", 26, 30 - 2 * i, 3) for i in range(10)]
+        W = Worth([young, old, *filler], {"y": 20.0, "o": 20.0, **{f"f{i}": 30.0 - 2 * i for i in range(10)}})
+        self.assertGreater(W(young, 3), W(old, 3))          # the young one climbs the ranks, the old one slides
+        self.assertGreater(best_length(young, W, 1, W(young, 1), 4, {}, 2026)[0], best_length(old, W, 1, W(old, 1), 4, {}, 2026)[0])
 
     def test_lineup_worth_flags_holes(self):
         total, by_pos, holes = lineup_worth([P("q", "A", "QB", 25, 1, 1)], ["QB", "TE"], {"q": 20})

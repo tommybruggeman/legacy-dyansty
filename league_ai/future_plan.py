@@ -22,12 +22,14 @@ from statistics import median
 from typing import Any, Iterable, Mapping
 
 from league_ai.power import FIXED, FLEX
-from league_ai.roster_moves import ROOKIE_OPTION, Rules, cut_or_keep, retention, rookie_option
+from league_ai.roster_moves import ROOKIE_OPTION, Rules, cut_or_keep, retention
 
 HORIZON = 3               # auctions planned ahead
 SPEND_SHARE = 0.85        # share of league-wide room that actually gets spent at an auction
 HEAT_RANGE = (0.8, 1.4)
 LEAN_SHRINK = 4.0         # contracts of pull toward 1.0 for an owner's pay-up habit at a position
+LEAN_WEIGHT = 0.5         # share of the most eager rival's habit that shows up in the price
+LEAN_CAP = 1.25
 TARGETS_PER_CLASS = 8
 OPTION_KEEP_MARGIN = 0.0  # option surplus above this -> the owner keeps him
 POS = ("QB", "RB", "WR", "TE")
@@ -41,9 +43,27 @@ def _years(p: Any) -> int:
     return max(int(getattr(p, "years_left", 1) or 1), 1)
 
 
-def worth_in(p: Any, fair: Mapping[str, float], k: int) -> float:
-    """Fair salary for this player k seasons from now."""
-    return round(float(fair.get(p.sleeper_id, 0.0)) * retention(p.position, p.age, k), 2)
+class Worth:
+    """Fair salary k seasons from now. Every rostered player's value is carried forward by the position/age table, the
+    league is re-ranked, and the k-th most valuable then gets the k-th biggest cap hit of today's league (the cap
+    doesn't shrink as players age: whoever holds value climbs the ranks). Incoming rookies and breakouts aren't in
+    the ranking, so far-out worth runs a little high."""
+
+    def __init__(self, players: Iterable[Any], fair: Mapping[str, float]):
+        self.fair = {k: float(v) for k, v in fair.items()}
+        self.meta = {p.sleeper_id: (p.position, p.age) for p in players if p.sleeper_id in self.fair}
+        self.curve = sorted((_salary(p) for p in players if _salary(p) > 0), reverse=True)
+        self._by_k: dict[int, dict[str, float]] = {0: self.fair}
+
+    def table(self, k: int) -> dict[str, float]:
+        if k not in self._by_k:
+            proj = {pid: self.fair[pid] * retention(pos, age, k) for pid, (pos, age) in self.meta.items()}
+            order = sorted(proj, key=lambda pid: -proj[pid])
+            self._by_k[k] = {pid: (self.curve[i] if i < len(self.curve) else 1.0) for i, pid in enumerate(order)}
+        return self._by_k[k]
+
+    def __call__(self, p: Any, k: int) -> float:
+        return round(self.table(k).get(p.sleeper_id, 0.0), 2)
 
 
 def lineup_worth(players: Iterable[Any], slots: list[str], worth: Mapping[str, float]) -> tuple[float, dict[str, float], list[str]]:
@@ -78,22 +98,24 @@ def pay_up_leans(players: Iterable[Any], fair: Mapping[str, float]) -> dict[str,
     return out
 
 
-def _option_kept(p: Any, fair: Mapping[str, float], rules: Rules) -> tuple[bool, float | None]:
+def _option_kept(p: Any, worth: "Worth", rules: Rules) -> float | None:
+    """The option salary if this rookie deal's option is worth picking up when it ends (else None)."""
     rnd = int(getattr(p, "rookie_round", 0) or 0)
     if getattr(p, "contract_type", None) != "rookie" or rnd not in ROOKIE_OPTION or rules.option_years <= 0:
-        return False, None
-    o = rookie_option(name=p.name, pos=p.position, age=p.age, rookie_round=rnd, fair_now=float(fair.get(p.sleeper_id, 0.0)), rules=rules)
-    return float(o.get("surplus") or 0) > OPTION_KEEP_MARGIN, ROOKIE_OPTION[rnd]
+        return None
+    end = _years(p)   # the option seasons are seasons end .. end + option_years - 1 from now
+    surplus = sum(worth(p, end + y) - ROOKIE_OPTION[rnd] for y in range(rules.option_years))
+    return ROOKIE_OPTION[rnd] if surplus > OPTION_KEEP_MARGIN else None
 
 
-def best_length(p: Any, fair: Mapping[str, float], k: int, price: float, max_years: int, light_years: Mapping[int, float],
+def best_length(p: Any, worth: "Worth", k: int, price: float, max_years: int, light_years: Mapping[int, float],
                 season: int) -> tuple[int, float]:
     """(years, surplus) for a deal signed at auction k: worth each season minus the price, the best length up to the max.
     light_years: season -> this owner's salary coming off after it; a tie (within $1) goes to the lighter year."""
     options = []
     total = 0.0
     for y in range(1, max(1, max_years) + 1):
-        total += worth_in(p, fair, k + y - 1) - price
+        total += worth(p, k + y - 1) - price
         ends = season + k + y - 1
         options.append((round(total, 2), -light_years.get(ends, 0.0), y))
     top = max(o[0] for o in options)
@@ -114,11 +136,12 @@ def plan(*, players: list[Any], teams: Mapping[str, Mapping[str, Any]], slots: l
         by_team[str(p.team_id)].append(p)
     name = {tid: str(t.get("owner_name") or t.get("team_name") or tid) for tid, t in teams.items()}
     leans = pay_up_leans(players, fair)
+    W = Worth(players, fair)
     kept: dict[str, float] = {}           # rookie deals whose option is worth picking up -> option salary
     for p in players:
-        if _years(p) == 1:
-            keep, price = _option_kept(p, fair, rules)
-            if keep and price is not None:
+        if _years(p) <= horizon:
+            price = _option_kept(p, W, rules)
+            if price is not None:
                 kept[p.sleeper_id] = price
 
     def _through(p: Any) -> int:
@@ -126,7 +149,7 @@ def plan(*, players: list[Any], teams: Mapping[str, Mapping[str, Any]], slots: l
 
     def under_contract(tid: str, k: int) -> list[Any]:
         """Players still signed for season + k (k-th season from now), rookie options picked up counted in."""
-        return [p for p in by_team.get(tid, []) if _years(p) > k or (k == 1 and p.sleeper_id in kept)]
+        return [p for p in by_team.get(tid, []) if _years(p) > k or (p.sleeper_id in kept and _years(p) + rules.option_years > k)]
 
     def committed(tid: str, k: int) -> float:
         return round(sum(kept.get(p.sleeper_id, _salary(p)) if _years(p) <= k else _salary(p) for p in under_contract(tid, k)), 2)
@@ -139,7 +162,7 @@ def plan(*, players: list[Any], teams: Mapping[str, Mapping[str, Any]], slots: l
     seasons_out, classes = [], []
     for k in range(1, horizon + 1):
         year = season + k
-        worth = {p.sleeper_id: worth_in(p, fair, k) for p in players}
+        worth = {p.sleeper_id: W(p, k) for p in players}
         room = {tid: round(float(salary_cap) - committed(tid, k) - float(dead_future.get(tid, {}).get(year, 0.0)), 2) for tid in teams}
         lineups = {tid: lineup_worth(under_contract(tid, k), slots, worth) for tid in teams}
         med_pos = {pos: median([lineups[t][1].get(pos, 0.0) for t in teams]) for pos in POS} if teams else {}
@@ -174,38 +197,39 @@ def plan(*, players: list[Any], teams: Mapping[str, Mapping[str, Any]], slots: l
                 s = _salary(p)
                 if str(p.team_id) == asker or s <= 1 or _years(p) < 2 or getattr(p, "contract_type", None) == "rookie" or p.sleeper_id not in fair:
                     continue
-                r = cut_or_keep(name=p.name, pos=p.position, age=p.age, salary=s, years_left=_years(p) - 1, fair_now=worth_in(p, fair, 1),
+                r = cut_or_keep(name=p.name, pos=p.position, age=p.age, salary=s, years_left=_years(p) - 1, fair_now=W(p, 1),
                                 rules=rules, offseason=True)
-                if r["call"] == "cut now" and worth_in(p, fair, 1) >= 3:
+                if r["call"] == "cut now" and W(p, 1) >= 3:
                     casualties.append(p)
         cut_ids = {p.sleeper_id for p in casualties}
         heat = 1.0
         if k == 1:
-            pool_worth = sum(worth_in(p, fair, k) for p in pool + casualties)
+            pool_worth = sum(W(p, k) for p in pool + casualties)
             spend = SPEND_SHARE * sum(max(v, 0.0) for v in room.values())
             if pool_worth > 0:
                 heat = round(max(HEAT_RANGE[0], min(HEAT_RANGE[1], spend / pool_worth)), 2)
         bidders = sorted((t for t in teams if t != asker), key=lambda t: -room[t])[:4]
         rows = []
         for p in pool + casualties:
-            w = worth_in(p, fair, k)
+            w = W(p, k)
             if w < 2.0:
                 continue
             rivals = [t for t in bidders if p.position in needs.get(t, []) and room[t] >= w]
             lean = max([leans.get(t, {}).get(p.position, 1.0) for t in rivals] or [1.0])
-            price = round(max(1.0, w * heat * max(1.0, lean)), 0)
-            years, surplus = best_length(p, fair, k, price, max_years, light, season)
+            push = min(LEAN_CAP, 1.0 + LEAN_WEIGHT * max(0.0, lean - 1.0))   # an eager rival bids him up, partly
+            price = round(max(1.0, w * heat * push), 0)
+            years, surplus = best_length(p, W, k, price, max_years, light, season)
             fit = []
             if p.position in needs.get(asker, []) or any(h == p.position for h in lineups.get(asker, (0, {}, []))[2]):
                 fit.append("fills a thin spot")
-            if retention(p.position, p.age, k + 1) >= retention(p.position, p.age, k) * 0.9:
+            if W(p, k + 1) >= 0.9 * w:
                 fit.append("holds value")
             score = w * (1.35 if fit and fit[0] == "fills a thin spot" else 1.0) + 0.5 * max(surplus, 0.0)
             if focus and p.position != focus.upper():
                 continue
             rows.append((score, {
                 "player": p.name, "pos": p.position, "age_then": round(p.age + k) if p.age else None,
-                "now_with": name.get(str(p.team_id), "?") if str(p.team_id) != asker else "you",
+                "now_with": name.get(str(p.team_id), "?") if str(p.team_id) != asker else "you (his deal runs out)",
                 "salary_now": _salary(p), "worth_then": round(w), "likely_price": int(price),
                 "suggested_years": years, "surplus_over_deal": round(surplus),
                 "why": ", ".join(fit) or None,
@@ -214,7 +238,7 @@ def plan(*, players: list[Any], teams: Mapping[str, Mapping[str, Any]], slots: l
             }))
         rows.sort(key=lambda r: -r[0])
         option_keeps = [f"{p.name} ({name.get(str(p.team_id), '?')}, ${kept[p.sleeper_id]:g} option)" for p in players
-                        if p.sleeper_id in kept and k == 1 and worth_in(p, fair, 1) >= 5]
+                        if p.sleeper_id in kept and _years(p) == k and W(p, k) >= 5]
         classes.append({
             "auction": f"before the {year} season",
             "market_heat": heat if k == 1 else "too far out to price (earlier auctions refill the room)",
