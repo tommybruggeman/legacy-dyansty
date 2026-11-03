@@ -119,13 +119,15 @@ function SplitOdds({ odds }: { odds: [number, number] }) {
   );
 }
 
-function Hero({ title, pill, me, them, week, matchupId, meLabel, themLabel, badges, showScores = true, proj, odds }: {
+// final: the matchup is over, so a gold WINNER tag sits under the winning score (the losing score is already dimmed).
+function Hero({ title, pill, me, them, week, matchupId, meLabel, themLabel, badges, showScores = true, proj, odds, final = false }: {
   title: string; pill?: ReactNode; me: HomeSide; them?: HomeSide | null; week: number; matchupId?: number;
   meLabel?: string; themLabel?: string; badges: [string, string][]; showScores?: boolean; proj?: [number, number] | null;
-  odds?: [number, number] | null;
+  odds?: [number, number] | null; final?: boolean;
 }) {
   const total = me.score + (them?.score ?? 0);
   const ahead = me.score >= (them?.score ?? 0);
+  const decided = final && showScores && !!them && me.score !== them.score;
   const open = matchupId != null ? () => router.push(`/game/${week}/${matchupId}`) : undefined;
   const Side = ({ s, label, lead, projected }: { s: HomeSide | null | undefined; label: string; lead: boolean; projected?: number }) => (
     <View style={styles.side}>
@@ -133,6 +135,7 @@ function Hero({ title, pill, me, them, week, matchupId, meLabel, themLabel, badg
       <Text style={styles.sideName} numberOfLines={1}>{label}</Text>
       {showScores ? <Text style={[styles.score, !lead && styles.dim]}>{pts(s?.score ?? 0)}</Text> : null}
       {showScores && projected != null ? <Text style={styles.proj}>proj {projected.toFixed(1)}</Text> : null}
+      {decided ? <Text style={[styles.winner, !lead && styles.hidden]}>WINNER</Text> : null}
     </View>
   );
   return (
@@ -179,7 +182,8 @@ function LiveHero({ data, title }: { data: HomeData; title: string }) {
       matchupId={g.matchup_id}
       proj={proj}
       odds={odds}
-      badges={line ? [[line.line.toFixed(1), line.final ? 'TOP-5 LINE' : 'PROJ. TOP-5 LINE']] : []}
+      final={final}
+      badges={line && !final ? [[line.line.toFixed(1), 'PROJ. TOP-5 LINE']] : []}
     />
   );
 }
@@ -339,7 +343,7 @@ const left = (players: LivePlayer[]) => players.filter((p) => p.status === 'wait
 const anyPlaying = (data: HomeData) => [...(data.players?.me ?? []), ...(data.players?.them ?? [])].some((p) => p.status === 'playing');
 
 function LivePill({ data, label = 'LIVE', waiting }: { data: HomeData; label?: string; waiting?: string }) {
-  if (data.game?.is_final) return <Pill label="FINAL" />;
+  if (data.game?.is_final) return <Pill label="FINAL" tone="gold" />;
   if (anyPlaying(data)) return <Pill label={`● ${label}`} tone="live" />;
   return waiting ? <Pill label={waiting} tone="gold" /> : null;
 }
@@ -422,16 +426,19 @@ function GameDay({ data }: { data: HomeData }) {
     const still = [...mine.filter((p) => p.status !== 'final' && p.player_id && p.status !== 'bye').map((p) => ({ ...p, side: 'You' })),
       ...theirs.filter((p) => p.status !== 'final' && p.player_id && p.status !== 'bye').map((p) => ({ ...p, side: firstName(g.them?.name ?? '') }))];
     const gap = Math.abs(g.me.score - (g.them?.score ?? 0));
+    // Every starter on both sides has played (the week itself may still have MNF games left in other matchups).
+    const done = mine.length > 0 && left(mine) === 0 && left(theirs) === 0;
     return (
       <>
         <Hero
           title={title}
-          pill={<LivePill data={data} label="MNF" waiting="MNF TONIGHT" />}
+          pill={done ? <Pill label="FINAL" tone="gold" /> : <LivePill data={data} label="MNF" waiting="MNF TONIGHT" />}
           me={g.me}
           them={g.them}
           week={data.week}
           matchupId={g.matchup_id}
-          badges={[[String(left(mine)), 'LEFT: YOU'], [String(left(theirs)), `LEFT: ${firstName(g.them?.name ?? 'THEM').toUpperCase()}`], [ordinal(g.me.rank), 'HIGH SCORE']]}
+          final={done}
+          badges={done ? [] : [[String(left(mine)), 'LEFT: YOU'], [String(left(theirs)), `LEFT: ${firstName(g.them?.name ?? 'THEM').toUpperCase()}`], [ordinal(g.me.rank), 'HIGH SCORE']]}
         />
         {still.length ? (
           <Card>
@@ -513,7 +520,8 @@ function Playoffs({ data }: { data: HomeData }) {
           matchupId={g.matchup_id}
           meLabel={`You${seed(g.me)}`}
           themLabel={g.them ? `${firstName(g.them.name)}${seed(g.them)}` : undefined}
-          badges={[[String(left(mine)), 'LEFT: YOU'], [String(left(data.players?.them ?? [])), 'LEFT: THEM'], [ordinal(g.me.rank), 'HIGH SCORE']]}
+          final={!!g.is_final}
+          badges={g.is_final ? [] : [[String(left(mine)), 'LEFT: YOU'], [String(left(data.players?.them ?? [])), 'LEFT: THEM'], [ordinal(g.me.rank), 'HIGH SCORE']]}
         />
       ) : null}
       {data.bracket?.length ? (
@@ -712,6 +720,8 @@ const styles = StyleSheet.create({
   sideName: { color: colors.text, fontWeight: '800', fontSize: 15 },
   score: { color: colors.text, fontSize: 30, fontWeight: '800' },
   proj: { color: colors.muted, fontSize: 12, marginTop: -4 },
+  winner: { color: colors.gold, fontSize: 10, fontWeight: '800', letterSpacing: 1.4, marginTop: -2 },
+  hidden: { opacity: 0 },
   bar: { marginTop: 12 },
   badges: { flexDirection: 'row', gap: 8, marginTop: 12 },
   badge: { flex: 1, backgroundColor: colors.row, borderRadius: 12, paddingVertical: 8, paddingHorizontal: 4, alignItems: 'center' },
