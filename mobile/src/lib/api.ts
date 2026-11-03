@@ -598,7 +598,7 @@ export type HomeBottom =
   | { mode: 'scoreboard'; scoreboard: { matchup_id: number; teams: BoardSide[]; mine: boolean }[]; race: RaceRow[] }
   | { mode: 'shotgun'; shotgun: {
       window: number; locked: boolean; last: ShotgunRow; danger: ShotgunRow[]; safe: ShotgunRow[];
-      needs: { points: number; to_pass: string } | null;
+      needs: { points: number; to_pass: string; who: string; who_is_me: boolean; to_pass_is_me: boolean } | null;
     } | null; scoreboard?: { matchup_id: number; teams: BoardSide[]; mine: boolean }[] };
 export type HomeData = {
   phase: 'game_day' | 'recap' | 'playoffs' | 'decisions' | 'draft_prep';

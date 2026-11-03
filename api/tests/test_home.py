@@ -148,7 +148,26 @@ def test_shotgun_locks_when_last_place_cant_be_caught():
     # still playing and close enough to pass Mekel: not locked, and says what he needs
     live[1] = _live(80.1, 5.0, 1, 1)
     out = home.shotgun(live, {1: "Luis", 2: "Mekel", 3: "Grady", 4: "Kevin"}, {}, None, 5.0)
-    assert not out["locked"] and out["needs"] == {"points": 6.11, "to_pass": "Mekel"}
+    assert not out["locked"] and out["needs"]["points"] == 6.11 and out["needs"]["to_pass"] == "Mekel"
+    assert out["needs"]["who"] == "Luis"
+    # Grady (frozen above Mekel) and Kevin can't finish last any more, so they drop off
+    assert [d["name"] for d in out["danger"] + out["safe"]] == ["Mekel"]
+
+
+def test_shotgun_hides_owners_who_cant_finish_last():
+    # Late Monday: A is frozen lowest by projection, D is under A with 2 left; B, C, E are done or already above A.
+    live = {1: _live(90.5, 0, 0), 2: _live(93.2, 0, 0), 3: _live(90.9, 3.3, 1, 1), 4: _live(87.9, 10.4, 2, 1),
+            5: _live(99.1, 0, 0)}
+    names = {1: "A", 2: "B", 3: "C", 4: "D", 5: "E"}
+    assert home.still_alive(live) == {1, 4}
+    out = home.shotgun(live, names, {}, None, 5.0)
+    assert out["last"]["name"] == "A" and not out["locked"]
+    assert [d["name"] for d in out["danger"] + out["safe"]] == ["D"]
+    assert out["needs"] == {"points": 2.61, "to_pass": "A", "who": "D", "who_is_me": False, "to_pass_is_me": False}
+    # D gets past A: A is the only one who can finish last, so it locks
+    live[4] = _live(95.0, 2.0, 1, 1)
+    out = home.shotgun(live, names, {}, None, 5.0)
+    assert out["locked"] and out["last"]["name"] == "A"
 
 
 def test_remaining_projection_and_team_live():

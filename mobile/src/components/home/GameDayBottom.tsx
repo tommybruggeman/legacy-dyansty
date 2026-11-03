@@ -163,6 +163,11 @@ function Shotgun({ data }: { data: Shot }) {
           {last.frozen ? <Text style={styles.frozen}>FROZEN</Text> : <Text style={styles.leftText}>{last.playing ? '● ' : ''}{last.left} left</Text>}
         </View>
       </View>
+      {data.needs ? (
+        <Text style={styles.shotNeeds}>
+          {data.needs.who_is_me ? 'You need' : `${firstName(data.needs.who)} needs`} {pts(data.needs.points)} to pass {data.needs.to_pass_is_me ? 'you' : firstName(data.needs.to_pass)}
+        </Text>
+      ) : null}
       <Zone rows={data.danger} safe={data.safe} />
     </Card>
   );
@@ -255,6 +260,7 @@ const styles = StyleSheet.create({
   zNum: { width: 46, textAlign: 'right', color: colors.text, fontSize: 13, fontWeight: '700' },
   zLeft: { width: 58, alignItems: 'flex-end' },
   leftText: { color: colors.live, fontSize: 11, fontWeight: '700', textAlign: 'right' },
+  shotNeeds: { color: colors.text, fontSize: 12, fontWeight: '700', textAlign: 'center', marginTop: 10 },
   frozen: { color: '#7FB2E0', backgroundColor: 'rgba(127,178,224,0.15)', fontSize: 9, fontWeight: '800', borderRadius: 6, overflow: 'hidden', paddingHorizontal: 5, paddingVertical: 2 },
   cut: { borderTopWidth: 1, borderTopColor: RED, borderStyle: 'dashed', marginVertical: 4 },
   lock: { alignItems: 'center', paddingTop: 14, paddingBottom: 4, gap: 6 },
