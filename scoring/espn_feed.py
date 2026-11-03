@@ -121,23 +121,49 @@ RECEIVER = re.compile(r"\bpass\b[^.]*?\bto\s+" + NAME)
 PASSER = re.compile(r"^(?:\([^)]*\)\s*)*" + NAME + r"\s+pass\b")
 
 
+ELIGIBLE = re.compile(r"[A-Z][\w.'-]*\s+reported in as eligible\.?\s*", re.IGNORECASE)
+GAIN = re.compile(r"\bfor (?:(-?\d+) yards?|(no gain))", re.IGNORECASE)
+
+
+def _gain(text: str) -> float | None:
+    m = GAIN.search(text)
+    if not m:
+        return None
+    return 0.0 if m.group(2) else float(m.group(1))
+
+
 def first_downs(summary: Mapping[str, Any] | None, names: Names, include_td: bool = False) -> list[tuple[str, str]]:
     """(ESPN athlete id, stat key) for each rushing or receiving first down (and the passer's passing first down),
     read from the play by play: a gain at least as long as the distance to go. Touchdowns don't count unless
-    include_td (graded against Sleeper's official numbers: without them 4 of 443 players differ on catches, with them 65)."""
+    include_td (graded against Sleeper's official numbers: without them 4 of 443 players differ on catches, with them 65).
+
+    Also read: runs and catches ESPN files under another play type (a fumble the offense recovered, or a defensive
+    penalty that let the play stand), using the gain in the play's own text; and plays that start with a lineman
+    "reported in as eligible"."""
     out = []
     for team, play in _plays(summary):
         kind = str((play.get("type") or {}).get("text") or "").lower()
-        text = str(play.get("text") or "")
-        if "no play" in text.lower() or "penalty" in kind or "two-point" in text.lower() or "kneel" in kind:
+        text = ELIGIBLE.sub("", str(play.get("text") or "")).strip()
+        low = text.lower()
+        if "no play" in low or "two-point" in low or "kneel" in kind or "kick" in kind or "punt" in kind:
             continue
         td = "touchdown" in kind
+        other = kind.startswith("fumble recovery (own)") or kind == "penalty"
+        if kind == "penalty" and ("offensive" in low or "penalty on" not in low):
+            continue  # a foul on the offense moves the ball back; only a defensive foul leaves the gain standing
         rush = kind.startswith("rush")
         catch = kind.startswith("pass reception") or kind == "passing touchdown"
+        if other:
+            catch = bool(RECEIVER.search(text)) and " pass " in f" {low} "
+            rush = not catch and "sacked" not in low and "pass" not in low and bool(_gain(text) is not None)
         if not (rush or catch):
             continue
-        start = play.get("start") or {}
-        distance, yards = start.get("distance"), play.get("statYardage")
+        distance = (play.get("start") or {}).get("distance")
+        if other:  # the gain on the run or catch itself, before the fumble or the penalty
+            m = RECEIVER.search(text) if catch else RUSHER.search(text)
+            yards = _gain(text[m.end():] if m else text)
+        else:
+            yards = play.get("statYardage")
         try:
             gained = float(yards) >= float(distance) and float(distance) > 0
         except (TypeError, ValueError):
