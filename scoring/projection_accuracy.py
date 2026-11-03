@@ -29,7 +29,7 @@ SKILL = ("QB", "RB", "WR", "TE")
 POS_PRIOR = 300.0     # projected points of "the projection was right" mixed into the position ratio
 TIER_PRIOR = 150.0
 PLAYER_PRIOR = 40.0   # about 3-4 games of a typical starter
-METHODS = ("sleeper", "app", "pos_bias", "tier_bias", "player_bias", "blend_avg_20", "blend_avg_30", "combo")
+METHODS = ("sleeper", "app", "pos_bias", "pos_100", "pos_600", "pos_carry", "pos_last4", "tier_bias", "player_bias", "blend_avg_20", "combo")
 
 
 def tier(p: float) -> str:
@@ -83,6 +83,7 @@ def run_league(client: Any, league_id: str, sleeper_league_id: str) -> None:
         lineups[(int(r["season"]), int(r["week"]))].append(r.get("details") or {})
     query = "season_type=regular&" + "&".join(f"position[]={p}" for p in POSITIONS)
 
+    carry: dict[str, float] = {}   # last season's end-of-season ratio by position
     for season in sorted({s for s, _ in lineups}):
         sc = scoring.get(season) or next(iter(scoring.values()), {})
         weeks = sorted(w for s, w in lineups if s == season)
@@ -91,6 +92,8 @@ def run_league(client: Any, league_id: str, sleeper_league_id: str) -> None:
         t = Tally()
         teams: dict[str, list[float]] = defaultdict(list)   # method -> team-week errors
         pos_hist: dict[str, list[float]] = defaultdict(lambda: [0.0, 0.0])
+        pos_weeks: dict[str, list[tuple[float, float]]] = defaultdict(list)   # per finished week (actual, projected)
+        kdiag: dict[str, list[int]] = defaultdict(lambda: [0, 0])
         tier_hist: dict[tuple[str, str], list[float]] = defaultdict(lambda: [0.0, 0.0])
         player_hist: dict[str, list[float]] = defaultdict(lambda: [0.0, 0.0])
         games_played: dict[str, list[float]] = defaultdict(list)
@@ -133,10 +136,13 @@ def run_league(client: Any, league_id: str, sleeper_league_id: str) -> None:
                 est[pid] = {
                     "sleeper": base, "app": app,
                     "pos_bias": app * ratio(ph[0], ph[1], POS_PRIOR),
+                    "pos_100": app * ratio(ph[0], ph[1], 100.0),
+                    "pos_600": app * ratio(ph[0], ph[1], 600.0),
+                    "pos_carry": app * (ph[0] + POS_PRIOR * carry.get(pos, 1.0)) / (ph[1] + POS_PRIOR),
+                    "pos_last4": app * ratio(sum(a for a, _ in pos_weeks[pos][-4:]), sum(b for _, b in pos_weeks[pos][-4:]), POS_PRIOR),
                     "tier_bias": tb,
                     "player_bias": app * ratio(plh[0], plh[1], PLAYER_PRIOR),
                     "blend_avg_20": 0.8 * app + 0.2 * avg if avg is not None else app,
-                    "blend_avg_30": 0.7 * app + 0.3 * avg if avg is not None else app,
                     "combo": tb * ratio(plh[0], plh[1], PLAYER_PRIOR),
                 }
                 pos_of[pid] = pos
@@ -161,14 +167,24 @@ def run_league(client: Any, league_id: str, sleeper_league_id: str) -> None:
                 real = sum(actual(pid, (est.get(pid) and pos_of[pid]) or "") for pid in ids)
                 for m in METHODS:
                     teams[m].append(real - sum(est.get(pid, {}).get(m, 0.0) for pid in ids))
+            # kickers: which scoring keys the projected and the real stat lines carry (keys only, no names)
+            for pid, line in proj_lines.items():
+                if line.get("pos") == "K":
+                    for k in sc:
+                        if k.startswith(("fg", "xp")):
+                            kdiag[k][0] += int((line.get("stats") or {}).get(k) not in (None, 0))
+                            kdiag[k][1] += int(((actual_lines.get(pid) or {}).get("stats") or {}).get(k) not in (None, 0))
             # learn from this week (only after it has been graded)
+            wk: dict[str, list[float]] = defaultdict(lambda: [0.0, 0.0])
             for pid, e in est.items():
                 if e["sleeper"] < MIN_PROJ:
                     continue
                 pos, a = pos_of[pid], pts[pid]
-                for h in (pos_hist[pos], tier_hist[(pos, tier(e["app"]))], player_hist[pid]):
+                for h in (pos_hist[pos], tier_hist[(pos, tier(e["app"]))], player_hist[pid], wk[pos]):
                     h[0] += a
                     h[1] += e["app"]
+            for pos, (a_, p_) in wk.items():
+                pos_weeks[pos].append((a_, p_))
             for pid in est:
                 line = actual_lines.get(pid)
                 s = (line or {}).get("stats") or {}
@@ -186,6 +202,9 @@ def run_league(client: Any, league_id: str, sleeper_league_id: str) -> None:
         # what the learned position ratios ended at (positive = players outscore the projection)
         print("  end-of-season position ratios (actual / app projection): " + ", ".join(
             f"{p} {h[0] / h[1]:.3f}" for p, h in sorted(pos_hist.items()) if h[1]))
+        carry = {p: h[0] / h[1] for p, h in pos_hist.items() if h[1]}
+        print("  kicker scoring keys (weight; K lines with it projected / real): " + ", ".join(
+            f"{k} {sc.get(k)} {v[0]}/{v[1]}" for k, v in sorted(kdiag.items())))
 
 
 def odds_history_check(client: Any, league_id: str) -> None:
