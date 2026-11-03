@@ -138,7 +138,8 @@ def first_downs(summary: Mapping[str, Any] | None, names: Names, include_td: boo
     include_td (graded against Sleeper's official numbers: without them 4 of 443 players differ on catches, with them 65).
 
     Also read: runs and catches ESPN files under another play type (a fumble the offense recovered, or a defensive
-    penalty that let the play stand), using the gain in the play's own text; and plays that start with a lineman
+    penalty that let the play stand), and runs and catches with a penalty after the play (statYardage then includes the
+    penalty), using the gain in the play's own text; and plays that start with a lineman
     "reported in as eligible"."""
     out = []
     for team, play in _plays(summary):
@@ -159,7 +160,7 @@ def first_downs(summary: Mapping[str, Any] | None, names: Names, include_td: boo
         if not (rush or catch):
             continue
         distance = (play.get("start") or {}).get("distance")
-        if other:  # the gain on the run or catch itself, before the fumble or the penalty
+        if other or "penalty" in low:  # the gain on the run or catch itself, before a fumble or a penalty after the play
             m = RECEIVER.search(text) if catch else RUSHER.search(text)
             yards = _gain(text[m.end():] if m else text)
         else:
