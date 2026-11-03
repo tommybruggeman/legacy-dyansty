@@ -439,7 +439,7 @@ def _team_week(client: Client, ctx: dict[str, Any], roster_id: int | None) -> di
     this week's opponent. None when the team has no game this week."""
     if roster_id is None:
         return None
-    week = league.current_week()
+    week = _home_week(client, ctx["season"], datetime.now(home.HOME_TZ).date())  # same week as Home: Monday's holds until midnight Pacific
     final = week <= league.last_scored_week(ctx["sleeper_id"])
 
     def load() -> dict[str, Any] | None:
