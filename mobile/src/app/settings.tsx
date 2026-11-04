@@ -1,4 +1,5 @@
 import Constants from 'expo-constants';
+import { router } from 'expo-router';
 import { Linking, Pressable, StyleSheet, Text } from 'react-native';
 
 import { Back, Card, Note, Row, Screen, Title, ui } from '../components/ui';
@@ -23,6 +24,13 @@ export default function Settings() {
         <Text style={ui.name}>{team?.ownerName ?? session?.user.email ?? ''}</Text>
         {team?.teamName ? <Text style={ui.sub}>{team.teamName}{team.role ? ` · ${team.role}` : ''}</Text> : null}
         {session?.user.email && team?.ownerName ? <Text style={ui.sub}>{session.user.email}</Text> : null}
+      </Card>
+      <Card>
+        <Row first onPress={() => router.push('/alerts')}>
+          <Text style={[ui.value, ui.flex]}>Alerts</Text>
+          <Text style={ui.link}>›</Text>
+        </Row>
+        <Note>Pick which alerts you get: lineup problems, injuries, final scores, deadlines and more.</Note>
       </Card>
       <Card>
         <Row first onPress={() => Linking.openURL(WEBSITE)}>

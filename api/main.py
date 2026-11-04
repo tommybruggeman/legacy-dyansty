@@ -8,7 +8,7 @@ reads run as that owner so row-level security applies just like the website.
 from __future__ import annotations
 
 import os
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from supabase import Client, create_client
 
 from api import box_score as box_score_mod
-from api import activity, cache, front_office, home, league, lineups, live_activity, market, nfl_live, own_league, player, playoffs, projections, teams, trade_feed, trade_offers, waivers
+from api import activity, alerts, cache, front_office, home, league, lineups, live_activity, market, nfl_live, own_league, player, playoffs, projections, teams, trade_feed, trade_offers, waivers
 from league_ai import risers as risers_log
 from season_engine import SeasonResolver
 from services.season_rollover_owner_ui import OwnerRolloverDecisionError, OwnerRolloverDecisionService
@@ -129,23 +129,91 @@ def _team_ids(client: Client, user: Any) -> dict[int, str]:
 class PushToken(BaseModel):
     token: str
     platform: str | None = None
+    tz: str | None = None
+
+
+def _push_token_kind(token: str) -> str | None:
+    """'apns' for an Apple device token (hex), None for anything else (Expo tokens are no longer used)."""
+    return "apns" if 32 <= len(token) <= 400 and all(c in "0123456789abcdef" for c in token) else None
 
 
 @app.post("/me/push-token")
 def save_push_token(body: PushToken, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
-    """This phone's Expo push token, so league alerts (a completed trade) reach it."""
+    """This phone's Apple push token (and time zone, for quiet hours), so league alerts reach it."""
     client, user = owner
-    token = body.token.strip()
-    if not token.startswith("ExponentPushToken[") and not token.startswith("ExpoPushToken["):
-        raise HTTPException(status_code=400, detail="Not an Expo push token.")
+    token = body.token.strip().lower()
+    kind = _push_token_kind(token)
+    if not kind:
+        raise HTTPException(status_code=400, detail="Not a push token.")
     league_id = resolve_team(client, user)["league_id"]
+    tz = (body.tz or "").strip()[:64] or None
     try:
         client.table("push_tokens").upsert({"token": token, "user_id": user.id, "league_id": league_id, "platform": body.platform,
+                                            "kind": kind, "tz": tz,
                                             "updated_at": datetime.now().astimezone().isoformat()}, on_conflict="token").execute()
     except Exception as exc:
         print(f"APP_PUSH_TOKEN_ERROR {type(exc).__name__}", flush=True)
         raise HTTPException(status_code=503, detail="Alerts aren't switched on yet.")
     return {"ok": True}
+
+
+class AlertSettings(BaseModel):
+    off: list[str] = []
+    tz: str | None = None
+
+
+def _alert_pref(client: Client, user: Any) -> tuple[str, dict[str, Any] | None]:
+    league_id = resolve_team(client, user)["league_id"]
+    rows = (client.table("push_prefs").select("off,tz").eq("user_id", user.id).eq("league_id", league_id).limit(1)
+            .execute().data or [])
+    return league_id, (rows[0] if rows else None)
+
+
+@app.get("/me/alerts")
+def my_alerts(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """Which alerts I get (each kind on or off), quiet hours and the weekly limit. Same switches as the website."""
+    client, user = owner
+    try:
+        _, pref = _alert_pref(client, user)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print(f"APP_ALERTS_ERROR {type(exc).__name__}", flush=True)
+        raise HTTPException(status_code=503, detail="Alerts aren't switched on yet.")
+    return alerts.settings_view(pref)
+
+
+@app.post("/me/alerts")
+def save_my_alerts(body: AlertSettings, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    try:
+        league_id, pref = _alert_pref(client, user)
+        row = {"user_id": user.id, "league_id": league_id, "off": alerts.clean_off(body.off),
+               "tz": ((body.tz or "").strip()[:64] or (pref or {}).get("tz")),
+               "updated_at": datetime.now(timezone.utc).isoformat()}
+        client.table("push_prefs").upsert(row, on_conflict="user_id,league_id").execute()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print(f"APP_ALERTS_ERROR {type(exc).__name__}", flush=True)
+        raise HTTPException(status_code=503, detail="Alerts aren't switched on yet.")
+    return alerts.settings_view(row)
+
+
+@app.post("/me/alerts/test")
+def test_my_alerts(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """Queue a test alert for my phones; the alert job sends it within about 10 minutes (quiet hours don't apply)."""
+    client, user = owner
+    league_id = resolve_team(client, user)["league_id"]
+    now = datetime.now(timezone.utc)
+    test = alerts.test_alert(now)
+    try:
+        alerts.enqueue(client, alerts.Alert(test.kind, test.key, test.title, test.body, test.url, urgent=True),
+                       league_id=league_id, user_ids=[user.id], expires_at=now + timedelta(hours=1))
+    except Exception as exc:
+        print(f"APP_ALERTS_ERROR {type(exc).__name__}", flush=True)
+        raise HTTPException(status_code=503, detail="Alerts aren't switched on yet.")
+    return {"ok": True, "message": "A test alert is on its way. It arrives within about 10 minutes."}
 
 
 class LiveActivityToken(BaseModel):
