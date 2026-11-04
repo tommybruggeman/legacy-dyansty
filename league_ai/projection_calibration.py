@@ -32,6 +32,8 @@ POSITIONS = ("QB", "RB", "WR", "TE", "K", "DEF")
 SKILL = ("QB", "RB", "WR", "TE")
 FACTOR_RANGE = (0.6, 1.5)
 FACTORS_TTL = 3600
+LINE_PRIOR_N = 30.0   # player-weeks' worth of last season's line (or of "the projection is right") mixed in
+SLOPE_RANGE = (0.5, 1.5)   # a slope above 0 keeps the order within a position: a higher projection stays higher
 
 
 # ---- the math (pure) -----------------------------------------------------------------------------------------
@@ -39,6 +41,44 @@ FACTORS_TTL = 3600
 def factor(actual: float, projected: float, carry: float = 1.0, prior: float = PRIOR) -> float:
     low, high = FACTOR_RANGE
     return max(low, min(high, (actual + prior * carry) / (projected + prior)))
+
+
+class Line:
+    """actual ~ a + b x per position, fit by least squares on finished weeks. Big projections run high more than small
+    ones (owners start the big ones, and the biggest regress most), so a line beats one ratio for the whole position.
+    Walk-forward on 2024-2026 starters (scoring/projection_accuracy.py, lin_carry): team totals MAE 19.42/21.39/18.56
+    (one ratio) -> 19.39/20.83/18.15."""
+
+    def __init__(self, sums: Iterable[float] | None = None) -> None:
+        self.s = list(sums) if sums else [0.0] * 5   # n, sum x, sum y, sum xx, sum xy
+
+    def add(self, x: float, y: float) -> None:
+        for i, v in enumerate((1.0, x, y, x * x, x * y)):
+            self.s[i] += v
+
+    def fit(self, prior: "Line | None" = None) -> tuple[float, float]:
+        s = list(self.s)
+        if prior is not None and prior.s[0] > 0:
+            k = LINE_PRIOR_N / prior.s[0]
+            s = [a + k * b for a, b in zip(s, prior.s)]
+        else:   # no last season: lean on the projection being right (points on y = x)
+            for x in (5.0, 10.0, 15.0, 20.0):
+                for i, v in enumerate((1.0, x, x, x * x, x * x)):
+                    s[i] += LINE_PRIOR_N / 4 * v
+        n, sx, sy, sxx, sxy = s
+        den = n * sxx - sx * sx
+        b = (n * sxy - sx * sy) / den if den > 0 else 1.0
+        b = max(SLOPE_RANGE[0], min(SLOPE_RANGE[1], b))
+        return round((sy - b * sx) / n, 3), round(b, 3)
+
+
+def line_points(x: float, ab: Iterable[float]) -> float:
+    """A projection through a fitted line; under MIN_PROJ it scales with the line's value at MIN_PROJ (no jump, no
+    free points for a player barely projected)."""
+    a, b = (float(v) for v in ab)
+    if x >= MIN_PROJ:
+        return max(0.0, a + b * x)
+    return max(0.0, x * (a + b * MIN_PROJ) / MIN_PROJ)
 
 
 def _stats(errs: list[float]) -> dict[str, Any] | None:
@@ -56,6 +96,8 @@ def replay(weeks: Iterable[Mapping[str, Any]], prior: float = PRIOR) -> dict[str
     Returns the factors for the next week of the latest season plus that season's card."""
     carry: dict[str, float] = {}
     hist: dict[str, list[float]] = defaultdict(lambda: [0.0, 0.0])
+    lines: dict[str, Line] = defaultdict(Line)
+    line_carry: dict[str, Line] = {}
     season = None
     card_weeks: list[dict[str, Any]] = []
     season_errs: dict[str, list[float]] = defaultdict(list)
@@ -63,15 +105,19 @@ def replay(weeks: Iterable[Mapping[str, Any]], prior: float = PRIOR) -> dict[str
         if wk["season"] != season:
             if season is not None:
                 carry = {p: h[0] / h[1] for p, h in hist.items() if h[1] > 0}
+                line_carry = {p: l for p, l in lines.items() if l.s[0] > 0}
             season, hist, card_weeks, season_errs = wk["season"], defaultdict(lambda: [0.0, 0.0]), [], defaultdict(list)
+            lines = defaultdict(Line)
         f = {p: factor(hist[p][0], hist[p][1], carry.get(p, 1.0), prior) for p in POSITIONS}
+        ln = {p: lines[p].fit(line_carry.get(p)) for p in SKILL}
+        cal_of = lambda r: calibrate(r["shown"], r["pos"], f, ln)  # noqa: E731
         rows = [r for r in wk["rows"] if r.get("actual") is not None]
         by_id = {str(r["id"]): r for r in rows}
         errs: dict[str, list[float]] = defaultdict(list)
         for r in rows:
             if r["raw"] < MIN_PROJ:
                 continue
-            cal = r["shown"] * f.get(r["pos"], 1.0)
+            cal = cal_of(r)
             errs["shown"].append(r["actual"] - r["shown"])
             errs["calibrated"].append(r["actual"] - cal)
             season_errs[f"pos:{r['pos']}"].append(r["actual"] - cal)
@@ -81,7 +127,7 @@ def replay(weeks: Iterable[Mapping[str, Any]], prior: float = PRIOR) -> dict[str
                 continue
             real = sum(r["actual"] for r in got)
             errs["team_shown"].append(real - sum(r["shown"] for r in got))
-            errs["team_calibrated"].append(real - sum(r["shown"] * f.get(r["pos"], 1.0) for r in got))
+            errs["team_calibrated"].append(real - sum(cal_of(r) for r in got))
         snap = wk.get("snapshot") or {}
         for pid, pts in snap.items():
             r = by_id.get(str(pid))
@@ -95,6 +141,8 @@ def replay(weeks: Iterable[Mapping[str, Any]], prior: float = PRIOR) -> dict[str
             if r["raw"] >= MIN_PROJ and r["pos"] in POSITIONS:
                 hist[r["pos"]][0] += r["actual"]
                 hist[r["pos"]][1] += r["shown"]
+                if r["pos"] in SKILL:
+                    lines[r["pos"]].add(r["shown"], r["actual"])
     if season is None:
         return {}
     nxt = {p: round(factor(hist[p][0], hist[p][1], carry.get(p, 1.0), prior), 3) for p in POSITIONS}
@@ -102,6 +150,7 @@ def replay(weeks: Iterable[Mapping[str, Any]], prior: float = PRIOR) -> dict[str
         "season": season,
         "through_week": card_weeks[-1]["week"] if card_weeks else 0,
         "factors": nxt,
+        "lines": {p: list(lines[p].fit(line_carry.get(p))) for p in SKILL},
         "season_ratio": {p: round(h[0] / h[1], 3) for p, h in hist.items() if h[1] > 0},
         "last_season_ratio": {p: round(v, 3) for p, v in carry.items() if p in POSITIONS},
         "overall": {k: _stats(v) for k, v in season_errs.items() if not k.startswith("pos:")},
@@ -110,8 +159,16 @@ def replay(weeks: Iterable[Mapping[str, Any]], prior: float = PRIOR) -> dict[str
     }
 
 
+def calibrate(points: float, position: str, factors: Mapping[str, float], lines: Mapping[str, Iterable[float]] | None = None) -> float:
+    """A projection corrected by the learned line for its position (QB/RB/WR/TE), else by the position factor."""
+    pos = str(position or "").upper()
+    if lines and lines.get(pos):
+        return line_points(points, lines[pos])
+    return points * float(factors.get(pos, 1.0))
+
+
 def apply(points: float, position: str, factors: Mapping[str, float]) -> float:
-    return points * float(factors.get(str(position or "").upper(), 1.0))
+    return calibrate(points, position, factors)
 
 
 # ---- reading the saved factors (app, website, Front Office) ---------------------------------------------------
@@ -130,24 +187,30 @@ def latest(client: Any, league_id: str) -> dict[str, Any] | None:
     return rows[0].get("result") if rows else None
 
 
-def position_factors(client: Any, sleeper_id: str, season: int) -> dict[str, float]:
-    """Position -> factor for this league's projections; {} (no change) when none is saved or it can't be read.
-    A card from last season still applies to week 1 of the next (its factors carry over)."""
+def calibration(client: Any, sleeper_id: str, season: int) -> dict[str, dict[str, Any]]:
+    """{'factors': position -> factor, 'lines': position -> [a, b]} for this league's projections; empty (no change)
+    when none is saved or it can't be read. A card from last season still applies to week 1 of the next."""
     from api import cache
 
-    def load() -> dict[str, float]:
+    def load() -> dict[str, dict[str, Any]]:
         try:
             lid = _league_id(client, sleeper_id)
             card = latest(client, lid) if lid else None
         except Exception:
-            return {}
+            return {"factors": {}, "lines": {}}
         if not card or int(card.get("season") or 0) > int(season):
-            return {}
-        return {str(k): float(v) for k, v in (card.get("factors") or {}).items()}
+            return {"factors": {}, "lines": {}}
+        return {"factors": {str(k): float(v) for k, v in (card.get("factors") or {}).items()},
+                "lines": {str(k): [float(x) for x in v] for k, v in (card.get("lines") or {}).items() if v and len(v) == 2}}
 
     if client is None:
-        return {}
-    return cache.cached(("projection_factors", str(sleeper_id), int(season)), FACTORS_TTL, load)
+        return {"factors": {}, "lines": {}}
+    return cache.cached(("projection_calibration", str(sleeper_id), int(season)), FACTORS_TTL, load)
+
+
+def position_factors(client: Any, sleeper_id: str, season: int) -> dict[str, float]:
+    """Position -> factor only (older callers)."""
+    return calibration(client, sleeper_id, season)["factors"]
 
 
 def card(client: Any, league_id: str) -> dict[str, Any] | None:
@@ -155,7 +218,7 @@ def card(client: Any, league_id: str) -> dict[str, Any] | None:
     c = latest(client, league_id)
     if not c or not c.get("overall"):
         return None
-    return {k: c.get(k) for k in ("season", "through_week", "factors", "overall", "by_position", "by_week", "computed_at")}
+    return {k: c.get(k) for k in ("season", "through_week", "factors", "lines", "overall", "by_position", "by_week", "computed_at")}
 
 
 # ---- building the weeks from data (learning job) --------------------------------------------------------------
@@ -313,7 +376,7 @@ def run(client: Any, *, now: datetime | None = None, dry_run: bool = False) -> d
                 res["snapshot_error"] = type(exc).__name__
         card_ = run_league(client, lid, sid)
         if card_:
-            res.update({"season": card_["season"], "through_week": card_["through_week"], "factors": card_["factors"],
+            res.update({"season": card_["season"], "through_week": card_["through_week"], "factors": card_["factors"], "lines": card_.get("lines"),
                         "overall": {k: (v or {}).get("mae") for k, v in card_["overall"].items()}})
             if not dry_run:
                 client.table("league_ai_experiments").insert({"league_id": lid, "user_id": SYSTEM_USER, "experiment": EXPERIMENT,

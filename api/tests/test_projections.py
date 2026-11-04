@@ -74,8 +74,11 @@ def test_week_projections_apply_the_learned_position_factor(monkeypatch):
     monkeypatch.setattr(projections, "season_games", lambda client, season: [{"week": 9, "home_team": "DEN", "away_team": "KC"}])
     monkeypatch.setattr(projections, "defense_vs_position", lambda client, season: {})
     monkeypatch.setattr(projections, "add_weather", lambda games, season, week: games)
-    monkeypatch.setattr(projections, "position_factors", lambda client, sid, season: {"RB": 0.8})
+    monkeypatch.setattr(projections, "projection_calibration", lambda client, sid, season: {"factors": {"RB": 0.8}, "lines": {}})
     out = projections.week_projections(None, "S", 2026, 9, ["1", "2"], {"1": "RB", "2": "QB"}, {"1": "DEN", "2": "DEN"})
     assert out == {"1": 8.0, "2": 10.0}   # RBs scaled to 80%, QBs untouched
+    # a learned line wins over the factor: 1 + 0.7 x 10 for the RB
+    monkeypatch.setattr(projections, "projection_calibration", lambda client, sid, season: {"factors": {"RB": 0.8}, "lines": {"RB": [1.0, 0.7]}})
+    assert projections.week_projections(None, "S", 2026, 9, ["1"], {"1": "RB"}, {"1": "DEN"}) == {"1": 8.0}
     raw = projections.week_projections(None, "S", 2026, 9, ["1"], {"1": "RB"}, {"1": "DEN"}, calibrate=False)
     assert raw == {"1": 10.0}

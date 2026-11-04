@@ -53,3 +53,25 @@ def test_front_office_week_number_comes_from_the_projection_when_there_is_one():
     use_projections([a, b], {"1": 16.0})
     assert a.week_now == 16.0 and a.week_sd == round(2 * 4 + 0.4, 2)
     assert b.week_now == 9.5 and b.week_sd is None   # no projection: keeps the form number
+
+
+def test_line_learns_that_big_projections_run_high_and_keeps_the_order():
+    line = pc.Line()
+    for x in range(4, 25):
+        line.add(float(x), 2.0 + 0.75 * x)
+    a, b = line.fit(pc.Line(line.s))   # last season said the same
+    assert abs(a - 2.0) < 0.01 and abs(b - 0.75) < 0.01
+    assert pc.line_points(20, (a, b)) < 20 and pc.line_points(4, (a, b)) > 4
+    assert abs(pc.line_points(1.5, (a, b)) - 1.5 * (a + 3 * b) / 3) < 1e-9   # under 3 pts: scaled, no jump
+    xs = [pc.line_points(x / 2, (a, b)) for x in range(0, 60)]
+    assert xs == sorted(xs)   # higher projection, higher number
+    assert pc.Line().fit() == (0.0, 1.0)   # nothing learned yet: projections as they are
+
+
+def test_replay_saves_lines_and_uses_them_for_skill_positions():
+    weeks = [_week(2025, w, [_row("a", "RB", 20, 14), _row("b", "RB", 6, 6), _row("k", "K", 8, 8)]) for w in range(1, 11)]
+    out = pc.replay(weeks)
+    a, b = out["lines"]["RB"]
+    assert b < 1 and pc.line_points(20, (a, b)) < 20
+    assert pc.calibrate(20, "RB", out["factors"], out["lines"]) == pc.line_points(20, out["lines"]["RB"])
+    assert pc.calibrate(8, "K", {"K": 1.1}, out["lines"]) == 8 * 1.1   # kickers keep the position factor
