@@ -114,10 +114,12 @@ def replay(weeks: Iterable[Mapping[str, Any]], prior: float = PRIOR) -> dict[str
         rows = [r for r in wk["rows"] if r.get("actual") is not None]
         by_id = {str(r["id"]): r for r in rows}
         errs: dict[str, list[float]] = defaultdict(list)
+        for r in wk["rows"]:
+            r["cal"] = cal_of(r)   # the walk-forward calibrated number (the projection learning builds on it)
         for r in rows:
             if r["raw"] < MIN_PROJ:
                 continue
-            cal = cal_of(r)
+            cal = r["cal"]
             errs["shown"].append(r["actual"] - r["shown"])
             errs["calibrated"].append(r["actual"] - cal)
             season_errs[f"pos:{r['pos']}"].append(r["actual"] - cal)
@@ -201,7 +203,8 @@ def calibration(client: Any, sleeper_id: str, season: int) -> dict[str, dict[str
         if not card or int(card.get("season") or 0) > int(season):
             return {"factors": {}, "lines": {}}
         return {"factors": {str(k): float(v) for k, v in (card.get("factors") or {}).items()},
-                "lines": {str(k): [float(x) for x in v] for k, v in (card.get("lines") or {}).items() if v and len(v) == 2}}
+                "lines": {str(k): [float(x) for x in v] for k, v in (card.get("lines") or {}).items() if v and len(v) == 2},
+                "adjust": card.get("adjust") or {}}
 
     if client is None:
         return {"factors": {}, "lines": {}}
@@ -218,7 +221,7 @@ def card(client: Any, league_id: str) -> dict[str, Any] | None:
     c = latest(client, league_id)
     if not c or not c.get("overall"):
         return None
-    return {k: c.get(k) for k in ("season", "through_week", "factors", "lines", "overall", "by_position", "by_week", "computed_at")}
+    return {k: c.get(k) for k in ("season", "through_week", "factors", "lines", "learning", "overall", "by_position", "by_week", "computed_at")}
 
 
 # ---- building the weeks from data (learning job) --------------------------------------------------------------
@@ -245,6 +248,17 @@ def _actual_lines(client: Any, season: int, week: int) -> dict[str, dict[str, An
     return out
 
 
+def _td_points(stats: Mapping[str, Any] | None, scoring: Mapping[str, Any]) -> float:
+    """Points from touchdowns alone (for telling a touchdown swing from a role change when a projection misses)."""
+    total = 0.0
+    for key in ("pass_td", "rush_td", "rec_td"):
+        try:
+            total += float((stats or {}).get(key) or 0) * float(scoring.get(key) or 0)
+        except (TypeError, ValueError):
+            continue
+    return round(total, 2)
+
+
 def week_rows(client: Any, season: int, week: int, scoring: Mapping[str, Any], stats_rows: list[dict[str, Any]],
               games_all: list[dict[str, Any]], actual: bool = True) -> list[dict[str, Any]]:
     """Every projected player's raw and matchup-tilted projection (as the app makes them, before calibration), and his
@@ -269,10 +283,12 @@ def week_rows(client: Any, season: int, week: int, scoring: Mapping[str, Any], s
             continue
         game = games.get(team_code(line.get("team")))
         tilt = total_multiplier(pos, game, dvp.get((game["opponent"], pos)) if game else None) if pos in SKILL and game else 1.0
-        row = {"id": str(pid), "pos": pos, "raw": raw, "shown": raw * tilt, "actual": None}
+        row = {"id": str(pid), "pos": pos, "team": team_code(line.get("team")), "raw": raw, "shown": raw * tilt, "actual": None,
+               "td_proj": _td_points(line.get("stats"), scoring)}
         if actual:
             real = lines.get(pid)
             row["actual"] = score(real.get("stats"), dict(scoring), real.get("pos") or pos) if real else 0.0
+            row["td_act"] = _td_points((real or {}).get("stats"), scoring)
         out.append(row)
     return out
 
@@ -304,7 +320,7 @@ def _snapshots(client: Any, league_id: str) -> dict[str, dict[str, Any]]:
     return {str(r["question"]): {"id": r["id"], "projections": (r.get("result") or {}).get("projections") or {}} for r in rows}
 
 
-def run_league(client: Any, league_id: str, sleeper_league_id: str) -> dict[str, Any]:
+def run_league(client: Any, league_id: str, sleeper_league_id: str, learn: bool = True) -> dict[str, Any]:
     from league_ai.nfl_data import season_games, season_stat_rows
     from pipeline.league_history.run import league_chain
 
@@ -324,7 +340,50 @@ def run_league(client: Any, league_id: str, sleeper_league_id: str) -> dict[str,
             if rows:
                 weeks.append({"season": season, "week": week, "rows": rows, "lineups": lineups[(season, week)],
                               "snapshot": (snaps.get(f"{season}-{week}") or {}).get("projections")})
-    return replay(weeks)
+    out = replay(weeks)
+    if out and learn:
+        try:
+            out.update(_learn(client, weeks, out, scoring))
+        except Exception as exc:
+            print(f"[projections] learning skipped: {type(exc).__name__}", flush=True)
+    return out
+
+
+def _learn(client: Any, weeks: list[dict[str, Any]], card_: Mapping[str, Any], scoring: Mapping[int, Any],
+           now: datetime | None = None) -> dict[str, Any]:
+    """The projection learning loop (league_ai.projection_learning) on the replayed weeks, plus this week's nudges."""
+    from league_ai import projection_learning as pl
+    from league_ai.nfl_data import add_weather, current_week_from_games, season_games, season_stat_rows, week_matchups
+
+    data: dict[int, Any] = {}
+
+    def data_for(season: int) -> Any:
+        if season not in data:
+            data[season] = pl.season_data(client, season)
+        return data[season]
+
+    pl.attach(weeks, data_for)
+    learned = pl.learn(weeks)
+    season = int(card_["season"])
+    names = dict(data_for(season)["names"])
+    out: dict[str, Any] = {"learning": pl.card_view(learned, names), "learning_k": learned.get("k")}
+    # this week's nudges, from the signals that are on
+    now = now or datetime.now(timezone.utc)
+    cur_season = now.year if now.month >= 3 else now.year - 1
+    games_all = season_games(client, cur_season)
+    week = current_week_from_games(games_all)
+    if week and learned.get("active"):
+        sc = scoring.get(cur_season) or next(iter(scoring.values()), {})
+        rows = week_rows(client, cur_season, week, sc, season_stat_rows(client, cur_season), games_all, actual=False)
+        for r in rows:
+            r["cal"] = calibrate(r["shown"], r["pos"], card_.get("factors") or {}, card_.get("lines"))
+        try:
+            games = add_weather(week_matchups(games_all, week), cur_season, week)
+        except Exception:
+            games = week_matchups(games_all, week)
+        ctx, _ = pl.context(data_for(cur_season), cur_season, week, games)
+        out["adjust"] = {"season": cur_season, "week": week, "players": pl.adjustments(rows, ctx, learned)}
+    return out
 
 
 def snapshot(client: Any, league_id: str, sleeper_league_id: str, now: datetime) -> int:
@@ -376,6 +435,11 @@ def run(client: Any, *, now: datetime | None = None, dry_run: bool = False) -> d
                 res["snapshot_error"] = type(exc).__name__
         card_ = run_league(client, lid, sid)
         if card_:
+            lr = card_.get("learning") or {}
+            res.update({"signals_on": lr.get("active"), "gaps": [g["cause"] for g in lr.get("gaps") or []],
+                        "causes": {c["cause"]: c["misses"] for c in lr.get("causes") or []},
+                        "signal_gains": {x["signal"]: [x["player_gain"], x["team_gain"]] for x in lr.get("signals") or []},
+                        "adjusted_players": len(((card_.get("adjust") or {}).get("players")) or {})})
             res.update({"season": card_["season"], "through_week": card_["through_week"], "factors": card_["factors"], "lines": card_.get("lines"),
                         "overall": {k: (v or {}).get("mae") for k, v in card_["overall"].items()}})
             if not dry_run:

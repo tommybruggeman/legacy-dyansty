@@ -138,6 +138,8 @@ def week_projections(client: Any, sleeper_id: str, season: int, week: int, ids: 
     except Exception:
         dvp = {}
     cal = projection_calibration(client, sleeper_id, season) if calibrate else {}
+    adj = cal.get("adjust") or {}
+    adjust = adj.get("players") or {} if int(adj.get("season") or 0) == int(season) and int(adj.get("week") or 0) == int(week) else {}
     out: dict[str, float] = {}
     for pid in ids:
         line = lines.get(pid)
@@ -152,7 +154,9 @@ def week_projections(client: Any, sleeper_id: str, season: int, week: int, ids: 
             continue
         factor = total_multiplier(pos, game, dvp.get((game["opponent"], pos)) if game else None) if pos in ("QB", "RB", "WR", "TE") else 1.0
         # learned from every finished week: how far projections at this position have run over or under real scores
-        out[pid] = round(calibrate_points(base * factor, pos, cal.get("factors") or {}, cal.get("lines")), 1)
+        # plus this week's nudges from the signals that have proven they help (league_ai.projection_learning)
+        nudge = float(adjust.get(pid, 1.0)) if adjust else 1.0
+        out[pid] = round(calibrate_points(base * factor, pos, cal.get("factors") or {}, cal.get("lines")) * nudge, 1)
     return out
 
 
