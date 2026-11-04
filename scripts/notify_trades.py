@@ -1,9 +1,10 @@
 """Push an alert to every owner's phone when a trade completes. Runs after each Sleeper sync (every 15 minutes).
 
 For each league, reads this week's and last week's Sleeper transactions, and for every completed trade not yet
-announced (push_sent), sends one Expo push to every phone registered in that league (push_tokens), then records it.
+announced (push_sent), queues one alert for every league member in the alert outbox (api.alerts); the alert job
+(scripts/push_alerts.py, every 10 minutes) sends it straight to Apple, honoring each owner's switches.
 The first run for a league only records the trades already there (and a 'seeded' marker), so nobody gets a burst of old trades.
-Free: Expo's push service has no charge. Prints counts only (the repo and its Actions logs are public).
+Prints counts only (the repo and its Actions logs are public).
 
 Environment: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 """
@@ -15,10 +16,11 @@ from typing import Any, Mapping
 
 import requests
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from api import alerts  # noqa: E402
 
 SLEEPER = "https://api.sleeper.app/v1"
-EXPO = "https://exp.host/--/api/v2/push/send"
-ACTIVITY_URL = "/activity?focus={tid}"
 
 
 def _get(url: str) -> Any:
@@ -30,23 +32,6 @@ def _get(url: str) -> Any:
 def trade_message(league_name: str | None) -> str:
     """'A trade was completed in Legacy Dynasty'; tapping it opens Activity on that trade."""
     return f"A trade was completed in {league_name or 'your league'}"
-
-
-def send(messages: list[dict[str, Any]]) -> list[str]:
-    """Send in batches of 100; returns the tokens Expo says are no longer registered."""
-    dead = []
-    for i in range(0, len(messages), 100):
-        batch = messages[i:i + 100]
-        try:
-            resp = requests.post(EXPO, json=batch, timeout=30, headers={"Accept": "application/json"})
-            tickets = (resp.json() or {}).get("data") or []
-        except Exception as exc:
-            print(f"[push] send failed: {type(exc).__name__}", flush=True)
-            continue
-        for msg, ticket in zip(batch, tickets):
-            if (ticket.get("details") or {}).get("error") == "DeviceNotRegistered":
-                dead.append(msg["to"])
-    return dead
 
 
 def run_league(client: Any, league: Mapping[str, Any], week: int, league_name: str | None = None) -> dict[str, int]:
@@ -64,16 +49,13 @@ def run_league(client: Any, league: Mapping[str, Any], week: int, league_name: s
         return {"new": len(new), "sent": 0}
     if not new:
         return {"new": 0, "sent": 0}
-    tokens = [r["token"] for r in client.table("push_tokens").select("token").eq("league_id", lid).execute().data or []]
+    members = sorted({str(m["user_id"]) for m in client.table("league_memberships").select("user_id").eq("league_id", lid)
+                      .execute().data or [] if m.get("user_id")})
     sent = 0
     for t in sorted(new, key=lambda t: t.get("status_updated") or 0):
-        messages = [{"to": tok, "body": trade_message(league_name), "sound": "default",
-                     "data": {"url": ACTIVITY_URL.format(tid=t["transaction_id"])}} for tok in tokens]
-        dead = send(messages) if messages else []
-        if dead:
-            client.table("push_tokens").delete().in_("token", dead).execute()
+        sent += alerts.enqueue(client, alerts.trade_completed(trade_id=str(t["transaction_id"]), league_name=league_name),
+                               league_id=lid, user_ids=members)
         client.table("push_sent").upsert({"league_id": lid, "key": f"trade:{t['transaction_id']}"}, on_conflict="league_id,key").execute()
-        sent += len(messages) - len(dead)
     return {"new": len(new), "sent": sent}
 
 
@@ -82,9 +64,9 @@ def main() -> int:
 
     client = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_ROLE_KEY"])
     try:
-        client.table("push_tokens").select("token").limit(1).execute()
+        client.table("push_outbox").select("id").limit(1).execute()
     except Exception:
-        print("[push] push tables not set up yet; skipping", flush=True)
+        print("[push] push alert tables not set up yet; skipping", flush=True)
         return 0
     state = _get(f"{SLEEPER}/state/nfl") or {}
     week = int(state.get("week") or 1)
@@ -97,7 +79,7 @@ def main() -> int:
             if str(info.get("season")) != season:
                 continue  # last season's league: nothing new happens there
             res = run_league(client, league, week, info.get("name"))
-            print(f"[push] league {n}: {res['new']} new trades, {res['sent']} alerts sent", flush=True)
+            print(f"[push] league {n}: {res['new']} new trades, {res['sent']} alerts queued", flush=True)
         except Exception as exc:
             print(f"[push] league {n}: failed ({type(exc).__name__})", flush=True)
     return 0

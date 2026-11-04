@@ -19,7 +19,7 @@ class _Q:
         self.filters[k] = set(v)
         return self
 
-    def upsert(self, rows, on_conflict=None):
+    def upsert(self, rows, on_conflict=None, ignore_duplicates=False):
         rows = rows if isinstance(rows, list) else [rows]
         self.db.setdefault(self.name, []).extend(rows)
         return self
@@ -54,21 +54,22 @@ class NotifyTradesTests(unittest.TestCase):
             if "/transactions/" in url:
                 return [TX] if url.endswith("/8") else []
             return []
-        with mock.patch.object(nt, "_get", side_effect=get), mock.patch.object(nt, "send", return_value=[]) as send:
+        with mock.patch.object(nt, "_get", side_effect=get):
             res = nt.run_league(_Client(db), {"id": "L", "sleeper_league_id": "S"}, 8, "Legacy Dynasty")
-        return res, send
+        return res, [r for r in db.get("push_outbox", [])]
 
-    def test_first_run_is_quiet_then_new_trades_are_sent_once(self):
-        db = {"push_tokens": [{"token": "ExponentPushToken[a]", "league_id": "L"}], "league_teams": [], "nfl_players": []}
-        res, send = self._run(db)
+    def test_first_run_is_quiet_then_new_trades_are_queued_once(self):
+        db = {"league_memberships": [{"user_id": "u1", "league_id": "L"}, {"user_id": "u2", "league_id": "L"}]}
+        res, queued = self._run(db)
         self.assertEqual(res, {"new": 1, "sent": 0})
-        send.assert_not_called()
+        self.assertEqual(queued, [])
         db["push_sent"] = [r for r in db["push_sent"] if r["key"] == "seeded"]  # pretend the trade is new after seeding
-        res, send = self._run(db)
-        self.assertEqual(res, {"new": 1, "sent": 1})
-        msg = send.call_args[0][0][0]
-        self.assertEqual((msg["to"], msg["body"], msg["data"]["url"]), ("ExponentPushToken[a]", "A trade was completed in Legacy Dynasty", "/activity?focus=t9"))
-        res, send = self._run(db)
+        res, queued = self._run(db)
+        self.assertEqual(res, {"new": 1, "sent": 2})
+        self.assertEqual({(r["user_id"], r["body"], r["url"], r["kind"]) for r in queued},
+                         {("u1", "A trade was completed in Legacy Dynasty", "/activity?focus=t9", "trades"),
+                          ("u2", "A trade was completed in Legacy Dynasty", "/activity?focus=t9", "trades")})
+        res, queued = self._run(db)
         self.assertEqual(res, {"new": 0, "sent": 0})
 
 
