@@ -205,7 +205,6 @@ export type Matchups = {
   summary: { high: MatchupTeam; cut: MatchupTeam; closest: Game; closest_margin: number } | null;
   last_week?: number;
   playoffs?: PlayoffWeek;
-  open_mine?: boolean; // before Sunday's 10 AM PT slate, League > Matchups opens on your own game
 };
 
 // Playoff weeks on League > Matchups: our bracket (seeded by our standings), never Sleeper's made-up pairings.

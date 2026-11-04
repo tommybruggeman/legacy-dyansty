@@ -1,5 +1,5 @@
 import { router } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Avatar } from '../Pictures';
@@ -15,10 +15,8 @@ const LIVE_REFRESH_MS = 30_000;
 
 
 // Built from the phone Weekly Matchups design: week picker, your game pinned first (Scorebug cards), gold rank = a Top 5 score this week.
-// Tapping a game opens its box score. Before Sunday's 10 AM PT slate (server: open_mine), opening League
-// jumps straight to your own game; the back button returns to this list (Tommy, 2026-11-04).
-// jump: a counter League bumps each time it is opened from another tab (0 = don't jump).
-export function MatchupsView({ jump = 0 }: { jump?: number }) {
+// Tapping a game opens its box score.
+export function MatchupsView() {
   const [week, setWeek] = useState<number | null>(null);
   const [live, setLive] = useState(true);
   const { data, error, loading, reload } = useApi<MatchupsData>(week ? `/matchups?week=${week}` : '/matchups', live ? LIVE_REFRESH_MS : 0);
@@ -32,14 +30,6 @@ export function MatchupsView({ jump = 0 }: { jump?: number }) {
     if (near.length) prefetch(near.map(path));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data?.week, data?.current_week]);
-
-  const jumped = useRef(0);
-  useEffect(() => {
-    if (!data || week !== null || !jump || jumped.current === jump) return;
-    jumped.current = jump;
-    const own = data.games.find((g) => g.teams.some((t) => t.roster_id === data.my_roster_id));
-    if (data.open_mine && !data.playoffs && own) router.push(`/game/${data.week}/${own.matchup_id}`);
-  }, [data, week, jump]);
 
   if (loading && !data) return <Loading />;
   if (error && !data) return <ErrorState message={error} onRetry={reload} />;

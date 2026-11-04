@@ -306,8 +306,6 @@ def matchups(
     result = league.matchups(sleeper_id, names, shown, my_roster_id)
     result["current_week"] = min(league.current_week(), last_week)
     result["last_week"] = last_week
-    # Before Sunday's 10 AM Pacific slate the app opens League > Matchups on your own game.
-    result["open_mine"] = shown == result["current_week"] and home.before_sunday_slate(datetime.now(timezone.utc))
     try:  # playoff weeks: our bracket, never Sleeper's made-up regular-season pairings
         pics = home.avatars(league.sleeper.get(f"league/{sleeper_id}/users") or [], league.sleeper.get(f"league/{sleeper_id}/rosters") or [])
         view = league.playoff_view(sleeper_id, names, shown, my_roster_id, rules, pics)
