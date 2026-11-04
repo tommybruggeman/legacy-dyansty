@@ -193,6 +193,7 @@ export type Standings = { weeks_played: number; playoff_teams: number; rows: Sta
 export type MatchupTeam = {
   roster_id: number; name: string; score: number; rank: number; top5: boolean; projected?: number | null;
   avatar?: string | null; record?: string; playing?: number; to_play?: number;
+  ranked?: boolean; // the weekly rank shows only once a team has 50+ points that week
 };
 export type Game = { matchup_id: number; teams: [MatchupTeam, MatchupTeam]; win_chance?: [number, number] | null; next_kickoff?: string | null };
 export type Matchups = {
@@ -204,6 +205,7 @@ export type Matchups = {
   summary: { high: MatchupTeam; cut: MatchupTeam; closest: Game; closest_margin: number } | null;
   last_week?: number;
   playoffs?: PlayoffWeek;
+  open_mine?: boolean; // before Sunday's 10 AM PT slate, League > Matchups opens on your own game
 };
 
 // Playoff weeks on League > Matchups: our bracket (seeded by our standings), never Sleeper's made-up pairings.

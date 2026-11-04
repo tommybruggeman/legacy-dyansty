@@ -63,6 +63,23 @@ def schedule_week(gamedays: dict[int, str], today: date) -> int | None:
     return None
 
 
+# The Sunday morning slate kicks off at 10 AM Pacific. Until then the app's
+# League > Matchups opens straight on your own game (Tommy, 2026-11-04).
+SUNDAY_SLATE_HOUR_PT = 10
+
+
+def before_sunday_slate(now: datetime) -> bool:
+    """True from Tuesday through Sunday 10 AM Pacific: the week's main games haven't started.
+    Sunday from 10 AM and Monday (the week's live days) are False."""
+    local = now.astimezone(HOME_TZ)
+    day = local.weekday()  # Monday=0 ... Sunday=6
+    if day == 0:
+        return False
+    if day == 6:
+        return local.hour < SUNDAY_SLATE_HOUR_PT
+    return True
+
+
 def rollover_deadline(today: date) -> date:
     return date(today.year, ROLLOVER_MONTH, ROLLOVER_DAY)
 
