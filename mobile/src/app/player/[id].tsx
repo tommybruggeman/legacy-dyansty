@@ -162,12 +162,7 @@ export default function Player() {
             <View style={[styles.healthDot, { backgroundColor: h.healthy ? colors.live : '#E8826F' }]} />
             <Text style={styles.value}>{h.healthy ? 'Healthy' : `${h.status}${h.detail ? ` · ${h.detail}` : ''}`}</Text>
           </View>
-          {h.this_week?.days?.length ? (
-            <Text style={styles.small}>
-              Week {h.this_week.week} practice: {h.this_week.days.map((d) => `${d.day} ${d.practice}`).join(' · ')}
-              {h.this_week.game_status ? ` · ${h.this_week.game_status}` : ''}
-            </Text>
-          ) : h.this_week?.practice || h.this_week?.game_status ? (
+          {h.this_week?.practice || h.this_week?.game_status ? (
             <Text style={styles.small}>Week {h.this_week.week}: {[h.this_week.practice, h.this_week.game_status].filter(Boolean).join(' · ')}</Text>
           ) : null}
           {h.estimate ? <Text style={[styles.small, styles.estimate]}>{h.estimate.text}</Text> : null}

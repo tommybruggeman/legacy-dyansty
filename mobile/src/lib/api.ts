@@ -409,7 +409,7 @@ export type PlayerPage = {
     detail: string | null;
     update: string | null;
     return: string | null;
-    this_week: { week: number; practice: string | null; game_status: string | null; injury: string | null; days?: { day: string; practice: string }[] } | null;
+    this_week: { week: number; practice: string | null; game_status: string | null; injury: string | null } | null;
     missed: { injury: string; season: number; games: number; back: boolean }[];
     estimate?: { injury: string; median_games: number; range: string; absences: number; scope: string; text: string } | null;
   };
