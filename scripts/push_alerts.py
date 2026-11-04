@@ -257,6 +257,41 @@ def results(lg: League) -> None:
                 lg.send(alert, lg.roster_users(me["roster_id"]), expires_at=expires)
 
 
+SHOTGUN_AT = 17  # Monday, 5 PM Eastern
+
+
+def shotgun_window(starts: Mapping[str, datetime], now: datetime) -> datetime | None:
+    """Monday's first kickoff when it's Monday from 5 PM ET until then; None otherwise (or no Monday game)."""
+    local = now.astimezone(home.EASTERN)
+    monday = sorted(t for t in starts.values() if t.astimezone(home.EASTERN).date() == local.date() and local.weekday() == 0)
+    if not monday or local.hour < SHOTGUN_AT or now >= monday[0]:
+        return None
+    return monday[0]
+
+
+def shotgun(lg: League) -> None:
+    """Monday's Shotgun watch, only to owners who can still finish last (home.still_alive)."""
+    if not lg.sid or not lg.in_season() or lg.week >= int(lg.rules["playoff_week_start"]):
+        return
+    starts = lg.kickoffs(lg.week)
+    kick = shotgun_window(starts, lg.now)
+    if kick is None:
+        return
+    from api import projections, teams
+    raw = league.sleeper.get(f"league/{lg.sid}/matchups/{lg.week}", ttl=60) or []
+    ids = [p for r in raw for p in (r.get("starters") or []) if p and p != "0"]
+    info = teams.player_info(lg.client, ids)
+    proj = projections.week_projections(lg.client, lg.sid, lg.season, lg.week, ids,
+                                        {p: _text(info.get(p, {}).get("position")) for p in ids},
+                                        {p: _text(info.get(p, {}).get("team")) for p in ids})
+    live = home.team_live(raw, info, starts, lg.now, proj)
+    for rid, me_last, other, gap in alerts.shotgun_targets(live, home.still_alive(live)):
+        alert = alerts.shotgun_watch(season=lg.season, week=lg.week, me_last=me_last, gap=gap,
+                                     other=lg.names.get(other) or f"Roster {other}",
+                                     my_left=live[rid]["left"], other_left=live[other]["left"])
+        lg.send(alert, lg.roster_users(rid), expires_at=kick)
+
+
 def playoff_spots(lg: League) -> None:
     if not lg.sid or not lg.in_season():
         return
@@ -471,6 +506,7 @@ def trade_offers(lg: League) -> None:
 PRODUCERS: list[tuple[str, Callable[[League], None]]] = [
     ("game day", game_day), ("results", results), ("playoffs", playoff_spots), ("waivers", waivers),
     ("deadlines", deadlines), ("cap", over_the_cap), ("rollover", rollover), ("offers", trade_offers),
+    ("shotgun", shotgun),
 ]
 
 

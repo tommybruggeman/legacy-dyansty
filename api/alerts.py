@@ -37,6 +37,7 @@ KINDS: dict[str, str] = {
     "trades": "Trades completed",
     "playoffs": "Playoffs",
     "rollover": "Rollover",
+    "shotgun": "Shotgun watch",
 }
 KIND_NOTES: dict[str, str] = {
     "lineup": "A starter is out for the season, on bye, or a slot is empty, before kickoff.",
@@ -50,6 +51,7 @@ KIND_NOTES: dict[str, str] = {
     "trades": "A trade was completed in the league.",
     "playoffs": "You clinched a spot, and when the bracket is set.",
     "rollover": "The day a new season starts.",
+    "shotgun": "Monday at 5 PM ET, only if you can still finish last that week.",
 }
 NOT_LIMITED = {"cap"}  # never counted toward (or stopped by) the weekly limit
 
@@ -292,6 +294,34 @@ def bracket_set(*, season: int, seed: int, opp: str | None, week: int) -> Alert:
 def rollover_done(*, season: int) -> Alert:
     return Alert("rollover", f"rollover:{season}", "Rollover is done",
                  "A new season has started in Legacy. Take a look at your team.", "/my-team")
+
+
+def _players(n: int) -> str:
+    return f"{n} player{'' if n == 1 else 's'}"
+
+
+def shotgun_watch(*, season: int, week: int, me_last: bool, gap: float, other: str, my_left: int, other_left: int) -> Alert:
+    """Monday's heads-up to an owner who can still finish last. `other` is the next team up when I'm projected last,
+    otherwise the team projected last; `gap` is the projected points between us."""
+    key = f"shotgun:{season}:{week}"
+    if me_last:
+        body = (f"You're projected {_pts(gap)} pts behind {other} with {_players(my_left)} still to play." if my_left
+                else f"You're done and {_pts(gap)} pts behind {other}'s projection. {other} has {_players(other_left)} left.")
+        return Alert("shotgun", key, "Shotgun watch: you're projected last", body, "/")
+    body = f"You're projected {_pts(gap)} pts ahead of {other}" + (f", who has {_players(other_left)} left." if other_left else ".")
+    return Alert("shotgun", key, "Shotgun watch: you could still finish last", body, "/")
+
+
+def shotgun_targets(live: Mapping[int, Mapping[str, Any]], alive: set[int]) -> list[tuple[int, bool, int, float]]:
+    """Who gets Monday's Shotgun watch: every team that can still finish last (alive), as
+    (roster_id, me_last, other roster_id, projected gap). Nobody hears it once last place is locked."""
+    if len(alive) < 2:
+        return []
+    ranked = sorted(alive, key=lambda r: (live[r]["projected"], live[r]["score"]))
+    last, nxt = ranked[0], ranked[1]
+    out = [(last, True, nxt, round(live[nxt]["projected"] - live[last]["projected"], 1))]
+    out += [(r, False, last, round(live[r]["projected"] - live[last]["projected"], 1)) for r in ranked[1:]]
+    return out
 
 
 def test_alert(now: datetime) -> Alert:
