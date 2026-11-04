@@ -640,6 +640,17 @@ def _render_projection_accuracy(client: Any, request_context: Any) -> None:
     if recent:
         lines.append("- Last weeks: " + " · ".join(f"W{wk} {m['mae']:.1f}" for wk, m in recent if m))
     st.markdown("\n".join(lines))
+    learning = card.get("learning") or {}
+    if learning.get("signals"):
+        on = [s["label"] for s in learning["signals"] if s.get("on")]
+        st.markdown(f"**What projections are learning** <span class='fo-note'>{len(on)} of {len(learning['signals'])} signals on, retested every morning</span>",
+                    unsafe_allow_html=True)
+        out = ["- On now: " + (" · ".join(on) if on else "no extra signal beats the corrected projection yet")]
+        for m in (learning.get("last_misses") or [])[:5]:
+            out.append(f"- W{m['week']} {_esc(m.get('player') or m['pos'])}: {m['projected']:.1f} projected, {m['actual']:.1f} scored ({_esc(' · '.join(m.get('why') or []))})")
+        if learning.get("gaps"):
+            out.append("- Costing the most with no data that fixes it yet: " + " · ".join(f"{_esc(g['label'])} ({g['misses']} misses)" for g in learning["gaps"]))
+        st.markdown("\n".join(out))
 
 
 def render_report_card(request_context: Any) -> None:

@@ -253,6 +253,7 @@ def learn(weeks: list[Mapping[str, Any]]) -> dict[str, Any]:
         if cover is not None and not covered & set(cover):
             gaps.append(row)
     recent_c = [g for _, g, _ in combined[-WINDOW_WEEKS:]]
+    gaps.sort(key=lambda g: (g["status"] != "no signal yet", -g["points"]))   # missing data first, then signals that don't help yet
     return {"signals": signals, "active": list(active), "k": ks, "causes": cause_rows, "gaps": gaps[:3],
             "last_misses": last_misses, "live_gain": round(sum(recent_c) / len(recent_c), 4) if recent_c else None,
             "history": history[-20:]}

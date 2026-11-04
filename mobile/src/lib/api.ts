@@ -540,6 +540,14 @@ export type ProjectionCard = {
   overall: { shown?: MissStats | null; calibrated?: MissStats | null; team_shown?: MissStats | null; team_calibrated?: MissStats | null; as_shown?: MissStats | null };
   by_position: (MissStats & { pos: string; factor: number })[];
   by_week: { week: number; shown?: MissStats | null; calibrated?: MissStats | null; team_calibrated?: MissStats | null; as_shown?: MissStats | null }[];
+  learning?: ProjectionLearning | null;
+};
+export type ProjectionLearning = {
+  signals: { signal: string; label: string; on: boolean; player_gain: number | null; team_gain: number | null }[];
+  active: string[];
+  causes: { cause: string; label: string; misses: number; points: number; status: string }[];
+  gaps: { cause: string; label: string; misses: number; points: number; status: string }[];
+  last_misses: { id: string; pos: string; week: number; player: string; projected: number; actual: number; why: string[] }[];
 };
 export type FoMove = { action: 'start' | 'sit'; player: string; slot: string; note: string };
 export type FoHeader = {

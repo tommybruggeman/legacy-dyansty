@@ -2,7 +2,7 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import { ErrorState, Loading } from '../components/ScreenState';
 import { Back, Bar, Card, Note, Pill, Pos, Row, Screen, Tile, Tiles, Title, ui } from '../components/ui';
-import { type Accuracy, type FrontOffice, type ProjectionCard, useApi } from '../lib/api';
+import { type Accuracy, type FrontOffice, type ProjectionCard, type ProjectionLearning, useApi } from '../lib/api';
 import { colors } from '../lib/theme';
 
 const LABEL: Record<string, string> = { start_sit: 'START/SIT', trade: 'TRADE CALLS', pickup: 'PICKUPS' };
@@ -169,7 +169,33 @@ function ProjectionCards({ c }: { c: ProjectionCard }) {
           })}
         </Card>
       ) : null}
+      {c.learning ? <LearningCard l={c.learning} /> : null}
     </>
+  );
+}
+
+// What the projections are learning on their own: which extra signals have earned a place, last week's
+// biggest misses and why, and the causes no data covers yet.
+function LearningCard({ l }: { l: ProjectionLearning }) {
+  const on = l.signals.filter((s) => s.on);
+  const tested = l.signals.length;
+  return (
+    <Card title="What projections are learning" right={`${on.length} of ${tested} signals on`}>
+      <Text style={ui.sub}>Each signal is retested on every past week every morning. It only stays on while it makes projections more accurate.</Text>
+      {on.length ? <Note>{`On now: ${on.map((s) => s.label).join(' · ')}`}</Note> : <Note>No extra signal beats the corrected projection yet.</Note>}
+      {l.last_misses.slice(0, 5).map((m, i) => (
+        <Row key={`${m.id}-${m.week}`} first={i === 0}>
+          <Text style={[ui.value, styles.week]}>Wk {m.week}</Text>
+          <View style={ui.flex}>
+            <Text style={ui.value}>{`${m.player}: ${pts(m.projected)} projected, ${pts(m.actual)} scored`}</Text>
+            <Text style={ui.sub}>{m.why.join(' · ')}</Text>
+          </View>
+        </Row>
+      ))}
+      {l.gaps.length ? (
+        <Note>{`Costing the most with no data that fixes it yet: ${l.gaps.map((g) => `${g.label} (${g.misses} misses)`).join(' · ')}`}</Note>
+      ) : null}
+    </Card>
   );
 }
 
