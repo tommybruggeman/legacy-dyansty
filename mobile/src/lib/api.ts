@@ -193,6 +193,7 @@ export type Standings = { weeks_played: number; playoff_teams: number; rows: Sta
 export type MatchupTeam = {
   roster_id: number; name: string; score: number; rank: number; top5: boolean; projected?: number | null;
   avatar?: string | null; record?: string; playing?: number; to_play?: number;
+  ranked?: boolean; // the weekly rank shows only once a team has 50+ points that week
 };
 export type Game = { matchup_id: number; teams: [MatchupTeam, MatchupTeam]; win_chance?: [number, number] | null; next_kickoff?: string | null };
 export type Matchups = {

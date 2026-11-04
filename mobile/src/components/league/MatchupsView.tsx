@@ -41,6 +41,8 @@ export function MatchupsView() {
   const shown = data.week;
   const started = data.games.some((g) => g.teams.some((t) => t.score > 0));
   const status = !started ? null : data.is_final ? 'FINAL' : 'LIVE';
+  // Weekly ranks show once a team has 50+ points; until anyone has, the rank column is left out.
+  const anyRanked = data.games.some((g) => g.teams.some(isRanked));
 
   return (
     <View style={styles.content}>
@@ -58,9 +60,9 @@ export function MatchupsView() {
       </View>
 
       {data.playoffs ? <PlayoffsView view={data.playoffs} /> : null}
-      {!data.playoffs && mine ? <GameCard game={mine} week={shown} myId={data.my_roster_id} weekFinal={data.is_final} isMine /> : null}
+      {!data.playoffs && mine ? <GameCard game={mine} week={shown} myId={data.my_roster_id} weekFinal={data.is_final} showRanks={anyRanked} isMine /> : null}
       {!data.playoffs && others.map((game) => (
-        <GameCard key={game.matchup_id} game={game} week={shown} myId={data.my_roster_id} weekFinal={data.is_final} />
+        <GameCard key={game.matchup_id} game={game} week={shown} myId={data.my_roster_id} weekFinal={data.is_final} showRanks={anyRanked} />
       ))}
     </View>
   );
@@ -69,7 +71,9 @@ export function MatchupsView() {
 // Scorebug cards (picked by Tommy from the 10 list designs): rank, owner face,
 // record and score per row. Live games get a green edge; finished games fade
 // the loser and point at the winner. No footer line (Tommy, build 39).
-function GameCard({ game, week, myId, weekFinal, isMine }: { game: Game; week: number; myId: number | null; weekFinal: boolean; isMine?: boolean }) {
+function GameCard({ game, week, myId, weekFinal, showRanks, isMine }: {
+  game: Game; week: number; myId: number | null; weekFinal: boolean; showRanks: boolean; isMine?: boolean;
+}) {
   const [a, b] = game.teams;
   const playing = (a.playing ?? 0) + (b.playing ?? 0);
   const toPlay = (a.to_play ?? 0) + (b.to_play ?? 0);
@@ -80,19 +84,29 @@ function GameCard({ game, week, myId, weekFinal, isMine }: { game: Game; week: n
   return (
     <Pressable onPress={() => router.push(`/game/${week}/${game.matchup_id}`)} style={[styles.card, isMine && styles.myCard]}>
       {state === 'live' ? <View style={styles.liveEdge} /> : null}
-      <TeamRow team={a} state={state} isMe={a.roster_id === myId} winner={winner} />
-      <TeamRow team={b} state={state} isMe={b.roster_id === myId} winner={winner} />
+      <TeamRow team={a} state={state} isMe={a.roster_id === myId} winner={winner} showRanks={showRanks} />
+      <TeamRow team={b} state={state} isMe={b.roster_id === myId} winner={winner} showRanks={showRanks} />
     </Pressable>
   );
 }
 
-function TeamRow({ team, state, isMe, winner }: { team: MatchupTeam; state: 'pre' | 'live' | 'final'; isMe: boolean; winner: number | null }) {
+// Older servers don't send ranked; the same 50-point rule applies.
+const isRanked = (t: MatchupTeam) => t.ranked ?? t.score >= 50;
+
+function TeamRow({ team, state, isMe, winner, showRanks }: {
+  team: MatchupTeam; state: 'pre' | 'live' | 'final'; isMe: boolean; winner: number | null; showRanks: boolean;
+}) {
   const lost = winner != null && winner !== team.roster_id;
+  const ranked = isRanked(team);
   return (
     <View style={[styles.teamRow, lost && styles.lost]}>
-      <View style={[styles.rank, team.top5 && styles.rankTop5]}>
-        <Text style={[styles.rankText, team.top5 && styles.rankTextTop5]}>{team.rank}</Text>
-      </View>
+      {showRanks ? (
+        ranked ? (
+          <View style={[styles.rank, team.top5 && styles.rankTop5]}>
+            <Text style={[styles.rankText, team.top5 && styles.rankTextTop5]}>{team.rank}</Text>
+          </View>
+        ) : <View style={styles.rankBlank} />
+      ) : null}
       <Avatar uri={team.avatar} name={team.name} size={30} me={isMe} />
       <View style={styles.nameBox}>
         <Text style={styles.teamName} numberOfLines={1}>{first(team.name)}</Text>
@@ -126,6 +140,7 @@ const styles = StyleSheet.create({
   teamRow: { flexDirection: 'row', alignItems: 'center', paddingLeft: 16, paddingRight: 14, paddingTop: 10, paddingBottom: 8, gap: 10 },
   lost: { opacity: 0.5 },
   rank: { width: 26, height: 26, borderRadius: 13, backgroundColor: colors.card, alignItems: 'center', justifyContent: 'center' },
+  rankBlank: { width: 26, height: 26 },
   rankTop5: { backgroundColor: colors.gold },
   rankText: { color: colors.muted, fontSize: 12, fontWeight: '800' },
   rankTextTop5: { color: colors.bg },
