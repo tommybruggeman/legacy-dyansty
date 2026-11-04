@@ -165,6 +165,10 @@ class _Q:
         self.f.append(lambda r: str(r.get(k) or "") >= v)
         return self
 
+    def is_(self, k, v):
+        self.f.append(lambda r: r.get(k) is None)
+        return self
+
     def order(self, *_a, **_k):
         return self
 
@@ -231,6 +235,15 @@ class DeliveryTests(unittest.TestCase):
         self.assertEqual(body, {"aps": {"alert": {"title": "Waivers processed", "body": "4 moves went through in Legacy Dynasty."},
                                         "sound": "default"}, "url": "/activity", "body": {"url": "/activity"}})
         self.assertEqual(alerts.deliver(client, push, morning)["sent"], 0)  # nothing twice
+
+    def test_a_row_another_runner_took_is_not_sent_again(self):
+        db = {"push_tokens": [{"token": "aa", "user_id": "u1", "kind": "apns"}]}
+        client = _Client(db)
+        alerts.enqueue(client, alerts.clinched(season=2026), league_id="L", user_ids=["u1"])
+        db["push_outbox"][0]["sent_at"] = "2026-11-15T17:00:00+00:00"  # claimed by the other runner a moment ago
+        push = mock.Mock()
+        self.assertEqual(alerts.deliver(client, push, at(2026, 11, 15, 12))["sent"], 0)
+        push.send_alert.assert_not_called()
 
     def test_seeded_rows_never_send_and_gone_phones_are_removed(self):
         db = {"push_tokens": [{"token": "aa", "user_id": "u1", "kind": "apns"}]}

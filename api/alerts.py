@@ -441,6 +441,8 @@ def deliver(client: Any, push: Any, now: datetime | None = None) -> dict[str, in
             _mark(client, row, "no_phone", now)
             counts["no_phone"] += 1
             continue
+        if not _claim(client, row, now):  # another runner (the VM or the GitHub backup) is sending this one
+            continue
         ok = False
         for phone in phones:
             result = push.send_alert(phone["token"], payload(row), urgent=bool(row.get("urgent")))
@@ -455,6 +457,13 @@ def deliver(client: Any, push: Any, now: datetime | None = None) -> dict[str, in
         if ok and row.get("kind") not in NOT_LIMITED and not row.get("urgent"):
             sent_count[uid] = sent_count.get(uid, 0) + 1
     return counts
+
+
+def _claim(client: Any, row: Mapping[str, Any], now: datetime) -> bool:
+    """Take the row before sending (stamp sent_at while it is still empty), so two runners never send it twice."""
+    got = (client.table("push_outbox").update({"sent_at": now.isoformat()}).eq("id", row["id"]).eq("status", "queued")
+           .is_("sent_at", "null").execute().data or [])
+    return bool(got)
 
 
 def _mark(client: Any, row: Mapping[str, Any], status: str, now: datetime) -> None:
