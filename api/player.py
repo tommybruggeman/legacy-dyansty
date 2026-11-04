@@ -387,9 +387,12 @@ PRACTICE = {
 HEALTHY = {"", "active", "healthy", "none", "na", "n/a"}
 
 
+DAY_PRACTICE = {"DNP": "Did not practice", "Limited": "Limited practice", "Full": "Full practice"}
+
+
 def health(
     meta: dict[str, Any], espn: dict[str, Any] | None, practice: list[dict[str, Any]], episodes: list[dict[str, Any]], season: int,
-    estimate: dict[str, Any] | None = None,
+    estimate: dict[str, Any] | None = None, days: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     status = _text(meta.get("injury_status")) or _text((espn or {}).get("status"))
     if status.lower() in HEALTHY:
@@ -403,6 +406,21 @@ def health(
             "game_status": _text(latest.get("report_status")) or None,
             "injury": _text(latest.get("report_injury") or latest.get("practice_injury")) or None,
         }
+    # Day-by-day lines (nfl_practice_days) for the newest week; they lead once this week's report starts.
+    days = [d for d in (days or []) if int(d.get("season") or 0) == season]
+    if days:
+        week = max(int(d["week"]) for d in days)
+        if not this_week or week >= this_week["week"]:
+            lines = injury_outlook.practice_week([d for d in days if int(d["week"]) == week])
+            last = lines[-1] if lines else {}
+            same = this_week if this_week and this_week["week"] == week else {}
+            this_week = {
+                "week": week,
+                "practice": DAY_PRACTICE.get(_text(last.get("practice"))) or same.get("practice"),
+                "game_status": _text(last.get("game_status")) or same.get("game_status"),
+                "injury": same.get("injury"),
+                "days": [{"day": d.get("day"), "practice": d.get("practice")} for d in lines],
+            }
     missed = []
     for e in episodes[:4]:
         games = int(e.get("games_missed") or 0)
@@ -480,6 +498,11 @@ def load_practice(client: Any, player_id: str) -> list[dict[str, Any]]:
                  .eq("sleeper_id", player_id).order("season", desc=True).order("week", desc=True).limit(1).execute().data or [], [])
 
 
+def load_practice_days(client: Any, player_id: str, season: int) -> list[dict[str, Any]]:
+    return _safe(lambda: client.table("nfl_practice_days").select("season,week,practice_date,day,source,practice_status,game_status")
+                 .eq("sleeper_id", player_id).eq("season", season).order("practice_date", desc=True).limit(12).execute().data or [], [])
+
+
 def load_episodes(client: Any, player_id: str) -> list[dict[str, Any]]:
     rows = _safe(lambda: client.table("nfl_injury_episodes").select("injury,last_game_season,last_game_week,games_missed,returned")
                  .eq("sleeper_id", player_id).limit(30).execute().data or [], [])
@@ -531,6 +554,7 @@ def page_extras(
         "games": lambda: _safe(lambda: season_games(client, season), []),
         "espn": lambda: load_espn(client, player_id),
         "practice": lambda: load_practice(client, player_id),
+        "practice_days": lambda: load_practice_days(client, player_id, season),
         "episodes": lambda: load_episodes(client, player_id),
         "history": lambda: load_history(client, league_id, player_id),
         "ranks": lambda: _safe(lambda: load_ranks(client, league_id, sleeper_id, last_week, player_info), {}),
@@ -585,7 +609,7 @@ def page_extras(
         "game_log": log,
         "live": bool(live),
         "next_game": upcoming,
-        "health": health(meta, got["espn"], got["practice"] or [], got["episodes"] or [], season, estimate),
+        "health": health(meta, got["espn"], got["practice"] or [], got["episodes"] or [], season, estimate, got["practice_days"] or []),
         "history": contract_history(got["history"] or [], years_left),
     }
 
