@@ -64,3 +64,11 @@ def test_adjustments_only_from_signals_that_are_on():
     ctx = _ctx({"a": "questionable"})
     assert pl.adjustments(rows, ctx, {"active": ["questionable"], "k": {"questionable": -0.3}}) == {"a": 0.7}
     assert pl.adjustments(rows, ctx, {"active": [], "k": {"questionable": -0.3}}) == {}
+
+
+def test_red_zone_signals_compare_role_with_projected_touchdowns():
+    ctx = {**_ctx(), "rz_xtd": {"a": 0.8}, "rz_avg": {"RB": 0.4}}
+    r = {"id": "a", "pos": "RB", "team": "A", "cal": 12.0, "td_proj": 2.4}
+    xs = pl.signal_x(r, ctx)
+    assert abs(xs["rz_vs_proj"] - (4.8 - 2.4) / 12.0) < 1e-9 and abs(xs["rz_role"] - 1.0) < 1e-9
+    assert "rz_role" not in pl.signal_x({**r, "id": "b"}, ctx)

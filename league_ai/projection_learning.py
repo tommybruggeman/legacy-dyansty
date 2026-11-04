@@ -83,6 +83,21 @@ def _script(sign: float) -> Callable[[Mapping[str, Any], Mapping[str, Any]], flo
     return lambda r, c: sign * c["spread"].get(r["team"], 0.0) / 7.0
 
 
+def _rz_vs_proj(r: Mapping[str, Any], c: Mapping[str, Any]) -> float:
+    """Touchdown points his red zone role says (carries inside the 10, targets inside the 20), against the
+    touchdown points in his projection, as a share of the projection."""
+    x = (c.get("rz_xtd") or {}).get(r["id"])
+    if x is None:
+        return 0.0
+    return _clamp((6.0 * x - _f(r.get("td_proj"))) / max(_f(r.get("cal")), MIN_PROJ), -0.5, 0.5)
+
+
+def _rz_role(r: Mapping[str, Any], c: Mapping[str, Any]) -> float:
+    """His red zone role against the position's average."""
+    x, avg = (c.get("rz_xtd") or {}).get(r["id"]), (c.get("rz_avg") or {}).get(r["pos"])
+    return _clamp(x / avg - 1, -0.6, 1.0) if x is not None and avg else 0.0
+
+
 def _wind(r: Mapping[str, Any], c: Mapping[str, Any]) -> float:
     return max(0.0, c["wind"].get(r["team"], 0.0) - 12.0) / 10.0
 
@@ -96,6 +111,8 @@ SIGNALS: dict[str, tuple[str, tuple[str, ...], Callable[[Mapping[str, Any], Mapp
     "script_run": ("favored, runs more", ("RB",), _script(1.0)),
     "script_pass": ("trailing, throws more", ("QB", "WR", "TE"), _script(-1.0)),
     "wind": ("wind", ("QB", "WR", "TE", "K"), _wind),
+    "rz_vs_proj": ("red zone role vs projected TDs", ("RB", "WR", "TE"), _rz_vs_proj),
+    "rz_role": ("red zone role", ("RB", "WR", "TE"), _rz_role),
 }
 
 # cause -> (label, the signals that cover it; None = luck, never a gap)
@@ -104,7 +121,7 @@ CAUSES: dict[str, tuple[str, tuple[str, ...] | None]] = {
     "late_scratch": ("late scratch (not on the injury report)", ()),
     "left_early": ("left the game early", None),
     "role_change": ("snap share changed", ("snap_trend", "teammate_out")),
-    "td_swing": ("touchdowns (red zone role)", ()),
+    "td_swing": ("touchdowns (red zone role)", ("rz_vs_proj", "rz_role")),
     "blowout": ("blowout game script", ("script_run", "script_pass")),
     "offense": ("offense far off its Vegas total", ("vegas_total",)),
     "weather": ("wind", ("wind",)),
@@ -307,7 +324,11 @@ def season_data(client: Any, season: int, get_csv: Callable[[str], list[dict[str
         injuries = _nflverse_csv(INJURIES_URL.format(season=season))
     else:
         injuries = get_csv(str(season))
-    return {"stats": stats, "games": season_games(client, season), "injuries": injuries,
+    plays: list[dict[str, Any]] = []
+    if get_csv is None:   # free nflverse play-by-play, only the columns the red zone role needs
+        from league_ai.start_sit_grade import PBP_COLUMNS, PBP_URL, _nflverse_csv
+        plays = [p for p in _nflverse_csv(PBP_URL.format(season=season), PBP_COLUMNS, gz=True) if p.get("season_type") == "REG"]
+    return {"stats": stats, "games": season_games(client, season), "injuries": injuries, "plays": plays,
             "names": {str(r["sleeper_id"]): r.get("player_name") for r in stats if r.get("sleeper_id")}}
 
 
@@ -354,9 +375,27 @@ def context(data: Mapping[str, Any], season: int, week: int, games: Mapping[str,
         if st in OUT and len(share.get(sid) or []) >= 2:
             freed[team_of.get(sid, "")] += sum(share[sid]) / len(share[sid])
     qb_out = {t for t, (_, sid) in main_qb.items() if status.get(sid) in OUT}
+    rz_xtd: dict[str, float] = {}
+    rz_avg: dict[str, float] = {}
+    if data.get("plays"):
+        from league_ai.missing_signals import RedZone
+
+        rz = RedZone([p for p in data["plays"] if int(_f(p.get("week"))) < week])
+        pos_of = {str(r["gsis_id"]): str(r.get("position") or "").upper() for r in prior if r.get("gsis_id")}
+        by_pos: dict[str, list[float]] = defaultdict(list)
+        for g, x in rz.xtd.items():
+            by_pos[pos_of.get(g, "")].append(x)
+        rz_avg = {p: sum(v) / len(v) for p, v in by_pos.items() if v}
+        for g in rz.xtd:
+            sid = g2s.get(g)
+            if sid and pos_of.get(g) in rz_avg:
+                x = rz.expected_tds(g, rz_avg[pos_of[g]])
+                if x is not None:
+                    rz_xtd[sid] = x
     implied_vals = list(implied.values())
     ctx = {"implied": implied, "lg_implied": sum(implied_vals) / len(implied_vals) if implied_vals else None, "spread": spread,
-           "wind": wind, "status": status, "snaps": dict(snaps), "freed_share": dict(freed), "qb_out": qb_out}
+           "wind": wind, "status": status, "snaps": dict(snaps), "freed_share": dict(freed), "qb_out": qb_out,
+           "rz_xtd": rz_xtd, "rz_avg": rz_avg}
     pct = {str(r["sleeper_id"]): _f(r.get("offense_pct")) for r in this if r.get("sleeper_id")}
     week_att: dict[str, tuple[float, str]] = {}
     for r in this:
