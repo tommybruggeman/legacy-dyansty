@@ -17,7 +17,7 @@ from services.standings_rules import TOP_FIVE_POINTS, WIN_POINTS
 
 ROLLOVER_MONTH, ROLLOVER_DAY = 6, 30
 ROSTER_MAX = 22
-GAME_DAYS = {3, 4, 5, 6, 0}  # Thu-Mon (Monday=0)
+GAME_DAYS = {2, 3, 4, 5, 6, 0}  # Wed-Mon (Monday=0); only Tuesday is last week's recap (Tommy, 2026-11-04)
 ROUND_NAMES = {1: "Semifinal", 2: "Final"}
 EASTERN = ZoneInfo("America/New_York")
 # Home's day flips at midnight Pacific, so Monday night's final screen stays up
@@ -277,7 +277,7 @@ def standings_table(rows: list[dict[str, Any]], team_ids: dict[int, str], pics: 
 
 # ---- the bottom of game-day Home -------------------------------------------------
 #
-# Thu-Sat: GM's Risers (who our projection says beats his normal the most this week).
+# Wed-Sat: GM's Risers (who our projection says beats his normal the most this week).
 # Sunday: the week's scoreboard (every Legacy game) until Shotgun watch takes over
 # midway through the late games. Shotgun watch follows the lowest projected final
 # score (last place shotguns a beer) and everyone close to it: within 10 projected
@@ -309,7 +309,7 @@ def bottom_mode(now: datetime, starts: dict[str, datetime]) -> dict[str, Any]:
     """
     local = now.astimezone(EASTERN)
     day = local.weekday()
-    if day in (3, 4, 5):
+    if day in (2, 3, 4, 5):
         return {"mode": "risers"}
     if day == 0 or (day == 1 and now.astimezone(HOME_TZ).weekday() == 0):  # Monday holds until midnight Pacific
         return {"mode": "shotgun", "window": SHOTGUN_WINDOWS["monday"]}

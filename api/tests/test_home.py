@@ -115,6 +115,7 @@ def test_bottom_mode_by_day_and_late_games():
     sunday = datetime(2026, 11, 1, 12, 0, tzinfo=et)
     starts = {"BUF": datetime(2026, 11, 1, 13, 0, tzinfo=et), "KC": datetime(2026, 11, 1, 16, 25, tzinfo=et),
               "SF": datetime(2026, 11, 1, 16, 5, tzinfo=et), "DAL": datetime(2026, 11, 1, 20, 20, tzinfo=et)}
+    assert home.bottom_mode(datetime(2026, 10, 28, 20, 0, tzinfo=et), starts)["mode"] == "risers"   # Wednesday
     assert home.bottom_mode(datetime(2026, 10, 29, 20, 0, tzinfo=et), starts)["mode"] == "risers"   # Thursday
     assert home.bottom_mode(datetime(2026, 10, 31, 20, 0, tzinfo=et), starts)["mode"] == "risers"   # Saturday
     assert home.bottom_mode(sunday, starts)["mode"] == "scoreboard"
@@ -216,6 +217,7 @@ def test_home_week_holds_monday_night_until_midnight():
     assert home.schedule_week(gamedays, date(2026, 11, 3)) == 10   # Tuesday (Pacific) -> recap of 9
     assert home.phase(date(2026, 11, 2), "in_season", 9, 15) == "game_day"
     assert home.phase(date(2026, 11, 3), "in_season", 10, 15) == "recap"
+    assert home.phase(date(2026, 11, 4), "in_season", 10, 15) == "game_day"   # Wednesday: this week's matchup
     assert home.schedule_week(gamedays, date(2026, 11, 10)) is None
     assert home.schedule_week({}, date(2026, 11, 2)) is None
 
