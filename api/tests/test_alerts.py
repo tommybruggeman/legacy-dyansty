@@ -165,6 +165,10 @@ class _Q:
         self.f.append(lambda r: str(r.get(k) or "") >= v)
         return self
 
+    def is_(self, k, v):
+        self.f.append(lambda r: r.get(k) is None)
+        return self
+
     def order(self, *_a, **_k):
         return self
 
@@ -231,6 +235,15 @@ class DeliveryTests(unittest.TestCase):
         self.assertEqual(body, {"aps": {"alert": {"title": "Waivers processed", "body": "4 moves went through in Legacy Dynasty."},
                                         "sound": "default"}, "url": "/activity", "body": {"url": "/activity"}})
         self.assertEqual(alerts.deliver(client, push, morning)["sent"], 0)  # nothing twice
+
+    def test_a_row_another_runner_took_is_not_sent_again(self):
+        db = {"push_tokens": [{"token": "aa", "user_id": "u1", "kind": "apns"}]}
+        client = _Client(db)
+        alerts.enqueue(client, alerts.clinched(season=2026), league_id="L", user_ids=["u1"])
+        db["push_outbox"][0]["sent_at"] = "2026-11-15T17:00:00+00:00"  # claimed by the other runner a moment ago
+        push = mock.Mock()
+        self.assertEqual(alerts.deliver(client, push, at(2026, 11, 15, 12))["sent"], 0)
+        push.send_alert.assert_not_called()
 
     def test_seeded_rows_never_send_and_gone_phones_are_removed(self):
         db = {"push_tokens": [{"token": "aa", "user_id": "u1", "kind": "apns"}]}
@@ -302,3 +315,41 @@ class JobTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ShotgunTests(unittest.TestCase):
+    """Tommy 2026-11-04: only owners who can still finish last hear it."""
+
+    def test_locked_owner_above_a_locked_owner_is_left_out(self):
+        from api import home
+        live = {1: {"score": 80.0, "rest": 0.0, "projected": 80.0, "left": 0},   # me: done
+                2: {"score": 70.0, "rest": 0.0, "projected": 70.0, "left": 0},   # Nando: done, behind me
+                3: {"score": 65.0, "rest": 12.0, "projected": 77.0, "left": 1}}  # still playing
+        alive = home.still_alive(live)
+        self.assertNotIn(1, alive)
+        self.assertEqual({2, 3}, alive)
+        got = alerts.shotgun_targets(live, alive)
+        self.assertEqual([(2, True, 3, 7.0), (3, False, 2, 7.0)], got)
+
+    def test_nobody_hears_it_once_last_is_locked(self):
+        live = {1: {"score": 80.0, "rest": 0.0, "projected": 80.0, "left": 0},
+                2: {"score": 70.0, "rest": 0.0, "projected": 70.0, "left": 0}}
+        self.assertEqual([], alerts.shotgun_targets(live, {2}))
+
+    def test_wording(self):
+        a = alerts.shotgun_watch(season=2026, week=10, me_last=True, gap=4.2, other="Grady", my_left=1, other_left=0)
+        self.assertEqual(("Shotgun watch: you're projected last", "You're projected 4.2 pts behind Grady with 1 player still to play.", "/"),
+                         (a.title, a.body, a.url))
+        b = alerts.shotgun_watch(season=2026, week=10, me_last=False, gap=3.1, other="Grady", my_left=0, other_left=2)
+        self.assertEqual(("Shotgun watch: you could still finish last", "You're projected 3.1 pts ahead of Grady, who has 2 players left."),
+                         (b.title, b.body))
+        self.assertEqual("shotgun:2026:10", a.key)
+        self.assertIn("shotgun", alerts.KINDS)
+
+    def test_window_is_monday_5pm_until_kickoff(self):
+        mnf = at(2026, 11, 9, 20, 15)
+        starts = {"SF": at(2026, 11, 8, 13), "DAL": mnf}
+        self.assertIsNone(job.shotgun_window(starts, at(2026, 11, 9, 16, 59)))
+        self.assertEqual(mnf, job.shotgun_window(starts, at(2026, 11, 9, 17, 0)))
+        self.assertIsNone(job.shotgun_window(starts, mnf))
+        self.assertIsNone(job.shotgun_window({"SF": at(2026, 11, 8, 13)}, at(2026, 11, 9, 18)))
