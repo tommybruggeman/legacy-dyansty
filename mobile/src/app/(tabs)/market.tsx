@@ -6,7 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PlayerFace } from '../../components/PlayerFace';
 import { ErrorState, Loading } from '../../components/ScreenState';
 import { Note, Pill, Screen, Title, money, ui } from '../../components/ui';
-import { type LeagueOwner, type LeaguePlayer, type LeaguePlayers, useApi } from '../../lib/api';
+import { type LeagueOwner, type LeaguePlayer, type LeaguePlayers, type NextGame, useApi } from '../../lib/api';
 import { nameMatches } from '../../lib/players';
 import { colors } from '../../lib/theme';
 import { useTargets } from '../../lib/targets';
@@ -35,34 +35,73 @@ const shortOwner = (name: string) => {
   return last ? `${first} ${last[0]}.` : first;
 };
 const ppgText = (n: number | null | undefined) => (n != null ? n.toFixed(1) : '—');
-const ptsText = (n: number | null | undefined) => (n != null ? `${Math.round(n)} pts` : '');
 
-// One player per line, no box: face, name with any tag, a short line, then PPG over season points and a star.
-// Your own and saved players get a gold name instead of a gold border.
-function PlayerRow({ id, name, pos, team, ppg, points, line, tag, mine }: {
-  id: string; name: string; pos: string; team: string; ppg: number | null; points: number | null;
-  line: string; tag?: { label: string; tone: 'out' | 'gold' } | null; mine?: boolean;
-}) {
+// ESPN-style row: star, face, name with team and any tag, two short lines, then PROJ (this week) and PPG columns.
+// Line 2 is the owner and contract for rostered players, last-3 form for free agents; line 3 is the next game with
+// the defense's rank against his position (green = easy matchup, red = tough). Your own and saved players get a gold name.
+function PlayerRow({ p, line }: { p: LeaguePlayer; line: string | null }) {
   const { isTarget, toggle } = useTargets();
-  const saved = isTarget(id);
+  const saved = isTarget(p.player_id);
+  const tag = p.injury ? { label: injuryLabel(p.injury), tone: 'out' as const }
+    : p.designation ? { label: p.designation.toUpperCase(), tone: 'gold' as const }
+    : p.rookie ? { label: 'ROOKIE', tone: 'gold' as const } : null;
+  const out = !!p.injury && OUT.has(p.injury.toLowerCase());
+  const ppg = p.avg ?? p.rank_ppg;
   return (
-    <Pressable onPress={() => router.push(`/player/${id}`)} style={styles.row}>
-      <PlayerFace name={name} team={team} pos={pos} size={40} />
-      <View style={styles.rowMid}>
-        <View style={styles.rowNameLine}>
-          <Text style={[styles.rowName, (saved || mine) && styles.rowNameGold]} numberOfLines={1}>{name}</Text>
-          {tag ? <Pill label={tag.label} tone={tag.tone} /> : null}
-        </View>
-        <Text style={styles.rowLine} numberOfLines={1}>{line}</Text>
-      </View>
-      <View style={styles.rowRight}>
-        <Text style={styles.rowPpg}>{ppgText(ppg)}</Text>
-        <Text style={styles.rowPts}>{ptsText(points)}</Text>
-      </View>
-      <Pressable onPress={() => toggle(id)} hitSlop={12} style={styles.star}>
+    <Pressable onPress={() => router.push(`/player/${p.player_id}`)} style={styles.row}>
+      <Pressable onPress={() => toggle(p.player_id)} hitSlop={10} style={styles.star}>
         <Text style={[styles.starText, saved && styles.starTextOn]}>{saved ? '★' : '☆'}</Text>
       </Pressable>
+      <PlayerFace name={p.name} team={p.nfl_team} pos={p.pos} size={40} />
+      <View style={styles.rowMid}>
+        <View style={styles.rowNameLine}>
+          <Text style={[styles.rowName, (saved || p.is_mine) && styles.rowNameGold]} numberOfLines={1}>{shortName(p.name)}</Text>
+          <Text style={styles.rowTeam}>{p.nfl_team === 'FA' ? '' : p.nfl_team}</Text>
+          {tag ? <Pill label={tag.label} tone={tag.tone} /> : null}
+        </View>
+        {line ? <Text style={styles.rowLine} numberOfLines={1}>{line}</Text> : null}
+        {line == null ? <Form trend={p.trend} last3={p.last3} /> : null}
+        <NextLine next={p.next} />
+      </View>
+      <View style={[styles.col, styles.colProj]}><Text style={styles.proj}>{p.proj != null && !out && !p.next?.bye ? p.proj.toFixed(1) : '—'}</Text></View>
+      <View style={styles.col}><Text style={styles.ppg}>{ppgText(ppg)}</Text></View>
     </Pressable>
+  );
+}
+
+const OUT = new Set(['out', 'ir', 'doubtful', 'pup', 'sus', 'na']);
+const GREEN = colors.live;
+const RED = '#E66A6A';
+// "Jacoby Brissett" -> "J. Brissett" (keeps suffixes: "M. Harrison Jr.")
+const shortName = (name: string) => {
+  const [first, ...rest] = name.split(' ');
+  return rest.length ? `${first[0]}. ${rest.join(' ')}` : first;
+};
+
+function Form({ trend, last3 }: { trend?: number | null; last3?: number | null }) {
+  if (trend == null) return last3 != null ? <Text style={styles.rowLine}>last 3: {last3.toFixed(1)}</Text> : null;
+  const up = trend > 0;
+  return (
+    <Text style={styles.rowLine} numberOfLines={1}>
+      last 3 <Text style={{ color: trend === 0 ? colors.muted : up ? GREEN : RED }}>{up ? '+' : ''}{trend.toFixed(1)} {trend === 0 ? '→' : up ? '↑' : '↓'}</Text>
+    </Text>
+  );
+}
+
+const ordinal = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' } as Record<number, string>)[n % 10] ?? 'th'}`;
+function NextLine({ next }: { next?: NextGame | null }) {
+  if (!next) return null;
+  if (next.bye) return <Text style={styles.rowLine}>Bye week</Text>;
+  const when = next.final ? 'Played' : next.kickoff
+    ? (() => { const d = new Date(next.kickoff); return `${d.toLocaleDateString(undefined, { weekday: 'short' })} ${d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`; })()
+    : '';
+  const teams = next.teams ?? 32;
+  // rank 1 = fewest points allowed to the position (toughest); the top third reads red, the bottom third green
+  const tone = next.opp_rank == null ? colors.muted : next.opp_rank <= teams / 3 ? RED : next.opp_rank > (teams * 2) / 3 ? GREEN : colors.muted;
+  return (
+    <Text style={styles.rowLine} numberOfLines={1}>
+      {when ? `${when} ` : ''}{next.home ? 'vs' : '@'}{next.opp}{next.opp_rank != null ? <Text style={{ color: tone }}> ({ordinal(next.opp_rank)})</Text> : null}
+    </Text>
   );
 }
 
@@ -175,23 +214,21 @@ function PlayersList({ query }: { query?: string }) {
       {rows.length === 0 ? (
         <Note>{savedView && !saved.length ? 'Tap ☆ on any player to save them here.' : 'No players match.'}</Note>
       ) : null}
+      {rows.length ? (
+        <View style={styles.head}>
+          <Text style={[styles.headText, styles.headPlayer]}>PLAYER</Text>
+          <View style={[styles.col, styles.colProj, styles.headProj]}><Text style={[styles.headText, styles.headGold]}>PROJ</Text></View>
+          <View style={styles.col}><Text style={styles.headText}>PPG</Text></View>
+        </View>
+      ) : null}
       <View style={styles.list}>
         {rows.slice(0, shown).map((p) => (
           <PlayerRow
             key={p.player_id}
-            id={p.player_id}
-            name={p.name}
-            pos={p.pos}
-            team={p.nfl_team}
-            ppg={p.rank_ppg}
-            points={p.points}
-            mine={p.is_mine}
+            p={p}
             line={p.team_id
               ? `${p.is_mine ? 'You' : shortOwner(p.owner_name ?? '')}${p.salary != null ? ` · ${money(p.salary)}` : ''}${p.years_left ? ` · ${p.years_left}y` : ''}`
-              : `${p.nfl_team} · Free agent`}
-            tag={p.injury ? { label: injuryLabel(p.injury), tone: 'out' }
-              : p.designation ? { label: p.designation.toUpperCase(), tone: 'gold' }
-              : p.rookie ? { label: 'ROOKIE', tone: 'gold' } : null}
+              : null}
           />
         ))}
       </View>
@@ -295,18 +332,25 @@ const styles = StyleSheet.create({
   sheetLabel: { color: colors.muted, fontSize: 11, fontWeight: '800', letterSpacing: 1, marginTop: 10, marginBottom: 8 },
   sectionTitle: { color: colors.text, fontSize: 18, fontWeight: '800' },
   list: { marginBottom: 12 },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 11, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.line },
-  rowMid: { flex: 1, minWidth: 0 },
-  rowNameLine: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  rowName: { color: colors.text, fontSize: 15, fontWeight: '800', flexShrink: 1 },
-  rowNameGold: { color: colors.gold },
-  rowLine: { color: colors.muted, fontSize: 12, marginTop: 2 },
-  rowRight: { alignItems: 'flex-end' },
-  rowPpg: { color: colors.gold, fontSize: 20, fontWeight: '800' },
-  rowPts: { color: colors.muted, fontSize: 11 },
-  star: { width: 26, alignItems: 'center' },
-  starText: { color: colors.muted, fontSize: 18 },
+  head: { flexDirection: 'row', alignItems: 'flex-end', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.line, paddingBottom: 6 },
+  headText: { color: colors.muted, fontSize: 10, fontWeight: '800', letterSpacing: 1 },
+  headPlayer: { flex: 1 },
+  headProj: { borderTopLeftRadius: 6, borderTopRightRadius: 6, paddingTop: 4 },
+  headGold: { color: colors.gold },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 9, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.line },
+  star: { width: 18, alignItems: 'center', paddingVertical: 10 },
+  starText: { color: colors.muted, fontSize: 17 },
   starTextOn: { color: colors.gold },
+  rowMid: { flex: 1, minWidth: 0, paddingVertical: 9 },
+  rowNameLine: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  rowName: { color: colors.text, fontSize: 14, fontWeight: '800', flexShrink: 1 },
+  rowNameGold: { color: colors.gold },
+  rowTeam: { color: colors.muted, fontSize: 11, fontWeight: '700' },
+  rowLine: { color: colors.muted, fontSize: 11, marginTop: 1 },
+  col: { width: 46, alignItems: 'center', justifyContent: 'center', alignSelf: 'stretch' },
+  colProj: { backgroundColor: colors.row },
+  proj: { color: colors.text, fontSize: 15, fontWeight: '800' },
+  ppg: { color: colors.gold, fontSize: 15, fontWeight: '800' },
   more: { alignItems: 'center', paddingVertical: 8, marginBottom: 4 },
   plan: { backgroundColor: colors.gold, borderRadius: 12, paddingVertical: 12, alignItems: 'center', marginTop: 10 },
   planText: { color: colors.bg, fontWeight: '800', fontSize: 15 },

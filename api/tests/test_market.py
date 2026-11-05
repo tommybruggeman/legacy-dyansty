@@ -152,3 +152,22 @@ def test_all_players_without_a_kicker_slot():
     without = market.all_players(pool, STATE, PPG, TEAMS, ROSTERS, "t2", kickers=False)
     assert "K" in with_k["positions"] and "11" in {p["player_id"] for p in with_k["players"]}
     assert without["positions"] == ["QB", "RB", "WR", "TE"] and "11" not in {p["player_id"] for p in without["players"]}
+
+
+def test_recent_form_averages_games_played_and_trend_vs_season():
+    weekly = [{"a": 20.0, "b": 5.0}, {"a": 10.0}, {"a": 15.0, "c": 9.0}]
+    form = market.recent_form(weekly, {"a": 12.0, "b": 8.0})
+    assert form["a"] == {"last3": 15.0, "trend": 3.0}
+    assert form["b"] == {"last3": 5.0, "trend": -3.0}
+    assert form["c"] == {"last3": 9.0}
+
+
+def test_next_games_opponent_rank_and_bye():
+    games = {"ARI": {"opponent": "SF", "home": True}, "SF": {"opponent": "ARI", "home": False}}
+    dvp = {("SF", "QB"): {"rank": 24, "teams": 32}}
+    find = market.next_games(games, dvp, 10, lambda g: "2026-11-08T21:05:00+00:00")
+    assert find("ARI", "QB") == {"week": 10, "bye": False, "opp": "SF", "home": True, "kickoff": "2026-11-08T21:05:00+00:00",
+                                 "opp_rank": 24, "teams": 32, "final": False}
+    assert find("CHI", "WR") == {"week": 10, "bye": True}
+    assert find("FA", "WR") is None
+    assert market.next_games({}, {}, 10, lambda g: None)("ARI", "QB") is None

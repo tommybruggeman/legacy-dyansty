@@ -486,6 +486,11 @@ export type LeaguePlayer = {
   rank_ppg: number | null; last_ppg: number | null; points: number | null;
   team_id: string | null; owner_name: string | null; is_mine: boolean;
   salary: number | null; years_left: number | null; rookie_deal: boolean; designation: 'taxi' | 'ir' | null;
+  // This week, in league scoring (missing on older servers): projection, season average, last-3 form, next game.
+  proj?: number | null; avg?: number | null; last3?: number | null; trend?: number | null; next?: NextGame | null;
+};
+export type NextGame = {
+  week: number; bye: boolean; opp?: string; home?: boolean; kickoff?: string | null; opp_rank?: number | null; teams?: number | null; final?: boolean;
 };
 export type LeagueOwner = { team_id: string; owner_name: string; team_name: string; is_mine: boolean };
 export type LeaguePlayers = {
