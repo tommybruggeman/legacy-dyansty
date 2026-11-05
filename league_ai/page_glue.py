@@ -615,6 +615,33 @@ def _render_accuracy(client: Any, request_context: Any) -> None:
     st.markdown("\n".join(lines))
 
 
+def _render_projection_accuracy(client: Any, request_context: Any) -> None:
+    """Weekly projections vs real scores and the learned position factors, same as the app's report card."""
+    from league_ai import projection_calibration
+
+    try:
+        card = projection_calibration.card(client, request_context.league_id)
+    except Exception:
+        card = None
+    overall = (card or {}).get("overall") or {}
+    player = overall.get("as_shown") or overall.get("calibrated")
+    if not player:
+        return
+    st.markdown(f"**Weekly projections, {card['season']}** <span class='fo-note'>every projection vs the real score</span>", unsafe_allow_html=True)
+    team, before = overall.get("team_calibrated"), overall.get("shown")
+    lines = [f"- Average miss {player['mae']:.1f} pts per player" + (f", {team['mae']:.1f} per team" if team else "") + f" ({player['n']:,} graded)"]
+    if before:
+        lines.append(f"- Before learning from results: {before['mae']:.1f} per player, running {abs(before['bias']):.1f} pts {'high' if before['bias'] < 0 else 'low'}")
+    factors = card.get("factors") or {}
+    scaled = [f"{p} {round(100 * factors[p])}%" for p in ("QB", "RB", "WR", "TE", "K") if p in factors and abs(factors[p] - 1) >= 0.02]
+    if scaled:
+        lines.append("- Learned so far (share of the raw projection): " + " · ".join(scaled))
+    recent = [(w["week"], w.get("as_shown") or w.get("calibrated")) for w in (card.get("by_week") or [])[-6:]]
+    if recent:
+        lines.append("- Last weeks: " + " · ".join(f"W{wk} {m['mae']:.1f}" for wk, m in recent if m))
+    st.markdown("\n".join(lines))
+
+
 def render_report_card(request_context: Any) -> None:
     """'How my calls have graded': this owner's record, recent graded calls with the diagnosis, and the playbook."""
     client = auth_client()
@@ -638,6 +665,7 @@ def render_report_card(request_context: Any) -> None:
             st.markdown(f"{mark} **{_esc(r['when'])}** · {_esc(r['call'])} ({_esc(r['points'])})" + (f"  \n<span class='fo-note'>{_esc(r['why'])}</span>" if r.get("why") else ""),
                         unsafe_allow_html=True)
         _render_accuracy(client, request_context)
+        _render_projection_accuracy(client, request_context)
         if lessons:
             st.markdown("**What I've learned in this league**")
             for l in lessons:

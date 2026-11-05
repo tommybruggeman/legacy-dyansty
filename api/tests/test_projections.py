@@ -65,3 +65,17 @@ def test_season_averages_use_league_scoring_and_games_played(monkeypatch):
     avg, games = projections.season_averages("S", 2026, 2)
     assert games == {"qb": 2, "wr": 1}
     assert avg["qb"] == round((12 + 10 + 6 + 8) / 2, 2) and avg["wr"] == 5.0
+
+
+def test_week_projections_apply_the_learned_position_factor(monkeypatch):
+    monkeypatch.setattr(sleeper, "get_url", lambda url, ttl=0: [{"player_id": "1", "stats": {"rush_yd": 100}, "player": {"position": "RB", "team": "DEN"}},
+                                                                {"player_id": "2", "stats": {"pass_yd": 250}, "player": {"position": "QB", "team": "DEN"}}])
+    monkeypatch.setattr(sleeper, "get", lambda path, ttl=0: {"scoring_settings": SCORING})
+    monkeypatch.setattr(projections, "season_games", lambda client, season: [{"week": 9, "home_team": "DEN", "away_team": "KC"}])
+    monkeypatch.setattr(projections, "defense_vs_position", lambda client, season: {})
+    monkeypatch.setattr(projections, "add_weather", lambda games, season, week: games)
+    monkeypatch.setattr(projections, "position_factors", lambda client, sid, season: {"RB": 0.8})
+    out = projections.week_projections(None, "S", 2026, 9, ["1", "2"], {"1": "RB", "2": "QB"}, {"1": "DEN", "2": "DEN"})
+    assert out == {"1": 8.0, "2": 10.0}   # RBs scaled to 80%, QBs untouched
+    raw = projections.week_projections(None, "S", 2026, 9, ["1"], {"1": "RB"}, {"1": "DEN"}, calibrate=False)
+    assert raw == {"1": 10.0}

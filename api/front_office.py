@@ -211,7 +211,19 @@ def report_card(client: Any, owner: runtime.Owner, week: int) -> dict[str, Any]:
         "recent": [{"when": r["when"], "call": r["call"], "right": r["result"] == "right", "points": r["points"], "why": r.get("why")} for r in rec.get("recent") or []],
         "lessons": [{"lesson": l["lesson"], "seen": int(l.get("evidence_count") or 1)} for l in lessons],
         "accuracy": _accuracy(client, owner),
+        "projections": _projection_card(client, owner),
     }
+
+
+def _projection_card(client: Any, owner: runtime.Owner) -> dict[str, Any] | None:
+    """How close the weekly projections have come to real scores, and the position factors learned from it
+    (league_ai.projection_calibration); None until the daily job saves the first card."""
+    from league_ai import projection_calibration
+
+    try:
+        return projection_calibration.card(client, owner.league_id)
+    except Exception:
+        return None
 
 
 def _accuracy(client: Any, owner: runtime.Owner) -> dict[str, Any] | None:

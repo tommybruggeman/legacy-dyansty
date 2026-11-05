@@ -521,6 +521,7 @@ export type ReportCard = {
   recent: { when: string; call: string; right: boolean; points: string; why: string | null }[];
   lessons: { lesson: string; seen: number }[];
   accuracy?: Accuracy | null;
+  projections?: ProjectionCard | null;
 };
 // How the start/sit engine did on every lineup in the league (weekly, free), and this owner's own line.
 export type AccuracyPair = { engine: number; owners: number; calls: number };
@@ -531,6 +532,15 @@ export type Accuracy = {
   by_position: (AccuracyPair & { pos: string })[];
   by_week: (AccuracyPair & { week: number })[];
   you?: { engine: number; you: number; calls: number; points_per_call: number };
+};
+export type MissStats = { n: number; mae: number; bias: number; sd: number };
+export type ProjectionCard = {
+  season: number;
+  through_week: number;
+  factors: Record<string, number>;
+  overall: { shown?: MissStats | null; calibrated?: MissStats | null; team_shown?: MissStats | null; team_calibrated?: MissStats | null; as_shown?: MissStats | null };
+  by_position: (MissStats & { pos: string; factor: number })[];
+  by_week: { week: number; shown?: MissStats | null; calibrated?: MissStats | null; team_calibrated?: MissStats | null; as_shown?: MissStats | null }[];
 };
 export type FoMove = { action: 'start' | 'sit'; player: string; slot: string; note: string };
 export type FoHeader = {
