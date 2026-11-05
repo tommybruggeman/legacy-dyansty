@@ -270,7 +270,8 @@ def week_conditions(games_all: list[Mapping[str, Any]], week: int, games: Mappin
     situ = {(w, team_code(t)): f for (w, t), f in situations(games_all).items()}
     arch = {}
     if archive:
-        arch = {team_code(h): w for (wk, h), w in archive_weather([g for g in games_all if int(g.get("week") or 0) == int(week)], get_json).items()}
+        # the whole season at once: one archive call per venue, reused for every week of the replay
+        arch = {team_code(h): w for (wk, h), w in archive_weather(games_all, get_json).items() if wk == int(week)}
     out = {}
     for team, g in games.items():
         home = team if g.get("home") else team_code(g.get("opponent"))
