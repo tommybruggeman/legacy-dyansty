@@ -306,3 +306,31 @@ class RosterSpotTests(unittest.TestCase):
             self.assertIn(len(idea["you_get"]), (1, 2))
             if len(idea["you_get"]) == 2:
                 self.assertGreaterEqual(len(idea["open_with"]), 2)  # never consolidate the wrong way
+
+
+class DeclinedOfferTests(unittest.TestCase):
+    def test_opener_they_already_turned_down_is_flagged(self):
+        lg = _league()
+        cap = {t: 20.0 for t in lg.teams}
+
+        def load():
+            return lg, cap, "me"
+
+        base = find_trades(league=lg, asker_team_id="me", cap_space=cap)["ideas"][0]
+        sent = [s.split(" (")[0] for s in base["open_with"]]
+        got = [s.split(" (")[0] for s in base["you_get"]]
+        outcomes = lambda partner=None: [{"partner": base["partner"], "outcome": "declined", "receives": [{"name": n} for n in got], "sends": [{"name": n} for n in sent]}]
+        tools = {t.name: t for t in trade_finder_tools(load, outcomes=outcomes, history=None)}
+        # history=None skips the per-idea notes, so run the check through price_target instead
+        out = tools["find_trade_targets"].fn(target=got[0])
+        self.assertTrue(out["fair_deal_found"])
+        self.assertIn("turned down an offer", out["declined_before"])
+
+    def test_offer_share_matches_the_package_math(self):
+        from league_ai.trade_finder import offer_share
+        lg = _league()
+        share = offer_share(lg, "me", "Deepwr", [{"name": "WR deepwr-wr1"}], [{"name": "RB me-rb0"}])
+        v = lg.valuer
+        expect = v.value_to("deepwr", lg.find_player("RB me-rb0")) / v.value_to("deepwr", lg.find_player("WR deepwr-wr1"))
+        self.assertAlmostEqual(share, round(expect, 3), places=3)
+        self.assertIsNone(offer_share(lg, "me", "Nobody", [], []))

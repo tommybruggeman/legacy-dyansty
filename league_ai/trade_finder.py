@@ -6,7 +6,7 @@ where both sides come out ahead by their own goals, which is where real trades h
 that are merely even on the market. Each idea comes as a ladder: the opening offer (cheapest they might
 take), where it should close, and the most the owner should pay. Market fair value is shown as context.
 
-Three things trade here: players, future rookie picks, and cap space (sent as FAAB in Sleeper). A deal that
+Three things trade here: players, future rookie picks, and cap space (sent as FAAB). A deal that
 is fair on value but leaves one side over the cap gets the difference added in cap dollars, priced into
 the value, rather than being thrown out. By default ideas stay plain (player for player, cap only to make
 salaries fit) and the opening rung is the simplest offer; creative=True, when the owner asks for it, adds
@@ -521,7 +521,8 @@ _WINDOW_NOTE = {"contending": "contending: this season counts about 80%", "middl
 HOW_TO_PITCH = ("You work for this owner, and every other owner has their own AI too. Lead with the opening offer, say what it should close at, "
                 "and give the walk-away as the most to pay. Mention market fair value as context, not as the ask. Say in a clause why that owner says yes "
                 "in their own terms (their window, a player not producing for them). If vs_real_trades shows few real trades here got a share that low, "
-                "say the opener is a stretch. When a salary_note is there, say the cap space goes with the deal so salaries fit (sent as FAAB in Sleeper). "
+                "say the opener is a stretch. If declined_before is there, don't open with a share they already turned down: start nearer the close. "
+                "When a salary_note is there, say the cap space goes with the deal so salaries fit (sent as FAAB). "
                 "Keep it simple unless the owner asked for creative ideas. If no idea is listed, say so rather than forcing a deal.")
 
 
@@ -743,6 +744,7 @@ def trade_finder_tools(load: Callable[[], tuple[League, Mapping[str, float], str
                 out["partner_style"] = f"{p['trades']} trades here; {p['style']}"
             if out.get("fair_deal_found"):
                 _vs_real(out)
+                _vs_declined(out)
             _log(out)
             return out
         out = find_trades(league=lg, asker_team_id=cache["asker"], cap_space=cache["cap"], want_position=position, goal=goal,
@@ -760,8 +762,32 @@ def trade_finder_tools(load: Callable[[], tuple[League, Mapping[str, float], str
                 if h and h.get("style") != "not enough activity yet":
                     idea["partner_habits"] = h["style"]
                 _vs_real(idea)
+                _vs_declined(idea)
         _log(out)
         return out
+
+    def declined_shares() -> dict[str, list[float]]:
+        """Partner -> the share (valued their way, with today's values) of each offer they turned down or countered."""
+        if "declined" not in cache:
+            out: dict[str, list[float]] = defaultdict(list)
+            try:
+                rows = [o for o in (outcomes() if outcomes else []) if str(o.get("outcome")) in ("declined", "countered")]
+            except Exception:
+                rows = []
+            for o in rows:
+                share = offer_share(cache["league"], cache["asker"], str(o.get("partner") or ""), o.get("receives") or [], o.get("sends") or [])
+                if share is not None:
+                    out[str(cache["league"].teams[cache["league"].team_id(str(o.get("partner")))].get("owner_name"))].append(share)
+            cache["declined"] = dict(out)
+        return cache["declined"]
+
+    def _vs_declined(item: dict[str, Any]) -> None:
+        """Flag an opening offer that's no better for them than one they already said no to."""
+        shares = declined_shares().get(str(item.get("partner") or ""))
+        opener = (item.get("their_share") or {}).get("open")
+        if shares and opener is not None and opener <= max(shares) + DECLINE_MARGIN:
+            item["declined_before"] = (f"{item.get('partner')} turned down an offer that gave them {round(100 * max(shares))}% of what they'd give up "
+                                       f"(valued their way, today's values); this opener gives {round(100 * opener)}%, so open closer to the likely close")
 
     def _log(out: Mapping[str, Any]) -> None:
         if log_ideas is not None and "error" not in out:
@@ -1173,6 +1199,35 @@ def _age_at(age_now: float | None, season: int, current_season: int | None) -> f
     if age_now is None:
         return None
     return float(age_now) - max(0, (current_season or season) - season)
+
+
+DECLINE_MARGIN = 0.02  # an opener within this share of a turned-down offer is "the same offer" to them
+
+
+def offer_share(league: League, asker_team_id: str, partner: str, receives: list[Any], sends: list[Any]) -> float | None:
+    """What a past offer gave the partner (their share, valued their way, with today's values). Players are matched by
+    Sleeper id, then name; None when the partner or every player is gone."""
+    tid = league.team_id(partner)
+    if not tid:
+        return None
+
+    def find(players: list[Any], team: str) -> list[PlayerStrength]:
+        found = []
+        for raw in players or []:
+            sid = str(raw.get("sleeper_id") or "") if isinstance(raw, Mapping) else ""
+            name = str(raw.get("name") or "") if isinstance(raw, Mapping) else str(raw or "")
+            p = next((x for x in league.players if sid and x.sleeper_id == sid), None) or (league.find_player(name, team) if name else None) \
+                or (league.find_player(name) if name else None)
+            if p is not None:
+                found.append(p)
+        return found
+
+    gets, gives = find(receives, tid), find(sends, str(asker_team_id))
+    if not gets or not gives:
+        return None
+    v = league.valuer
+    out = v.package(tid, gets, versus=len(gives))
+    return round(v.package(tid, gives, versus=len(gets)) / out, 3) if out > 0 else None
 
 
 def pitch_record(outcomes: list[Mapping[str, Any]]) -> dict[str, dict[str, int]]:
