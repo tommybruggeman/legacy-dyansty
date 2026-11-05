@@ -241,3 +241,23 @@ def multiplier(position: str, feats: Mapping[str, float], table: Mapping[str, Ma
 # Fitted by scoring/weather_study.py (2021-2025 regular seasons, ridge-shrunk, checked on 2026). Share of the
 # projection per unit of each feature. Empty until the fit is in: multiplier() is then 1.
 COND_EFFECTS: dict[str, dict[str, float]] = {}
+
+
+def week_conditions(games_all: list[Mapping[str, Any]], week: int, games: Mapping[str, Mapping[str, Any]],
+                    archive: bool = False, get_json: Any = None) -> dict[str, dict[str, float]]:
+    """team -> features for one week. games_all: the season's nfl_games rows; games: week_matchups for the week
+    (with add_weather's forecast for games not played yet). archive=True looks up Open-Meteo's archive for played
+    games (the daily learning job's replay); the app's server never does, it uses the forecast or game record."""
+    from league_ai.nfl_data import team_code
+
+    climate = {team_code(t): c for t, c in team_climates(games_all).items()}
+    situ = {(w, team_code(t)): f for (w, t), f in situations(games_all).items()}
+    arch = {}
+    if archive:
+        arch = {team_code(h): w for (wk, h), w in archive_weather([g for g in games_all if int(g.get("week") or 0) == int(week)], get_json).items()}
+    out = {}
+    for team, g in games.items():
+        home = team if g.get("home") else team_code(g.get("opponent"))
+        wx = game_weather(g, arch.get(home))
+        out[team] = features(g, team, climate, wx, situ.get((int(week), team)))
+    return out

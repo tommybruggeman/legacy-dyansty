@@ -97,7 +97,7 @@ def season_games(client: Any, season: int) -> list[dict[str, Any]]:
 
     def load() -> list[dict[str, Any]]:
         try:
-            return client.table("nfl_games").select("week, gameday, gametime, home_team, away_team, home_score, away_score, spread_line, total_line, roof, stadium, temp, wind, home_coach, away_coach").eq("season", season).eq("game_type", "REG").limit(400).execute().data or []
+            return client.table("nfl_games").select("week, gameday, gametime, home_team, away_team, home_score, away_score, spread_line, total_line, roof, stadium, temp, wind, home_coach, away_coach, div_game").eq("season", season).eq("game_type", "REG").limit(400).execute().data or []
         except Exception:
             return []
 
@@ -341,8 +341,11 @@ def situational_splits(client: Any, season: int) -> dict[tuple[str, str], dict[s
 LEAGUE_AVG_IMPLIED = 22.5
 
 
-def game_multiplier(position: str, game: Mapping[str, Any] | None) -> float:
+def game_multiplier(position: str, game: Mapping[str, Any] | None, conditions: bool = False) -> float:
     """Game environment: Vegas implied team points (a high-scoring script lifts everyone) and open-air weather.
+
+    conditions=True leaves weather and rest out: the caller applies the fitted game conditions instead
+    (league_ai.game_conditions, used by the weekly projections).
 
     Wind is the weather that moves fantasy output most: it hurts passing and kicking and pushes teams to run.
     Heavy rain or snow and deep cold trim passing a little more.
@@ -354,6 +357,8 @@ def game_multiplier(position: str, game: Mapping[str, Any] | None) -> float:
     implied = game.get("implied_points")
     if implied is not None:
         mult *= max(0.9, min(1.1, 1 + 0.5 * (float(implied) / LEAGUE_AVG_IMPLIED - 1)))
+    if conditions:
+        return mult
     wx = game.get("weather") or {}
     if str(game.get("roof") or "") in ("outdoors", "open") and wx:
         wind = float(wx.get("wind_mph") or 0)
@@ -400,10 +405,10 @@ TILT_WEIGHT = {"WR": 0.0}
 
 
 def total_multiplier(position: str, game: Mapping[str, Any] | None, rating: Mapping[str, Any] | None,
-                     weights: Mapping[str, float] | None = None) -> float:
+                     weights: Mapping[str, float] | None = None, conditions: bool = False) -> float:
     """Defense matchup x game environment, capped at +/-20% so this week's context tilts calls without overriding talent.
     weights: share of the tilt by position (TILT_WEIGHT when None; {} for the full tilt everywhere)."""
-    full = max(0.8, min(1.2, matchup_multiplier(rating.get("factor") if rating else None) * game_multiplier(position, game)))
+    full = max(0.8, min(1.2, matchup_multiplier(rating.get("factor") if rating else None) * game_multiplier(position, game, conditions)))
     w = (TILT_WEIGHT if weights is None else weights).get(str(position or "").upper(), 1.0)
     return 1 + (full - 1) * w
 
