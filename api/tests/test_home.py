@@ -227,3 +227,14 @@ def test_shotgun_holds_until_midnight_pacific():
     assert home.bottom_mode(late_monday, {})["mode"] == "shotgun"
     tuesday = datetime(2026, 11, 3, 8, 30, tzinfo=timezone.utc)       # 12:30 AM Tue PT
     assert home.bottom_mode(tuesday, {})["mode"] == "scoreboard"
+
+
+def test_top_projected_keeps_five_per_position_best_first():
+    proj = {f"r{i}": 20.0 - i for i in range(7)} | {"q": 25.0, "out": 30.0, "new": 18.5}
+    info = {p: {"full_name": p, "position": "RB", "team": "DET"} for p in proj}
+    info["q"]["position"] = "QB"
+    info["out"]["injury_status"] = "IR"
+    rows = home.top_projected(proj, {"q": 21.0, "r0": 15.0}, info, {"q": 3}, {3: "Tommy"}, 3, {"q": 30.2})
+    assert [r["player_id"] for r in rows] == ["q", "r0", "r1", "new", "r2", "r3"]   # out skipped, 5 RBs kept
+    assert rows[0]["is_mine"] and rows[0]["last"] == 30.2 and rows[0]["avg"] == 21.0
+    assert rows[3]["avg"] is None and rows[3]["owner"] is None

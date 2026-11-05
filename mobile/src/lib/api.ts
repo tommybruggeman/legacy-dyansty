@@ -607,7 +607,7 @@ export type RookieDeal = {
   choice: 'keep' | 'walk' | 'review' | null; open: boolean; status: string;
 };
 export type Riser = {
-  player_id: string; name: string; pos: string; team: string; avg: number; proj: number; rise: number; last: number | null;
+  player_id: string; name: string; pos: string; team: string; avg: number | null; proj: number; rise: number; last: number | null;
   roster_id: number | null; owner: string | null; is_mine: boolean; injury: string | null;
 };
 export type BoardSide = { roster_id: number; name: string; score: number; top5: boolean; left: number; projected?: number | null; is_me: boolean; avatar: string | null };

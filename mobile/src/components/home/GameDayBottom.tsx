@@ -9,11 +9,11 @@ import { PlayerFace } from '../PlayerFace';
 import { Card, firstName, ui } from '../ui';
 
 // The bottom of game-day Home, picked by the server from the clock:
-// GM's Risers Thu-Sat, the week's scoreboard on Sunday, then Shotgun watch
+// Highest projected Thu-Sat, the week's scoreboard on Sunday, then Shotgun watch
 // (last place shotguns a beer) from midway through the late games to Monday.
 
 const pts = (n: number) => n.toFixed(1);
-const POSITIONS = ['All', 'QB', 'RB', 'WR', 'TE'] as const;
+const POSITIONS = ['Total', 'QB', 'RB', 'WR', 'TE'] as const;
 const RED = '#E08A8A';
 
 export function GameDayBottom({ bottom, week }: { bottom: HomeBottom; week: number }) {
@@ -31,14 +31,15 @@ function Eyebrow({ title, right, tone = colors.gold }: { title: string; right?: 
   );
 }
 
-// ---- GM's Risers -------------------------------------------------------------
+// ---- Highest projected -------------------------------------------------------
+// The week's top projected players, Total or by position (5 each). Big number = this week's projection.
 
 function Risers({ rows, week }: { rows: Riser[]; week: number }) {
-  const [pos, setPos] = useState<(typeof POSITIONS)[number]>('All');
-  const shown = rows.filter((r) => pos === 'All' || r.pos === pos).slice(0, 5);
+  const [pos, setPos] = useState<(typeof POSITIONS)[number]>('Total');
+  const shown = rows.filter((r) => pos === 'Total' || r.pos === pos).slice(0, 5);
   return (
     <Card>
-      <Eyebrow title={`GM'S RISERS · WEEK ${week}`} />
+      <Eyebrow title={`HIGHEST PROJECTED · WEEK ${week}`} />
       <View style={styles.chips}>
         {POSITIONS.map((p) => (
           <Pressable key={p} onPress={() => setPos(p)} style={[styles.chip, p === pos && styles.chipOn]} hitSlop={4}>
@@ -46,7 +47,7 @@ function Risers({ rows, week }: { rows: Riser[]; week: number }) {
           </Pressable>
         ))}
       </View>
-      {shown.length === 0 ? <Text style={[ui.sub, styles.gap]}>No {pos} risers this week.</Text> : null}
+      {shown.length === 0 ? <Text style={[ui.sub, styles.gap]}>No {pos} projections yet.</Text> : null}
       {shown.map((r, i) => (
         <Pressable key={r.player_id} style={[styles.riser, i > 0 && styles.line]} onPress={() => router.push(`/player/${r.player_id}`)}>
           <Text style={styles.rank}>{i + 1}</Text>
@@ -57,11 +58,11 @@ function Risers({ rows, week }: { rows: Riser[]; week: number }) {
               {r.pos} · {r.team || 'FA'} · <Text style={r.is_mine ? ui.gold : r.owner ? undefined : styles.free}>{r.is_mine ? 'You' : r.owner ? firstName(r.owner) : 'Free agent'}</Text>
             </Text>
             <Text style={styles.stats}>
-              AVG <Text style={styles.statVal}>{pts(r.avg)}</Text>   PROJ <Text style={styles.statVal}>{pts(r.proj)}</Text>
-              {r.last != null ? <>   LAST <Text style={styles.statVal}>{pts(r.last)}</Text></> : null}
+              {r.avg != null ? <>AVG <Text style={styles.statVal}>{pts(r.avg)}</Text>   </> : 'New starter   '}
+              {r.last != null ? <>LAST <Text style={styles.statVal}>{pts(r.last)}</Text></> : null}
             </Text>
           </View>
-          <Text style={styles.rise}>+{pts(r.rise)}</Text>
+          <View style={styles.projBox}><Text style={styles.projBig}>{pts(r.proj)}</Text><Text style={styles.projUnit}>PROJ</Text></View>
         </Pressable>
       ))}
     </Card>
@@ -223,7 +224,9 @@ const styles = StyleSheet.create({
   free: { color: colors.live },
   stats: { color: colors.muted, fontSize: 10, fontWeight: '700', marginTop: 3 },
   statVal: { color: colors.text },
-  rise: { color: colors.live, fontSize: 19, fontWeight: '800' },
+  projBox: { alignItems: 'flex-end' },
+  projBig: { color: colors.gold, fontSize: 19, fontWeight: '800' },
+  projUnit: { color: colors.muted, fontSize: 9, fontWeight: '800', letterSpacing: 1 },
   // scoreboard
   strip: { marginTop: 10, marginRight: -14 },
   stripIn: { gap: 8, paddingRight: 14 },

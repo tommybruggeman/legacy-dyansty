@@ -18,7 +18,6 @@ from supabase import Client, create_client
 
 from api import box_score as box_score_mod
 from api import activity, alerts, cache, front_office, home, league, lineups, live_activity, market, nfl_live, own_league, player, playoffs, projections, teams, trade_feed, trade_offers, waivers
-from league_ai import risers as risers_log
 from season_engine import SeasonResolver
 from services.season_rollover_owner_ui import OwnerRolloverDecisionError, OwnerRolloverDecisionService
 
@@ -1270,7 +1269,7 @@ def _nfl_week(client: Client, season: int, week: int) -> list[dict[str, Any]]:
 
 
 def _risers(client: Client, ctx: dict[str, Any], week: int) -> list[dict[str, Any]]:
-    """GM's Risers for the league this week (the same list for every owner; cached half an hour)."""
+    """Highest projected for the league this week (the same list for every owner; cached half an hour)."""
     sid, season = ctx["sleeper_id"], ctx["season"]
     lines = projections.week_lines("projections", season, week, 1800)
     scoring = projections.league_scoring(sid)
@@ -1278,8 +1277,8 @@ def _risers(client: Client, ctx: dict[str, Any], week: int) -> list[dict[str, An
              and projections.score(line["stats"], scoring) >= home.RISER_MIN_PROJ * 0.8]
     proj = projections.week_projections(client, sid, season, week, skill, {p: lines[p]["pos"] for p in skill}, {p: lines[p]["team"] for p in skill})
     # The average is in league scoring too (the market's PPG is full PPR, which made QBs look like risers).
-    avg, games = projections.season_averages(sid, season, week - 1) if week > 1 else ({}, {})
-    near = [p for p, v in proj.items() if v >= home.RISER_MIN_PROJ and avg.get(p) is not None and v > avg[p]]
+    avg, _games = projections.season_averages(sid, season, week - 1) if week > 1 else ({}, {})
+    near = [p for p, v in proj.items() if v >= home.RISER_MIN_PROJ]
     info = teams.player_info(client, near)
     last_lines = projections.week_lines("stats", season, week - 1, 86400) if week > 1 else {}
     last = {p: projections.score(last_lines[p]["stats"], scoring) for p in near if p in last_lines}
@@ -1287,10 +1286,7 @@ def _risers(client: Client, ctx: dict[str, Any], week: int) -> list[dict[str, An
         owners = league.sleeper_owners(sid)
     except Exception:
         owners = {}
-    return home.risers({p: proj[p] for p in near}, avg, games, info, owners, ctx["names"], None, last)
-
-
-_RISERS_LOGGED: set[tuple[str, int, int]] = set()
+    return home.top_projected({p: proj[p] for p in near}, avg, info, owners, ctx["names"], None, last)
 
 
 def _league_live(client: Client, ctx: dict[str, Any], week: int, starts: dict[str, datetime], now: datetime) -> dict[int, dict[str, Any]]:
@@ -1307,16 +1303,14 @@ def _league_live(client: Client, ctx: dict[str, Any], week: int, starts: dict[st
 
 def _game_day_bottom(client: Client, ctx: dict[str, Any], user: Any, week: int, current: dict[str, Any],
                      pics: dict[int, str | None], now: datetime) -> dict[str, Any]:
-    """The bottom card of game-day Home: GM's Risers, the week's scoreboard, or Shotgun watch."""
+    """The bottom card of game-day Home: Highest projected, the week's scoreboard, or Shotgun watch."""
     sid, my_roster = ctx["sleeper_id"], ctx["sleeper_roster_id"]
     starts = home.kickoffs(_nfl_week(client, ctx["season"], week))
     pick = home.bottom_mode(now, starts)
     if pick["mode"] == "risers":
-        rows = cache.cached(("risers", sid, ctx["season"], week), 1800, lambda: _risers(client, ctx, week))
-        key = (str(user.id), ctx["season"], week)
-        if rows and key not in _RISERS_LOGGED:  # once per owner and week per server; the log also skips saved weeks
-            _RISERS_LOGGED.add(key)
-            risers_log.log(client, league_id=ctx["league_id"], sleeper_id=sid, season=ctx["season"], week=week, rows=rows)
+        # Mode stays "risers" so older app builds still render the card. The GM's Risers grading log
+        # (league_ai/risers.py) is no longer fed: a top-projected list isn't a "beats his average" call.
+        rows = cache.cached(("top_proj", sid, ctx["season"], week), 1800, lambda: _risers(client, ctx, week))
         return {"mode": "risers", "risers": [{**r, "is_mine": r["roster_id"] is not None and r["roster_id"] == my_roster} for r in rows]}
 
     live = _league_live(client, ctx, week, starts, now)
