@@ -214,7 +214,7 @@ def main() -> None:
 
 
 TRAIN = (2021, 2022, 2023, 2024, 2025)
-RIDGE = 3000.0   # about 30 typical player-games of evidence at zero effect
+RIDGE = 8000.0   # about 80 typical player-games of evidence at zero effect
 
 
 def _fit(rows: list[dict[str, Any]], names: list[str]) -> dict[str, float]:
@@ -293,15 +293,16 @@ def fit_effects(recs: list[dict[str, Any]], games: list[dict[str, Any]]) -> None
     full = loso(names)
     print("    all conditions: " + ", ".join(f"{s} player {p:+.3f} team {t:+.2f}" for s, p, t in full))
     keep, cur = list(names), full
-    for n in names:   # one pass: drop a condition if the model does better without it, season by season
-        without = loso([k for k in keep if k != n])
-        dt = sum(t for _, _, t in without) - sum(t for _, _, t in cur)
-        dp = sum(p for _, p, _ in without) - sum(p for _, p, _ in cur)
-        verdict = "drop" if dt >= 0 and dp >= 0 else "keep"
-        print(f"    {n:<18} n={sum(1 for r in rows if n in r['f']):<6} without it: player {dp:+.4f} team {dt:+.3f} -> {verdict}")
-        if verdict == "drop":
-            keep.remove(n)
-            cur = without
+    for rnd in (1, 2):   # drop a condition unless team totals get worse without it (and players don't get better)
+        for n in list(keep):
+            without = loso([k for k in keep if k != n])
+            dt = sum(t for _, _, t in without) - sum(t for _, _, t in cur)
+            dp = sum(p for _, p, _ in without) - sum(p for _, p, _ in cur)
+            verdict = "drop" if dt >= 0 or dp > 0.002 else "keep"
+            print(f"    round {rnd} {n:<18} n={sum(1 for r in rows if n in r['f']):<6} without it: player {dp:+.4f} team {dt:+.3f} -> {verdict}")
+            if verdict == "drop":
+                keep.remove(n)
+                cur = without
     final = loso(keep)
     print("    kept: " + ", ".join(f"{s} player {p:+.3f} team {t:+.2f}" for s, p, t in final))
     expect(2026)
