@@ -98,6 +98,15 @@ def _rz_role(r: Mapping[str, Any], c: Mapping[str, Any]) -> float:
     return _clamp(x / avg - 1, -0.6, 1.0) if x is not None and avg else 0.0
 
 
+def _usage(r: Mapping[str, Any], c: Mapping[str, Any]) -> float:
+    """Our own projection from his recent usage (carries + targets + pass attempts, last 4 games) times his
+    position's points per opportunity so far, against the calibrated projection. Walk-forward on 2024-2026 a 20-30%
+    blend of it cut the team miss a little in 2025-26 (scoring/projection_experiments.py)."""
+    own = (c.get("own") or {}).get(r["id"])
+    cal = _f(r.get("cal"))
+    return _clamp(own / cal - 1, -0.6, 0.6) if own is not None and cal >= MIN_PROJ else 0.0
+
+
 def _wind(r: Mapping[str, Any], c: Mapping[str, Any]) -> float:
     return max(0.0, c["wind"].get(r["team"], 0.0) - 12.0) / 10.0
 
@@ -111,6 +120,7 @@ SIGNALS: dict[str, tuple[str, tuple[str, ...], Callable[[Mapping[str, Any], Mapp
     "script_run": ("favored, runs more", ("RB",), _script(1.0)),
     "script_pass": ("trailing, throws more", ("QB", "WR", "TE"), _script(-1.0)),
     "wind": ("wind", ("QB", "WR", "TE", "K"), _wind),
+    "usage": ("recent usage (carries, targets, attempts)", SKILL, _usage),
     "rz_vs_proj": ("red zone role vs projected TDs", ("RB", "WR", "TE"), _rz_vs_proj),
     "rz_role": ("red zone role", ("RB", "WR", "TE"), _rz_role),
 }
@@ -193,6 +203,7 @@ def learn(weeks: list[Mapping[str, Any]]) -> dict[str, Any]:
     errs: dict[str, list[tuple[int, float, float]]] = defaultdict(list)   # signal -> (week index, player |err| gain, ...)
     team_gain: dict[str, list[tuple[int, float]]] = defaultdict(list)
     active: list[str] = []
+    rate: dict[str, list[float]] = defaultdict(lambda: [0.0, 0.0])
     history: list[dict[str, Any]] = []   # per week: active set used, combined gains
     season = weeks[-1]["season"] if weeks else None
     cause_pts: dict[str, list[float]] = defaultdict(lambda: [0, 0.0])   # this season: cause -> [misses, points]
@@ -205,6 +216,7 @@ def learn(weeks: list[Mapping[str, Any]]) -> dict[str, Any]:
         if not ctx or not post or not rows:
             continue
         ks = {s: sums[s][0] / (sums[s][1] + RIDGE) for s in SIGNALS}
+        ctx = {**ctx, "own": own_projections(ctx, rate)}
         xs = {r["id"]: signal_x(r, ctx) for r in rows}
         by_id = {r["id"]: r for r in rows}
         if graded >= WARMUP_WEEKS:
@@ -249,6 +261,11 @@ def learn(weeks: list[Mapping[str, Any]]) -> dict[str, Any]:
                 cx = r["cal"] * x
                 sums[s][0] += cx * res
                 sums[s][1] += cx * cx
+        for r in rows:   # points per opportunity by position, from finished weeks
+            o = (post.get("opps") or {}).get(r["id"])
+            if o and o > 0:
+                rate[r["pos"]][0] += r["actual"]
+                rate[r["pos"]][1] += o
         graded += 1
         active = choose(errs, team_gain, i)
         history.append({"season": wk["season"], "week": wk["week"], "active": list(active)})
@@ -273,7 +290,18 @@ def learn(weeks: list[Mapping[str, Any]]) -> dict[str, Any]:
     gaps.sort(key=lambda g: (g["status"] != "no signal yet", -g["points"]))   # missing data first, then signals that don't help yet
     return {"signals": signals, "active": list(active), "k": ks, "causes": cause_rows, "gaps": gaps[:3],
             "last_misses": last_misses, "live_gain": round(sum(recent_c) / len(recent_c), 4) if recent_c else None,
-            "history": history[-20:]}
+            "history": history[-20:], "rate": {p: list(v) for p, v in rate.items()}}
+
+
+def own_projections(ctx: Mapping[str, Any], rate: Mapping[str, Iterable[float]]) -> dict[str, float]:
+    """player -> recent opportunities per game x his position's points per opportunity (needs 2+ games)."""
+    pos_of = ctx.get("pos_of") or {}
+    out = {}
+    for sid, g in (ctx.get("opps") or {}).items():
+        pts, n = (list(rate.get(pos_of.get(sid, ""), (0.0, 0.0))) + [0.0, 0.0])[:2]
+        if len(g) >= 2 and n > 50:
+            out[sid] = sum(g) / len(g) * pts / n
+    return out
 
 
 def choose(errs: Mapping[str, list[tuple[int, float, float]]], team_gain: Mapping[str, list[tuple[int, float]]], i: int) -> list[str]:
@@ -290,6 +318,7 @@ def choose(errs: Mapping[str, list[tuple[int, float, float]]], team_gain: Mappin
 def adjustments(rows: Iterable[Mapping[str, Any]], ctx: Mapping[str, Any], learned: Mapping[str, Any]) -> dict[str, float]:
     """This week's multiplier per player from the live signals (only the ones that aren't 1)."""
     active, ks = learned.get("active") or [], learned.get("k") or {}
+    ctx = {**ctx, "own": own_projections(ctx, learned.get("rate") or {})}
     out = {}
     for r in rows:
         xs = signal_x(r, ctx)
@@ -301,7 +330,7 @@ def adjustments(rows: Iterable[Mapping[str, Any]], ctx: Mapping[str, Any], learn
 
 # ---- building the context from data (learning job) ------------------------------------------------------------
 
-STAT_COLUMNS = "gsis_id, sleeper_id, player_name, week, team, position, offense_pct, attempts, targets, target_share"
+STAT_COLUMNS = "gsis_id, sleeper_id, player_name, week, team, position, offense_pct, attempts, carries, targets, target_share"
 
 
 def season_data(client: Any, season: int, get_csv: Callable[[str], list[dict[str, Any]]] | None = None) -> dict[str, Any]:
@@ -353,7 +382,9 @@ def context(data: Mapping[str, Any], season: int, week: int, games: Mapping[str,
                 status[sid] = str(r["report_status"]).strip().lower()
     snaps: dict[str, list[float]] = defaultdict(list)
     share: dict[str, list[float]] = defaultdict(list)
+    opps: dict[str, list[float]] = defaultdict(list)
     team_of: dict[str, str] = {}
+    sid_pos: dict[str, str] = {}
     att: dict[tuple[str, str], float] = defaultdict(float)
     for r in sorted(prior, key=lambda r: int(_f(r.get("week")))):
         sid = str(r.get("sleeper_id") or "")
@@ -363,7 +394,9 @@ def context(data: Mapping[str, Any], season: int, week: int, games: Mapping[str,
             snaps[sid].append(_f(r["offense_pct"]))
         if r.get("target_share") is not None:
             share[sid].append(_f(r["target_share"]))
+        opps[sid].append(_f(r.get("carries")) + _f(r.get("targets")) + _f(r.get("attempts")))
         team_of[sid] = r.get("team") or team_of.get(sid, "")
+        sid_pos[sid] = str(r.get("position") or "").upper()
         if str(r.get("position") or "").upper() == "QB":
             att[(r.get("team") or "", sid)] += _f(r.get("attempts"))
     main_qb: dict[str, tuple[float, str]] = {}
@@ -394,7 +427,7 @@ def context(data: Mapping[str, Any], season: int, week: int, games: Mapping[str,
                     rz_xtd[sid] = x
     implied_vals = list(implied.values())
     ctx = {"implied": implied, "lg_implied": sum(implied_vals) / len(implied_vals) if implied_vals else None, "spread": spread,
-           "wind": wind, "status": status, "snaps": dict(snaps), "freed_share": dict(freed), "qb_out": qb_out,
+           "wind": wind, "status": status, "snaps": dict(snaps), "freed_share": dict(freed), "qb_out": qb_out, "opps": {k: v[-4:] for k, v in opps.items()}, "pos_of": sid_pos,
            "rz_xtd": rz_xtd, "rz_avg": rz_avg}
     pct = {str(r["sleeper_id"]): _f(r.get("offense_pct")) for r in this if r.get("sleeper_id")}
     week_att: dict[str, tuple[float, str]] = {}
@@ -409,7 +442,8 @@ def context(data: Mapping[str, Any], season: int, week: int, games: Mapping[str,
         fs = g.get("final_score")
         if fs:
             points[t], margin[t] = float(fs["team"]), float(fs["team"]) - float(fs["opponent"])
-    post = {"pct": pct, "points": points, "margin": margin, "wind": wind, "qb_changed": qb_changed}
+    week_opps = {str(r["sleeper_id"]): _f(r.get("carries")) + _f(r.get("targets")) + _f(r.get("attempts")) for r in this if r.get("sleeper_id")}
+    post = {"opps": week_opps, "pct": pct, "points": points, "margin": margin, "wind": wind, "qb_changed": qb_changed}
     return ctx, post
 
 
