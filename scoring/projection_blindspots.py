@@ -48,7 +48,52 @@ def run_league(client: Any, league_id: str, sleeper_league_id: str) -> None:
         unscored = sorted({int(g["week"]) for g in games_all if g.get("home_score") is None and g.get("week") is not None})
         print(f"season {season}: lineup weeks {sorted(w for s, w in lineups if s == season)}; weeks with unscored games {unscored[:6]}"
               f"; graded weeks {[w['week'] for w in weeks if w['season'] == season]}")
+    # bent line test: replay each season's end with a straight line and with a knee
+    ends = [i for i, w in enumerate(weeks) if i + 1 == len(weeks) or weeks[i + 1]["season"] != w["season"]]
+    for knee in (0, 12, 15, 18):
+        parts = []
+        for i in ends:
+            card = pc.replay(weeks[: i + 1], knee=knee)
+            o = card["overall"]
+            top = [r["actual"] - r["cal"] for w in weeks[: i + 1] if w["season"] == card["season"]
+                   for r in w["rows"] if r.get("actual") is not None and r.get("cal", 0) >= 20 and r["id"] in {x for ids in w["lineups"] for x in ids}]
+            parts.append(f"{card['season']} team {o['team_calibrated']['mae']:.2f} player {o['calibrated']['mae']:.3f} "
+                         f"stars20+ bias {sum(top) / max(1, len(top)):+.2f} (n={len(top)})")
+        print(f"knee {knee or 'none'}: " + "; ".join(parts))
     pc.replay(weeks)
+    # starters Sleeper didn't project: who are they and what would our own fallback have said
+    from league_ai.projection_calibration import _actual_lines
+    from api.projections import score
+    hist: dict[str, list[float]] = defaultdict(list)
+    fb: dict[str, list[float]] = defaultdict(list)
+    pos_n: dict[str, int] = defaultdict(int)
+    for wk in weeks:
+        if wk["season"] < weeks[-1]["season"] - 1:
+            continue
+        sc = scoring.get(wk["season"]) or {}
+        lines = _actual_lines(client, wk["season"], wk["week"])
+        have = {r["id"] for r in wk["rows"]}
+        started = {i for ids in wk["lineups"] for i in ids}
+        for pid in started - have:
+            line = lines.get(pid) or {}
+            pos = str(line.get("pos") or "?")
+            pos_n[pos] += 1
+            real = score(line.get("stats"), sc, pos) if line else 0.0
+            past = hist.get(pid, [])[-4:]
+            ppg = sum(past) / len(past) if past else 0.0
+            for name, guess in (("zero", 0.0), ("ppg4", ppg), ("ppg4_x0.8", 0.8 * ppg)):
+                fb[name].append(real - guess)
+            fb["has_history"].append(1.0 if past else 0.0)
+        for pid, line in lines.items():
+            st = line.get("stats") or {}
+            if st.get("gp") or st.get("off_snp") or line.get("source"):
+                hist[pid].append(score(st, sc, line.get("pos")))
+    print("unprojected starters by position: " + ", ".join(f"{k} {v}" for k, v in sorted(pos_n.items())))
+    for k, v in fb.items():
+        if k == "has_history":
+            print(f"  with past games: {int(sum(v))} of {len(v)}")
+        elif v:
+            print(f"  fallback {k}: MAE {sum(abs(e) for e in v) / len(v):.2f} bias {sum(v) / len(v):+.2f} (n={len(v)})")
     data: dict[int, Any] = {}
     for season in sorted({w["season"] for w in weeks})[-2:]:
         data[season] = pl.season_data(client, season)

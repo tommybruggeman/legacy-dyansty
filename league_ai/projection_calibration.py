@@ -33,7 +33,9 @@ SKILL = ("QB", "RB", "WR", "TE")
 FACTOR_RANGE = (0.6, 1.5)
 FACTORS_TTL = 3600
 LINE_PRIOR_N = 30.0   # player-weeks' worth of last season's line (or of "the projection is right") mixed in
-SLOPE_RANGE = (0.5, 1.5)   # a slope above 0 keeps the order within a position: a higher projection stays higher
+SLOPE_RANGE = (0.5, 1.5)
+MIN_TOP_SLOPE = 0.3   # above the knee a higher projection still means a higher number
+KNEE = None           # projected points where the line may bend (None = a straight line)   # a slope above 0 keeps the order within a position: a higher projection stays higher
 
 
 # ---- the math (pure) -----------------------------------------------------------------------------------------
@@ -72,13 +74,77 @@ class Line:
         return round((sy - b * sx) / n, 3), round(b, 3)
 
 
+class KneeLine:
+    """actual ~ a + b x + c max(0, x - knee): a line that can bend at the knee, so the biggest projections (the stars)
+    get their own trim. Least squares with last season's fit (or "the projection is right") mixed in, kept monotone
+    (slope above the knee stays at least MIN_TOP_SLOPE)."""
+
+    def __init__(self, knee: float, sums: Iterable[float] | None = None) -> None:
+        self.knee = knee
+        self.s = list(sums) if sums else [0.0] * 10   # n, then XtX upper (6 values) and Xty (3)
+
+    @staticmethod
+    def _basis(x: float, knee: float) -> tuple[float, float, float]:
+        return 1.0, x, max(0.0, x - knee)
+
+    def add(self, x: float, y: float, w: float = 1.0) -> None:
+        f = self._basis(x, self.knee)
+        self.s[0] += w
+        k = 1
+        for i in range(3):
+            for j in range(i, 3):
+                self.s[k] += w * f[i] * f[j]
+                k += 1
+        for i in range(3):
+            self.s[7 + i] += w * f[i] * y
+
+    def fit(self, prior: "KneeLine | None" = None) -> tuple[float, float, float]:
+        import numpy as np
+
+        s = list(self.s)
+        if prior is not None and prior.s[0] > 0:
+            k = LINE_PRIOR_N / prior.s[0]
+            s = [a + k * b for a, b in zip(s, prior.s)]
+        else:
+            tmp = KneeLine(self.knee)
+            for x in (5.0, 10.0, 15.0, 20.0, 25.0):
+                tmp.add(x, x, LINE_PRIOR_N / 5)
+            s = [a + b for a, b in zip(s, tmp.s)]
+        m = np.zeros((3, 3))
+        k = 1
+        for i in range(3):
+            for j in range(i, 3):
+                m[i, j] = m[j, i] = s[k]
+                k += 1
+        v = np.array(s[7:10])
+        try:
+            a, b, c = np.linalg.solve(m + np.eye(3) * 1e-6, v)
+        except Exception:
+            return 0.0, 1.0, 0.0
+        b = max(SLOPE_RANGE[0], min(SLOPE_RANGE[1], float(b)))
+        c = max(MIN_TOP_SLOPE - b, min(0.5, float(c)))
+        # refit the intercept for the clamped slopes
+        n, sx, sh, sy = s[1], s[2], s[3], s[7]
+        a = (sy - b * sx - c * sh) / n if n else 0.0
+        return round(a, 3), round(b, 3), round(c, 3)
+
+
 def line_points(x: float, ab: Iterable[float]) -> float:
-    """A projection through a fitted line; under MIN_PROJ it scales with the line's value at MIN_PROJ (no jump, no
-    free points for a player barely projected)."""
-    a, b = (float(v) for v in ab)
+    """A projection through a fitted line ([a, b] or a bent one [a, b, c, knee]); under MIN_PROJ it scales with the
+    line's value at MIN_PROJ (no jump, no free points for a player barely projected)."""
+    v = [float(t) for t in ab]
+    a, b = v[0], v[1]
+    c, knee = (v[2], v[3]) if len(v) >= 4 else (0.0, 0.0)
+
+    def at(z: float) -> float:
+        return a + b * z + c * max(0.0, z - knee)
     if x >= MIN_PROJ:
-        return max(0.0, a + b * x)
-    return max(0.0, x * (a + b * MIN_PROJ) / MIN_PROJ)
+        return max(0.0, at(x))
+    return max(0.0, x * at(MIN_PROJ) / MIN_PROJ)
+
+
+def _with_knee(fit: tuple[float, ...], knee: float | None) -> tuple[float, ...]:
+    return (*fit, float(knee)) if knee and len(fit) == 3 else fit
 
 
 def _stats(errs: list[float]) -> dict[str, Any] | None:
@@ -89,15 +155,17 @@ def _stats(errs: list[float]) -> dict[str, Any] | None:
             "sd": round(sqrt(sum(e * e for e in errs) / n), 2)}
 
 
-def replay(weeks: Iterable[Mapping[str, Any]], prior: float = PRIOR) -> dict[str, Any]:
+def replay(weeks: Iterable[Mapping[str, Any]], prior: float = PRIOR, knee: float | None = None) -> dict[str, Any]:
     """weeks, oldest first: {season, week, rows: [{id, pos, raw, shown, actual}], lineups: [[player ids]], snapshot: {id: pts}}.
     raw = the projection before the matchup tilt, shown = after it (both before calibration); actual None = no real score.
 
     Returns the factors for the next week of the latest season plus that season's card."""
     carry: dict[str, float] = {}
     hist: dict[str, list[float]] = defaultdict(lambda: [0.0, 0.0])
-    lines: dict[str, Line] = defaultdict(Line)
-    line_carry: dict[str, Line] = {}
+    knee = KNEE if knee is None else (knee or None)
+    new_line = (lambda: KneeLine(knee)) if knee else Line
+    lines: dict[str, Any] = defaultdict(new_line)
+    line_carry: dict[str, Any] = {}
     season = None
     card_weeks: list[dict[str, Any]] = []
     season_errs: dict[str, list[float]] = defaultdict(list)
@@ -107,9 +175,9 @@ def replay(weeks: Iterable[Mapping[str, Any]], prior: float = PRIOR) -> dict[str
                 carry = {p: h[0] / h[1] for p, h in hist.items() if h[1] > 0}
                 line_carry = {p: l for p, l in lines.items() if l.s[0] > 0}
             season, hist, card_weeks, season_errs = wk["season"], defaultdict(lambda: [0.0, 0.0]), [], defaultdict(list)
-            lines = defaultdict(Line)
+            lines = defaultdict(new_line)
         f = {p: factor(hist[p][0], hist[p][1], carry.get(p, 1.0), prior) for p in POSITIONS}
-        ln = {p: lines[p].fit(line_carry.get(p)) for p in SKILL}
+        ln = {p: _with_knee(lines[p].fit(line_carry.get(p)), knee) for p in SKILL}
         cal_of = lambda r: calibrate(r["shown"], r["pos"], f, ln)  # noqa: E731
         rows = [r for r in wk["rows"] if r.get("actual") is not None]
         by_id = {str(r["id"]): r for r in rows}
@@ -152,7 +220,7 @@ def replay(weeks: Iterable[Mapping[str, Any]], prior: float = PRIOR) -> dict[str
         "season": season,
         "through_week": card_weeks[-1]["week"] if card_weeks else 0,
         "factors": nxt,
-        "lines": {p: list(lines[p].fit(line_carry.get(p))) for p in SKILL},
+        "lines": {p: list(_with_knee(lines[p].fit(line_carry.get(p)), knee)) for p in SKILL},
         "season_ratio": {p: round(h[0] / h[1], 3) for p, h in hist.items() if h[1] > 0},
         "last_season_ratio": {p: round(v, 3) for p, v in carry.items() if p in POSITIONS},
         "overall": {k: _stats(v) for k, v in season_errs.items() if not k.startswith("pos:")},
@@ -203,7 +271,7 @@ def calibration(client: Any, sleeper_id: str, season: int) -> dict[str, dict[str
         if not card or int(card.get("season") or 0) > int(season):
             return {"factors": {}, "lines": {}}
         return {"factors": {str(k): float(v) for k, v in (card.get("factors") or {}).items()},
-                "lines": {str(k): [float(x) for x in v] for k, v in (card.get("lines") or {}).items() if v and len(v) == 2},
+                "lines": {str(k): [float(x) for x in v] for k, v in (card.get("lines") or {}).items() if v and len(v) in (2, 4)},
                 "adjust": card.get("adjust") or {}}
 
     if client is None:
