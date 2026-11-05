@@ -160,17 +160,25 @@ function Hero({ title, pill, me, them, week, matchupId, meLabel, themLabel, badg
 // The game-week Hero with each side's live projected total (same numbers as the game page), both sides'
 // win odds on a split bar under VS, and the projected top-5 line at the bottom (the 5th-best projected
 // final score in the league this week; a top-5 week is worth a standings point).
-function LiveHero({ data, title }: { data: HomeData; title: string }) {
+// Each side's projected total and win odds from the game page's box score, mine first (null once final).
+function useMatchupProj(data: HomeData) {
   const g = data.game!;
-  const me = g.me!;
   const final = !!g.is_final;
   const { data: box } = useApi<BoxScore>(`/matchups/${data.week}/${g.matchup_id}`, final ? 0 : 60_000);
   const sides = box?.teams ?? [];
-  const mine = box ? sides.findIndex((t) => t.roster_id === me.roster_id) : -1;
+  const mine = box ? sides.findIndex((t) => t.roster_id === g.me!.roster_id) : -1;
   const proj: [number, number] | null = !final && mine >= 0 && sides.length === 2
     ? [sides[mine].projected ?? sides[mine].score, sides[1 - mine].projected ?? sides[1 - mine].score] : null;
   const odds: [number, number] | null = !final && mine >= 0 && box?.win_chance && g.them
     ? [box.win_chance[mine], box.win_chance[1 - mine]] : null;
+  return { proj, odds };
+}
+
+function LiveHero({ data, title }: { data: HomeData; title: string }) {
+  const g = data.game!;
+  const me = g.me!;
+  const final = !!g.is_final;
+  const { proj, odds } = useMatchupProj(data);
   const line = data.top5_line;
   return (
     <Hero
@@ -395,23 +403,9 @@ function GameDay({ data }: { data: HomeData }) {
 
   if (!started) {
     const first = mine.filter((p) => p.kickoff).sort((a, b) => (a.kickoff! < b.kickoff! ? -1 : 1));
-    const s = data.series;
     return (
       <>
-        <Hero
-          title={title}
-          pill={first[0] ? <Pill label={`KICKOFF ${KICK(first[0].kickoff).toUpperCase()}`} /> : undefined}
-          me={g.me}
-          them={g.them}
-          week={data.week}
-          matchupId={g.matchup_id}
-          showScores={false}
-          badges={[
-            [g.me.ppg != null ? g.me.ppg.toFixed(1) : '—', 'YOUR PPG'],
-            [g.them?.ppg != null ? g.them.ppg.toFixed(1) : '—', 'THEIR PPG'],
-            [s ? record(s.wins, s.losses, s.ties) : '0-0', 'SERIES'],
-          ]}
-        />
+        <PreGameHero data={data} title={title} kickoff={first[0]?.kickoff} />
         <PlayerHeads title="YOUR STARTERS · FIRST UP" players={first.slice(0, 3)} showPoints={false} sub={(p) => KICK(p.kickoff)} />
         <LineupCheck issues={data.lineup_issues ?? []} />
         <AskBar placeholder="Who should I start this week?" />
@@ -477,6 +471,29 @@ function GameDay({ data }: { data: HomeData }) {
   );
 }
 
+// Before kickoff: your week score on the left, theirs on the right, both projected totals in the middle.
+function PreGameHero({ data, title, kickoff }: { data: HomeData; title: string; kickoff?: string | null }) {
+  const g = data.game!;
+  const { proj } = useMatchupProj(data);
+  const them = g.them ? firstName(g.them.name).toUpperCase() : 'BYE';
+  return (
+    <Hero
+      title={title}
+      pill={kickoff ? <Pill label={`KICKOFF ${KICK(kickoff).toUpperCase()}`} /> : undefined}
+      me={g.me!}
+      them={g.them}
+      week={data.week}
+      matchupId={g.matchup_id}
+      showScores={false}
+      badges={[
+        [pts(g.me!.score), 'YOU'],
+        [proj ? `${proj[0].toFixed(1)} – ${proj[1].toFixed(1)}` : '—', 'PROJECTED'],
+        [g.them ? pts(g.them.score) : '—', them],
+      ]}
+    />
+  );
+}
+
 const order = (p: LivePlayer) => (p.status === 'playing' ? 0 : p.status === 'final' ? 1 : 2);
 
 function LineupCheck({ issues }: { issues: LivePlayer[] }) {
@@ -487,13 +504,18 @@ function LineupCheck({ issues }: { issues: LivePlayer[] }) {
       </Eyebrow>
       {issues.length === 0 ? <Text style={[ui.sub, styles.gap]}>Every starter is healthy and has a game.</Text> : null}
       {issues.map((p, i) => (
-        <View key={`${p.player_id}-${i}`} style={styles.issue}>
+        <Pressable
+          key={`${p.player_id}-${i}`}
+          style={styles.issue}
+          onPress={p.player_id ? () => router.push({ pathname: '/player/[id]', params: { id: p.player_id!, section: 'health' } }) : undefined}
+        >
           <Headshot playerId={p.player_id} pos={p.pos} team={p.team} size={44} ring="red" />
           <View style={ui.flex}>
             <Text style={ui.name}>{p.player_id ? shortName(p.name) : p.name} <Text style={styles.dimSmall}>{p.pos}</Text></Text>
             <Text style={styles.issueText}>{p.issue} · in your lineup</Text>
           </View>
-        </View>
+          {p.player_id ? <Text style={styles.chev}>›</Text> : null}
+        </Pressable>
       ))}
       {issues.length ? <Text style={[ui.sub, styles.gap]}>Set your lineup in Sleeper.</Text> : null}
     </Card>
@@ -754,6 +776,7 @@ const styles = StyleSheet.create({
   upNext: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 10 },
   issue: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 10 },
   issueText: { color: '#E08A8A', fontSize: 12, marginTop: 1 },
+  chev: { color: colors.muted, fontSize: 22, paddingLeft: 4 },
   bracket: { flexDirection: 'row', gap: 10, marginTop: 8 },
   roundCol: { flex: 1, gap: 8, justifyContent: 'center' },
   roundLabel: { color: colors.muted, fontSize: 9, fontWeight: '800', letterSpacing: 0.8, textAlign: 'center' },
