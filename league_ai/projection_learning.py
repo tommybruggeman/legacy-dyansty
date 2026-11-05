@@ -270,6 +270,8 @@ def learn(weeks: list[Mapping[str, Any]]) -> dict[str, Any]:
         active = choose(errs, team_gain, i)
         history.append({"season": wk["season"], "week": wk["week"], "active": list(active)})
     ks = {s: round(sums[s][0] / (sums[s][1] + RIDGE), 4) for s in SIGNALS}
+    print(f"[projections] usage rows {sum(1 for w in weeks for r in w['rows'] if r.get('actual') is not None and (w.get('post') or {}).get('opps', {}).get(r['id']))}, "
+          f"rate {dict((p, round(v[0] / v[1], 3)) for p, v in rate.items() if v[1])}, k {ks.get('usage')}, graded weeks {len(errs.get('usage', []))}", flush=True)
     signals = []
     for s, (label, positions, _) in SIGNALS.items():
         recent = [g for _, g, _ in errs[s][-WINDOW_WEEKS:]]
