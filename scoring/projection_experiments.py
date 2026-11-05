@@ -141,6 +141,18 @@ def run_league(client: Any, league_id: str, sleeper_league_id: str) -> None:
                     r["shown"] = (1 - wt) * r["shown"] + wt * o
         _print(f"usage {int(wt * 100)}%", _season_summary(pc, ws), base)
 
+    # 3b. ESPN's lesson in our own terms: only trim when Sleeper is above what his recent usage says (never raise)
+    for wt in (0.3, 0.5, 0.7):
+        ws = copy.deepcopy(weeks)
+        for w in ws:
+            for r in w["rows"]:
+                o = own.get((w["season"], w["week"], r["id"]))
+                if o is not None and r["pos"] in ("QB", "RB", "WR", "TE") and o < r["shown"]:
+                    r["shown"] = (1 - wt) * r["shown"] + wt * o
+        _print(f"trim-only {int(wt * 100)}%", _season_summary(pc, ws), base)
+    if os.environ.get("SKIP_ESPN"):
+        return
+
     # 4. ESPN projections
     from pipeline.nfl_data.run import load_crosswalk
 
@@ -185,6 +197,7 @@ def main() -> None:
     client = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_ROLE_KEY"])
     leagues = client.table("leagues").select("id, sleeper_league_id").execute().data or []
     lg = [l for l in leagues if str(l.get("sleeper_league_id")) == "1361083066197491712"] or leagues[-1:]
+    os.environ.setdefault("SKIP_ESPN", "1")
     run_league(client, lg[0]["id"], str(lg[0]["sleeper_league_id"]))
 
 
