@@ -193,6 +193,7 @@ export type Standings = { weeks_played: number; playoff_teams: number; rows: Sta
 export type MatchupTeam = {
   roster_id: number; name: string; score: number; rank: number; top5: boolean; projected?: number | null;
   avatar?: string | null; record?: string; playing?: number; to_play?: number;
+  ranked?: boolean; // the weekly rank shows only once a team has 50+ points that week
 };
 export type Game = { matchup_id: number; teams: [MatchupTeam, MatchupTeam]; win_chance?: [number, number] | null; next_kickoff?: string | null };
 export type Matchups = {
@@ -579,6 +580,9 @@ export type ChatEvent =
   | { e: 'text'; d: string }
   | { e: 'reset' }
   | { e: 'round' }
+  | { e: 'job'; question: string; conversation_id: string | null }
+  | { e: 'none' }
+  | { e: 'added'; text: string }
   | ({ e: 'done' } & ChatReply);
 export type Conversations = { conversations: { id: string; title: string; updated_at: string | null }[] };
 export type Conversation = { id: string; title: string; messages: ChatMessage[] };
@@ -616,7 +620,7 @@ export type HomeBottom =
   | { mode: 'scoreboard'; scoreboard: { matchup_id: number; teams: BoardSide[]; mine: boolean }[]; race: RaceRow[] }
   | { mode: 'shotgun'; shotgun: {
       window: number; locked: boolean; last: ShotgunRow; danger: ShotgunRow[]; safe: ShotgunRow[];
-      needs: { points: number; to_pass: string } | null;
+      needs: { points: number; to_pass: string; who: string; who_is_me: boolean; to_pass_is_me: boolean } | null;
     } | null; scoreboard?: { matchup_id: number; teams: BoardSide[]; mine: boolean }[] };
 export type HomeData = {
   phase: 'game_day' | 'recap' | 'playoffs' | 'decisions' | 'draft_prep';

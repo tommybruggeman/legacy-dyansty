@@ -329,13 +329,22 @@ class ChatTurn:
 
 
 def chat_turn(client: Any, owner: Owner, *, question: str, history: list[dict[str, str]], conversation_id: str | None, pack: str,
-              tools: ToolRegistry, on_event: Any = None, week_context: str | None = None) -> ChatTurn:
-    """One question and answer: run Claude, save the conversation, log the cost."""
+              tools: ToolRegistry, on_event: Any = None, week_context: str | None = None, inbox: Any = None) -> ChatTurn:
+    """One question and answer: run Claude, save the conversation, log the cost.
+    inbox(final) hands over anything the owner typed while the answer was being worked on (see ClaudeClient.run)."""
+    added: list[str] = []
+
+    def take(final: bool) -> list[str]:
+        got = list(inbox(final) or [])
+        added.extend(got)
+        return got
+
     sources = LeagueDataSources(client=client, league_id=owner.league_id, season=owner.season)
     result = answer(question=question, history=history, asker=owner.asker(), sources=sources, tools=tools, client=ClaudeClient(), pack=pack, on_event=on_event,
-                    week_context=week_context, turn_effort=effort_for(question))
+                    week_context=week_context, turn_effort=effort_for(question), **({"inbox": take} if inbox else {}))
     if result.ok:
-        full = [*history, {"role": "user", "content": question}, {"role": "assistant", "content": result.text}]
+        full = [*history, {"role": "user", "content": question}, *({"role": "user", "content": a} for a in added),
+                {"role": "assistant", "content": result.text}]
         conversation_id = owner.memory(client).save_conversation(conversation_id, full)
     record_usage(client, row_from_trace(result.trace, league_id=owner.league_id, user_id=owner.user_id, feature="chat",
                                         topic=question_topic(question), conversation_id=conversation_id))

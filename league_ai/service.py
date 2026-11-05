@@ -129,6 +129,7 @@ def answer(
     on_event: Callable[[str, Any], None] | None = None,
     week_context: str | None = None,
     turn_effort: str | None = None,
+    inbox: Callable[[bool], list[str]] | None = None,
 ) -> AnswerResult:
     config = config or load_config()
     if not config.enabled:
@@ -149,5 +150,6 @@ def answer(
         messages.append({"role": "user", "content": question.strip()})
 
     runner = client or ClaudeClient(config)
-    result: ClientResult = runner.run(system=system_blocks(league_pack, week_context), messages=messages, tools=tools, on_event=on_event, turn_effort=turn_effort)
+    result: ClientResult = runner.run(system=system_blocks(league_pack, week_context), messages=messages, tools=tools, on_event=on_event, turn_effort=turn_effort,
+                                        **({"inbox": inbox} if inbox else {}))
     return AnswerResult(result.ok, result.text, result.trace, result.error_code, pack_chars=len(league_pack))

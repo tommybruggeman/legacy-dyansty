@@ -1,6 +1,7 @@
 name: Live stats watcher VM
 
-# Creates (or refreshes) the free Google e2-micro that runs the main game-day live stats watcher all season.
+# Creates (or refreshes) the free Google e2-micro that runs the main game-day live stats watcher all season,
+# and the owners' push alerts every 5 minutes.
 # Always-free tier: one e2-micro in us-central1 with a 30 GB standard disk. The Supabase settings go to Google
 # Secret Manager from this repo's secrets (nobody pastes a key), and the VM reads them at boot
 # (deploy/live-watcher/startup.sh). Safe to run again: it updates the secrets and restarts the watcher.
@@ -28,6 +29,8 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          APNS_KEY_P8: ${{ secrets.APNS_KEY_P8 }}
+          APNS_KEY_ID: ${{ secrets.APNS_KEY_ID || 'M4JQR79FN5' }}
         run: |
           put() {
             gcloud secrets describe "$1" --project "$PROJECT" >/dev/null 2>&1 || gcloud secrets create "$1" --project "$PROJECT" --replication-policy automatic
@@ -35,9 +38,11 @@ jobs:
           }
           put legacy-supabase-url "$SUPABASE_URL"
           put legacy-supabase-service-key "$SUPABASE_SERVICE_ROLE_KEY"
+          put legacy-apns-key "$APNS_KEY_P8"
+          put legacy-apns-key-id "$APNS_KEY_ID"
           # The VM's default service account, read through the Compute API (no Resource Manager API needed).
           SA=$(gcloud compute project-info describe --project "$PROJECT" --format 'value(defaultServiceAccount)')
-          for s in legacy-supabase-url legacy-supabase-service-key; do
+          for s in legacy-supabase-url legacy-supabase-service-key legacy-apns-key legacy-apns-key-id; do
             gcloud secrets add-iam-policy-binding "$s" --project "$PROJECT" --member "serviceAccount:$SA" --role roles/secretmanager.secretAccessor >/dev/null
           done
       - name: VM
@@ -62,4 +67,4 @@ jobs:
             if echo "$out" | grep -q "startup-script exit status"; then break; fi
             sleep 30
           done
-          echo "$out" | grep -oE "startup-script exit status [0-9]+|live watcher \((main|backup)\) started|Started legacy-watcher.service[^ ]*" | sort | uniq -c
+          echo "$out" | grep -oE "startup-script exit status [0-9]+|live watcher \((main|backup)\) started|Started legacy-watcher.service[^ ]*|Started legacy-alerts.timer[^ ]*" | sort | uniq -c

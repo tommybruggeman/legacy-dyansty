@@ -115,6 +115,7 @@ def test_bottom_mode_by_day_and_late_games():
     sunday = datetime(2026, 11, 1, 12, 0, tzinfo=et)
     starts = {"BUF": datetime(2026, 11, 1, 13, 0, tzinfo=et), "KC": datetime(2026, 11, 1, 16, 25, tzinfo=et),
               "SF": datetime(2026, 11, 1, 16, 5, tzinfo=et), "DAL": datetime(2026, 11, 1, 20, 20, tzinfo=et)}
+    assert home.bottom_mode(datetime(2026, 10, 28, 20, 0, tzinfo=et), starts)["mode"] == "risers"   # Wednesday
     assert home.bottom_mode(datetime(2026, 10, 29, 20, 0, tzinfo=et), starts)["mode"] == "risers"   # Thursday
     assert home.bottom_mode(datetime(2026, 10, 31, 20, 0, tzinfo=et), starts)["mode"] == "risers"   # Saturday
     assert home.bottom_mode(sunday, starts)["mode"] == "scoreboard"
@@ -148,7 +149,26 @@ def test_shotgun_locks_when_last_place_cant_be_caught():
     # still playing and close enough to pass Mekel: not locked, and says what he needs
     live[1] = _live(80.1, 5.0, 1, 1)
     out = home.shotgun(live, {1: "Luis", 2: "Mekel", 3: "Grady", 4: "Kevin"}, {}, None, 5.0)
-    assert not out["locked"] and out["needs"] == {"points": 6.11, "to_pass": "Mekel"}
+    assert not out["locked"] and out["needs"]["points"] == 6.11 and out["needs"]["to_pass"] == "Mekel"
+    assert out["needs"]["who"] == "Luis"
+    # Grady (frozen above Mekel) and Kevin can't finish last any more, so they drop off
+    assert [d["name"] for d in out["danger"] + out["safe"]] == ["Mekel"]
+
+
+def test_shotgun_hides_owners_who_cant_finish_last():
+    # Late Monday: A is frozen lowest by projection, D is under A with 2 left; B, C, E are done or already above A.
+    live = {1: _live(90.5, 0, 0), 2: _live(93.2, 0, 0), 3: _live(90.9, 3.3, 1, 1), 4: _live(87.9, 10.4, 2, 1),
+            5: _live(99.1, 0, 0)}
+    names = {1: "A", 2: "B", 3: "C", 4: "D", 5: "E"}
+    assert home.still_alive(live) == {1, 4}
+    out = home.shotgun(live, names, {}, None, 5.0)
+    assert out["last"]["name"] == "A" and not out["locked"]
+    assert [d["name"] for d in out["danger"] + out["safe"]] == ["D"]
+    assert out["needs"] == {"points": 2.61, "to_pass": "A", "who": "D", "who_is_me": False, "to_pass_is_me": False}
+    # D gets past A: A is the only one who can finish last, so it locks
+    live[4] = _live(95.0, 2.0, 1, 1)
+    out = home.shotgun(live, names, {}, None, 5.0)
+    assert out["locked"] and out["last"]["name"] == "A"
 
 
 def test_remaining_projection_and_team_live():
@@ -189,3 +209,21 @@ def test_top5_line_projected_then_final():
     assert home.top5_line(live) == {"line": 115.0, "final": False}
     assert home.top5_line(live, final=True) == {"line": 95.0, "final": True}
     assert home.top5_line({1: live[1]}) is None
+
+
+def test_home_week_holds_monday_night_until_midnight():
+    gamedays = {9: "2026-11-02", 10: "2026-11-09"}
+    assert home.schedule_week(gamedays, date(2026, 11, 2)) == 9    # Monday night, games over
+    assert home.schedule_week(gamedays, date(2026, 11, 3)) == 10   # Tuesday (Pacific) -> recap of 9
+    assert home.phase(date(2026, 11, 2), "in_season", 9, 15) == "game_day"
+    assert home.phase(date(2026, 11, 3), "in_season", 10, 15) == "recap"
+    assert home.phase(date(2026, 11, 4), "in_season", 10, 15) == "game_day"   # Wednesday: this week's matchup
+    assert home.schedule_week(gamedays, date(2026, 11, 10)) is None
+    assert home.schedule_week({}, date(2026, 11, 2)) is None
+
+
+def test_shotgun_holds_until_midnight_pacific():
+    late_monday = datetime(2026, 11, 3, 5, 45, tzinfo=timezone.utc)   # 12:45 AM Tue ET, 9:45 PM Mon PT
+    assert home.bottom_mode(late_monday, {})["mode"] == "shotgun"
+    tuesday = datetime(2026, 11, 3, 8, 30, tzinfo=timezone.utc)       # 12:30 AM Tue PT
+    assert home.bottom_mode(tuesday, {})["mode"] == "scoreboard"

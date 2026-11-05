@@ -634,6 +634,12 @@ div[data-testid="stSelectbox"] > div > div {
 }
 
 
+.mm-rank.is-blank {
+    background: transparent;
+
+    border-color: transparent;
+}
+
 .mm-rank.top5 {
     background: var(--gold);
 

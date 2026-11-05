@@ -6,6 +6,9 @@ Kept free of Streamlit and network calls so it can be tested directly.
 - Teams are keyed by Sleeper roster id, never by display name.
 - Weekly rank and Top 5 follow services.standings_rules: highest score
   first, ties broken by name, and the top five scorers get a Top 5.
+- A weekly rank is only shown once a team has scored RANK_MIN_POINTS that
+  week (``ranked``), so nobody shows a rank before they have played
+  (Tommy, 2026-11-04). The rank still orders the games.
 """
 
 from __future__ import annotations
@@ -13,6 +16,9 @@ from __future__ import annotations
 import html
 
 from services.standings_rules import TOP_FIVE_COUNT
+
+# A team needs this many points in a week before its weekly rank shows.
+RANK_MIN_POINTS = 50.0
 
 
 def _as_number(value) -> float:
@@ -84,6 +90,7 @@ def build_games(rows: list[dict], names: dict) -> list[dict]:
     for rank, team in enumerate(ordered, start=1):
         team["rank"] = rank
         team["top5"] = scored and rank <= TOP_FIVE_COUNT
+        team["ranked"] = team["score"] >= RANK_MIN_POINTS
 
     for game in games:
         game["teams"].sort(key=lambda t: t["rank"])
@@ -140,6 +147,17 @@ def _status_line(game: dict, is_final: bool) -> str:
     return f"{who} {verb} {margin:.2f}"
 
 
+def _rank_html(team: dict) -> str:
+    """The weekly rank circle, blank until the team has RANK_MIN_POINTS."""
+
+    if not team.get("ranked", True):
+        return '<div class="mm-rank is-blank"></div>'
+
+    rank_class = "mm-rank top5" if team["top5"] else "mm-rank"
+
+    return f'<div class="{rank_class}">{team["rank"]}</div>'
+
+
 def _team_row(team: dict, is_winner: bool, is_me: bool) -> str:
     classes = ["mm-team"]
 
@@ -149,13 +167,12 @@ def _team_row(team: dict, is_winner: bool, is_me: bool) -> str:
     if is_me:
         classes.append("is-me")
 
-    rank_class = "mm-rank top5" if team["top5"] else "mm-rank"
     you = '<span class="mm-you">You</span>' if is_me else ""
     name = html.escape(team["name"])
 
     return (
         f'<div class="{" ".join(classes)}">'
-        f'<div class="{rank_class}">{team["rank"]}</div>'
+        f'{_rank_html(team)}'
         f'<div class="mm-name"><span class="mm-name-text">{name}</span>{you}</div>'
         f'<div class="mm-score">{team["score"]:.2f}</div>'
         "</div>"
@@ -211,13 +228,12 @@ def _hero_html(game: dict, my_roster_id, summary, status, badge) -> str:
         if decided and team is leader:
             classes += " is-winner"
 
-        rank_class = "mm-rank top5" if team["top5"] else "mm-rank"
         you = '<span class="mm-you">You</span>' if team is me else ""
 
         return (
             f'<div class="{classes}">'
             '<div class="mm-hero-who">'
-            f'<div class="{rank_class}">{team["rank"]}</div>'
+            f'{_rank_html(team)}'
             f'<span class="mm-name-text">{html.escape(team["name"])}</span>{you}'
             "</div>"
             f'<div class="mm-hero-score">{team["score"]:.2f}</div>'

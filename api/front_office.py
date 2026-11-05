@@ -7,7 +7,6 @@ server instance; anything about one owner is keyed by their user id.
 from __future__ import annotations
 
 import json
-import queue
 import threading
 import time
 from datetime import date, datetime
@@ -346,7 +345,8 @@ def after_answer(session: Session, seen: Any, *, conversation_id: str | None, qu
                          answer=answer, seen=seen, sdk_factory=lambda: runtime.ClaudeClient()._client())
 
 
-def ask(session: Session, question: str, conversation_id: str | None, on_event: Callable[[str, Any], None] | None = None) -> dict[str, Any]:
+def ask(session: Session, question: str, conversation_id: str | None, on_event: Callable[[str, Any], None] | None = None,
+        inbox: Callable[[bool], list[str]] | None = None) -> dict[str, Any]:
     """One chat turn. Returns the answer, or a friendly error the app can show."""
     o, client = session.owner, session.client
     memory = o.memory(client)
@@ -364,7 +364,7 @@ def ask(session: Session, question: str, conversation_id: str | None, on_event: 
         fo = None
     tools, seen = gm_tools(session, fo, question=lambda: question, conversation_id=lambda: conversation_id)
     turn = runtime.chat_turn(client, o, question=question, history=history, conversation_id=conversation_id, pack=session.pack(), tools=tools,
-                             on_event=on_event, week_context=week_context(fo, o.owner_name))
+                             on_event=on_event, week_context=week_context(fo, o.owner_name), **({"inbox": inbox} if inbox else {}))
     if turn.result.ok:
         after_answer(session, seen, conversation_id=turn.conversation_id, question=question, answer=turn.result.text)
     if turn.notes_changed:
@@ -387,28 +387,125 @@ def stream_event(kind: str, payload: Any) -> dict[str, Any] | None:
     return None
 
 
+# Answers keep going on the server when the phone locks or the app closes. Each owner's
+# latest answer lives here (this server copy only) until JOB_KEEP_SECONDS after it lands,
+# so the app can pick it back up with resume_stream() when it comes back.
+JOB_KEEP_SECONDS = 30 * 60
+
+
+class ChatJob:
+    def __init__(self, question: str, conversation_id: str | None) -> None:
+        self.question = question
+        self.conversation_id = conversation_id
+        self.started = time.time()
+        self.finished: float | None = None
+        self.events: list[dict[str, Any]] = [{"e": "status", "text": "Reading your roster"}]
+        self.lock = threading.Condition()
+        self.inbox: list[str] = []
+        self.closed = False  # the answer is finished: anything typed now is a new question
+
+    def tell(self, text: str) -> bool:
+        """The owner typed more while the GM is still working. False once the answer is done."""
+        with self.lock:
+            if self.closed:
+                return False
+            self.inbox.append(text)
+            self.events.append({"e": "added", "text": text})
+            self.lock.notify_all()
+            return True
+
+    def take(self, final: bool) -> list[str]:
+        """Hand the GM what was typed; with final and nothing waiting, close the inbox."""
+        with self.lock:
+            got, self.inbox = self.inbox, []
+            if final and not got:
+                self.closed = True
+            return got
+
+    def add(self, event: dict[str, Any], *, last: bool = False) -> None:
+        with self.lock:
+            self.events.append(event)
+            if last:
+                self.finished = time.time()
+                self.closed = True
+            self.lock.notify_all()
+
+    def follow(self) -> Iterator[str]:
+        """Every event so far, then each new one as it comes, until the answer is done."""
+        sent = 0
+        while True:
+            with self.lock:
+                while sent >= len(self.events) and self.finished is None:
+                    self.lock.wait(timeout=15)
+                batch = self.events[sent:]
+                sent += len(batch)
+                over = self.finished is not None and sent >= len(self.events)
+            for event in batch:
+                yield json.dumps(event) + "\n"
+            if over:
+                return
+
+
+_jobs: dict[str, ChatJob] = {}
+_jobs_lock = threading.Lock()
+
+
+def _job_key(session: Session | None) -> str:
+    return str(getattr(getattr(session, "owner", None), "user_id", None) or "anon")
+
+
+def _sweep(now: float) -> None:
+    for key, job in list(_jobs.items()):
+        if job.finished is not None and now - job.finished > JOB_KEEP_SECONDS:
+            _jobs.pop(key, None)
+
+
 def ask_stream(session: Session, question: str, conversation_id: str | None) -> Iterator[str]:
-    """The same turn as ask(), as newline-delimited JSON events ending with a 'done' event."""
-    events: queue.Queue[dict[str, Any] | None] = queue.Queue()
+    """The same turn as ask(), as newline-delimited JSON events ending with a 'done' event.
+    The answer runs on its own thread, so it finishes even if the phone drops the connection."""
+    job = ChatJob(question, conversation_id)
+    with _jobs_lock:
+        _sweep(time.time())
+        _jobs[_job_key(session)] = job
 
     def on_event(kind: str, payload: Any) -> None:
         event = stream_event(kind, payload)
         if event:
-            events.put(event)
+            job.add(event)
 
     def run() -> None:
         try:
-            events.put({"e": "done", **ask(session, question, conversation_id, on_event)})
+            done = {"e": "done", **ask(session, question, conversation_id, on_event, inbox=job.take)}
         except Exception as exc:
-            print(f"APP_CHAT_ERROR {type(exc).__name__}: {exc}", flush=True)
-            events.put({"e": "done", "ok": False, "text": "Something went wrong. Try again.", "conversation_id": conversation_id})
-        finally:
-            events.put(None)
+            print(f"APP_CHAT_ERROR {type(exc).__name__}", flush=True)
+            done = {"e": "done", "ok": False, "text": "Something went wrong. Try again.", "conversation_id": conversation_id}
+        job.add({**done, "question": question}, last=True)
 
     threading.Thread(target=run, daemon=True).start()
-    yield json.dumps({"e": "status", "text": "Reading your roster"}) + "\n"
-    while (event := events.get()) is not None:
-        yield json.dumps(event) + "\n"
+    return job.follow()
+
+
+def tell(session: Session, text: str) -> bool:
+    """Add to the answer the GM is working on right now. False when there isn't one (send it as a new question)."""
+    with _jobs_lock:
+        job = _jobs.get(_job_key(session))
+    return bool(job and job.tell(text))
+
+
+def resume_stream(session: Session) -> Iterator[str]:
+    """Pick the owner's latest answer back up: replays it from the start and follows it to the end.
+    A single {"e": "none"} when there's nothing (never asked, older than 30 minutes, or the server restarted)."""
+    with _jobs_lock:
+        _sweep(time.time())
+        job = _jobs.get(_job_key(session))
+    if job is None:
+        return iter([json.dumps({"e": "none"}) + "\n"])
+
+    def stream() -> Iterator[str]:
+        yield json.dumps({"e": "job", "question": job.question, "conversation_id": job.conversation_id}) + "\n"
+        yield from job.follow()
+
+    return stream()
 
 
 def conversations(client: Any, owner: runtime.Owner) -> list[dict[str, Any]]:

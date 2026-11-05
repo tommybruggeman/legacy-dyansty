@@ -10,7 +10,7 @@ import { type BoxScore, type HomeData, type HomeSide, type LivePlayer, type Race
 import { syncLiveActivity } from '../../lib/liveActivity';
 import { colors } from '../../lib/theme';
 
-// Home changes with the calendar: last week's recap (Tue-Wed), a preview
+// Home changes with the calendar: last week's recap (Tuesday), a preview
 // before kickoff, live scores on game days and Monday night's "still to
 // play", the bracket in the playoffs, rookie-deal decisions until the June 30
 // rollover, then draft prep. Pictures, badges and tables over sentences.

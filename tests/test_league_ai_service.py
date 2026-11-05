@@ -174,6 +174,31 @@ class ClientLoopTests(unittest.TestCase):
         self.assertNotIn("cache_control", blocks[2])
         self.assertEqual(len(system_blocks("PACK")), 2)
 
+    def test_message_typed_during_a_lookup_joins_the_next_round(self):
+        reg = ToolRegistry()
+        reg.register(ToolSpec("get_injury_report", "inj", {"type": "object", "properties": {}}, lambda: {"status": "Out"}))
+        sdk = FakeSDK([_resp([_tool_use("tu1", "get_injury_report", {})], stop="tool_use"), _resp([_text("Sit him; start Pacheco.")])])
+        waiting = [["Also Pacheco is back this week"]]
+        result = ClaudeClient(CONFIG, sdk_client=sdk).run(system=[], messages=[{"role": "user", "content": "q"}], tools=reg,
+                                                          inbox=lambda final: waiting.pop(0) if waiting else [])
+        self.assertEqual(result.text, "Sit him; start Pacheco.")
+        note = sdk.calls[1]["messages"][2]["content"][-1]
+        self.assertEqual(note["type"], "text")
+        self.assertIn("Also Pacheco is back this week", note["text"])
+
+    def test_message_typed_while_the_answer_is_written_reworks_it(self):
+        sdk = FakeSDK([_resp([_text("Start Kelce.")]), _resp([_text("With Kelce's ankle, start Kittle.")])])
+        waiting = [["His ankle is hurt"]]
+        events = []
+        result = ClaudeClient(CONFIG, sdk_client=sdk).run(system=[], messages=[{"role": "user", "content": "q"}],
+                                                          on_event=lambda k, p: events.append(k),
+                                                          inbox=lambda final: waiting.pop(0) if waiting else [])
+        self.assertEqual(result.text, "With Kelce's ankle, start Kittle.")
+        self.assertEqual(len(sdk.calls), 2)
+        self.assertIn("reset", events)
+        self.assertEqual(sdk.calls[1]["messages"][-1]["role"], "user")
+        self.assertIn("His ankle is hurt", sdk.calls[1]["messages"][-1]["content"])
+
     def test_tool_loop_executes_and_feeds_results_back(self):
         reg = ToolRegistry()
         reg.register(ToolSpec("get_player_profile", "profile", {"type": "object", "properties": {"name": {"type": "string"}}},
