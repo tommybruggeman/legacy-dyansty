@@ -10,7 +10,11 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, Callable, Mapping
 
+from dataclasses import replace
+
+from league_ai import fact_check
 from league_ai.client import ClaudeClient
+from league_ai.config import load_config
 from league_ai.context_pack import Asker
 from league_ai.front_office import (
     build_tiles, current_opponent, data_brief, head_to_head, nfl_week, power_movement, power_rankings, season_table, snapshot_power,
@@ -26,7 +30,7 @@ from league_ai.team_context import team_context
 from league_ai.tools import ToolRegistry
 from league_ai.tools.history import history_tools, pack_history_summary
 from league_ai.tools.nfl import NflData, build_registry
-from league_ai.usage import record as record_usage, row_from_trace
+from league_ai.usage import record as record_usage, row_from_trace, usage_row
 
 
 # What the chat shows while a tool runs, keyed by tool name.
@@ -361,17 +365,88 @@ def chat_turn(client: Any, owner: Owner, *, question: str, history: list[dict[st
         added.extend(got)
         return got
 
+    memory = owner.memory(client)
+    topic = question_topic(question)
     sources = LeagueDataSources(client=client, league_id=owner.league_id, season=owner.season)
-    result = answer(question=question, history=history, asker=owner.asker(), sources=sources, tools=tools, client=ClaudeClient(), pack=pack, on_event=on_event,
-                    week_context=week_context, turn_effort=effort_for(question), **({"inbox": take} if inbox else {}))
+    model = pick_model(topic, conversation_id or question)
+    result = answer(question=question, history=history, asker=owner.asker(), sources=sources, tools=tools,
+                    client=ClaudeClient(replace(load_config(), model=model) if model else None), pack=pack, on_event=on_event,
+                    week_context=week_context, turn_effort=effort_for(question), prior_facts=_prior_facts(memory, conversation_id) if history else None,
+                    **({"inbox": take} if inbox else {}))
+    if result.ok and fact_check.enabled():
+        checked = fact_check.check(result.text, pack=result.pack or pack, evidence=result.evidence, week_context=week_context)
+        if checked.ran:
+            record_usage(client, usage_row(league_id=owner.league_id, user_id=owner.user_id, feature="fact_check", model=fact_check.MODEL,
+                                           topic="fixed" if checked.fixed else ("flagged" if checked.problems else "ok"),
+                                           conversation_id=conversation_id, latency_ms=checked.latency_ms, **checked.usage))
+        if checked.fixed:
+            # the owner watched the first draft stream in; swap it for the corrected one
+            result.text = checked.text
+            _emit_replace(on_event, checked.text)
+            print(f"LEAGUE_AI_FACT_FIX problems={len(checked.problems)}", flush=True)
     if result.ok:
         full = [*history, {"role": "user", "content": question}, *({"role": "user", "content": a} for a in added),
-                {"role": "assistant", "content": result.text}]
-        conversation_id = owner.memory(client).save_conversation(conversation_id, full)
+                {"role": "assistant", "content": result.text, "facts": facts_digest(result.evidence)}]
+        conversation_id = memory.save_conversation(conversation_id, full)
     record_usage(client, row_from_trace(result.trace, league_id=owner.league_id, user_id=owner.user_id, feature="chat",
-                                        topic=question_topic(question), conversation_id=conversation_id))
+                                        topic=topic, conversation_id=conversation_id))
     notes_changed = any(name in ("remember", "forget") for name in result.trace.tool_calls)
     return ChatTurn(result, conversation_id, notes_changed)
+
+
+HARD_TOPICS = ("trade", "strategy")
+FACTS_CHARS = 1500   # per lookup in the facts note a follow-up gets
+FACTS_TOTAL = 8000
+
+
+def pick_model(topic: str, key: str) -> str | None:
+    """The model for this question: LEAGUE_AI_HARD_MODEL (e.g. Opus) for trade and strategy questions, for a
+    LEAGUE_AI_HARD_SHARE of conversations (0 = off, 1 = all), picked by a stable hash so a conversation keeps its model
+    (and its prompt cache). None = the default model."""
+    import hashlib
+    import os
+
+    hard = (os.getenv("LEAGUE_AI_HARD_MODEL") or "").strip()
+    try:
+        share = max(0.0, min(1.0, float(os.getenv("LEAGUE_AI_HARD_SHARE") or 0)))
+    except ValueError:
+        share = 0.0
+    if not hard or share <= 0 or topic not in HARD_TOPICS:
+        return None
+    bucket = int(hashlib.sha256(str(key).encode()).hexdigest()[:8], 16) / 0xFFFFFFFF
+    return hard if bucket < share else None
+
+
+def facts_digest(evidence: list[Mapping[str, Any]] | None) -> str:
+    """A short note of what the answer's lookups returned, saved with the answer for the next question."""
+    import json
+
+    parts, total = [], 0
+    for e in evidence or []:
+        block = f"{e.get('tool')}({json.dumps(e.get('input') or {}, sort_keys=True, default=str)[:200]}): {str(e.get('result') or '')[:FACTS_CHARS]}"
+        if total + len(block) > FACTS_TOTAL:
+            break
+        parts.append(block)
+        total += len(block)
+    return "\n".join(parts)
+
+
+def _prior_facts(memory: Memory, conversation_id: str | None) -> str | None:
+    if not conversation_id:
+        return None
+    row = memory.get_conversation(conversation_id) or {}
+    last = next((m for m in reversed(row.get("messages") or []) if m.get("role") == "assistant"), None)
+    return (last or {}).get("facts") or None
+
+
+def _emit_replace(on_event: Any, text: str) -> None:
+    if on_event is None:
+        return
+    try:
+        on_event("reset", None)
+        on_event("text", text)
+    except Exception:
+        pass
 
 
 __all__ = [
