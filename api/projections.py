@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Any, Iterable
 
 from api import cache, sleeper
-from league_ai.projection_calibration import position_factors
+from league_ai.projection_calibration import calibrate as calibrate_points, calibration as projection_calibration
 from league_ai.nfl_data import add_weather, defense_vs_position, season_games, team_code, total_multiplier, week_matchups
 
 ROOT = "https://api.sleeper.app"
@@ -137,7 +137,9 @@ def week_projections(client: Any, sleeper_id: str, season: int, week: int, ids: 
         dvp = defense_vs_position(client, season)
     except Exception:
         dvp = {}
-    calibration = position_factors(client, sleeper_id, season) if calibrate else {}
+    cal = projection_calibration(client, sleeper_id, season) if calibrate else {}
+    adj = cal.get("adjust") or {}
+    adjust = adj.get("players") or {} if int(adj.get("season") or 0) == int(season) and int(adj.get("week") or 0) == int(week) else {}
     out: dict[str, float] = {}
     for pid in ids:
         line = lines.get(pid)
@@ -152,7 +154,9 @@ def week_projections(client: Any, sleeper_id: str, season: int, week: int, ids: 
             continue
         factor = total_multiplier(pos, game, dvp.get((game["opponent"], pos)) if game else None) if pos in ("QB", "RB", "WR", "TE") else 1.0
         # learned from every finished week: how far projections at this position have run over or under real scores
-        out[pid] = round(base * factor * calibration.get(pos, 1.0), 1)
+        # plus this week's nudges from the signals that have proven they help (league_ai.projection_learning)
+        nudge = float(adjust.get(pid, 1.0)) if adjust else 1.0
+        out[pid] = round(calibrate_points(base * factor, pos, cal.get("factors") or {}, cal.get("lines")) * nudge, 1)
     return out
 
 
