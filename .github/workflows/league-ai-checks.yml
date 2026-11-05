@@ -11,7 +11,7 @@ on:
       check:
         description: Which check to run
         type: choice
-        options: [odds_backtest, odds_trial, odds_grade, start_sit_grade, practice_test, weekly_cards, shadow_scoring, live_projection_study, espn_feed_check, final_scores_check, projection_accuracy, projection_calibration, win_odds_study]
+        options: [odds_backtest, odds_trial, odds_grade, start_sit_grade, practice_test, weekly_cards, shadow_scoring, live_projection_study, espn_feed_check, final_scores_check, projection_accuracy, projection_calibration, win_odds_study, answer_eval]
         default: odds_backtest
 
 jobs:
@@ -24,7 +24,7 @@ jobs:
         with:
           python-version: "3.13"
       - run: pip install supabase requests pandas
-      - if: inputs.check == 'start_sit_grade' || inputs.check == 'practice_test' || inputs.check == 'weekly_cards' || inputs.check == 'projection_accuracy' || inputs.check == 'projection_calibration' || inputs.check == 'win_odds_study'
+      - if: inputs.check == 'start_sit_grade' || inputs.check == 'practice_test' || inputs.check == 'weekly_cards' || inputs.check == 'projection_accuracy' || inputs.check == 'projection_calibration' || inputs.check == 'win_odds_study' || inputs.check == 'answer_eval'
         run: pip install -r api/requirements.txt
       - if: inputs.check == 'live_projection_study'
         run: pip install pyarrow numpy
@@ -34,6 +34,8 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           REPORT_DETAIL: ${{ vars.REPORT_DETAIL }}
           LEAGUE_AI_IDEA_LOG: "off"
+          # only the paid answer test set uses the model key
+          ANTHROPIC_API_KEY: ${{ inputs.check == 'answer_eval' && secrets.ANTHROPIC_API_KEY || '' }}
         run: |
           case "${{ inputs.check }}" in
             odds_trial) python -m league_ai.odds_trial ;;
@@ -54,5 +56,7 @@ jobs:
             projection_calibration) python -m league_ai.projection_calibration --dry-run ;;
             # which pregame team projection gives the best weekly win odds (saves nothing)
             win_odds_study) python -m scoring.win_odds_study ;;
+            # PAID (about $4): 20 real questions answered and graded (facts, rubric), trade/contract ones also by Opus with a blind judge
+            answer_eval) EVAL_BUDGET=4 EVAL_COMPARE=claude-opus-5-5 python -m league_ai.answer_eval ;;
             *) python -m league_ai.playoff_odds ;;
           esac
