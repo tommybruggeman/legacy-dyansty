@@ -10,6 +10,10 @@ lot to a team trying to win this year. So every player gets three numbers on the
              player holds by current production (the RB2 by points is valued like the RB2 by market)
   contract : cap surplus or cost. A $21 x 2yr bench WR costs a cap team real room.
 
+Cap space itself trades too (sent as FAAB in Sleeper; the sender loses that much cap, the receiver gains it).
+A dollar of cap is priced at a share of what a dollar buys on this league's rosters, since room only turns
+into points once it is spent on someone.
+
 A player coming off a major or moderate injury gets a note on what that injury did to similar players' next seasons
 (league_ai.injuries). Tilting his value by it is off (INJURY_TILT): on this league's completed trades it made the
 engine fit what owners actually agreed to slightly worse, so it informs the owner without moving the price.
@@ -31,6 +35,8 @@ WINDOWS = ("contending", "middle", "rebuilding")
 NOW_WEIGHT = {"contending": 0.8, "middle": 0.5, "rebuilding": 0.2}
 INJURY_TILT = False    # multiply the market part by the injury history effect
 CONTRACT_WEIGHT = 0.5  # share of a contract's cap surplus or cost counted in the player's value
+DEPTH_SHARE = 0.6      # the side that gets more players counts the extras at this share: they take roster spots and rarely start
+CAP_DOLLAR_SHARE = 0.35  # a dollar of cap space is worth this share of the value a rostered dollar buys
 POSITIONS = ("QB", "RB", "WR", "TE")
 TOP_SHARE = 0.12       # a cap hit this big a share of the average team's payroll is a top contract
 TOP_WORTH = 0.80       # what top contracts really returned per dollar (Brotherhood 2021-2025, walk-forward: 0.77-0.81)
@@ -69,6 +75,8 @@ class Valuer:
         top = TOP_SHARE * sum(hits) / teams
         self._fair_cap = {p.sleeper_id: hits[i] * (TOP_WORTH if hits[i] >= top else 1.0)
                           for i, p in enumerate(sorted(capped, key=lambda p: -self.base(p, "middle")))}
+        total_cap = sum(hits)
+        self.cap_dollar = CAP_DOLLAR_SHARE * sum(self.base(p, "middle") for p in capped) / total_cap if total_cap else 0.0
 
     def now(self, p: PlayerStrength) -> float:
         """This-season value, nudged by the rest-of-season schedule (playoff weeks weighted double) when it's known."""
@@ -92,12 +100,23 @@ class Valuer:
         window = self.windows.get(str(team_id), "middle")
         return self.base(p, window) + self.contract(p, window)
 
-    def package(self, team_id: str, ps: Iterable[PlayerStrength], picks: float = 0.0) -> float:
-        """Total value of players (plus pick value on the market scale) to one team. Rebuilders value picks fully,
-        contenders at half, since picks don't score this year."""
+    def package(self, team_id: str, ps: Iterable[PlayerStrength], picks: float = 0.0, cap: float = 0.0, versus: int | None = None) -> float:
+        """Total value of players (plus pick value on the market scale, plus cap dollars) to one team. Rebuilders value
+        picks fully, contenders at half, since picks don't score this year.
+
+        versus = how many players come back the other way. Two bench players don't add up to one starter: a team only
+        starts so many and has to cut someone to fit an extra body, so players beyond that count are taken at
+        DEPTH_SHARE, best first. Both teams see the same discount, so a 2-for-1 needs better pieces, not just more."""
         window = self.windows.get(str(team_id), "middle")
         pick_w = {"contending": 0.5, "middle": 0.8, "rebuilding": 1.0}.get(window, 0.8)
-        return sum(self.value_to(team_id, p) for p in ps) + picks * pick_w
+        values = sorted((self.value_to(team_id, p) for p in ps), reverse=True)
+        full = len(values) if versus is None else max(1, int(versus))
+        players = sum(values[:full]) + DEPTH_SHARE * sum(values[full:])
+        return players + picks * pick_w + self.cap_value(cap)
+
+    def cap_value(self, dollars: float) -> float:
+        """What this many dollars of cap space is worth on the value scale."""
+        return max(0.0, float(dollars or 0.0)) * self.cap_dollar
 
     def explain(self, team_id: str, p: PlayerStrength) -> str:
         window = self.windows.get(str(team_id), "middle")

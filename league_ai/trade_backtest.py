@@ -47,9 +47,23 @@ def asset_value(a: Mapping[str, Any], w: float, variant: str = "current") -> flo
     return base
 
 
+def _side_total(assets: list[Mapping[str, Any]], versus: int, w: float, variant: str) -> float:
+    """Sum of asset values; with a "depth:x" variant, players beyond the count coming back the other way count at x
+    (trade_value.DEPTH_SHARE). Picks always count in full."""
+    if not variant.startswith("depth:"):
+        return sum(asset_value(a, w, variant) for a in assets)
+    share = float(variant[6:])
+    picks = sum(asset_value(a, w, "current") for a in assets if a.get("pick"))
+    players = sorted((asset_value(a, w, "current") for a in assets if not a.get("pick")), reverse=True)
+    full = max(1, versus)
+    return picks + sum(players[:full]) + share * sum(players[full:])
+
+
 def side_share(side: Mapping[str, list[Mapping[str, Any]]], w: float, variant: str = "current") -> float | None:
-    gives = sum(asset_value(a, w, variant) for a in side.get("gives") or [])
-    gets = sum(asset_value(a, w, variant) for a in side.get("gets") or [])
+    n_gives = sum(1 for a in side.get("gives") or [] if not a.get("pick"))
+    n_gets = sum(1 for a in side.get("gets") or [] if not a.get("pick"))
+    gives = _side_total(list(side.get("gives") or []), n_gets, w, variant)
+    gets = _side_total(list(side.get("gets") or []), n_gives, w, variant)
     if gives <= 0:
         return None if gets <= 0 else 9.99
     return gets / gives
@@ -165,6 +179,29 @@ def fit_cap_dollar(trades: list[Mapping[str, Any]]) -> dict[str, Any]:
     curve = {k: gap(k) for k in CAP_DOLLAR_GRID}
     best = min((k for k in curve if curve[k] is not None), key=lambda k: curve[k], default=None)
     return {"trades_with_salaries": len(known), "imbalance_by_value_per_dollar": curve, "best": best}
+
+
+DEPTH_GRID = (1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4)
+
+
+def fit_depth(trades: list[Mapping[str, Any]]) -> dict[str, Any]:
+    """How much an extra body is worth in this league's trades: the share for players beyond the count coming back
+    that makes completed trades (both sides said yes) look most even. Only trades with uneven player counts can tell."""
+    uneven = [t for t in trades if len({sum(1 for a in sd["gets"] if not a.get("pick")) for sd in t["sides"].values()}) > 1]
+
+    def stats(variant: str) -> dict[str, Any]:
+        gaps, hits = [], []
+        for t in uneven:
+            shares = [side_share(sd, DEFAULT_WEIGHT, variant) for sd in t["sides"].values()]
+            if shares and None not in shares:
+                logs = [math.log(max(0.2, min(x, 5.0))) for x in shares]
+                gaps.append(max(logs) - min(logs))
+                hits.append(all(x >= OPEN_SHARE for x in shares))
+        return {"imbalance": round(sum(gaps) / len(gaps), 3) if gaps else None, "hit_rate": round(sum(hits) / len(hits), 3) if hits else None}
+
+    curve = {d: stats(f"depth:{d}") for d in DEPTH_GRID}
+    best = min((d for d in curve if curve[d]["imbalance"] is not None), key=lambda d: curve[d]["imbalance"], default=None)
+    return {"uneven_trades": len(uneven), "by_depth_share": curve, "best": best}
 
 
 def lean_label(w: float | None) -> str | None:
@@ -504,10 +541,12 @@ def main() -> None:
             print(f"  hit rate by now weight: {backtest(trades)['hit_rate']}")
             print(f"  valuation changes: {compare_variants(trades)}")
             print(f"  cap dollar: {fit_cap_dollar(trades)}")
+            print(f"  extra-body share (2-for-1s): {fit_depth(trades)}")
             dated = [t for t in trades if t.get("dated")]
             print(f"  {len(dated)} trades after the first market scrape, {sum(1 for t in trades if t.get('faab'))} include FAAB/cap")
             if dated:
                 print(f"  valuation changes, those trades only: {compare_variants(dated)}")
+                print(f"  extra-body share, those trades only: {fit_depth(dated)}")
             clean = [t for t in dated if not t.get("faab")]
             if clean and len(clean) < len(dated):
                 print(f"  valuation changes, those without FAAB: {compare_variants(clean)}")
