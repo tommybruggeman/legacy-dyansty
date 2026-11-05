@@ -196,7 +196,7 @@ def kickoff_forecasts(games: list[Mapping[str, Any]], get_json: Any = None) -> d
     days = sorted({str(g["gameday"]) for g in venues})
     params = {
         "latitude": ",".join(str(OPEN_AIR_VENUES[g["stadium"]][0]) for g in venues), "longitude": ",".join(str(OPEN_AIR_VENUES[g["stadium"]][1]) for g in venues),
-        "hourly": "temperature_2m,precipitation,wind_speed_10m", "temperature_unit": "fahrenheit", "wind_speed_unit": "mph", "precipitation_unit": "inch",
+        "hourly": "temperature_2m,precipitation,rain,snowfall,wind_speed_10m,wind_gusts_10m", "temperature_unit": "fahrenheit", "wind_speed_unit": "mph", "precipitation_unit": "inch",
         "timezone": "America/New_York", "start_date": days[0], "end_date": days[-1],
     }
     try:
@@ -228,6 +228,13 @@ def kickoff_forecasts(games: list[Mapping[str, Any]], get_json: Any = None) -> d
         if not temps or not winds:
             continue
         out[g["stadium"]] = {"temp_f": round(sum(temps) / len(temps)), "wind_mph": round(sum(winds) / len(winds)), "precip_in": round(sum(rain), 2) if rain else 0.0, "source": "forecast"}
+        # the split and the gusts the game conditions model uses (league_ai.game_conditions); absent in older responses
+        extra = {k: [x for x in (hourly.get(k) or [])[window] if x is not None] for k in ("rain", "snowfall", "wind_gusts_10m")}
+        if extra["rain"] or extra["snowfall"]:
+            out[g["stadium"]]["rain_in"] = round(sum(extra["rain"]), 2)
+            out[g["stadium"]]["snow_in"] = round(sum(extra["snowfall"]), 2)
+        if extra["wind_gusts_10m"]:
+            out[g["stadium"]]["gust_mph"] = round(max(extra["wind_gusts_10m"]))
     return out
 
 

@@ -186,6 +186,7 @@ def main() -> None:
         show("cold team in <=35F", [x for x in out if x["wx"]["temp"] <= 35 and climate.get(x["team"]) == "cold"])
         show("wind 15+ and rain/snow", [x for x in out if x["wx"]["wind"] >= 15 and (x["wx"]["rain"] >= 0.05 or x["wx"]["snow"] >= 0.1)])
     situations(recs, games, played_weeks, show)
+    fit_effects(recs, games)
     # does Vegas already price weather? real game total vs the Vegas total
     print("  game totals vs Vegas total")
     tot = defaultdict(list)
@@ -210,6 +211,111 @@ def main() -> None:
             tot["85F+"].append(diff)
     for k, v in tot.items():
         print(f"    {k:<14} n={len(v):<4} real minus Vegas total {sum(v) / len(v):+.2f} pts")
+
+
+TRAIN = (2021, 2022, 2023, 2024, 2025)
+RIDGE = 3000.0   # about 30 typical player-games of evidence at zero effect
+
+
+def _fit(rows: list[dict[str, Any]], names: list[str]) -> dict[str, float]:
+    """Ridge fit of (actual - expected) on expected x feature: the share of the projection each condition adds."""
+    import numpy as np
+
+    if not rows or not names:
+        return {}
+    X = np.array([[r["e"] * r["f"].get(n, 0.0) for n in names] for r in rows])
+    y = np.array([r["a"] - r["e"] for r in rows])
+    b = np.linalg.solve(X.T @ X + RIDGE * np.eye(len(names)), X.T @ y)
+    return dict(zip(names, (float(v) for v in b)))
+
+
+def _mae(rows: list[dict[str, Any]], eff: dict[str, dict[str, float]] | None) -> tuple[float, float]:
+    """Player MAE and NFL-team-week MAE (each team's projected players summed)."""
+    from league_ai.game_conditions import multiplier
+
+    err, team = 0.0, defaultdict(lambda: [0.0, 0.0])
+    for r in rows:
+        pred = r["e"] * (multiplier(r["pos"], r["f"], eff) if eff else 1.0)
+        err += abs(r["a"] - pred)
+        t = team[(r["season"], r["week"], r["team"])]
+        t[0] += r["a"]
+        t[1] += pred
+    return err / max(1, len(rows)), sum(abs(a - b) for a, b in team.values()) / max(1, len(team))
+
+
+def fit_effects(recs: list[dict[str, Any]], games: list[dict[str, Any]]) -> None:
+    """Fit every condition's effect by position (league_ai.game_conditions.features), check it season by season
+    out of sample, drop conditions that don't hold up, and print the table for COND_EFFECTS."""
+    from league_ai import game_conditions as gc
+
+    climate = gc.team_climates(games)
+    situ: dict[int, dict[tuple[int, str], dict[str, float]]] = {}
+    for season in SEASONS:
+        situ[season] = gc.situations([g for g in games if int(g["season"]) == season])
+    rows = []
+    for x in recs:
+        g = x["g"]
+        f = gc.features(g, x["team"], climate, x["wx"], situ[x["season"]].get((x["week"], x["team"])))
+        rows.append({"season": x["season"], "week": x["week"], "team": x["team"], "pos": x["pos"], "a": x["a"], "p": x["p"], "f": f})
+    # the expected score: projection x the position's ratio from the OTHER seasons (no peeking at the test season)
+    tot: dict[tuple[int, str], list[float]] = defaultdict(lambda: [0.0, 0.0])
+    for r in rows:
+        tot[(r["season"], r["pos"])][0] += r["a"]
+        tot[(r["season"], r["pos"])][1] += r["p"]
+
+    def expect(test: int) -> None:
+        for r in rows:
+            a = sum(v[0] for (s, p), v in tot.items() if p == r["pos"] and s != test)
+            b = sum(v[1] for (s, p), v in tot.items() if p == r["pos"] and s != test)
+            r["e"] = r["p"] * a / b if b else r["p"]
+
+    names = sorted({k for r in rows for k in r["f"]})
+
+    def table(train: list[dict[str, Any]], use: list[str]) -> dict[str, dict[str, float]]:
+        eff: dict[str, dict[str, float]] = defaultdict(dict)
+        for pos in gc.POSITIONS:
+            for n, b in _fit([r for r in train if r["pos"] == pos], use).items():
+                eff[n][pos] = b
+        return dict(eff)
+
+    def loso(use: list[str]) -> list[tuple[int, float, float]]:
+        out = []
+        for test in SEASONS[1:]:
+            expect(test)
+            tr = [r for r in rows if r["season"] != test]
+            te = [r for r in rows if r["season"] == test]
+            eff = table(tr, use)
+            b, w = _mae(te, None), _mae(te, eff)
+            out.append((test, b[0] - w[0], b[1] - w[1]))
+        return out
+
+    print("  FIT (share of the projection per unit; LOSO = each season predicted from the other five)")
+    full = loso(names)
+    print("    all conditions: " + ", ".join(f"{s} player {p:+.3f} team {t:+.2f}" for s, p, t in full))
+    keep, cur = list(names), full
+    for n in names:   # one pass: drop a condition if the model does better without it, season by season
+        without = loso([k for k in keep if k != n])
+        dt = sum(t for _, _, t in without) - sum(t for _, _, t in cur)
+        dp = sum(p for _, p, _ in without) - sum(p for _, p, _ in cur)
+        verdict = "drop" if dt >= 0 and dp >= 0 else "keep"
+        print(f"    {n:<18} n={sum(1 for r in rows if n in r['f']):<6} without it: player {dp:+.4f} team {dt:+.3f} -> {verdict}")
+        if verdict == "drop":
+            keep.remove(n)
+            cur = without
+    final = loso(keep)
+    print("    kept: " + ", ".join(f"{s} player {p:+.3f} team {t:+.2f}" for s, p, t in final))
+    expect(2026)
+    eff = table([r for r in rows if r["season"] in TRAIN], keep)
+    te = [r for r in rows if r["season"] == 2026]
+    b, w = _mae(te, None), _mae(te, eff)
+    print(f"    2026 out of sample (fit 2021-2025): player MAE {b[0]:.3f} -> {w[0]:.3f}, team-week MAE {b[1]:.2f} -> {w[1]:.2f}")
+    expect(0)
+    eff = table(rows, keep)
+    print("  COND_EFFECTS (fit on all seasons):")
+    print("  {")
+    for n in keep:
+        print(f'      "{n}": {{' + ", ".join(f'"{p}": {round(v, 3)}' for p, v in sorted(eff.get(n, {}).items())) + "},")
+    print("  }")
 
 
 WEST = {"SEA", "SF", "LA", "LAC", "LV", "ARI"}
