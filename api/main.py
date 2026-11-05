@@ -18,6 +18,7 @@ from supabase import Client, create_client
 
 from api import box_score as box_score_mod
 from api import activity, alerts, cache, front_office, home, league, lineups, live_activity, market, nfl_live, own_league, player, playoffs, projections, teams, trade_feed, trade_offers, waivers
+from league_ai import nfl_data
 from season_engine import SeasonResolver
 from services.season_rollover_owner_ui import OwnerRolloverDecisionError, OwnerRolloverDecisionService
 
@@ -781,9 +782,62 @@ def all_players(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, 
     ids = _saved_ids(client, ctx["league_id"]) or []
     result = market.all_players(pool, state, ppg, _league_team_rows(client, ctx["league_id"]), rosters, ctx["team_id"],
                                 keep_ids=ids, kickers=not ctx["slots"] or "K" in ctx["slots"])
+    _add_this_week(client, ctx, result["players"])
     # The ★ Saved chip's "Plan these moves with the GM" question.
     result["plan_question"] = market.strategy_question(market.targets(ids, state, ctx["team_id"], pool, ppg), ctx["season"])
     return result
+
+
+def _kickoff_utc(game: dict[str, Any]) -> str | None:
+    try:
+        clock = str(game.get("gametime") or "") or "13:00"
+        return datetime.fromisoformat(f"{game['gameday']}T{clock}").replace(tzinfo=home.EASTERN).astimezone(timezone.utc).isoformat()
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _add_this_week(client: Client, ctx: dict[str, Any], rows: list[dict[str, Any]]) -> None:
+    """Market rows get this week's projection (league scoring, matchup-adjusted, same as Home), the season
+    average and last-3 trend in league scoring, and the next game with the defense's rank vs the position.
+    One pass for the whole league, cached half an hour; any piece that fails is just left off."""
+    sid, season, week = ctx["sleeper_id"], ctx["season"], league.current_week()
+
+    def load() -> dict[str, Any]:
+        ids = [r["player_id"] for r in rows if r.get("pos") in ("QB", "RB", "WR", "TE", "K")]
+        pos = {r["player_id"]: r["pos"] for r in rows}
+        team = {r["player_id"]: r["nfl_team"] for r in rows}
+        out: dict[str, Any] = {"proj": {}, "avg": {}, "form": {}, "games": {}, "dvp": {}}
+        try:
+            out["proj"] = projections.week_projections(client, sid, season, week, ids, pos, team)
+        except Exception as exc:
+            print(f"MARKET_PROJ_ERROR {type(exc).__name__}", flush=True)
+        try:
+            avg, _games = projections.season_averages(sid, season, week - 1) if week > 1 else ({}, {})
+            scoring = projections.league_scoring(sid)
+            weekly = []
+            for w in range(week - 1, max(0, week - 1 - market.TREND_WEEKS), -1):
+                lines = projections.week_lines("stats", season, w, 86400)
+                weekly.append({p: projections.score(l["stats"], scoring, l.get("pos")) for p, l in lines.items() if projections.played(l.get("stats"))})
+            out["avg"], out["form"] = avg, market.recent_form(weekly, avg)
+        except Exception as exc:
+            print(f"MARKET_FORM_ERROR {type(exc).__name__}", flush=True)
+        try:
+            out["games"] = nfl_data.week_matchups(nfl_data.season_games(client, season), week)
+            out["dvp"] = nfl_data.defense_vs_position(client, season)
+        except Exception as exc:
+            print(f"MARKET_GAMES_ERROR {type(exc).__name__}", flush=True)
+        return out
+
+    data = cache.cached(("market_week", sid, season, week), 1800, load)
+    find = market.next_games(data["games"], data["dvp"], week, _kickoff_utc)
+    for r in rows:
+        pid = r["player_id"]
+        r["proj"] = data["proj"].get(pid)
+        a = data["avg"].get(pid)
+        r["avg"] = round(a, 1) if a is not None else None
+        form = data["form"].get(pid) or {}
+        r["last3"], r["trend"] = form.get("last3"), form.get("trend")
+        r["next"] = find(nfl_data.team_code(r.get("nfl_team")) or "", r.get("pos") or "")
 
 
 @app.get("/my-team/calls")
