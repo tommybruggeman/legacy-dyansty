@@ -72,3 +72,11 @@ def test_red_zone_signals_compare_role_with_projected_touchdowns():
     xs = pl.signal_x(r, ctx)
     assert abs(xs["rz_vs_proj"] - (4.8 - 2.4) / 12.0) < 1e-9 and abs(xs["rz_role"] - 1.0) < 1e-9
     assert "rz_role" not in pl.signal_x({**r, "id": "b"}, ctx)
+
+
+def test_usage_signal_compares_our_usage_projection_with_the_calibrated_one():
+    ctx = {**_ctx(), "opps": {"a": [10.0, 12.0], "b": [9.0]}, "pos_of": {"a": "RB", "b": "RB"}}
+    own = pl.own_projections(ctx, {"RB": [600.0, 1000.0]})
+    assert own == {"a": 6.6}   # 11 opportunities a game x 0.6 points each; b has only one game
+    xs = pl.signal_x({"id": "a", "pos": "RB", "team": "A", "cal": 11.0}, {**ctx, "own": own})
+    assert abs(xs["usage"] - (6.6 / 11.0 - 1)) < 1e-9
