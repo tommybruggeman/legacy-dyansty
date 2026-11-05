@@ -1,4 +1,3 @@
-import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams, useNavigation } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
@@ -8,7 +7,6 @@ import { PlayerFace } from '../../components/PlayerFace';
 import { ErrorState, Loading } from '../../components/ScreenState';
 import { Note, Pill, Screen, Title, money, ui } from '../../components/ui';
 import { type LeagueOwner, type LeaguePlayer, type LeaguePlayers, useApi } from '../../lib/api';
-import { teamColors } from '../../lib/nflColors';
 import { nameMatches } from '../../lib/players';
 import { colors } from '../../lib/theme';
 import { useTargets } from '../../lib/targets';
@@ -39,32 +37,31 @@ const shortOwner = (name: string) => {
 const ppgText = (n: number | null | undefined) => (n != null ? n.toFixed(1) : '—');
 const ptsText = (n: number | null | undefined) => (n != null ? `${Math.round(n)} pts` : '');
 
-// One player as a card tinted in their NFL team's colors: circle, name, a short line, PPG and season points.
-function PlayerTile({ id, name, pos, team, ppg, points, line, tag, mine }: {
+// One player per line, no box: face, name with any tag, a short line, then PPG over season points and a star.
+// Your own and saved players get a gold name instead of a gold border.
+function PlayerRow({ id, name, pos, team, ppg, points, line, tag, mine }: {
   id: string; name: string; pos: string; team: string; ppg: number | null; points: number | null;
   line: string; tag?: { label: string; tone: 'out' | 'gold' } | null; mine?: boolean;
 }) {
   const { isTarget, toggle } = useTargets();
   const saved = isTarget(id);
-  const [fill] = teamColors(team);
   return (
-    <Pressable onPress={() => router.push(`/player/${id}`)} style={[styles.tile, (saved || mine) && styles.tileGold]}>
-      <LinearGradient colors={[`${fill}CC`, colors.card]} locations={[0, 0.6]} start={{ x: 0, y: 0 }} end={{ x: 0.6, y: 1 }} style={StyleSheet.absoluteFill} />
-      <View style={styles.tileTop}>
-        <PlayerFace name={name} team={team} pos={pos} size={48} />
-        <View style={styles.tileTopRight}>
+    <Pressable onPress={() => router.push(`/player/${id}`)} style={styles.row}>
+      <PlayerFace name={name} team={team} pos={pos} size={40} />
+      <View style={styles.rowMid}>
+        <View style={styles.rowNameLine}>
+          <Text style={[styles.rowName, (saved || mine) && styles.rowNameGold]} numberOfLines={1}>{name}</Text>
           {tag ? <Pill label={tag.label} tone={tag.tone} /> : null}
-          <Pressable onPress={() => toggle(id)} hitSlop={10} style={[styles.star, saved && styles.starOn]}>
-            <Text style={[styles.starText, saved && styles.starTextOn]}>{saved ? '★' : '☆'}</Text>
-          </Pressable>
         </View>
+        <Text style={styles.rowLine} numberOfLines={1}>{line}</Text>
       </View>
-      <Text style={styles.tileName} numberOfLines={1}>{name}</Text>
-      <Text style={styles.tileLine} numberOfLines={1}>{line}</Text>
-      <View style={styles.tileBottom}>
-        <Text style={styles.tilePpg}>{ppgText(ppg)}<Text style={styles.unit}> PPG</Text></Text>
-        <Text style={styles.tilePts}>{ptsText(points)}</Text>
+      <View style={styles.rowRight}>
+        <Text style={styles.rowPpg}>{ppgText(ppg)}</Text>
+        <Text style={styles.rowPts}>{ptsText(points)}</Text>
       </View>
+      <Pressable onPress={() => toggle(id)} hitSlop={12} style={styles.star}>
+        <Text style={[styles.starText, saved && styles.starTextOn]}>{saved ? '★' : '☆'}</Text>
+      </Pressable>
     </Pressable>
   );
 }
@@ -178,9 +175,9 @@ function PlayersList({ query }: { query?: string }) {
       {rows.length === 0 ? (
         <Note>{savedView && !saved.length ? 'Tap ☆ on any player to save them here.' : 'No players match.'}</Note>
       ) : null}
-      <View style={styles.grid}>
+      <View style={styles.list}>
         {rows.slice(0, shown).map((p) => (
-          <PlayerTile
+          <PlayerRow
             key={p.player_id}
             id={p.player_id}
             name={p.name}
@@ -297,21 +294,19 @@ const styles = StyleSheet.create({
   sheetBody: { flex: 1 },
   sheetLabel: { color: colors.muted, fontSize: 11, fontWeight: '800', letterSpacing: 1, marginTop: 10, marginBottom: 8 },
   sectionTitle: { color: colors.text, fontSize: 18, fontWeight: '800' },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 10, marginBottom: 12 },
-  tile: { width: '48.5%', borderRadius: 18, borderWidth: 1, borderColor: colors.line, padding: 12, overflow: 'hidden', backgroundColor: colors.card },
-  tileGold: { borderColor: colors.gold },
-  tileTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
-  tileTopRight: { alignItems: 'flex-end', gap: 6 },
-  star: { width: 28, height: 28, borderRadius: 14, backgroundColor: 'rgba(0,0,0,0.35)', alignItems: 'center', justifyContent: 'center' },
-  starOn: { backgroundColor: colors.gold },
-  starText: { color: colors.text, fontSize: 15 },
-  starTextOn: { color: colors.bg },
-  tileName: { color: colors.text, fontSize: 15, fontWeight: '800', marginTop: 12 },
-  tileLine: { color: colors.muted, fontSize: 12, marginTop: 2 },
-  tileBottom: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', marginTop: 8 },
-  tilePpg: { color: colors.gold, fontSize: 24, fontWeight: '800' },
-  unit: { color: colors.muted, fontSize: 10, fontWeight: '600' },
-  tilePts: { color: colors.muted, fontSize: 11, marginBottom: 4 },
+  list: { marginBottom: 12 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 11, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.line },
+  rowMid: { flex: 1, minWidth: 0 },
+  rowNameLine: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  rowName: { color: colors.text, fontSize: 15, fontWeight: '800', flexShrink: 1 },
+  rowNameGold: { color: colors.gold },
+  rowLine: { color: colors.muted, fontSize: 12, marginTop: 2 },
+  rowRight: { alignItems: 'flex-end' },
+  rowPpg: { color: colors.gold, fontSize: 20, fontWeight: '800' },
+  rowPts: { color: colors.muted, fontSize: 11 },
+  star: { width: 26, alignItems: 'center' },
+  starText: { color: colors.muted, fontSize: 18 },
+  starTextOn: { color: colors.gold },
   more: { alignItems: 'center', paddingVertical: 8, marginBottom: 4 },
   plan: { backgroundColor: colors.gold, borderRadius: 12, paddingVertical: 12, alignItems: 'center', marginTop: 10 },
   planText: { color: colors.bg, fontWeight: '800', fontSize: 15 },
