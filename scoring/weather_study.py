@@ -115,6 +115,7 @@ def main() -> None:
         for side, opp in (("home_team", "away_team"), ("away_team", "home_team")):
             game_of[(int(g["season"]), int(g["week"]), str(g[side]))] = {**g, "team": g[side], "opp": g[opp], "is_home": side == "home_team"}
     recs = []
+    played_weeks: dict[tuple[int, str], set[int]] = defaultdict(set)
     for season in SEASONS:
         for week in range(1, 19):
             try:
@@ -139,7 +140,12 @@ def main() -> None:
                 played = bool((r.get("stats") or {}).get("gp") or (r.get("stats") or {}).get("off_snp") or (pos == "K" and a))
                 if not played:
                     continue   # weather doesn't explain inactives
-                recs.append({"season": season, "pos": pos, "p": p, "a": a, "g": g, "wx": wx.get(str(g["game_id"])), "team": str(g["team"])})
+                recs.append({"season": season, "week": week, "pid": pid, "pos": pos, "p": p, "a": a, "g": g, "wx": wx.get(str(g["game_id"])),
+                             "team": str(g["team"])})
+            for pid, r in real.items():
+                st = r.get("stats") or {}
+                if st.get("gp") or st.get("off_snp"):
+                    played_weeks[(season, pid)].add(week)
     # normalize by season-position ratio
     ratio: dict[tuple[int, str], list[float]] = defaultdict(lambda: [0.0, 0.0])
     for x in recs:
@@ -179,6 +185,7 @@ def main() -> None:
         show("warm/dome team in <=35F", [x for x in out if x["wx"]["temp"] <= 35 and climate.get(x["team"]) in ("dome", "warm")])
         show("cold team in <=35F", [x for x in out if x["wx"]["temp"] <= 35 and climate.get(x["team"]) == "cold"])
         show("wind 15+ and rain/snow", [x for x in out if x["wx"]["wind"] >= 15 and (x["wx"]["rain"] >= 0.05 or x["wx"]["snow"] >= 0.1)])
+    situations(recs, games, played_weeks, show)
     # does Vegas already price weather? real game total vs the Vegas total
     print("  game totals vs Vegas total")
     tot = defaultdict(list)
@@ -203,6 +210,84 @@ def main() -> None:
             tot["85F+"].append(diff)
     for k, v in tot.items():
         print(f"    {k:<14} n={len(v):<4} real minus Vegas total {sum(v) / len(v):+.2f} pts")
+
+
+WEST = {"SEA", "SF", "LA", "LAC", "LV", "ARI"}
+EAST = {"NE", "NYJ", "NYG", "BUF", "MIA", "PHI", "PIT", "BAL", "WAS", "CAR", "ATL", "TB", "JAX", "CLE", "CIN", "DET", "IND"}
+
+
+def situations(recs: list[dict[str, Any]], games: list[dict[str, Any]], played_weeks: dict[tuple[int, str], set[int]], show: Any) -> None:
+    """Game situations against the projection, by position."""
+    # each team's usual QB and head coach so far in the season, and first meetings between division rivals
+    qb_seen: dict[tuple[int, str], dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    coach_first: dict[tuple[int, str], str] = {}
+    met: set[tuple[int, str, str]] = set()
+    tags: dict[tuple[int, int, str], set[str]] = defaultdict(set)
+    for g in sorted(games, key=lambda g: (int(g["season"]), int(g["week"]))):
+        season, week = int(g["season"]), int(g["week"])
+        for side, opp in (("home", "away"), ("away", "home")):
+            team, other = str(g[f"{side}_team"]), str(g[f"{opp}_team"])
+            t = tags[(season, week, team)]
+            rest = g.get(f"{side}_rest")
+            if rest is not None:
+                rest = float(rest)
+                if rest <= 5:
+                    t.add("short rest (5 days or less)")
+                elif rest >= 13:
+                    t.add("off a bye")
+                if g.get(f"{opp}_rest") is not None and float(g[f"{opp}_rest"]) - rest >= 3:
+                    t.add("rest disadvantage 3+ days")
+            if str(g.get("location") or "") == "Neutral":
+                t.add("international / neutral site")
+            if side == "away" and team in WEST and str(g["home_team"]) in EAST and str(g.get("gametime") or "")[:2] in ("09", "13"):
+                t.add("west coast team, early east kickoff")
+            if side == "away" and str(g["home_team"]) == "DEN":
+                t.add("visiting Denver altitude")
+            if side == "away":
+                t.add("away")
+            else:
+                t.add("home")
+            if g.get("div_game"):
+                key = (season, *sorted((team, other)))
+                t.add("division rematch" if key in met else "division first meeting")
+            if week >= 17:
+                t.add("weeks 17-18")
+            surf = str(g.get("surface") or "").lower()
+            if surf:
+                t.add("grass" if "grass" in surf else "turf")
+            qb = str(g.get(f"{side}_qb_id") or "")
+            seen = qb_seen[(season, team)]
+            if qb and seen and max(seen, key=seen.get) != qb and sum(seen.values()) >= 2:
+                t.add("different starting QB than usual")
+            if qb:
+                seen[qb] += 1
+            coach = str(g.get(f"{side}_coach") or "")
+            if coach:
+                first = coach_first.setdefault((season, team), coach)
+                if coach != first:
+                    t.add("new head coach mid-season")
+        if g.get("div_game"):
+            met.add((season, *sorted((str(g["home_team"]), str(g["away_team"])))))
+    ref_avg: dict[str, list[float]] = defaultdict(list)
+    for g in games:
+        if g.get("referee") and g.get("home_score") is not None and g.get("total_line") is not None:
+            ref_avg[str(g["referee"])].append(float(g["home_score"]) + float(g["away_score"]) - float(g["total_line"]))
+    for x in recs:
+        t = tags.get((x["season"], x["week"], x["team"]), set())
+        x["tags"] = set(t)
+        weeks = played_weeks.get((x["season"], x["pid"]), set())
+        prev = [w for w in weeks if w < x["week"]]
+        if prev and x["week"] - max(prev) >= 3:
+            x["tags"].add("first game back after 2+ missed weeks")
+        elif prev and x["week"] - max(prev) == 2 and "off a bye" not in t:
+            x["tags"].add("first game back after 1 missed week")
+    names = sorted({k for x in recs for k in x["tags"]})
+    print("  SITUATIONS")
+    for pos in SKILL + ("ALL",):
+        rs = [x for x in recs if pos == "ALL" or x["pos"] == pos]
+        print(f"  {pos}")
+        for n in names:
+            show(n, [x for x in rs if n in x["tags"]])
 
 
 if __name__ == "__main__":
