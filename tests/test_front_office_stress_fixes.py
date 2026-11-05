@@ -58,8 +58,9 @@ class NamedTargetTests(unittest.TestCase):
 
     def test_prices_a_named_player_even_from_a_team_with_no_need(self):
         lg = _league()
-        # deepboth has no weak spot, so the shortlist never offers its WRs...
-        self.assertNotIn("Deepboth", {i["partner"] for i in find_trades(league=lg, asker_team_id="me", cap_space=self.CAP, limit=8)["ideas"]})
+        # deepboth has no weak spot, so the shortlist only offers its WRs when their lineup gets better, and never its WR1...
+        ideas = find_trades(league=lg, asker_team_id="me", cap_space=self.CAP, limit=8)["ideas"]
+        self.assertFalse(any(i["partner"] == "Deepboth" and "deepboth-wr0" in i["you_get"][0] for i in ideas))
         # ...but an owner who names one still gets a price
         out = price_target(league=lg, asker_team_id="me", cap_space=self.CAP, target="WR deepboth-wr0", partner="deepboth")
         self.assertEqual(out["partner"], "Deepboth")
@@ -73,9 +74,15 @@ class NamedTargetTests(unittest.TestCase):
     def test_says_so_when_nothing_is_fair(self):
         lg = _league()
         lg.find_player("WR deepwr-wr0").cap_hit = 100.0  # no package of mine can make room for him
-        out = price_target(league=lg, asker_team_id="me", cap_space=self.CAP, target="WR deepwr-wr0")
+        out = price_target(league=lg, asker_team_id="me", cap_space=self.CAP, target="WR deepwr-wr0", cap_trades=False)
         self.assertFalse(out["fair_deal_found"])
         self.assertEqual(out["note"], "no package is cap-legal for both teams")
+        # where traded cap moves cap, Deepwr can send cap space with him, and that cap is priced in
+        out = price_target(league=lg, asker_team_id="me", cap_space=self.CAP, target="WR deepwr-wr0")
+        self.assertTrue(out["fair_deal_found"])
+        self.assertIn("Deepwr adds", out["salary_note"])
+        self.assertGreaterEqual(out["cap_after"]["you"], 0)
+        self.assertGreaterEqual(out["cap_after"]["them"], 0)
 
     def test_errors_are_plain(self):
         lg = _league()
