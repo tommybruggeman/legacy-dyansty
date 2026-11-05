@@ -10,10 +10,17 @@ import { useSlow } from './ScreenState';
 // Shared pieces from the page designs: cards, tiles, the gold segmented
 // switcher, position badges and status pills.
 
-export function Screen({ children, loading, onRefresh }: { children: ReactNode; loading?: boolean; onRefresh?: () => void }) {
+// scrollTo: a y offset inside the page (its children) to glide to once, e.g. a card the page was opened for.
+export function Screen({ children, loading, onRefresh, scrollTo }: { children: ReactNode; loading?: boolean; onRefresh?: () => void; scrollTo?: number | null }) {
   const insets = useSafeAreaInsets();
   const scroll = useRef<ScrollViewInstance>(null);
   useScrollTopOnTab(scroll);
+  const scrolled = useRef(false);
+  useEffect(() => {
+    if (scrollTo == null || scrolled.current) return;
+    scrolled.current = true;
+    scroll.current?.scrollTo({ y: Math.max(0, scrollTo - 8), animated: true });
+  }, [scrollTo]);
   const pull = usePullToSearch();
   const slow = useSlow(!!loading);
   return (
