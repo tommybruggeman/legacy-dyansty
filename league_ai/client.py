@@ -56,6 +56,8 @@ class ClientResult:
     text: str
     trace: Trace
     error_code: str | None = None
+    # what each lookup returned, for the fact check (league_ai.fact_check): [{"tool", "input", "result"}]
+    evidence: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _redact(text: str) -> str:
@@ -199,6 +201,7 @@ class ClaudeClient:
         kept_text = ""
         ended_on_tools = False
         best_text = ""  # the fullest answer any round wrote, in case the last round only says "Logged."
+        evidence: list[dict[str, Any]] = []
         try:
             while True:
                 kwargs: dict[str, Any] = {
@@ -264,6 +267,8 @@ class ClaudeClient:
                         trace.tool_calls.append(name)
                         _emit(on_event, "tool", name)
                         result_text = tools.call(name, _block_attr(block, "input") or {}) if tools else "{}"
+                        if name not in SILENT_TOOLS:
+                            evidence.append({"tool": name, "input": _block_attr(block, "input") or {}, "result": str(result_text)[:EVIDENCE_CHARS]})
                     results.append({"type": "tool_result", "tool_use_id": _block_attr(block, "id"), "content": result_text})
                 added = inbox(False) if inbox else []
                 if added:
@@ -306,10 +311,11 @@ class ClaudeClient:
             return ClientResult(False, "", trace, trace.error_code)
         if trace.stop_reason == "max_tokens":
             text_out += "\n\n_(answer cut off: output budget reached)_"
-        return ClientResult(True, text_out, trace)
+        return ClientResult(True, text_out, trace, evidence=evidence)
 
 
 PER_MESSAGE_EFFORT_BETA = "mid-conversation-output-config-2026-07-01"
+EVIDENCE_CHARS = 12000  # per tool result kept for the fact check
 SHORT_ANSWER_CHARS = 60
 ACK_CHARS = 25  # a closing line this short after a full answer is an acknowledgement ("Logged.")
 THIN_ANSWER_CHARS = 100  # after real research, an answer shorter than this left its reasons in the model's thinking

@@ -12,6 +12,11 @@ class IdeaLogTest(unittest.TestCase):
         target = {"target": "Puka Nacua (WR4)", "partner": "B", "fair_deal_found": True, "open_with": ["Zay Flowers (WR20)"]}
         self.assertEqual(compact(target)[0]["gets"], ["Puka Nacua"])
         self.assertEqual(compact({"target": "X", "partner": "B", "fair_deal_found": False}), [])
+        cap = {"ideas": [{"partner": "B", "you_get": ["Puka Nacua (WR4)"],
+                          "open_with": ["Zay Flowers (WR20)", "$4 of cap space (as FAAB)"],
+                          "likely_close": ["Zay Flowers (WR20)", "2027 2nd pick", "and they add $3 of cap space to you (as FAAB)"]}]}
+        row = compact(cap)[0]  # picks and cap aren't players, so they don't count against matching real trades
+        self.assertEqual((row["open_with"], row["likely_close"]), (["Zay Flowers"], ["Zay Flowers"]))
 
     def test_match_finds_the_trade_and_closest_rung(self):
         ev = [{"event_id": "sleeper:t1:a", "owner_name": "A", "counterparty_names": ["B"], "player_name": "Puka Nacua", "occurred_at": "2026-10-10T00:00:00Z"},

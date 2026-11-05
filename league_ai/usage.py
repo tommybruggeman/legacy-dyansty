@@ -12,6 +12,7 @@ from typing import Any, Mapping
 PRICES: dict[str, tuple[float, float, float, float]] = {
     "claude-sonnet-5-5": (2.00, 10.00, 2.50, 0.20),
     "claude-opus-5-5": (4.00, 20.00, 5.00, 0.20),
+    "claude-haiku-5-5": (0.10, 0.50, 0.125, 0.01),
     "claude-haiku-4-5": (1.00, 5.00, 1.25, 0.10),
     "claude-haiku-4-5-20251001": (1.00, 5.00, 1.25, 0.10),
 }

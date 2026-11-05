@@ -81,8 +81,8 @@ class Session:
                                      lambda: fill_from_sleeper(client, load_team_state(client, o.league_id, o.season), sleeper_league_id, o.league_id))
         self.rules = lambda: _cached(("rules", o.league_id), 300, lambda: load_league_rules(client, o.league_id))
         self.positions = lambda: _cached(("positions", o.league_id), 1800, lambda: runtime.roster_positions(client, o.league_id, sleeper_league_id))
-        self.week = lambda: _cached("week", 3600, runtime.nfl_week)
-        self.playoff_start = lambda: _cached(("playoffs", sleeper_league_id), 12 * 3600, lambda: runtime.playoff_start(sleeper_league_id))
+        self.week = lambda: _cached(("week", o.season), 600, lambda: runtime.current_week(client, o.season))
+        self.playoff_start = lambda: _cached(("playoffs", o.league_id), 3600, lambda: runtime.playoff_start(sleeper_league_id, client, o.league_id))
 
     def pack(self) -> str:
         o = self.owner
