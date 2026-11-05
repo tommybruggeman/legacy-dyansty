@@ -238,9 +238,25 @@ def multiplier(position: str, feats: Mapping[str, float], table: Mapping[str, Ma
     return max(0.75, min(1.25, m))
 
 
-# Fitted by scoring/weather_study.py (2021-2025 regular seasons, ridge-shrunk, checked on 2026). Share of the
-# projection per unit of each feature. Empty until the fit is in: multiplier() is then 1.
-COND_EFFECTS: dict[str, dict[str, float]] = {}
+# Fitted by scoring/weather_study.py on 2021-2026 regular seasons (25,862 player-games, ridge-shrunk): share of the
+# projection per unit of each feature. Kept only conditions that helped when each season was predicted from the other
+# five (team-week miss better in all five seasons, 2022 to 2026). Fit one at a time they read: steady rain about -16%,
+# wind 20+ mph about -24%, snow +10% (projections cut too much), domes +3%; jointly the numbers share the credit.
+# Refit each offseason (python -m scoring.weather_study); the daily learning loop rescales them ('conditions' signal).
+COND_EFFECTS: dict[str, dict[str, float]] = {
+    "altitude": {"K": 0.054, "QB": -0.067, "RB": -0.061, "TE": -0.097, "WR": -0.069},
+    "gusts": {"K": -0.06, "QB": 0.125, "RB": 0.025, "TE": -0.057, "WR": 0.014},
+    "heat_unused": {"K": -0.028, "QB": -0.044, "RB": -0.123, "TE": -0.067, "WR": 0.018},
+    "home": {"K": -0.003, "QB": 0.034, "RB": 0.012, "TE": -0.0, "WR": 0.007},
+    "indoors": {"K": 0.049, "QB": 0.007, "RB": 0.003, "TE": 0.006, "WR": 0.041},
+    "new_coach": {"K": 0.111, "QB": -0.061, "RB": 0.012, "TE": -0.088, "WR": 0.012},
+    "rain": {"K": -0.049, "QB": -0.095, "RB": -0.07, "TE": -0.008, "WR": -0.076},
+    "rest_disadvantage": {"K": -0.027, "QB": -0.064, "RB": -0.049, "TE": 0.001, "WR": -0.017},
+    "short_rest": {"K": -0.053, "QB": 0.02, "RB": 0.011, "TE": 0.112, "WR": 0.028},
+    "snow": {"K": -0.004, "QB": 0.131, "RB": 0.156, "TE": -0.003, "WR": 0.032},
+    "west_early": {"K": 0.02, "QB": -0.013, "RB": -0.036, "TE": -0.023, "WR": 0.082},
+    "wind": {"K": -0.126, "QB": -0.17, "RB": -0.017, "TE": -0.084, "WR": -0.137},
+}
 
 
 def week_conditions(games_all: list[Mapping[str, Any]], week: int, games: Mapping[str, Mapping[str, Any]],
