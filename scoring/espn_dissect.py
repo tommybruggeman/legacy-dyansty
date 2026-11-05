@@ -93,6 +93,21 @@ def main() -> None:
         mad = sum(abs(x[key]) for x in rows) / max(1, len(rows))
         print(f"  {name:<28} n={n:<5} avg |disagreement| {mad:5.2f}  slope {k:+.2f}  MAE gain if used {gain:+.3f}")
 
+    # head to head: each source's own number through its own learned position ratio (fit on the whole season,
+    # same advantage for both), and the raw numbers
+    for season in sorted({x["season"] for x in recs}):
+        rs = [x for x in recs if x["season"] == season]
+        for label, sel in (("all", rs), ("started", [x for x in rs if x["started"]])):
+            out = []
+            for src in ("sl", "es"):
+                ratio: dict[str, list[float]] = defaultdict(lambda: [0.0, 0.0])
+                for x in sel:
+                    ratio[x["pos"]][0] += x["r"] + x["cal"]
+                    ratio[x["pos"]][1] += x[src]
+                errs = [(x["r"] + x["cal"]) - x[src] * ratio[x["pos"]][0] / ratio[x["pos"]][1] for x in sel]
+                raw = [(x["r"] + x["cal"]) - x[src] for x in sel]
+                out.append(f"{'Sleeper' if src == 'sl' else 'ESPN'} MAE {sum(abs(e) for e in errs) / len(errs):.3f} (raw {sum(abs(e) for e in raw) / len(raw):.3f})")
+            print(f"head to head {season} {label} (n={len(sel)}): " + " | ".join(out))
     for season in sorted({x["season"] for x in recs}):
         print(f"season {season}")
         rs = [x for x in recs if x["season"] == season]
