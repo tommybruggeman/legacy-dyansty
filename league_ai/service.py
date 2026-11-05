@@ -26,6 +26,8 @@ class AnswerResult:
     trace: Trace
     error_code: str | None = None
     pack_chars: int = 0
+    evidence: list[dict[str, Any]] = field(default_factory=list)
+    pack: str = ""
 
     @property
     def human_error(self) -> str:
@@ -130,6 +132,7 @@ def answer(
     week_context: str | None = None,
     turn_effort: str | None = None,
     inbox: Callable[[bool], list[str]] | None = None,
+    prior_facts: str | None = None,
 ) -> AnswerResult:
     config = config or load_config()
     if not config.enabled:
@@ -144,12 +147,18 @@ def answer(
         return AnswerResult(False, str(exc), trace, "league_state_unavailable")
 
     messages = _history_messages(history)
+    asked = question.strip()
+    if prior_facts and messages:
+        # what the last answer's lookups found, so a follow-up ("why?", "go deeper") reuses the same numbers
+        asked = (f"(Figures from the lookups behind your previous answer. Reuse them instead of looking them up again, "
+                 f"and keep your numbers consistent with them:\n{prior_facts})\n\n{asked}")
     if messages and messages[-1]["role"] == "user":
-        messages[-1]["content"] += "\n\n" + question.strip()
+        messages[-1]["content"] += "\n\n" + asked
     else:
-        messages.append({"role": "user", "content": question.strip()})
+        messages.append({"role": "user", "content": asked})
 
     runner = client or ClaudeClient(config)
     result: ClientResult = runner.run(system=system_blocks(league_pack, week_context), messages=messages, tools=tools, on_event=on_event, turn_effort=turn_effort,
                                         **({"inbox": inbox} if inbox else {}))
-    return AnswerResult(result.ok, result.text, result.trace, result.error_code, pack_chars=len(league_pack))
+    return AnswerResult(result.ok, result.text, result.trace, result.error_code, pack_chars=len(league_pack),
+                        evidence=list(getattr(result, "evidence", None) or []), pack=league_pack)
