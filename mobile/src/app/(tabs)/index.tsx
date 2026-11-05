@@ -408,7 +408,7 @@ function GameDay({ data }: { data: HomeData }) {
     const first = mine.filter((p) => p.kickoff).sort((a, b) => (a.kickoff! < b.kickoff! ? -1 : 1));
     return (
       <>
-        <PreGameHero data={data} title={title} kickoff={first[0]?.kickoff} />
+        <PreGameHero data={data} title={title} />
         <PlayerHeads title="YOUR STARTERS · FIRST UP" players={first.slice(0, 3)} showPoints={false} sub={(p) => KICK(p.kickoff)} />
         <LineupCheck issues={data.lineup_issues ?? []} />
         <AskBar placeholder="Who should I start this week?" />
@@ -475,14 +475,13 @@ function GameDay({ data }: { data: HomeData }) {
 }
 
 // Before kickoff: your week score on the left, theirs on the right, both projected totals in the middle.
-function PreGameHero({ data, title, kickoff }: { data: HomeData; title: string; kickoff?: string | null }) {
+function PreGameHero({ data, title }: { data: HomeData; title: string }) {
   const g = data.game!;
   const { proj } = useMatchupProj(data);
   const them = g.them ? firstName(g.them.name).toUpperCase() : 'BYE';
   return (
     <Hero
       title={title}
-      pill={kickoff ? <Pill label={`KICKOFF ${KICK(kickoff).toUpperCase()}`} /> : undefined}
       me={g.me!}
       them={g.them}
       week={data.week}
