@@ -155,7 +155,7 @@ def _stats(errs: list[float]) -> dict[str, Any] | None:
             "sd": round(sqrt(sum(e * e for e in errs) / n), 2)}
 
 
-def replay(weeks: Iterable[Mapping[str, Any]], prior: float = PRIOR, knee: float | None = None) -> dict[str, Any]:
+def replay(weeks: Iterable[Mapping[str, Any]], prior: float = PRIOR, knee: float | None = None, decay: float = 1.0) -> dict[str, Any]:
     """weeks, oldest first: {season, week, rows: [{id, pos, raw, shown, actual}], lineups: [[player ids]], snapshot: {id: pts}}.
     raw = the projection before the matchup tilt, shown = after it (both before calibration); actual None = no real score.
 
@@ -207,6 +207,12 @@ def replay(weeks: Iterable[Mapping[str, Any]], prior: float = PRIOR, knee: float
             season_errs[k] += v
         if errs:
             card_weeks.append({"week": wk["week"], **{k: _stats(v) for k, v in errs.items()}})
+        if decay < 1.0:   # older weeks count for less
+            for h in hist.values():
+                h[0] *= decay
+                h[1] *= decay
+            for l in lines.values():
+                l.s = [v * decay for v in l.s]
         for r in rows:   # learn only after the week is graded
             if r["raw"] >= MIN_PROJ and r["pos"] in POSITIONS:
                 hist[r["pos"]][0] += r["actual"]
