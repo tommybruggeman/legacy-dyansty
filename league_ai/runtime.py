@@ -17,7 +17,7 @@ from league_ai.front_office import (
 )
 from league_ai.learning import Ledger, learning_pack_lines
 from league_ai.memory import Memory
-from league_ai.nfl_data import add_weather, bye_weeks, data_freshness, defense_vs_position, season_games, week_matchups
+from league_ai.nfl_data import add_weather, bye_weeks, current_week_from_games, data_freshness, defense_vs_position, season_games, week_matchups
 from league_ai.roster_moves import rules_from
 from league_ai.routing import effort_for, topic as question_topic
 from league_ai.service import AnswerResult, LeagueDataSources, answer, build_pack
@@ -127,8 +127,24 @@ def roster_positions(client: Any, league_id: str, sleeper_league_id: str | None)
     return list(s.roster_positions or [])
 
 
-def playoff_start(sleeper_league_id: str | None) -> int | None:
-    """First fantasy playoff week from Sleeper's league settings."""
+def current_week(client: Any, season: int) -> int:
+    """This NFL week from our own schedule (nfl_games): the earliest week with an unplayed game, the last week once the
+    regular season is over. Sleeper's state endpoint only when the schedule isn't loaded."""
+    games = season_games(client, int(season)) if client is not None else []
+    if games:
+        week = current_week_from_games(games)
+        return int(week) if week else max(int(g["week"]) for g in games if g.get("week") is not None)
+    return nfl_week()
+
+
+def playoff_start(sleeper_league_id: str | None, client: Any = None, league_id: str | None = None) -> int | None:
+    """First fantasy playoff week: our own playoff format (Settings > League AI), Sleeper's league settings only for a
+    caller that has no league to read it from."""
+    if client is not None and league_id:
+        try:
+            return int(load_settings(client, league_id).playoff_week_start or 15)
+        except Exception:
+            pass
     if not sleeper_league_id:
         return None
     try:
@@ -138,9 +154,15 @@ def playoff_start(sleeper_league_id: str | None) -> int | None:
         return None
 
 
-def season_mode(sleeper_league_id: str | None, week: int, playoff_week: int | None) -> tuple[bool, float]:
+def season_mode(sleeper_league_id: str | None, week: int, playoff_week: int | None, client: Any = None, season: int | None = None) -> tuple[bool, float]:
     """(offseason?, share of the regular season still to play). The offseason starts once the league's final game is
-    over (Sleeper marks the league complete) and runs until the next season starts."""
+    over and runs until the next season starts. Ours: every regular-season NFL game is final in our schedule (the
+    fantasy playoffs end by the last regular-season week). Sleeper's league status only when our schedule isn't loaded."""
+    games = season_games(client, int(season)) if client is not None and season else []
+    if games:
+        offseason = current_week_from_games(games) is None
+        end = (playoff_week or 15) - 1
+        return offseason, (0.0 if offseason else max(0.0, min(1.0, (end - week + 1) / max(end, 1))))
     status = None
     if sleeper_league_id:
         try:
@@ -163,12 +185,12 @@ def build_owner_pack(client: Any, owner: Owner, *, state: Mapping[str, Any], rul
         sleeper_league_id=league.get("sleeper_league_id"),
         league_rules=rules,
         state_loader=lambda: state,
-        standings_loader=standings_loader(league.get("sleeper_league_id")),
+        standings_loader=lambda: standings(client, owner.league_id, owner.season, league.get("sleeper_league_id")),
         history_loader=lambda: pack_history_summary(client, owner.league_id),
         private_memory_loader=memory.private_notes,
         league_notebook_loader=memory.league_notes,
         learning_loader=lambda: learning_pack_lines(client, owner.league_id, owner.user_id, owner.season),
-        data_freshness={"league state": "live from the app database", "standings": "live from Sleeper", **data_freshness(client)},
+        data_freshness={"league state": "live from the app database", "standings": "the app's own standings (our league rules)", **data_freshness(client)},
     )
     return build_pack(sources, owner.asker())
 
@@ -297,9 +319,9 @@ def chat_tools(client: Any, owner: Owner, *, state: Mapping[str, Any], rules: Ma
                             league_id=owner.league_id, playoff_start=playoff_week() or 15),
         LeagueHistory(client, owner.league_id),
         outcomes=ledger.trade_outcomes, current_season=owner.season, odds=odds,
-        free_agent=lambda name: next((free_agent_strength(client, r, owner.season, owner.league_team_id) for r in nfl.find_players(name, limit=1)), None),
+        free_agent=lambda name: next((free_agent_strength(client, r, owner.season, owner.league_team_id, owner.league_id) for r in nfl.find_players(name, limit=1)), None),
         roster_rules=lambda: (rules_from(rules, load_settings(client, owner.league_id)),
-                              *season_mode(league.get("sleeper_league_id"), week, playoff_week())),
+                              *season_mode(league.get("sleeper_league_id"), week, playoff_week(), client, owner.season)),
         log_ideas=lambda out: threading.Thread(target=idea_log.log, daemon=True, kwargs={
             "client": client, "league_id": owner.league_id, "user_id": owner.user_id, "conversation_id": conversation_id(),
             "question": question(), "out": out}).start(),
@@ -354,5 +376,5 @@ def chat_turn(client: Any, owner: Owner, *, question: str, history: list[dict[st
 
 __all__ = [
     "ChatTurn", "Loaders", "TOOL_STATUS", "Owner", "build_owner_pack", "bye_weeks", "chat_tools", "chat_turn", "current_opponent", "front_office_data",
-    "league_row", "nfl_week", "playoff_start", "power_rows", "roster_positions", "standings", "standings_loader",
+    "current_week", "league_row", "nfl_week", "playoff_start", "power_rows", "roster_positions", "standings", "standings_loader",
 ]

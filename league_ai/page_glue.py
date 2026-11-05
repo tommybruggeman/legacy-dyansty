@@ -239,9 +239,12 @@ from league_ai.front_office import (  # noqa: E402
 )
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def _cached_nfl_week() -> int:
-    return nfl_week()
+@st.cache_data(ttl=600, show_spinner=False)
+def _cached_nfl_week(season: int | None = None) -> int:
+    """This NFL week from our own schedule (Sleeper only when it isn't loaded), same as the app's API."""
+    if season is None:
+        return nfl_week()
+    return runtime.current_week(auth_client(), int(season))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -254,9 +257,9 @@ def _cached_roster_positions(league_id: str, sleeper_league_id: str | None, user
     return runtime.roster_positions(auth_client(), league_id, sleeper_league_id)
 
 
-@st.cache_data(ttl=12 * 3600, show_spinner=False)
-def _cached_playoff_start(sleeper_league_id: str | None) -> int | None:
-    return runtime.playoff_start(sleeper_league_id)
+@st.cache_data(ttl=3600, show_spinner=False)
+def _cached_playoff_start(sleeper_league_id: str | None, league_id: str | None = None, user_id: str = "") -> int | None:
+    return runtime.playoff_start(sleeper_league_id, auth_client() if league_id else None, league_id)
 
 
 @st.cache_data(ttl=12 * 3600, show_spinner=False)
@@ -290,11 +293,11 @@ def front_office_data(*, request_context: Any, team: dict) -> dict[str, Any]:
         rules=lambda: _cached_rules(league_id, user_id, epoch),
         positions=lambda: list(positions),
         standings=lambda: _cached_standings(league_id, season, user_id, sleeper_id),
-        week=_cached_nfl_week,
+        week=lambda: _cached_nfl_week(season),
         byes=lambda: _cached_byes(season),
         power=lambda actual_ppg, week: _cached_power(league_id, season, user_id, epoch, positions, actual_ppg, week),
         opponent=lambda week, roster_to_owner, my_roster_id: _cached_opponent(sleeper_id, week, roster_to_owner, my_roster_id),
-        playoff_start=lambda: _cached_playoff_start(sleeper_id),
+        playoff_start=lambda: _cached_playoff_start(sleeper_id, league_id, user_id),
     )
     return runtime.front_office_data(client, owner, league, load)
 
@@ -657,7 +660,7 @@ def render_report_card(request_context: Any) -> None:
     """'How my calls have graded': this owner's record, recent graded calls with the diagnosis, and the playbook."""
     client = auth_client()
     ledger = Ledger(client, league_id=request_context.league_id, user_id=request_context.user_id, league_team_id=request_context.league_team_id,
-                    season=int(request_context.current_season), week=_cached_nfl_week())
+                    season=int(request_context.current_season), week=_cached_nfl_week(int(request_context.current_season)))
     rec = ledger.track_record(limit=6)
     try:
         lessons = (client.table("league_ai_lessons").select("lesson, evidence_count").eq("league_id", request_context.league_id).eq("active", True)
