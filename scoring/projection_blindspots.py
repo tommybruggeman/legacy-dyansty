@@ -43,6 +43,11 @@ def run_league(client: Any, league_id: str, sleeper_league_id: str) -> None:
             rows = pc.week_rows(client, season, week, sc, stats_rows, games_all)
             if rows:
                 weeks.append({"season": season, "week": week, "rows": rows, "lineups": lineups[(season, week)], "snapshot": None})
+    for season in sorted({s for s, _ in lineups})[-1:]:
+        games_all = season_games(client, season)
+        unscored = sorted({int(g["week"]) for g in games_all if g.get("home_score") is None and g.get("week") is not None})
+        print(f"season {season}: lineup weeks {sorted(w for s, w in lineups if s == season)}; weeks with unscored games {unscored[:6]}"
+              f"; graded weeks {[w['week'] for w in weeks if w['season'] == season]}")
     pc.replay(weeks)
     data: dict[int, Any] = {}
     for season in sorted({w["season"] for w in weeks})[-2:]:
