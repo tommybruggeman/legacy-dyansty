@@ -173,6 +173,24 @@ def build_owner_pack(client: Any, owner: Owner, *, state: Mapping[str, Any], rul
     return build_pack(sources, owner.asker())
 
 
+def _week_points(client: Any, league_id: str, season: int, week: int, players: list[Any]) -> dict[str, float]:
+    """Sleeper id -> this week's calibrated projection for every rostered player ({} when it can't be made: the
+    Front Office then falls back to recent form)."""
+    from api.projections import week_projections
+
+    try:
+        rows = client.table("leagues").select("sleeper_league_id").eq("id", league_id).limit(1).execute().data or []
+        sid = str((rows[0] if rows else {}).get("sleeper_league_id") or "")
+        if not sid:
+            return {}
+        ids = [p.sleeper_id for p in players if p.sleeper_id]
+        return week_projections(client, sid, int(season), int(week), ids, {p.sleeper_id: p.position for p in players},
+                                {p.sleeper_id: p.nfl_team or "" for p in players})
+    except Exception as exc:
+        print(f"FO_WEEK_POINTS_ERROR {type(exc).__name__}", flush=True)
+        return {}
+
+
 def power_rows(client: Any, league_id: str, season: int, *, state: Mapping[str, Any], positions: list[str], actual_ppg: Mapping[str, float],
                week: int, byes: Mapping[str, int]) -> list[dict]:
     """Power rankings as plain dicts (cache friendly), with this week's lineup, matchups and byes."""
@@ -181,7 +199,8 @@ def power_rows(client: Any, league_id: str, season: int, *, state: Mapping[str, 
     if ctx:
         ctx.annotate(games)
     rankings = power_rankings(client, state, season, list(positions), dict(actual_ppg), byes=dict(byes), week=week, games=games, dvp=defense_vs_position(client, season),
-                              situational=ctx.situational if ctx else None)
+                              situational=ctx.situational if ctx else None,
+                              week_points=(lambda players: _week_points(client, league_id, season, week, players)) if week else None)
     snapshot_power(client, league_id, rankings)
 
     def bye_label(p: Any) -> str:
@@ -190,7 +209,7 @@ def power_rows(client: Any, league_id: str, season: int, *, state: Mapping[str, 
     def player_row(p: Any, slot: str | None = None) -> dict:
         # pts: this week's matchup-adjusted expectation; sd: how much he swings week to week (None = too few games)
         return {"id": p.sleeper_id, "name": p.name, "pos": p.position, "slot": slot, "matchup": p.matchup, "injury": p.injury,
-                "pts": round(p.score("week_now"), 2), "sd": p.spread}
+                "pts": round(p.score("week_now"), 2), "sd": p.week_sd if p.week_sd is not None else p.spread}
 
     def week_label(p: Any) -> str:
         return f"{p.position} {p.name} ({p.score('week_now'):.1f}" + (f", {p.matchup})" if p.matchup else ")")
