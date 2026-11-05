@@ -572,6 +572,18 @@ class NflData:
         return out
 
     # ---- stats -------------------------------------------------------------
+    def league_points(self, sleeper_id: str, season: int) -> list[tuple[int, float]]:
+        """[(week, points in this league's scoring)] from our saved official lines; [] when unavailable."""
+        league_id = self.league_state.get("league_id") if isinstance(self.league_state, Mapping) else None
+        if not sleeper_id or not league_id:
+            return []
+        try:
+            from league_ai.league_points import weekly_points
+
+            return weekly_points(self.client, str(league_id), int(season), [str(sleeper_id)]).get(str(sleeper_id), [])
+        except Exception:
+            return []
+
     def weekly(self, sleeper_id: str | None, gsis_id: str | None, seasons: Iterable[int] | None = None) -> list[dict[str, Any]]:
         q = self.client.table("nfl_player_stats").select("*")
         if gsis_id:
@@ -612,9 +624,15 @@ class NflData:
         for r in rows:
             by_season[int(r["season"])].append(r)
         result: dict[str, Any] = {"seasons": {}}
+        sid = str(sleeper_id or next((r.get("sleeper_id") for r in rows if r.get("sleeper_id")), "") or "")
+        league_weeks = {season: dict(self.league_points(sid, season)) for season in by_season} if sid else {}
         for season in sorted(by_season, reverse=True):
             srows = by_season[season]
             entry: dict[str, Any] = {"totals": self.aggregate(srows), "teams": sorted({r.get("team") for r in srows if r.get("team")})}
+            lw = league_weeks.get(season) or {}
+            if lw:  # this league's own scoring, from our saved official lines
+                entry["totals"]["ppg_league"] = _round(sum(lw.values()) / len(lw), 2)
+                entry["totals"]["league_scored_games"] = len(lw)
             if split == "home_away":
                 entry["home"] = self.aggregate([r for r in srows if r.get("is_home") is True])
                 entry["away"] = self.aggregate([r for r in srows if r.get("is_home") is False])
@@ -623,10 +641,17 @@ class NflData:
             latest_season = max(by_season)
             recent = sorted(by_season[latest_season], key=lambda r: int(r["week"]), reverse=True)[:recent_weeks]
             result["recent"] = {"season": latest_season, "weeks": [int(r["week"]) for r in recent], "totals": self.aggregate(recent)}
+            lw = league_weeks.get(latest_season) or {}
+            recent_league = [lw[int(r["week"])] for r in recent if int(r["week"]) in lw]
+            if recent_league:
+                result["recent"]["totals"]["ppg_league"] = _round(sum(recent_league) / len(recent_league), 2)
             result["game_log_latest"] = [
-                {k: r.get(k) for k in ("week", "opponent", "is_home", "fantasy_points_ppr", "targets", "receptions", "receiving_yards", "carries", "rushing_yards", "passing_yards", "passing_tds", "rushing_tds", "receiving_tds", "offense_pct", "target_share")}
+                {**{k: r.get(k) for k in ("week", "opponent", "is_home", "fantasy_points_ppr", "targets", "receptions", "receiving_yards", "carries", "rushing_yards", "passing_yards", "passing_tds", "rushing_tds", "receiving_tds", "offense_pct", "target_share")},
+                 **({"league_points": lw[int(r["week"])]} if int(r["week"]) in lw else {})}
                 for r in sorted(by_season[latest_season], key=lambda r: int(r["week"]), reverse=True)[:8]
             ]
+            if lw:
+                result["scoring_note"] = "ppg_league and league_points are this league's own scoring; quote those, not the generic PPR figures"
         return result
 
 
