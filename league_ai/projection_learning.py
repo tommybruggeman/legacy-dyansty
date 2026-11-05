@@ -270,8 +270,6 @@ def learn(weeks: list[Mapping[str, Any]]) -> dict[str, Any]:
         active = choose(errs, team_gain, i)
         history.append({"season": wk["season"], "week": wk["week"], "active": list(active)})
     ks = {s: round(sums[s][0] / (sums[s][1] + RIDGE), 4) for s in SIGNALS}
-    print(f"[projections] usage rows {sum(1 for w in weeks for r in w['rows'] if r.get('actual') is not None and (w.get('post') or {}).get('opps', {}).get(r['id']))}, "
-          f"rate {dict((p, round(v[0] / v[1], 3)) for p, v in rate.items() if v[1])}, k {ks.get('usage')}, graded weeks {len(errs.get('usage', []))}", flush=True)
     signals = []
     for s, (label, positions, _) in SIGNALS.items():
         recent = [g for _, g, _ in errs[s][-WINDOW_WEEKS:]]
@@ -386,7 +384,7 @@ def context(data: Mapping[str, Any], season: int, week: int, games: Mapping[str,
     share: dict[str, list[float]] = defaultdict(list)
     opps: dict[str, list[float]] = defaultdict(list)
     team_of: dict[str, str] = {}
-    pos_of: dict[str, str] = {}
+    sid_pos: dict[str, str] = {}
     att: dict[tuple[str, str], float] = defaultdict(float)
     for r in sorted(prior, key=lambda r: int(_f(r.get("week")))):
         sid = str(r.get("sleeper_id") or "")
@@ -398,7 +396,7 @@ def context(data: Mapping[str, Any], season: int, week: int, games: Mapping[str,
             share[sid].append(_f(r["target_share"]))
         opps[sid].append(_f(r.get("carries")) + _f(r.get("targets")) + _f(r.get("attempts")))
         team_of[sid] = r.get("team") or team_of.get(sid, "")
-        pos_of[sid] = str(r.get("position") or "").upper()
+        sid_pos[sid] = str(r.get("position") or "").upper()
         if str(r.get("position") or "").upper() == "QB":
             att[(r.get("team") or "", sid)] += _f(r.get("attempts"))
     main_qb: dict[str, tuple[float, str]] = {}
@@ -429,7 +427,7 @@ def context(data: Mapping[str, Any], season: int, week: int, games: Mapping[str,
                     rz_xtd[sid] = x
     implied_vals = list(implied.values())
     ctx = {"implied": implied, "lg_implied": sum(implied_vals) / len(implied_vals) if implied_vals else None, "spread": spread,
-           "wind": wind, "status": status, "snaps": dict(snaps), "freed_share": dict(freed), "qb_out": qb_out, "opps": {k: v[-4:] for k, v in opps.items()}, "pos_of": pos_of,
+           "wind": wind, "status": status, "snaps": dict(snaps), "freed_share": dict(freed), "qb_out": qb_out, "opps": {k: v[-4:] for k, v in opps.items()}, "pos_of": sid_pos,
            "rz_xtd": rz_xtd, "rz_avg": rz_avg}
     pct = {str(r["sleeper_id"]): _f(r.get("offense_pct")) for r in this if r.get("sleeper_id")}
     week_att: dict[str, tuple[float, str]] = {}

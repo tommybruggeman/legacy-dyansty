@@ -80,3 +80,11 @@ def test_usage_signal_compares_our_usage_projection_with_the_calibrated_one():
     assert own == {"a": 6.6}   # 11 opportunities a game x 0.6 points each; b has only one game
     xs = pl.signal_x({"id": "a", "pos": "RB", "team": "A", "cal": 11.0}, {**ctx, "own": own})
     assert abs(xs["usage"] - (6.6 / 11.0 - 1)) < 1e-9
+
+
+def test_usage_survives_play_by_play_being_loaded():
+    stats = [{"gsis_id": "g1", "sleeper_id": "a", "week": w, "team": "A", "position": "RB", "offense_pct": 0.6, "carries": 15, "targets": 3}
+             for w in range(1, 5)]
+    plays = [{"week": 1, "yardline_100": 5, "rush": 1, "rusher_player_id": "g1", "rush_touchdown": 1}]
+    ctx, _ = pl.context({"stats": stats, "games": [], "injuries": [], "plays": plays}, 2026, 4, {})
+    assert ctx["pos_of"] == {"a": "RB"} and pl.own_projections(ctx, {"RB": [600.0, 1000.0]}) == {"a": 10.8}
