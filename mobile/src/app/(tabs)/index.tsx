@@ -89,12 +89,15 @@ function Eyebrow({ children, right }: { children: string; right?: ReactNode }) {
   );
 }
 
-function Badges({ items }: { items: [string, string][] }) {
+// A third 'proj' entry draws the value smaller, grey and on one line (a projection, not a score).
+type Badge = [string, string] | [string, string, 'proj'];
+
+function Badges({ items }: { items: Badge[] }) {
   return (
     <View style={styles.badges}>
-      {items.map(([value, label]) => (
+      {items.map(([value, label, kind]) => (
         <View key={label} style={styles.badge}>
-          <Text style={styles.badgeValue}>{value}</Text>
+          <Text style={[styles.badgeValue, kind === 'proj' && styles.badgeProj]} numberOfLines={1} adjustsFontSizeToFit>{value}</Text>
           <Text style={styles.badgeLabel}>{label}</Text>
         </View>
       ))}
@@ -122,7 +125,7 @@ function SplitOdds({ odds }: { odds: [number, number] }) {
 // final: the matchup is over, so a gold WINNER tag sits under the winning score (the losing score is already dimmed).
 function Hero({ title, pill, me, them, week, matchupId, meLabel, themLabel, badges, showScores = true, proj, odds, final = false }: {
   title: string; pill?: ReactNode; me: HomeSide; them?: HomeSide | null; week: number; matchupId?: number;
-  meLabel?: string; themLabel?: string; badges: [string, string][]; showScores?: boolean; proj?: [number, number] | null;
+  meLabel?: string; themLabel?: string; badges: Badge[]; showScores?: boolean; proj?: [number, number] | null;
   odds?: [number, number] | null; final?: boolean;
 }) {
   const total = me.score + (them?.score ?? 0);
@@ -487,7 +490,7 @@ function PreGameHero({ data, title, kickoff }: { data: HomeData; title: string; 
       showScores={false}
       badges={[
         [pts(g.me!.score), 'YOU'],
-        [proj ? `${proj[0].toFixed(1)} – ${proj[1].toFixed(1)}` : '—', 'PROJECTED'],
+        [proj ? `${proj[0].toFixed(1)} – ${proj[1].toFixed(1)}` : '—', 'PROJECTED', 'proj'],
         [g.them ? pts(g.them.score) : '—', them],
       ]}
     />
@@ -748,6 +751,7 @@ const styles = StyleSheet.create({
   badges: { flexDirection: 'row', gap: 8, marginTop: 12 },
   badge: { flex: 1, backgroundColor: colors.row, borderRadius: 12, paddingVertical: 8, paddingHorizontal: 4, alignItems: 'center' },
   badgeValue: { color: colors.text, fontSize: 17, fontWeight: '800' },
+  badgeProj: { color: colors.muted, opacity: 0.75, fontSize: 13, fontWeight: '600', lineHeight: 21 },
   badgeLabel: { color: colors.muted, fontSize: 10, fontWeight: '700', letterSpacing: 0.6, marginTop: 2, textAlign: 'center' },
   heads: { flexDirection: 'row', gap: 10, marginTop: 12 },
   head: { flex: 1, alignItems: 'center' },
