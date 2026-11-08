@@ -6,7 +6,7 @@ import { GameDayBottom, Scoreboard } from '../../components/home/GameDayBottom';
 import { Avatar, Headshot, type Ring } from '../../components/Pictures';
 import { ErrorState, Loading } from '../../components/ScreenState';
 import { Bar, Card, Pill, Screen, firstName, money, ordinal, record, ui } from '../../components/ui';
-import { type BoxScore, type HomeData, type HomeSide, type LivePlayer, type RaceRow, type RookieDeal, type TableRow, apiSend, prefetch, useApi } from '../../lib/api';
+import { type BoxScore, type HomeData, type HomeSide, type LivePlayer, type RaceRow, type RookieDeal, type TableRow, apiSend, LIVE_POLL_MS, prefetch, useApi } from '../../lib/api';
 import { syncLiveActivity } from '../../lib/liveActivity';
 import { colors } from '../../lib/theme';
 
@@ -25,8 +25,8 @@ const pts = (n: number) => n.toFixed(1);
 
 export default function Home() {
   const [live, setLive] = useState(false);
-  // Game days refresh every minute while Home is open.
-  const { data, error, loading, reload, refresh } = useApi<HomeData>('/home', live ? 60_000 : 0);
+  // Game days refresh every 10 seconds while Home is open.
+  const { data, error, loading, reload, refresh } = useApi<HomeData>('/home', live ? LIVE_POLL_MS : 0);
   const isLive = data?.phase === 'game_day' || data?.phase === 'playoffs';
   useEffect(() => setLive(isLive), [isLive]);
   // Game days: start or refresh the lock screen Live Activity for my matchup (iPhone only).
@@ -167,7 +167,7 @@ function Hero({ title, pill, me, them, week, matchupId, meLabel, themLabel, badg
 function useMatchupProj(data: HomeData) {
   const g = data.game!;
   const final = !!g.is_final;
-  const { data: box } = useApi<BoxScore>(`/matchups/${data.week}/${g.matchup_id}`, final ? 0 : 60_000);
+  const { data: box } = useApi<BoxScore>(`/matchups/${data.week}/${g.matchup_id}`, final ? 0 : LIVE_POLL_MS);
   const sides = box?.teams ?? [];
   const mine = box ? sides.findIndex((t) => t.roster_id === g.me!.roster_id) : -1;
   const proj: [number, number] | null = !final && mine >= 0 && sides.length === 2
