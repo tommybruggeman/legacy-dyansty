@@ -111,6 +111,31 @@ AccuracySec=15s
 WantedBy=timers.target
 UNIT
 
+# Lock screen Live Activities: always on (GitHub's game-window schedule started it up to 4 hours late). With no
+# activity running it checks Supabase once a minute; with one, every 15 seconds. Same env file as the alerts.
+cat > /etc/systemd/system/legacy-live-activity.service <<UNIT
+[Unit]
+Description=Legacy Dynasty lock screen Live Activity watcher
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/etc/legacy-alerts.env
+Environment=MAX_MINUTES=1500 INTERVAL=15
+WorkingDirectory=$APP
+ExecStartPre=-/usr/bin/git -C $APP pull --ff-only --quiet
+ExecStart=$APP/.venv/bin/python scripts/live_activity_watcher.py
+Restart=always
+RestartSec=20
+MemoryMax=450M
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+# The daily 9:00 UTC update restarts it too, so it runs the latest code.
+sed -i 's|^ExecStart=/bin/systemctl restart legacy-watcher.service$|ExecStart=/bin/systemctl restart legacy-watcher.service legacy-live-activity.service|' \
+  /etc/systemd/system/legacy-watcher-update.service
+
 systemctl daemon-reload
-systemctl enable --now legacy-watcher.service legacy-watcher-update.timer legacy-alerts.timer
-systemctl restart legacy-watcher.service
+systemctl enable --now legacy-watcher.service legacy-watcher-update.timer legacy-alerts.timer legacy-live-activity.service
+systemctl restart legacy-watcher.service legacy-live-activity.service

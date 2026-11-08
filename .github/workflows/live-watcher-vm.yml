@@ -1,7 +1,7 @@
 name: Live stats watcher VM
 
 # Creates (or refreshes) the free Google e2-micro that runs the main game-day live stats watcher all season,
-# and the owners' push alerts every 5 minutes.
+# the owners' push alerts every 5 minutes, and the lock screen Live Activity watcher.
 # Always-free tier: one e2-micro in us-central1 with a 30 GB standard disk. The Supabase settings go to Google
 # Secret Manager from this repo's secrets (nobody pastes a key), and the VM reads them at boot
 # (deploy/live-watcher/startup.sh). Safe to run again: it updates the secrets and restarts the watcher.
@@ -67,4 +67,4 @@ jobs:
             if echo "$out" | grep -q "startup-script exit status"; then break; fi
             sleep 30
           done
-          echo "$out" | grep -oE "startup-script exit status [0-9]+|live watcher \((main|backup)\) started|Started legacy-watcher.service[^ ]*|Started legacy-alerts.timer[^ ]*" | sort | uniq -c
+          echo "$out" | grep -oE "startup-script exit status [0-9]+|live watcher \((main|backup)\) started|Started legacy-watcher.service[^ ]*|Started legacy-alerts.timer[^ ]*|Started legacy-live-activity.service[^ ]*" | sort | uniq -c
