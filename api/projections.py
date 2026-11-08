@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any, Iterable
 
 from api import cache, sleeper
+from league_ai.first_downs import adjust_with_card as adjust_first_downs
 from league_ai.projection_calibration import calibrate as calibrate_points, calibration as projection_calibration
 from league_ai.nfl_data import add_weather, defense_vs_position, season_games, team_code, total_multiplier, week_matchups
 
@@ -150,7 +151,7 @@ def week_projections(client: Any, sleeper_id: str, season: int, week: int, ids: 
         if not line:
             continue
         pos = positions.get(pid) or line.get("pos") or ""
-        base = score(line["stats"], scoring, pos)
+        base = score(adjust_first_downs(cal.get("first_downs"), pid, pos, line["stats"]), scoring, pos)   # our own first downs
         team = team_code(teams.get(pid) or line.get("team"))
         game = games.get(team)
         if game is None and games:

@@ -214,6 +214,7 @@ def calibration(client: Any, sleeper_id: str, season: int) -> dict[str, dict[str
         return {"factors": {str(k): float(v) for k, v in (card.get("factors") or {}).items()},
                 "lines": {str(k): [float(x) for x in v] for k, v in (card.get("lines") or {}).items() if v and len(v) == 2},
                 "lines_played": {str(k): [float(x) for x in v] for k, v in (card.get("lines_played") or {}).items() if v and len(v) == 2},
+                "first_downs": card.get("first_downs") or {},
                 "adjust": card.get("adjust") or {}}
 
     if client is None:
@@ -270,7 +271,7 @@ def _td_points(stats: Mapping[str, Any] | None, scoring: Mapping[str, Any]) -> f
 
 
 def week_rows(client: Any, season: int, week: int, scoring: Mapping[str, Any], stats_rows: list[dict[str, Any]],
-              games_all: list[dict[str, Any]], actual: bool = True) -> list[dict[str, Any]]:
+              games_all: list[dict[str, Any]], actual: bool = True, fd: Any = None) -> list[dict[str, Any]]:
     """Every projected player's raw and matchup-tilted projection (as the app makes them, before calibration), and his
     real score when actual=True. The defense ratings use only games played before the week."""
     from api.projections import score
@@ -288,13 +289,14 @@ def week_rows(client: Any, season: int, week: int, scoring: Mapping[str, Any], s
     out = []
     for pid, line in proj.items():
         pos = str(line.get("pos") or "").upper()
-        raw = score(line.get("stats"), dict(scoring), pos)
+        stats = fd.adjust(str(pid), pos, line.get("stats")) if fd is not None else line.get("stats")   # our own first downs
+        raw = score(stats, dict(scoring), pos)
         if raw <= 0:
             continue
         game = games.get(team_code(line.get("team")))
         tilt = total_multiplier(pos, game, dvp.get((game["opponent"], pos)) if game else None) if pos in SKILL and game else 1.0
         row = {"id": str(pid), "pos": pos, "team": team_code(line.get("team")), "raw": raw, "shown": raw * tilt, "actual": None,
-               "td_proj": _td_points(line.get("stats"), scoring)}
+               "td_proj": _td_points(stats, scoring)}
         if actual:
             real = lines.get(pid)
             row["actual"] = score(real.get("stats"), dict(scoring), real.get("pos") or pos) if real else 0.0
@@ -302,6 +304,9 @@ def week_rows(client: Any, season: int, week: int, scoring: Mapping[str, Any], s
             row["played"] = bool(st.get("gp") or st.get("off_snp") or (pos in ("K", "DEF") and row["actual"]))
             row["td_act"] = _td_points((real or {}).get("stats"), scoring)
         out.append(row)
+    if fd is not None and actual:   # learn first-down rates from this week only after it's been projected
+        for pid, real in lines.items():
+            fd.add(str(pid), str(real.get("pos") or (proj.get(pid) or {}).get("pos") or ""), real.get("stats"))
     return out
 
 
@@ -339,7 +344,10 @@ def run_league(client: Any, league_id: str, sleeper_league_id: str, learn: bool 
     scoring = {int(l["season"]): l.get("scoring_settings") or {} for l in league_chain(sleeper_league_id) if l.get("season")}
     lineups = _lineups(client, league_id)
     snaps = _snapshots(client, league_id)
+    from league_ai.first_downs import FirstDowns
+
     weeks = []
+    fd = FirstDowns()   # walk-forward: each week is projected with rates from the weeks before it
     for season in sorted({s for s, _ in lineups}):
         sc = scoring.get(season) or next(iter(scoring.values()), {})
         stats_rows, games_all = season_stat_rows(client, season), season_games(client, season)
@@ -348,11 +356,13 @@ def run_league(client: Any, league_id: str, sleeper_league_id: str, learn: bool 
         for week in sorted(w for s, w in lineups if s == season):
             if games_all and week not in done:
                 continue   # only weeks whose games are all final
-            rows = week_rows(client, season, week, sc, stats_rows, games_all)
+            rows = week_rows(client, season, week, sc, stats_rows, games_all, fd=fd)
             if rows:
                 weeks.append({"season": season, "week": week, "rows": rows, "lineups": lineups[(season, week)],
                               "snapshot": (snaps.get(f"{season}-{week}") or {}).get("projections")})
     out = replay(weeks)
+    if out:
+        out["first_downs"] = fd.to_card()
     if out and learn:
         try:
             out.update(_learn(client, weeks, out, scoring))
@@ -386,7 +396,14 @@ def _learn(client: Any, weeks: list[dict[str, Any]], card_: Mapping[str, Any], s
     week = current_week_from_games(games_all)
     if week and learned.get("active"):
         sc = scoring.get(cur_season) or next(iter(scoring.values()), {})
-        rows = week_rows(client, cur_season, week, sc, season_stat_rows(client, cur_season), games_all, actual=False)
+        from league_ai.first_downs import adjust_with_card
+
+        class _SavedFirstDowns:   # this week's rows use the first-down rates just learned, like the app
+            def adjust(self, pid: str, pos: str, stats: Any) -> dict[str, Any]:
+                return adjust_with_card(card_.get("first_downs"), pid, pos, stats)
+
+        rows = week_rows(client, cur_season, week, sc, season_stat_rows(client, cur_season), games_all, actual=False,
+                         fd=_SavedFirstDowns())
         for r in rows:
             r["cal"] = calibrate(r["shown"], r["pos"], card_.get("factors") or {}, card_.get("lines"))
         try:
