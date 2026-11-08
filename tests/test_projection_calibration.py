@@ -75,3 +75,12 @@ def test_replay_saves_lines_and_uses_them_for_skill_positions():
     assert b < 1 and pc.line_points(20, (a, b)) < 20
     assert pc.calibrate(20, "RB", out["factors"], out["lines"]) == pc.line_points(20, out["lines"]["RB"])
     assert pc.calibrate(8, "K", {"K": 1.1}, out["lines"]) == 8 * 1.1   # kickers keep the position factor
+
+
+def test_played_lines_leave_out_players_who_never_got_in():
+    rows = lambda w: [{**_row("a", "WR", 15, 15), "played": True}, {**_row("b", "WR", 10, 10), "played": True},
+                      {**_row("c", "WR", 15, 0), "played": False}]   # a scratch: 0 points
+    out = pc.replay([_week(2026, w, rows(w)) for w in range(1, 11)])
+    all_line, played = out["lines"]["WR"], out["lines_played"]["WR"]
+    assert pc.line_points(15, played) > pc.line_points(15, all_line)
+    assert abs(pc.line_points(15, played) - 15) < 1.0

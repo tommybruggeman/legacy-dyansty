@@ -27,7 +27,9 @@ def main(argv: list[str]) -> int:
     current = league.current_week()
     seasons = (client.table("league_seasons").select("league_id,season,sleeper_league_id")
                .eq("is_active", True).eq("season", 2026).execute().data or [])
-    weeks = [int(a) for a in argv] or [current - 1, current]
+    args = [a for a in argv if a != "--all"]
+    weeks = [int(a) for a in args] or (list(range(1, current + 1)) if "--all" in argv else [current - 1, current])
+    every_player = "--all" in argv
     for s in seasons:
         sid = s["sleeper_league_id"]
         scoring = load_settings(client, s["league_id"]).scoring_settings or (sleeper.raw(f"league/{sid}") or {}).get("scoring_settings") or {}
@@ -39,7 +41,7 @@ def main(argv: list[str]) -> int:
             rows = sleeper.raw(f"league/{sid}/matchups/{week}") or []
             keys_n, keys_pts, kinds = Counter(), defaultdict(float), Counter()
             n_diff, total = 0, 0.0
-            starters = {str(p) for r in rows for p in (r.get("starters") or []) if p and str(p) != "0"}
+            starters = {str(p) for r in rows for p in ((r.get("players") if every_player else r.get("starters")) or []) if p and str(p) != "0"}
             sleeper_pts = {str(p): float(v or 0) for r in rows for p, v in (r.get("players_points") or {}).items()}
             for pid in starters:
                 line = ours.get(pid)
@@ -48,6 +50,8 @@ def main(argv: list[str]) -> int:
                 if abs(gap) < 0.005:
                     continue
                 n_diff += 1
+                bucket = "under 1" if abs(gap) < 1 else "1-3" if abs(gap) < 3 else "3+"
+                kinds[f"size {bucket}"] += 1
                 total += gap
                 src = "official" if pid in official else "live" if pid in live else "sleeper-stats" if pid in theirs else "none"
                 pos = (line or {}).get("pos") or (theirs.get(pid) or {}).get("pos") or "?"

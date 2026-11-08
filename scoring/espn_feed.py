@@ -43,6 +43,21 @@ def team_code(team: Mapping[str, Any] | None) -> str:
     return ESPN_TEAMS.get(code, code)
 
 
+def points_allowed(board: Mapping[str, Any] | None) -> dict[str, float]:
+    """Our team id -> points its defense allowed (the opponent's score), for every game on a scoreboard."""
+    out: dict[str, float] = {}
+    for event in (board or {}).get("events") or []:
+        sides = ((event.get("competitions") or [{}])[0]).get("competitors") or []
+        if len(sides) != 2:
+            continue
+        a, b = sides
+        for me, them in ((a, b), (b, a)):
+            score = _num(them.get("score"))
+            if score is not None:
+                out[team_code(me.get("team"))] = score
+    return out
+
+
 def _num(text: Any) -> float | None:
     try:
         return float(str(text).replace(",", ""))

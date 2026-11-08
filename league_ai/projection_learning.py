@@ -111,6 +111,17 @@ def _wind(r: Mapping[str, Any], c: Mapping[str, Any]) -> float:
     return max(0.0, c["wind"].get(r["team"], 0.0) - 12.0) / 10.0
 
 
+def _conditions(r: Mapping[str, Any], c: Mapping[str, Any]) -> float:
+    """The fitted weather and game situation effect already in the projection (league_ai.game_conditions): a positive
+    k means the conditions matter more than the 2021-25 fit says, a negative one less."""
+    return _f(r.get("cond") or 1.0) - 1.0
+
+
+def _returning(r: Mapping[str, Any], c: Mapping[str, Any]) -> float:
+    """First game back after missing games (not counting a bye): 1 for one missed game, 2 for two or more."""
+    return float(min(2, (c.get("missed") or {}).get(r["id"], 0)))
+
+
 SIGNALS: dict[str, tuple[str, tuple[str, ...], Callable[[Mapping[str, Any], Mapping[str, Any]], float]]] = {
     "vegas_total": ("Vegas team total", SKILL + ("K",), _vegas),
     "questionable": ("listed questionable", SKILL, _questionable),
@@ -123,6 +134,8 @@ SIGNALS: dict[str, tuple[str, tuple[str, ...], Callable[[Mapping[str, Any], Mapp
     "usage": ("recent usage (carries, targets, attempts)", SKILL, _usage),
     "rz_vs_proj": ("red zone role vs projected TDs", ("RB", "WR", "TE"), _rz_vs_proj),
     "rz_role": ("red zone role", ("RB", "WR", "TE"), _rz_role),
+    "conditions": ("weather and game situation", SKILL + ("K",), _conditions),
+    "returning": ("first game back after missing games", SKILL, _returning),
 }
 
 # cause -> (label, the signals that cover it; None = luck, never a gap)
@@ -134,7 +147,7 @@ CAUSES: dict[str, tuple[str, tuple[str, ...] | None]] = {
     "td_swing": ("touchdowns (red zone role)", ("rz_vs_proj", "rz_role")),
     "blowout": ("blowout game script", ("script_run", "script_pass")),
     "offense": ("offense far off its Vegas total", ("vegas_total",)),
-    "weather": ("wind", ("wind",)),
+    "weather": ("wind", ("wind", "conditions")),
     "qb_change": ("different QB", ("backup_qb",)),
     "unexplained": ("no clear cause (variance)", None),
 }
@@ -425,9 +438,23 @@ def context(data: Mapping[str, Any], season: int, week: int, games: Mapping[str,
                 x = rz.expected_tds(g, rz_avg[pos_of[g]])
                 if x is not None:
                     rz_xtd[sid] = x
+    # games missed right before this week (byes don't count): only for players who played earlier this season
+    from league_ai.nfl_data import bye_weeks_from_games
+
+    byes = bye_weeks_from_games(data.get("games") or [])
+    last: dict[str, int] = {}
+    for r in prior:
+        sid = str(r.get("sleeper_id") or "")
+        if sid and (_f(r.get("offense_pct")) > 0 or _f(r.get("attempts")) + _f(r.get("carries")) + _f(r.get("targets")) > 0):
+            last[sid] = max(last.get(sid, 0), int(_f(r.get("week"))))
+    missed = {}
+    for sid, w in last.items():
+        gap = week - w - 1 - (1 if w < byes.get(team_of.get(sid, ""), 0) < week else 0)
+        if gap >= 1:
+            missed[sid] = gap
     implied_vals = list(implied.values())
     ctx = {"implied": implied, "lg_implied": sum(implied_vals) / len(implied_vals) if implied_vals else None, "spread": spread,
-           "wind": wind, "status": status, "snaps": dict(snaps), "freed_share": dict(freed), "qb_out": qb_out, "opps": {k: v[-4:] for k, v in opps.items()}, "pos_of": sid_pos,
+           "wind": wind, "status": status, "snaps": dict(snaps), "freed_share": dict(freed), "qb_out": qb_out, "opps": {k: v[-4:] for k, v in opps.items()}, "pos_of": sid_pos, "missed": missed,
            "rz_xtd": rz_xtd, "rz_avg": rz_avg}
     pct = {str(r["sleeper_id"]): _f(r.get("offense_pct")) for r in this if r.get("sleeper_id")}
     week_att: dict[str, tuple[float, str]] = {}

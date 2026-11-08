@@ -339,8 +339,9 @@ def remaining(status: str, projected: float, kickoff: datetime | None, now: date
 
 
 def team_live(rows: list[dict[str, Any]], info: dict[str, dict[str, Any]], starts: dict[str, datetime], now: datetime,
-              projections: dict[str, float]) -> dict[int, dict[str, Any]]:
-    """roster_id -> score now, starters left to play, and the projected rest of the week."""
+              projections: dict[str, float], active: dict[str, float] | None = None) -> dict[int, dict[str, Any]]:
+    """roster_id -> score now, starters left to play, and the projected rest of the week. active: the in-game
+    projection for players already in their game (no "might not play" discount)."""
     out: dict[int, dict[str, Any]] = {}
     for row in rows:
         rid = row.get("roster_id")
@@ -348,8 +349,8 @@ def team_live(rows: list[dict[str, Any]], info: dict[str, dict[str, Any]], start
             continue
         players = lineup(row, info, starts, now)
         left = [p for p in players if p["status"] in ("waiting", "playing")]
-        rest = sum(remaining(p["status"], projections.get(p["player_id"] or "", 0.0),
-                             starts.get(p["team"]), now) for p in left)
+        rest = sum(remaining(p["status"], ((active or {}) if p["status"] == "playing" else {}).get(p["player_id"] or "")
+                             or projections.get(p["player_id"] or "", 0.0), starts.get(p["team"]), now) for p in left)
         score = _f(team_points(row))
         out[int(rid)] = {"score": score, "left": len(left), "playing": sum(p["status"] == "playing" for p in left),
                          "rest": round(rest, 2), "projected": round(score + rest, 1)}

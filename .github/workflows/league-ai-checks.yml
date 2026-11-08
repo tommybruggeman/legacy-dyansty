@@ -11,20 +11,28 @@ on:
       check:
         description: Which check to run
         type: choice
+<<<<<<< HEAD
         options: [odds_backtest, odds_trial, odds_grade, start_sit_grade, practice_test, weekly_cards, shadow_scoring, live_projection_study, espn_feed_check, final_scores_check, projection_accuracy, projection_calibration, win_odds_study, trade_backtest, answer_eval, fd_check, own_scores_check, score_gaps]
+=======
+        options: [odds_backtest, odds_trial, odds_grade, start_sit_grade, practice_test, weekly_cards, shadow_scoring, live_projection_study, espn_feed_check, final_scores_check, projection_accuracy, projection_calibration, win_odds_study, trade_backtest, answer_eval, fd_check, own_scores_check, projection_by_stat, weather_study]
+>>>>>>> origin/main
         default: odds_backtest
 
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
       - run: pip install supabase requests pandas
+<<<<<<< HEAD
       - if: inputs.check == 'start_sit_grade' || inputs.check == 'practice_test' || inputs.check == 'weekly_cards' || inputs.check == 'projection_accuracy' || inputs.check == 'projection_calibration' || inputs.check == 'win_odds_study' || inputs.check == 'trade_backtest' || inputs.check == 'answer_eval' || inputs.check == 'own_scores_check' || inputs.check == 'score_gaps'
+=======
+      - if: inputs.check == 'start_sit_grade' || inputs.check == 'practice_test' || inputs.check == 'weekly_cards' || inputs.check == 'projection_accuracy' || inputs.check == 'projection_calibration' || inputs.check == 'win_odds_study' || inputs.check == 'trade_backtest' || inputs.check == 'answer_eval' || inputs.check == 'own_scores_check' || inputs.check == 'projection_by_stat' || inputs.check == 'weather_study'
+>>>>>>> origin/main
         run: pip install -r api/requirements.txt
       - if: inputs.check == 'live_projection_study'
         run: pip install pyarrow numpy
@@ -53,11 +61,15 @@ jobs:
             # our own scores (every week, our stat lines) vs Sleeper's: totals that differ, winner flips (saves nothing)
             own_scores_check) python -m scripts.own_scores_check ;;
             # why our scores differ from Sleeper's: stat keys behind each starter's gap, last 2 weeks (saves nothing)
-            score_gaps) python -m scripts.score_gaps ;;
+            score_gaps) python -m scripts.score_gaps --all ;;
             # weekly projections vs real scores, and whether learned corrections would help (saves nothing)
             projection_accuracy) python -m scoring.projection_accuracy ;;
             # the daily projection calibration (factors + accuracy card) without saving anything
+            # where the projection runs high, stat by stat (saves nothing)
+            projection_by_stat) python -m scoring.projection_by_stat ;;
             projection_calibration) python -m league_ai.projection_calibration --dry-run ;;
+            # how weather (wind, rain, snow, heat/cold by team climate) moves scoring against the projection
+            weather_study) python -m scoring.weather_study ;;
             # which pregame team projection gives the best weekly win odds (saves nothing)
             win_odds_study) python -m scoring.win_odds_study ;;
             # the trade engine on every completed trade: valuation variants, cap dollar and extra-body share (saves nothing)
