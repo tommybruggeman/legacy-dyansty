@@ -11,7 +11,7 @@ on:
       check:
         description: Which check to run
         type: choice
-        options: [odds_backtest, odds_trial, odds_grade, start_sit_grade, practice_test, weekly_cards, shadow_scoring, live_projection_study, espn_feed_check, final_scores_check, projection_accuracy, projection_calibration, win_odds_study, trade_backtest, answer_eval, own_scores_check]
+        options: [odds_backtest, odds_trial, odds_grade, start_sit_grade, practice_test, weekly_cards, shadow_scoring, live_projection_study, espn_feed_check, final_scores_check, projection_accuracy, projection_calibration, win_odds_study, trade_backtest, answer_eval, fd_check, own_scores_check]
         default: odds_backtest
 
 jobs:
@@ -62,5 +62,7 @@ jobs:
             trade_backtest) python -m league_ai.trade_backtest ;;
             # PAID (about $4): 20 real questions answered and graded (facts, rubric), trade/contract ones also by Opus with a blind judge
             answer_eval) EVAL_BUDGET=4 EVAL_COMPARE=claude-opus-5-5 python -m league_ai.answer_eval ;;
+            # first downs read from ESPN's play by play vs Sleeper's, game by game, for last week (prints the plays behind each gap)
+            fd_check) python -m scoring.fd_debug ;;
             *) python -m league_ai.playoff_odds ;;
           esac

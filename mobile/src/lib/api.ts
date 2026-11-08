@@ -1,6 +1,6 @@
 import { fetch as streamingFetch } from 'expo/fetch';
 import { useFocusEffect } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppState } from 'react-native';
 
@@ -122,6 +122,9 @@ export async function refreshPage() {
   await Promise.all([...onPage].map((reload) => reload()));
 }
 
+// How often a page with live games re-fetches while it's open (one number for every live page).
+export const LIVE_POLL_MS = 10_000;
+
 // refreshEvery (ms) quietly re-fetches while the screen is open and the app
 // is in front, e.g. live scores. Pass 0 to stop.
 export function useApi<T>(path: string, refreshEvery = 0) {
@@ -166,14 +169,25 @@ export function useApi<T>(path: string, refreshEvery = 0) {
     }, [load]),
   );
 
+  // Live pages also catch up the moment you come back to them (another tab, or the app returning to the
+  // front), instead of showing old scores until the next tick. The first focus on a path skips it: the load above runs.
+  const seen = useRef<string | null>(null);
   useFocusEffect(
     useCallback(() => {
       if (!refreshEvery) return undefined;
+      if (seen.current === path) load(true);
+      seen.current = path;
       const timer = setInterval(() => {
         if (AppState.currentState === 'active') load(true);
       }, refreshEvery);
-      return () => clearInterval(timer);
-    }, [load, refreshEvery]),
+      const wake = AppState.addEventListener('change', (state) => {
+        if (state === 'active') load(true);
+      });
+      return () => {
+        clearInterval(timer);
+        wake.remove();
+      };
+    }, [load, path, refreshEvery]),
   );
 
   // Stable across renders, so screens can list it in effect dependencies.
