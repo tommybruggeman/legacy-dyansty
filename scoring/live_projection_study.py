@@ -165,6 +165,12 @@ def main() -> None:
         return features(d.drop(columns=["opp", "left", "ppo", "recent", "cold", "pts_rate", "opp_rate"]))
 
     train_c, test_c = rebase(train), rebase(test)
+    # the lines the app used through 2026 week 8 (calibration card), fit on every projected player incl. those who
+    # didn't play: they carry a "might not play" discount that no longer applies once a player is in the game
+    app_lines = {"QB": (4.812, 0.693), "RB": (0.624, 0.782), "WR": (0.248, 0.823), "TE": (0.94, 0.77)}
+    test_a = test.copy()
+    test_a["P"] = test_a.apply(lambda r: max(0.0, app_lines[r.position][0] + app_lines[r.position][1] * r.P), axis=1)
+    test_a = features(test_a.drop(columns=["opp", "left", "ppo", "recent", "cold", "pts_rate", "opp_rate"]))
     print("[study] PREGAME vs final, test season: " + ", ".join(
         f"{pos} sleeper bias {float((one[(one.position == pos) & (one.season == TEST_SEASON)].f_pts - one[(one.position == pos) & (one.season == TEST_SEASON)].P).mean()):+.2f} "
         f"mae {float((one[(one.position == pos) & (one.season == TEST_SEASON)].f_pts - one[(one.position == pos) & (one.season == TEST_SEASON)].P).abs().mean()):.2f} / ours mae "
@@ -175,10 +181,11 @@ def main() -> None:
         tr, te = train[train.position == pos], test[test.position == pos]
         trc, tec = train_c[train_c.position == pos], test_c[test_c.position == pos]
         preds = {"sleeper base: pts + proj x left": te.pts + te.left * te.P,
-                 "ours (app now): pts + cal x left": tec.pts + tec.left * tec.P,
-                 "ours + pace (no fit)": tec.pts + tec.left * tec.pts_rate}
+                 "app now (all-player line) x left": test_a[test_a.position == pos].pts + test_a[test_a.position == pos].left * test_a[test_a.position == pos].P,
+                 "played-player line x left": tec.pts + tec.left * tec.P,
+                 "played line + pace (no fit)": tec.pts + tec.left * tec.pts_rate}
         coef_c = np.linalg.lstsq(design(trc, "full"), (trc.f_pts - trc.pts).to_numpy(), rcond=None)[0]
-        preds["ours + fitted pace/usage/margin"] = tec.pts + design(tec, "full") @ coef_c
+        preds["played line + fitted pace/usage/margin"] = tec.pts + design(tec, "full") @ coef_c
         print(f"[study] {pos} ours fitted coefficients: {[round(float(c), 4) for c in coef_c]}", flush=True)
         for kind in ("clock", "full"):
             coef = np.linalg.lstsq(design(tr, kind), (tr.f_pts - tr.pts).to_numpy(), rcond=None)[0]
