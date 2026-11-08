@@ -64,3 +64,17 @@ def test_overrides_replace_and_drop():
     assert sleeper.get("league/L/matchups/15") == [{"roster_id": 1}]
     sleeper.drop("league/L/")
     assert "league/L/matchups/15" not in str(list(sleeper._overrides))
+
+
+def test_finished_week_keeps_a_dropped_starter():
+    saved = [{"league_team_id": "t1", "week": 15, "slots": [{"slot": "QB", "player_id": "q1"}, {"slot": "WR", "player_id": "w1"}]}]
+    gone = [dict(r, players=[p for p in r["players"] if p != "w1"]) if r["roster_id"] == 1 else r for r in rosters()]
+    res = own_league.build(
+        season=2026, own_from=15, current_week=16,
+        league={"settings": {"playoff_week_start": 15, "playoff_teams": 4, "playoff_round_type": 0}},
+        rosters=gone, team_of_roster={r: f"t{r}" for r in (1, 2, 3, 4, 5)}, saved=saved, scoring=SCORING, slots=SLOTS,
+        sleeper_rows=lambda w: [], lines_for=lines, standings_for=lambda own: [1, 2, 3, 4, 5])
+    week15 = next(r for r in res["weeks"][15] if r["roster_id"] == 1)
+    week16 = next(r for r in res["weeks"][16] if r["roster_id"] == 1)
+    assert week15["starters"] == ["q1", "w1"] and week15["points"] == 6.0  # week 15 stands as played
+    assert week16["starters"] == ["q1", "0"]  # he's gone this week
