@@ -31,7 +31,30 @@ def _top5(rows):
     return {r["roster_id"] for r in ranked[:5]}
 
 
+def _stub_streamlit() -> None:
+    """api.league imports website helpers that import streamlit; the checks runner doesn't install it."""
+    import types
+    from unittest.mock import MagicMock
+    if "streamlit" in sys.modules:
+        return
+    try:
+        import streamlit  # noqa: F401
+        return
+    except ImportError:
+        pass
+
+    def cache(*args, **kwargs):
+        return args[0] if args and callable(args[0]) else (lambda f: f)
+    st = types.ModuleType("streamlit")
+    st.cache_data = st.cache_resource = cache
+    st.session_state = {}
+    st.secrets = {}
+    st.__getattr__ = lambda name: MagicMock()
+    sys.modules["streamlit"] = st
+
+
 def main() -> int:
+    _stub_streamlit()
     from api import league, own_league, sleeper
     from league_ai.settings_store import load_settings
     from pipeline.nfl_data.common import service_client
