@@ -117,7 +117,18 @@ def _league_context(client: Client, user: Any) -> tuple[str, dict[int, str], int
         sleeper_id = league.sleeper_league_id(client, team["league_id"])
     except LookupError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
+    _sync_own_league(client, team["league_id"], sleeper_id)
     return sleeper_id, _roster_names(client, team["league_id"], sleeper_id), team["sleeper_roster_id"]
+
+
+def _sync_own_league(client: Client, league_id: str, sleeper_id: str) -> None:
+    """Refresh the app's own scores (live watcher overlay, or the weeks the app runs itself) before any page reads
+    matchups. Shared and cached 15 s in api.own_league, so pages like Matchups and Standings never show a frozen copy."""
+    try:
+        season = cache.cached(("season", league_id), 600, lambda: SeasonResolver(client).get_active_season(league_id))
+        own_league.sync(client, league_id, sleeper_id, int(season.season))
+    except Exception:
+        pass
 
 
 def _team_ids(client: Client, user: Any) -> dict[int, str]:
@@ -386,10 +397,7 @@ def _season_context(client: Client, user: Any) -> dict[str, Any]:
     if not season.sleeper_league_id:
         raise HTTPException(status_code=409, detail="The active season isn't linked to a Sleeper league yet.")
     sleeper_id = season.sleeper_league_id
-    try:  # weeks the app runs itself (playoffs on) replace Sleeper's matchups for every page below
-        own_league.sync(client, team["league_id"], sleeper_id, int(season.season))
-    except Exception:
-        pass
+    _sync_own_league(client, team["league_id"], sleeper_id)  # our scores replace Sleeper's for every page below
     _process_due_waivers(client, team["league_id"])
     return {
         **team,

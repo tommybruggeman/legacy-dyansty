@@ -75,7 +75,7 @@ export default function Player() {
       : { label: 'Bid', style: styles.pillBid, onPress: data.transactions_enabled ? bid : sleeper };
 
   return (
-    <Screen loading={loading} onRefresh={reload} scrollTo={section === 'health' && stackY != null && healthY != null ? stackY + healthY : null}>
+    <Screen loading={loading} scrollTo={section === 'health' && stackY != null && healthY != null ? stackY + healthY : null}>
       <Back label="Back" />
       <View style={styles.stack} onLayout={(e) => setStackY(e.nativeEvent.layout.y)}>
         <View style={styles.hero}>

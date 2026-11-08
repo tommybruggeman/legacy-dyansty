@@ -32,7 +32,7 @@ export default function MyTeam() {
   if (!data) return null;
 
   return (
-    <Screen loading={loading} onRefresh={reload}>
+    <Screen loading={loading}>
       <TeamView team={data} eyebrow="OWNER PORTAL" badge={<PendingBadge />} top={callsCard} onChange={refresh} />
     </Screen>
   );

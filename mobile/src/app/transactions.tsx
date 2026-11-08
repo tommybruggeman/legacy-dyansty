@@ -66,7 +66,7 @@ export default function TransactionsPage() {
   const counter = (offer: Offer) => router.push({ pathname: '/trade/[teamId]', params: { teamId: offer.partner_team_id, parent: offer.id, give: keys(offer.you_give), get: keys(offer.you_get) } });
 
   return (
-    <Screen loading={loading} onRefresh={reload}>
+    <Screen loading={loading}>
       <Back label="My Team" />
       <Title>Transactions</Title>
       {!data.enabled ? <Note>Trades and bids in the app turn on after the league leaves Sleeper.</Note> : null}

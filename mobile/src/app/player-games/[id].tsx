@@ -32,7 +32,7 @@ export default function PlayerGames() {
   const tiles = data.nfl_season?.tiles ?? [];
 
   return (
-    <Screen loading={loading} onRefresh={reload}>
+    <Screen loading={loading}>
       <Back label={data.name} />
       <View style={styles.stack}>
         <View style={styles.hero}>

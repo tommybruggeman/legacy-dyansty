@@ -24,7 +24,7 @@ export default function ReportCard() {
   const kinds = Object.entries(card.record).slice(0, 2);
 
   return (
-    <Screen loading={loading} onRefresh={reload}>
+    <Screen loading={loading}>
       <Back label="Front Office" />
       <Title>GM report card</Title>
       <Tiles>
