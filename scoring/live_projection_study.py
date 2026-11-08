@@ -185,10 +185,10 @@ def main() -> None:
             preds[f"sleeper base fit: {kind}"] = te.pts + design(te, kind) @ coef
             if kind == "full":
                 coefs[pos] = [round(float(c), 4) for c in coef]
-                resid = te.f_pts - preds["fit: full"]
+                resid = te.f_pts - preds["sleeper base fit: full"]
                 for c in (0.25, 0.5, 0.75, 0.875):
                     sel = te.el == c
-                    rem = (preds["fit: full"] - te.pts)[sel]
+                    rem = (preds["sleeper base fit: full"] - te.pts)[sel]
                     spread.append((pos, c, float(resid[sel].std()), float(rem.mean()), float(np.sqrt(rem.clip(lower=0)).mean())))
         for name, pred in preds.items():
             err = te.f_pts - pred
