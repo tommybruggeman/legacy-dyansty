@@ -115,6 +115,13 @@ export function prefetch(paths: string[]) {
   }
 }
 
+// Pull to refresh: every useApi on the page you're looking at (including the cards inside it) signs up
+// while that page is in view, so one pull reloads everything on it, not just the page's main call.
+const onPage = new Set<() => Promise<void>>();
+export async function refreshPage() {
+  await Promise.all([...onPage].map((reload) => reload()));
+}
+
 // refreshEvery (ms) quietly re-fetches while the screen is open and the app
 // is in front, e.g. live scores. Pass 0 to stop.
 export function useApi<T>(path: string, refreshEvery = 0) {
@@ -150,6 +157,14 @@ export function useApi<T>(path: string, refreshEvery = 0) {
     });
     return () => { live = false; };
   }, [path, load]);
+
+  useFocusEffect(
+    useCallback(() => {
+      const reload = () => load(true);
+      onPage.add(reload);
+      return () => { onPage.delete(reload); };
+    }, [load]),
+  );
 
   useFocusEffect(
     useCallback(() => {

@@ -50,7 +50,7 @@ export default function BidPage() {
   }
 
   return (
-    <Screen loading={loading} onRefresh={reload}>
+    <Screen loading={loading}>
       <Back label="Back" />
       <Title eyebrow={data.free_agency_open ? 'FREE AGENCY · OPEN TODAY' : `BIDS RUN ${data.next_run.toUpperCase()}`}>{data.free_agency_open ? `Add ${who}` : `Bid on ${who}`}</Title>
       <Card>
