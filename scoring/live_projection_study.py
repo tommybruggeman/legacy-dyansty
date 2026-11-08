@@ -131,6 +131,8 @@ def features(s: pd.DataFrame) -> pd.DataFrame:
 def design(d: pd.DataFrame, kind: str) -> np.ndarray:
     if kind == "clock":
         return np.column_stack([d.left * d.P])
+    if kind == "live":   # what the app can compute live (no "quiet lately" term: that needs the play history)
+        return np.column_stack([d.left * d.pts_rate, d.left * d.opp_rate, d.left * d.margin, d.left])
     return np.column_stack([d.left * d.pts_rate, d.left * d.opp_rate, d.left * d.margin, d.left * d.cold * d.P, d.left])
 
 
@@ -186,6 +188,11 @@ def main() -> None:
                  "played line + pace (no fit)": tec.pts + tec.left * tec.pts_rate}
         coef_c = np.linalg.lstsq(design(trc, "full"), (trc.f_pts - trc.pts).to_numpy(), rcond=None)[0]
         preds["played line + fitted pace/usage/margin"] = tec.pts + design(tec, "full") @ coef_c
+        coef_l = np.linalg.lstsq(design(trc, "live"), (trc.f_pts - trc.pts).to_numpy(), rcond=None)[0]
+        preds["played line + live fit (app candidate)"] = tec.pts + design(tec, "live") @ coef_l
+        allc = pd.concat([trc, tec])
+        coef_all = np.linalg.lstsq(design(allc, "live"), (allc.f_pts - allc.pts).to_numpy(), rcond=None)[0]
+        print(f"[study] {pos} LIVE_FIT all seasons (left*pts_rate, left*opp_rate, left*margin, left): {[round(float(c), 4) for c in coef_all]}", flush=True)
         print(f"[study] {pos} ours fitted coefficients: {[round(float(c), 4) for c in coef_c]}", flush=True)
         for kind in ("clock", "full"):
             coef = np.linalg.lstsq(design(tr, kind), (tr.f_pts - tr.pts).to_numpy(), rcond=None)[0]
