@@ -54,6 +54,16 @@ def put(path: str, data: Any) -> None:
     _overrides[f"{BASE}/{path.lstrip('/')}"] = data
 
 
+def put_many(prefix: str, data: dict[str, Any]) -> None:
+    """Swap every override under `prefix` for `data` ({path under prefix: rows}) in one step, so readers never see a
+    half-built set."""
+    start = f"{BASE}/{prefix.lstrip('/')}"
+    fresh = {f"{start}{path}": rows for path, rows in data.items()}
+    for url in [u for u in _overrides if u.startswith(start) and u not in fresh]:
+        _overrides.pop(url, None)
+    _overrides.update(fresh)
+
+
 def drop(prefix: str) -> None:
     """Forget every override under `prefix` (e.g. "league/123/")."""
     start = f"{BASE}/{prefix.lstrip('/')}"

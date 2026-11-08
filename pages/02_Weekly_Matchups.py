@@ -216,7 +216,7 @@ def _roster_id_to_owner_name(
 # ============================================================
 
 @st.cache_data(
-    ttl=60,
+    ttl=15,
     show_spinner=False,
 )
 def load_weekly_games_cached(
@@ -1409,7 +1409,7 @@ def show_loading_screen(
 
 
 @st.cache_data(
-    ttl=60,
+    ttl=15,
     show_spinner=False,
 )
 def load_box_score_cached(
@@ -1574,118 +1574,129 @@ with week_col:
 # Load matchups
 # ============================================================
 
-try:
-
-    loading_box = st.empty()
-
-
-    show_loading_screen(
-        loading_box,
-        "Loading Weekly Matchups...",
-    )
-
-
-    selected_week = int(st.session_state["weekly_wk"])
-
-    games = load_weekly_games_cached(
-        str(league_id),
-        SLEEPER_LEAGUE_ID,
-        selected_week,
-    )
-
-
-
-    loading_box.empty()
-
-    # Playoff weeks: our bracket (seeded by our standings), never
-    # Sleeper's made-up regular-season pairings. Same view as the app.
-    playoff_view = None
+def _matchups_body() -> None:
     try:
-        playoff_view = api_league.playoff_view(
+
+        loading_box = st.empty()
+
+
+        selected_week = int(st.session_state["weekly_wk"])
+
+        if st.session_state.get("weekly_loaded_week") != selected_week:  # no loader flash on the 15 s live refresh
+            show_loading_screen(
+                loading_box,
+                "Loading Weekly Matchups...",
+            )
+        st.session_state["weekly_loaded_week"] = selected_week
+
+        games = load_weekly_games_cached(
+            str(league_id),
             SLEEPER_LEAGUE_ID,
-            _roster_id_to_owner_name(str(league_id), SLEEPER_LEAGUE_ID),
             selected_week,
-            int(_my_roster_id()) if _my_roster_id() is not None else None,
-            _playoff_rules,
-        )
-    except Exception as exc:
-        print(f"WEB_PLAYOFFS_ERROR {type(exc).__name__}", flush=True)
-
-
-    # ========================================================
-    # Empty week
-    # ========================================================
-
-    if playoff_view is not None:
-
-        st.markdown(
-            playoff_html(playoff_view),
-            unsafe_allow_html=True,
         )
 
-        # Box scores once the playoffs are really being played
-        # (Sleeper pairs the playoff teams itself by then).
-        if not playoff_view["projected"] and selected_week <= current_nfl_week() and games:
+
+
+        loading_box.empty()
+
+        # Playoff weeks: our bracket (seeded by our standings), never
+        # Sleeper's made-up regular-season pairings. Same view as the app.
+        playoff_view = None
+        try:
+            playoff_view = api_league.playoff_view(
+                SLEEPER_LEAGUE_ID,
+                _roster_id_to_owner_name(str(league_id), SLEEPER_LEAGUE_ID),
+                selected_week,
+                int(_my_roster_id()) if _my_roster_id() is not None else None,
+                _playoff_rules,
+            )
+        except Exception as exc:
+            print(f"WEB_PLAYOFFS_ERROR {type(exc).__name__}", flush=True)
+
+
+        # ========================================================
+        # Empty week
+        # ========================================================
+
+        if playoff_view is not None:
+
+            st.markdown(
+                playoff_html(playoff_view),
+                unsafe_allow_html=True,
+            )
+
+            # Box scores once the playoffs are really being played
+            # (Sleeper pairs the playoff teams itself by then).
+            if not playoff_view["projected"] and selected_week <= current_nfl_week() and games:
+                _render_box_score(games, selected_week)
+
+        elif not games:
+
+            st.markdown(
+                (
+                    '<div class="empty-matchups-card">'
+                    '<div class="empty-title">'
+                    'No matchups found for this week yet'
+                    '</div>'
+                    '<div class="empty-subtitle">'
+                    'Sleeper may not have generated the official schedule '
+                    'for this week. Once matchups are available, this page '
+                    'will automatically display them here.'
+                    '</div>'
+                    '</div>'
+                ),
+                unsafe_allow_html=True,
+            )
+
+
+        # ========================================================
+        # Matchups available
+        # ========================================================
+
+        else:
+
+            # ----------------------------------------------------
+            # Matchup cards (phone and desktop)
+            # ----------------------------------------------------
+
+            try:
+                week_is_final = selected_week <= int(
+                    last_scored_week(SLEEPER_LEAGUE_ID)
+                )
+            except Exception:
+                week_is_final = False
+
+
+            cards = matchup_cards_html(
+                games,
+                my_roster_id=_my_roster_id(),
+                is_final=week_is_final,
+            )
+
+
+            st.markdown(
+                cards,
+                unsafe_allow_html=True,
+            )
+
+            # ----------------------------------------------------
+            # Box score: starters with projections and weekly
+            # position ranks (same numbers as the app's game screen)
+            # ----------------------------------------------------
             _render_box_score(games, selected_week)
 
-    elif not games:
 
-        st.markdown(
-            (
-                '<div class="empty-matchups-card">'
-                '<div class="empty-title">'
-                'No matchups found for this week yet'
-                '</div>'
-                '<div class="empty-subtitle">'
-                'Sleeper may not have generated the official schedule '
-                'for this week. Once matchups are available, this page '
-                'will automatically display them here.'
-                '</div>'
-                '</div>'
-            ),
-            unsafe_allow_html=True,
+    except Exception as e:
+
+        st.error(
+            f"Failed to load matchups: {e}"
         )
 
 
-    # ========================================================
-    # Matchups available
-    # ========================================================
-
-    else:
-
-        # ----------------------------------------------------
-        # Matchup cards (phone and desktop)
-        # ----------------------------------------------------
-
-        try:
-            week_is_final = selected_week <= int(
-                last_scored_week(SLEEPER_LEAGUE_ID)
-            )
-        except Exception:
-            week_is_final = False
-
-
-        cards = matchup_cards_html(
-            games,
-            my_roster_id=_my_roster_id(),
-            is_final=week_is_final,
-        )
-
-
-        st.markdown(
-            cards,
-            unsafe_allow_html=True,
-        )
-
-        # ----------------------------------------------------
-        # Box score: starters with projections and weekly
-        # position ranks (same numbers as the app's game screen)
-        # ----------------------------------------------------
-        _render_box_score(games, selected_week)
-
-
-except Exception as e:
-
-    st.error(
-        f"Failed to load matchups: {e}"
-    )
+# The week being played refreshes itself every 15 seconds (our own live scores); other weeks render once.
+try:
+    _live_week = int(st.session_state["weekly_wk"]) > int(last_scored_week(SLEEPER_LEAGUE_ID)) \
+        and int(st.session_state["weekly_wk"]) <= int(current_nfl_week())
+except Exception:
+    _live_week = False
+st.fragment(_matchups_body, run_every=15 if _live_week else None)()
