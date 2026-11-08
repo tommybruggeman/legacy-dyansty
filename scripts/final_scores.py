@@ -139,7 +139,7 @@ def record_corrections(client: Any, season: int, week: int, old: dict[str, Any],
 
     from league_ai.settings_store import load_settings
     from scoring import corrections
-    from scripts.notify_trades import send
+    from api import alerts
 
     out = []
     seen: set[str] = set()
@@ -179,14 +179,25 @@ def record_corrections(client: Any, season: int, week: int, old: dict[str, Any],
             continue
         saved = (client.table(CORRECTIONS).insert({"league_id": lid, "season": season, "week": week, "changes": changes})
                  .execute().data or [{}])[0]
-        tokens = [r["token"] for r in client.table("push_tokens").select("token").eq("league_id", lid).execute().data or []]
-        messages = [{"to": tok, "body": corrections.push_body(week, len(teams)), "sound": "default",
-                     "data": {"url": f"/activity?correction={saved.get('id', '')}"}} for tok in tokens]
-        dead = send(messages) if messages else []
-        if dead:
-            client.table("push_tokens").delete().in_("token", dead).execute()
+        names = {int(t["sleeper_roster_id"]): str(t.get("owner_name") or t.get("team_name") or "")
+                 for t in client.table("league_teams").select("sleeper_roster_id,owner_name,team_name").eq("league_id", lid)
+                 .execute().data or [] if t.get("sleeper_roster_id") is not None}
+        flip = next((c for c in changes if any(r in ("win", "loss") for r in c["results"])), None)
+        winner = loser = None
+        if flip:  # the game whose result changed: winner and loser after the correction
+            mid = next((r.get("matchup_id") for r in rows if int(r.get("roster_id") or -1) == flip["roster_id"]), None)
+            pair = [int(r["roster_id"]) for r in rows if mid is not None and r.get("matchup_id") == mid]
+            if len(pair) == 2:
+                winner, loser = sorted(pair, key=lambda rid: -float(after.get(rid) or 0))
+        alert = alerts.stat_correction(
+            season=season, week=week, correction_id=str(saved.get("id", "")), result_changed=winner is not None,
+            winner=names.get(winner, "") if winner else "", winner_pts=float(after.get(winner) or 0) if winner else 0,
+            loser=names.get(loser, "") if loser else "", loser_pts=float(after.get(loser) or 0) if loser else 0)
+        members = [str(m["user_id"]) for m in client.table("league_memberships").select("user_id").eq("league_id", lid)
+                   .execute().data or [] if m.get("user_id")]
+        queued = alerts.enqueue(client, alert, league_id=lid, user_ids=members)
         client.table("push_sent").upsert({"league_id": lid, "key": key}, on_conflict="league_id,key").execute()
-        out.append(f"    saved; pushed to {len(messages) - len(dead)} phones")
+        out.append(f"    saved; alert queued for {queued} owners")
     return out
 
 

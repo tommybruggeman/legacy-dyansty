@@ -55,10 +55,11 @@ class _DB:
 
 def test_record_corrections_saves_and_pushes(monkeypatch):
     from scripts import final_scores
-    tables = {"leagues": [{"id": "L", "sleeper_league_id": "S"}], "league_teams": [{"id": "t1", "sleeper_roster_id": 1}, {"id": "t2", "sleeper_roster_id": 2}],
-              "push_sent": [], "push_tokens": [{"token": "tok"}], "league_app_transactions": []}
+    tables = {"leagues": [{"id": "L", "sleeper_league_id": "S"}],
+              "league_teams": [{"id": "t1", "sleeper_roster_id": 1, "owner_name": "A"}, {"id": "t2", "sleeper_roster_id": 2, "owner_name": "B"}],
+              "push_sent": [], "league_memberships": [{"user_id": "u1"}], "league_app_transactions": []}
     pushed = []
-    monkeypatch.setattr("scripts.notify_trades.send", lambda msgs: pushed.extend(msgs) or [])
+    monkeypatch.setattr("api.alerts.enqueue", lambda c, alert, league_id, user_ids: pushed.append(alert) or len(user_ids))
     monkeypatch.setattr("league_ai.settings_store.load_settings", lambda c, l: type("S", (), {"scoring_settings": SCORING})())
     def get(url):
         if url.endswith("/league/S"):
@@ -71,8 +72,9 @@ def test_record_corrections_saves_and_pushes(monkeypatch):
     saved = tables["inserted"][0]
     assert saved["week"] == 9 and saved["changes"][0]["team_id"] == "t1" and saved["changes"][0]["results"] == ["win"]
     assert any(c["team_id"] == "t2" and "loss" in c["results"] for c in saved["changes"])
-    assert pushed and pushed[0]["data"]["url"] == "/activity?correction=c1" and "Week 9" in pushed[0]["body"]
-    assert "pushed to 1 phones" in out[-1]
+    assert pushed and pushed[0].url == "/activity?correction=c1" and "Week 9" in pushed[0].title
+    assert pushed[0].body.startswith("Result changed: A ")
+    assert "alert queued for 1 owners" in out[-1]
 
 
 def test_new_lines_are_not_corrections():
