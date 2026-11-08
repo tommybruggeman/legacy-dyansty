@@ -20,8 +20,8 @@ import requests
 
 PBP = "https://github.com/nflverse/nflverse-data/releases/download/pbp/play_by_play_{season}.parquet"
 SLEEPER = "https://api.sleeper.app"
-SEASONS = (2023, 2024, 2025)
-TEST_SEASON = 2025
+SEASONS = (2023, 2024, 2025, 2026)
+TEST_SEASON = int(os.environ.get("LIVE_TEST_SEASON", "2026"))
 POSITIONS = ("QB", "RB", "WR", "TE")
 CHECK = [i / 16 for i in range(1, 16)]  # elapsed share of regulation
 HALF_PPR = {"pass_yd": 0.04, "pass_td": 4, "pass_int": -1, "rush_yd": 0.1, "rush_td": 6, "rec": 0.5, "rec_yd": 0.1, "rec_td": 6, "fum_lost": -2}
@@ -143,16 +143,46 @@ def main() -> None:
     snaps = pd.concat([snapshots(y, sc) for y in SEASONS])
     s = features(snaps.merge(proj, on=["season", "week", "gsis"]))
     s = s[s.position.isin(POSITIONS) & (s.P >= 3)]
+    s = s[~((s.season == 2026) & (s.week >= 9))]   # only finished weeks (week 9 is still being played)
     print(f"[study] snapshots: {len(s)} ({s.game_id.nunique()} games)", flush=True)
     train, test = s[s.season < TEST_SEASON], s[s.season == TEST_SEASON]
+    # our pregame number: Sleeper's projection through a per-position line actual ~ a + b x projection fitted on the
+    # training seasons (what league_ai.projection_calibration does walk-forward), so live tests start from what the app shows
+    one = s[s.el == CHECK[0]]
+    lines = {}
+    for pos in POSITIONS:
+        t = one[(one.position == pos) & (one.season < TEST_SEASON)]
+        b, a = np.polyfit(t.P, t.f_pts, 1)
+        lines[pos] = (float(a), float(b))
+    print("[study] calibration lines (a, b): " + ", ".join(f"{p} ({a:.2f}, {b:.2f})" for p, (a, b) in lines.items()), flush=True)
+
+    def ours(d: pd.DataFrame) -> pd.Series:
+        return d.apply(lambda r: lines[r.position][0] + lines[r.position][1] * r.P, axis=1)
+
+    def rebase(d: pd.DataFrame) -> pd.DataFrame:
+        d = d.copy()
+        d["P"] = ours(d)
+        return features(d.drop(columns=["opp", "left", "ppo", "recent", "cold", "pts_rate", "opp_rate"]))
+
+    train_c, test_c = rebase(train), rebase(test)
+    print("[study] PREGAME vs final, test season: " + ", ".join(
+        f"{pos} sleeper bias {float((one[(one.position == pos) & (one.season == TEST_SEASON)].f_pts - one[(one.position == pos) & (one.season == TEST_SEASON)].P).mean()):+.2f} "
+        f"mae {float((one[(one.position == pos) & (one.season == TEST_SEASON)].f_pts - one[(one.position == pos) & (one.season == TEST_SEASON)].P).abs().mean()):.2f} / ours mae "
+        f"{float((one[(one.position == pos) & (one.season == TEST_SEASON)].f_pts - ours(one[(one.position == pos) & (one.season == TEST_SEASON)])).abs().mean()):.2f}" for pos in POSITIONS), flush=True)
     pd.set_option("display.width", 220)
     rows, coefs, spread = [], {}, []
     for pos in POSITIONS:
         tr, te = train[train.position == pos], test[test.position == pos]
-        preds = {"current (pts + proj x time left)": te.pts + te.left * te.P}
+        trc, tec = train_c[train_c.position == pos], test_c[test_c.position == pos]
+        preds = {"sleeper base: pts + proj x left": te.pts + te.left * te.P,
+                 "ours (app now): pts + cal x left": tec.pts + tec.left * tec.P,
+                 "ours + pace (no fit)": tec.pts + tec.left * tec.pts_rate}
+        coef_c = np.linalg.lstsq(design(trc, "full"), (trc.f_pts - trc.pts).to_numpy(), rcond=None)[0]
+        preds["ours + fitted pace/usage/margin"] = tec.pts + design(tec, "full") @ coef_c
+        print(f"[study] {pos} ours fitted coefficients: {[round(float(c), 4) for c in coef_c]}", flush=True)
         for kind in ("clock", "full"):
             coef = np.linalg.lstsq(design(tr, kind), (tr.f_pts - tr.pts).to_numpy(), rcond=None)[0]
-            preds[f"fit: {kind}"] = te.pts + design(te, kind) @ coef
+            preds[f"sleeper base fit: {kind}"] = te.pts + design(te, kind) @ coef
             if kind == "full":
                 coefs[pos] = [round(float(c), 4) for c in coef]
                 resid = te.f_pts - preds["fit: full"]
