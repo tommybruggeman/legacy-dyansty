@@ -14,4 +14,4 @@ jobs:
       - uses: google-github-actions/setup-gcloud@v2
       - run: |
           gcloud compute ssh legacy-live-watcher --project legacy-dynasty-25024 --zone us-central1-a --quiet --strict-host-key-checking=no \
-            --command "sudo systemctl show legacy-watcher -p ActiveState -p NRestarts; sudo journalctl -u legacy-watcher --since '-60 min' --no-pager -o cat | grep -ciE 'error|traceback'; sudo journalctl -u legacy-watcher --since '-60 min' --no-pager -o cat | grep -oE '^(pass|tick|saved|games|lines)[^A-Za-z]{0,80}' | tail -8"
+            --command "sudo journalctl -u legacy-watcher --since '-60 min' --no-pager -o short-iso | grep -E 'WATCH_ERROR|pass [0-9]+:' | cut -c1-220 | tail -12"
