@@ -11,11 +11,7 @@ on:
       check:
         description: Which check to run
         type: choice
-<<<<<<< HEAD
-        options: [odds_backtest, odds_trial, odds_grade, start_sit_grade, practice_test, weekly_cards, shadow_scoring, live_projection_study, espn_feed_check, final_scores_check, projection_accuracy, projection_calibration, win_odds_study, trade_backtest, answer_eval, fd_check, own_scores_check, score_gaps]
-=======
-        options: [odds_backtest, odds_trial, odds_grade, start_sit_grade, practice_test, weekly_cards, shadow_scoring, live_projection_study, espn_feed_check, final_scores_check, projection_accuracy, projection_calibration, win_odds_study, trade_backtest, answer_eval, fd_check, own_scores_check, projection_by_stat, weather_study]
->>>>>>> origin/main
+        options: [odds_backtest, odds_trial, odds_grade, start_sit_grade, practice_test, weekly_cards, shadow_scoring, live_projection_study, espn_feed_check, final_scores_check, projection_accuracy, projection_calibration, win_odds_study, trade_backtest, answer_eval, fd_check, own_scores_check, projection_by_stat, weather_study, score_gaps]
         default: odds_backtest
 
 jobs:
@@ -28,11 +24,7 @@ jobs:
         with:
           python-version: "3.13"
       - run: pip install supabase requests pandas
-<<<<<<< HEAD
-      - if: inputs.check == 'start_sit_grade' || inputs.check == 'practice_test' || inputs.check == 'weekly_cards' || inputs.check == 'projection_accuracy' || inputs.check == 'projection_calibration' || inputs.check == 'win_odds_study' || inputs.check == 'trade_backtest' || inputs.check == 'answer_eval' || inputs.check == 'own_scores_check' || inputs.check == 'score_gaps'
-=======
-      - if: inputs.check == 'start_sit_grade' || inputs.check == 'practice_test' || inputs.check == 'weekly_cards' || inputs.check == 'projection_accuracy' || inputs.check == 'projection_calibration' || inputs.check == 'win_odds_study' || inputs.check == 'trade_backtest' || inputs.check == 'answer_eval' || inputs.check == 'own_scores_check' || inputs.check == 'projection_by_stat' || inputs.check == 'weather_study'
->>>>>>> origin/main
+      - if: inputs.check == 'start_sit_grade' || inputs.check == 'practice_test' || inputs.check == 'weekly_cards' || inputs.check == 'projection_accuracy' || inputs.check == 'projection_calibration' || inputs.check == 'win_odds_study' || inputs.check == 'trade_backtest' || inputs.check == 'answer_eval' || inputs.check == 'own_scores_check' || inputs.check == 'projection_by_stat' || inputs.check == 'weather_study' || inputs.check == 'score_gaps'
         run: pip install -r api/requirements.txt
       - if: inputs.check == 'live_projection_study'
         run: pip install pyarrow numpy
