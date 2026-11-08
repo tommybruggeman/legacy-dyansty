@@ -1352,7 +1352,13 @@ def _league_live(client: Client, ctx: dict[str, Any], week: int, starts: dict[st
     proj = cache.cached(("starter_proj", sid, ctx["season"], week), 1800, lambda: projections.week_projections(
         client, sid, ctx["season"], week, ids, {p: _text(info.get(p, {}).get("position")) for p in ids},
         {p: _text(info.get(p, {}).get("team")) for p in ids}))
-    return home.team_live(raw, info, starts, now, proj)
+    try:
+        active = cache.cached(("starter_proj_active", sid, ctx["season"], week), 1800, lambda: projections.week_projections(
+            client, sid, ctx["season"], week, ids, {p: _text(info.get(p, {}).get("position")) for p in ids},
+            {p: _text(info.get(p, {}).get("team")) for p in ids}, active=True))
+    except Exception:
+        active = {}
+    return home.team_live(raw, info, starts, now, proj, active)
 
 
 def _game_day_bottom(client: Client, ctx: dict[str, Any], user: Any, week: int, current: dict[str, Any],

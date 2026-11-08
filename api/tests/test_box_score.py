@@ -102,3 +102,16 @@ def test_live_projection_follows_the_game_clock():
     assert nfl_live.live_projection(0.0, 16.0, "waiting", None) == 16.0
     assert nfl_live.live_projection(5.0, 16.0, "playing", None) == 16.0    # no clock: never below projection
     assert nfl_live.time_left({"state": "in", "quarter": 5, "clock": "8:00"}) == 0.0
+
+
+def test_live_projection_reacts_to_pace_usage_and_score():
+    q2 = {"state": "in", "quarter": 2, "clock": "0:00", "score": 7, "opp_score": 7}   # half time
+    slow = nfl_live.live_projection(2.0, 16.0, "playing", q2, "WR", {"rec_tgt": 1}, 8.0)
+    hot = nfl_live.live_projection(14.0, 16.0, "playing", q2, "WR", {"rec_tgt": 8}, 8.0)
+    plain_hot = nfl_live.live_projection(14.0, 16.0, "playing", q2)
+    assert slow < 2.0 + 16.0 * 0.5 < hot
+    assert hot > plain_hot                  # a hot first half lifts what's left, not just the points so far
+    behind = nfl_live.live_projection(8.0, 20.0, "playing", {**q2, "score": 0, "opp_score": 21}, "QB", {"pass_att": 18}, 36.0)
+    ahead = nfl_live.live_projection(8.0, 20.0, "playing", {**q2, "score": 21, "opp_score": 0}, "QB", {"pass_att": 18}, 36.0)
+    assert behind > ahead                   # trailing QBs throw more
+    assert nfl_live.live_projection(5.0, 16.0, "playing", q2, "K", {}, 0) == 13.0   # no fit: points + proj x left

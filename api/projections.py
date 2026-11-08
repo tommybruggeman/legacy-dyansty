@@ -124,10 +124,14 @@ def week_ranks(sleeper_id: str, season: int, week: int, final: bool, positions: 
 
 
 def week_projections(client: Any, sleeper_id: str, season: int, week: int, ids: Iterable[str], positions: dict[str, str], teams: dict[str, str],
-                     calibrate: bool = True) -> dict[str, float]:
+                     calibrate: bool = True, active: bool = False) -> dict[str, float]:
     """player_id -> projected league points this week, matchup-adjusted and calibrated by position
-    (league_ai.projection_calibration; calibrate=False gives the uncalibrated number the calibration learns from)."""
-    lines = week_lines("projections", season, week, 1800)
+    (league_ai.projection_calibration; calibrate=False gives the uncalibrated number the calibration learns from).
+
+    active=True: the number for a player who is already in his game. The pregame line also prices in the chance he
+    doesn't play (a scratch scores 0); once he's on the field that's gone, so this uses the line fitted only on
+    players who played."""
+    proj_lines = week_lines("projections", season, week, 1800)
     scoring = league_scoring(sleeper_id)
     try:
         games = add_weather(week_matchups(season_games(client, season), week), season, week)
@@ -142,7 +146,7 @@ def week_projections(client: Any, sleeper_id: str, season: int, week: int, ids: 
     adjust = adj.get("players") or {} if int(adj.get("season") or 0) == int(season) and int(adj.get("week") or 0) == int(week) else {}
     out: dict[str, float] = {}
     for pid in ids:
-        line = lines.get(pid)
+        line = proj_lines.get(pid)
         if not line:
             continue
         pos = positions.get(pid) or line.get("pos") or ""
@@ -156,7 +160,8 @@ def week_projections(client: Any, sleeper_id: str, season: int, week: int, ids: 
         # learned from every finished week: how far projections at this position have run over or under real scores
         # plus this week's nudges from the signals that have proven they help (league_ai.projection_learning)
         nudge = float(adjust.get(pid, 1.0)) if adjust else 1.0
-        out[pid] = round(calibrate_points(base * factor, pos, cal.get("factors") or {}, cal.get("lines")) * nudge, 1)
+        cal_lines = (cal.get("lines_played") or cal.get("lines")) if active else cal.get("lines")
+        out[pid] = round(calibrate_points(base * factor, pos, cal.get("factors") or {}, cal_lines) * nudge, 1)
     return out
 
 

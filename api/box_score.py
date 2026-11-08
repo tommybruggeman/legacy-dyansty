@@ -73,6 +73,17 @@ def add_projections(client: Any, ctx: dict[str, Any], week: int, final: bool, re
             cache.store(proj_key, PROJ_TTL, proj)
         except Exception:
             pass
+    # in-game numbers for players already in their game (no "might not play" discount), and projected usage
+    active: dict[str, float] = {}
+    proj_opps: dict[str, float] = {}
+    if not final:
+        try:
+            akey = ("proj_active", sid, season, week, tuple(sorted(ids)))
+            active = cache.cached(akey, PROJ_TTL, lambda: projections.week_projections(client, sid, season, week, ids, positions, nfl_teams, active=True))
+            plines = projections.week_lines("projections", season, week, 1800)
+            proj_opps = {pid: nfl_live.opportunities((plines.get(pid) or {}).get("stats"), positions.get(pid) or "") for pid in ids}
+        except Exception:
+            active, proj_opps = {}, {}
     try:
         ranks = rank_job.result()
     except Exception:
@@ -106,7 +117,9 @@ def add_projections(client: Any, ctx: dict[str, Any], week: int, final: bool, re
             p["proj"] = proj.get(pid)
             p["rank"] = (ranks.get(pid) or {}).get("label") if p["status"] in ("playing", "final") and p["points"] else None
             p["breakdown"] = projections.breakdown((lines.get(pid) or {}).get("stats"), scoring) if p["status"] in ("playing", "final") else []
-            p["live_proj"] = nfl_live.live_projection(p["points"], p["proj"], p["status"], p.get("game"))
+            base = active.get(pid, p["proj"]) if p["status"] == "playing" else p["proj"]
+            p["live_proj"] = nfl_live.live_projection(p["points"], base, p["status"], p.get("game"), p["pos"],
+                                                      (lines.get(pid) or {}).get("stats"), proj_opps.get(pid))
         for p in side["players"]:
             total += p["live_proj"] if p["live_proj"] is not None else p["points"]
         side["projected"] = round(total, 1)

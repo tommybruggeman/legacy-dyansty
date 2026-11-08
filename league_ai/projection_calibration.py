@@ -98,6 +98,8 @@ def replay(weeks: Iterable[Mapping[str, Any]], prior: float = PRIOR) -> dict[str
     hist: dict[str, list[float]] = defaultdict(lambda: [0.0, 0.0])
     lines: dict[str, Line] = defaultdict(Line)
     line_carry: dict[str, Line] = {}
+    played_lines: dict[str, Line] = defaultdict(Line)   # only players who got into their game (for live projections)
+    played_carry: dict[str, Line] = {}
     season = None
     card_weeks: list[dict[str, Any]] = []
     season_errs: dict[str, list[float]] = defaultdict(list)
@@ -106,8 +108,10 @@ def replay(weeks: Iterable[Mapping[str, Any]], prior: float = PRIOR) -> dict[str
             if season is not None:
                 carry = {p: h[0] / h[1] for p, h in hist.items() if h[1] > 0}
                 line_carry = {p: l for p, l in lines.items() if l.s[0] > 0}
+                played_carry = {p: l for p, l in played_lines.items() if l.s[0] > 0}
             season, hist, card_weeks, season_errs = wk["season"], defaultdict(lambda: [0.0, 0.0]), [], defaultdict(list)
             lines = defaultdict(Line)
+            played_lines = defaultdict(Line)
         f = {p: factor(hist[p][0], hist[p][1], carry.get(p, 1.0), prior) for p in POSITIONS}
         ln = {p: lines[p].fit(line_carry.get(p)) for p in SKILL}
         cal_of = lambda r: calibrate(r["shown"], r["pos"], f, ln)  # noqa: E731
@@ -145,6 +149,8 @@ def replay(weeks: Iterable[Mapping[str, Any]], prior: float = PRIOR) -> dict[str
                 hist[r["pos"]][1] += r["shown"]
                 if r["pos"] in SKILL:
                     lines[r["pos"]].add(r["shown"], r["actual"])
+                    if r.get("played"):
+                        played_lines[r["pos"]].add(r["shown"], r["actual"])
     if season is None:
         return {}
     nxt = {p: round(factor(hist[p][0], hist[p][1], carry.get(p, 1.0), prior), 3) for p in POSITIONS}
@@ -153,6 +159,9 @@ def replay(weeks: Iterable[Mapping[str, Any]], prior: float = PRIOR) -> dict[str
         "through_week": card_weeks[-1]["week"] if card_weeks else 0,
         "factors": nxt,
         "lines": {p: list(lines[p].fit(line_carry.get(p))) for p in SKILL},
+        # the same line fit only on players who got into their game: the "might not play" discount is gone once he's
+        # playing, so live projections start from this one (api.projections.week_projections(active=True))
+        "lines_played": {p: list(played_lines[p].fit(played_carry.get(p))) for p in SKILL if played_lines[p].s[0] > 0 or p in played_carry},
         "season_ratio": {p: round(h[0] / h[1], 3) for p, h in hist.items() if h[1] > 0},
         "last_season_ratio": {p: round(v, 3) for p, v in carry.items() if p in POSITIONS},
         "overall": {k: _stats(v) for k, v in season_errs.items() if not k.startswith("pos:")},
@@ -204,6 +213,7 @@ def calibration(client: Any, sleeper_id: str, season: int) -> dict[str, dict[str
             return {"factors": {}, "lines": {}}
         return {"factors": {str(k): float(v) for k, v in (card.get("factors") or {}).items()},
                 "lines": {str(k): [float(x) for x in v] for k, v in (card.get("lines") or {}).items() if v and len(v) == 2},
+                "lines_played": {str(k): [float(x) for x in v] for k, v in (card.get("lines_played") or {}).items() if v and len(v) == 2},
                 "adjust": card.get("adjust") or {}}
 
     if client is None:
@@ -288,6 +298,8 @@ def week_rows(client: Any, season: int, week: int, scoring: Mapping[str, Any], s
         if actual:
             real = lines.get(pid)
             row["actual"] = score(real.get("stats"), dict(scoring), real.get("pos") or pos) if real else 0.0
+            st = (real or {}).get("stats") or {}
+            row["played"] = bool(st.get("gp") or st.get("off_snp") or (pos in ("K", "DEF") and row["actual"]))
             row["td_act"] = _td_points((real or {}).get("stats"), scoring)
         out.append(row)
     return out
@@ -441,7 +453,7 @@ def run(client: Any, *, now: datetime | None = None, dry_run: bool = False) -> d
                         "signal_gains": {x["signal"]: [x["player_gain"], x["team_gain"]] for x in lr.get("signals") or []},
                         "adjusted_players": len(((card_.get("adjust") or {}).get("players")) or {})})
             res.update({"season": card_["season"], "through_week": card_["through_week"], "factors": card_["factors"], "lines": card_.get("lines"),
-                        "overall": {k: (v or {}).get("mae") for k, v in card_["overall"].items()}})
+                        "lines_played": card_.get("lines_played"), "overall": {k: (v or {}).get("mae") for k, v in card_["overall"].items()}})
             if not dry_run:
                 client.table("league_ai_experiments").insert({"league_id": lid, "user_id": SYSTEM_USER, "experiment": EXPERIMENT,
                                                               "question": "weekly projection calibration",
