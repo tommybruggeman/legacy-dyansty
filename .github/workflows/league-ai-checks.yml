@@ -11,7 +11,7 @@ on:
       check:
         description: Which check to run
         type: choice
-        options: [odds_backtest, odds_trial, odds_grade, start_sit_grade, practice_test, weekly_cards, shadow_scoring, live_projection_study, espn_feed_check, final_scores_check, projection_accuracy, projection_calibration, win_odds_study, trade_backtest, answer_eval]
+        options: [odds_backtest, odds_trial, odds_grade, start_sit_grade, practice_test, weekly_cards, shadow_scoring, live_projection_study, espn_feed_check, final_scores_check, projection_accuracy, projection_calibration, win_odds_study, trade_backtest, answer_eval, own_scores_check]
         default: odds_backtest
 
 jobs:
@@ -50,6 +50,8 @@ jobs:
             espn_feed_check) python -m scoring.espn_check --weeks 3 ;;
             # official finals from nflverse scored by our engine vs Sleeper, every finished week (saves nothing)
             final_scores_check) python -m scripts.final_scores --dry ;;
+            # our own scores (every week, our stat lines) vs Sleeper's: totals that differ, winner flips (saves nothing)
+            own_scores_check) python -m scripts.own_scores_check ;;
             # weekly projections vs real scores, and whether learned corrections would help (saves nothing)
             projection_accuracy) python -m scoring.projection_accuracy ;;
             # the daily projection calibration (factors + accuracy card) without saving anything
