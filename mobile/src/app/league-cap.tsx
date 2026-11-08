@@ -21,7 +21,7 @@ export default function LeagueCap() {
   const rows = [...data.teams].sort((a, b) => (b.cap_by_year[sortBy]?.space ?? 0) - (a.cap_by_year[sortBy]?.space ?? 0));
 
   return (
-    <Screen loading={loading} onRefresh={reload}>
+    <Screen loading={loading}>
       <Back label="Contracts" />
       <Title>League cap</Title>
       <Card>

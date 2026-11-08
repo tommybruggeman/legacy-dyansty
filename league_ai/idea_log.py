@@ -23,6 +23,12 @@ def _name(label: Any) -> str:
     return str(label or "").split(" (")[0].strip()
 
 
+def _is_player(label: Any) -> bool:
+    """Rungs also list picks ('2027 1st pick') and cap space ('$4 of cap space (as FAAB)'); only players match real trades."""
+    text = str(label or "")
+    return not (text.startswith("$") or text.startswith("and they add") or text.endswith(" pick"))
+
+
 def compact(out: Mapping[str, Any]) -> list[dict[str, Any]]:
     """The ideas in one find_trade_targets answer, as names only."""
     rows = []
@@ -31,7 +37,7 @@ def compact(out: Mapping[str, Any]) -> list[dict[str, Any]]:
         row = {"partner": idea.get("partner"), "gets": [_name(g) for g in gets]}
         for rung in RUNGS:
             if idea.get(rung):
-                row[rung] = [_name(p) for p in idea[rung]]
+                row[rung] = [_name(p) for p in idea[rung] if _is_player(p)]
         if idea.get("their_share"):
             row["their_share"] = dict(idea["their_share"])   # numbers per rung, for fitting an acceptance model later
         if row["partner"] and row["gets"] and row.get("open_with"):

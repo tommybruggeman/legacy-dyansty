@@ -98,7 +98,8 @@ class Memory:
         return rows[0] if rows else None
 
     def save_conversation(self, conversation_id: str | None, messages: list[dict[str, str]]) -> str | None:
-        clean = [{"role": m.get("role", "user"), "content": str(m.get("content") or "")[:6000]} for m in messages][-MAX_MESSAGES_SAVED:]
+        clean = [{"role": m.get("role", "user"), "content": str(m.get("content") or "")[:6000],
+                  **({"facts": str(m["facts"])[:8000]} if m.get("facts") else {})} for m in messages][-MAX_MESSAGES_SAVED:]
         title = next((m["content"][:80] for m in clean if m["role"] == "user"), "Conversation")
         try:
             if conversation_id:

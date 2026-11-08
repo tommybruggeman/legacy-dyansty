@@ -566,12 +566,8 @@ def build_standings_from_sleeper(sleeper_league_id: str) -> pd.DataFrame:
         latest_week = min(latest_week, playoff_start - 1)
     for week in range(1, latest_week + 1):
         try:
-            rows = (
-                get_json(
-                    f"https://api.sleeper.app/v1/league/{sleeper_league_id}/matchups/{week}"
-                )
-                or []
-            )
+            from services import own_scores  # our own scores, same copy as the iOS app
+            rows = own_scores.matchup_rows(get_sb(), sleeper_league_id, week)
         except Exception:
             continue
 

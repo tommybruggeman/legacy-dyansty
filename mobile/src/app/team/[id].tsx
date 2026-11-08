@@ -19,7 +19,7 @@ export default function Team() {
   if (!data) return null;
 
   return (
-    <Screen loading={loading} onRefresh={reload}>
+    <Screen loading={loading}>
       <Back label="League" />
       <TeamView team={data} />
     </Screen>

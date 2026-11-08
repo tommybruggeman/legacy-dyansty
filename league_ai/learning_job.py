@@ -322,6 +322,12 @@ def run(client: Any, runner: Runner, *, season: int | None = None, web_search: b
         summary["gm_risers"] = risers.grade(client, now=now, dry_run=dry_run)
     except Exception as exc:
         print(f"[learning] GM's Risers grading skipped: {type(exc).__name__}", flush=True)
+    try:   # daily: snapshot this week's projections before kickoff, then grade finished weeks and retune the factors
+        from league_ai import projection_calibration
+
+        summary["projection_calibration"] = projection_calibration.run(client, now=now, dry_run=dry_run)
+    except Exception as exc:
+        print(f"[learning] projection calibration skipped: {type(exc).__name__}", flush=True)
     if backtest if backtest is not None else now.weekday() == 1:  # weekly, with the Tuesday report
         try:
             summary["trade_backtest"] = run_trade_backtests(client, now=now, dry_run=dry_run)

@@ -371,3 +371,45 @@ def strategy_question(saved: list[dict[str, Any]], season: int) -> str:
     question = (f"Plan my offseason. My transfer targets are {_names(names)}. "
                 "Which ones should I go after, in what order, and should I trade for each now or wait for the auction?")
     return f"{question} {watching}" if watching else question
+
+
+# ---- This week, for the Market list (PROJ column, last-3 trend, next game) --------------------------------
+
+TREND_WEEKS = 3
+
+
+def recent_form(weekly: list[dict[str, float]], avg: dict[str, float]) -> dict[str, dict[str, float]]:
+    """player_id -> {"last3": average over the games he played in the given weeks, "trend": last3 - season average}.
+
+    `weekly` is the last few weeks' league-scoring points (only games played), newest first. A player
+    with no games in those weeks gets nothing; one without a season average gets last3 only.
+    """
+    totals: dict[str, list[float]] = {}
+    for week in weekly:
+        for pid, pts in week.items():
+            totals.setdefault(pid, []).append(pts)
+    out: dict[str, dict[str, float]] = {}
+    for pid, pts in totals.items():
+        last3 = round(sum(pts) / len(pts), 1)
+        row: dict[str, float] = {"last3": last3}
+        if avg.get(pid) is not None:
+            row["trend"] = round(last3 - avg[pid], 1)
+        out[pid] = row
+    return out
+
+
+def next_games(matchups: dict[str, dict[str, Any]], dvp: dict[tuple[str, str], dict[str, Any]], week: int,
+               kickoff: Callable[[dict[str, Any]], str | None]) -> Callable[[str, str], dict[str, Any] | None]:
+    """A lookup (nfl_team, pos) -> this week's game for the row's second line: opponent, home/away, kickoff,
+    and the defense's rank against that position (1 = toughest, teams = easiest). Teams with no game this
+    week are on bye ({"bye": True}); with no schedule at all it returns None."""
+    def find(team: str, pos: str) -> dict[str, Any] | None:
+        if not matchups or not team or team == "FA":
+            return None
+        game = matchups.get(team)
+        if not game:
+            return {"week": week, "bye": True}
+        rating = dvp.get((game["opponent"], pos)) or {}
+        return {"week": week, "bye": False, "opp": game["opponent"], "home": bool(game.get("home")), "kickoff": kickoff(game),
+                "opp_rank": rating.get("rank"), "teams": rating.get("teams"), "final": bool(game.get("final_score"))}
+    return find

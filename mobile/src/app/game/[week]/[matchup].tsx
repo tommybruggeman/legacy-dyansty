@@ -6,14 +6,14 @@ import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Avatar } from '../../../components/Pictures';
 import { ErrorState, Loading } from '../../../components/ScreenState';
 import { Back, Screen, firstName } from '../../../components/ui';
-import { type BoxPlayer, type BoxScore, useApi } from '../../../lib/api';
+import { type BoxPlayer, type BoxScore, LIVE_POLL_MS, useApi } from '../../../lib/api';
 import { teamColors } from '../../../lib/nflColors';
 import { colors } from '../../../lib/theme';
 
 export { ScreenError as ErrorBoundary } from '../../../components/ScreenState';
 
 // Live games refresh every 15 seconds while this screen is open (the server reads the NFL scoreboard at most that often).
-const LIVE_REFRESH_MS = 15_000;
+const LIVE_REFRESH_MS = LIVE_POLL_MS;
 const THEM = '#D08B6A';
 const RED = '#E05555';
 
@@ -39,7 +39,7 @@ export default function Game() {
   const open = (teamId: string | null) => (teamId ? () => router.push(`/team/${teamId}`) : undefined);
 
   return (
-    <Screen loading={loading} onRefresh={reload}>
+    <Screen loading={loading}>
       <Back label="Matchups" />
       <Text style={styles.eyebrow}>WEEK {data.week} · {firstName(a.name).toUpperCase()} VS {firstName(b.name).toUpperCase()}</Text>
       <View style={styles.header}>

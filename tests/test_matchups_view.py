@@ -96,6 +96,15 @@ class MatchupsViewTest(unittest.TestCase):
         out = matchup_cards_html(games, my_roster_id=4)
         self.assertIn("behind the Top 5 line", out)
 
+    def test_rank_hidden_until_50_points(self):
+        games = build_games(_rows({1: (1, 49.9), 2: (1, 50), 3: (2, 0), 4: (2, 0)}), NAMES)
+        ranked = {t["roster_id"]: t["ranked"] for g in games for t in g["teams"]}
+        self.assertEqual(ranked, {1: False, 2: True, 3: False, 4: False})
+        out = matchup_cards_html(games, my_roster_id=1)
+        self.assertIn('mm-rank is-blank', out)
+        self.assertIn('>1</div>', out)  # Dylan (50) shows rank 1
+        self.assertNotIn('>2</div>', out)  # Tommy (49.9) shows no rank
+
     def test_no_hero_without_my_team(self):
         out = matchup_cards_html(self.games)
         self.assertNotIn('class="mm-hero"', out)

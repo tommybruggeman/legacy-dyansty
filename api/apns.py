@@ -96,6 +96,28 @@ class Client:
                 reason = ""
         return Result(resp.status_code, reason)
 
+    def send_alert(self, device_token: str, payload: dict[str, Any], urgent: bool = False) -> Result:
+        """One ordinary alert (title + body on the lock screen) to one phone's APNs device token."""
+        headers = {
+            "authorization": f"bearer {self.bearer()}",
+            "apns-push-type": "alert",
+            "apns-topic": BUNDLE_ID,
+            "apns-priority": "10",
+        }
+        if urgent:
+            headers["apns-expiration"] = str(int(time.time()) + 30 * 60)
+        try:
+            resp = self.http().post(f"https://{self.host}/3/device/{device_token}", json=payload, headers=headers)
+        except httpx.HTTPError as exc:
+            return Result(0, type(exc).__name__)
+        reason = ""
+        if resp.status_code != 200:
+            try:
+                reason = str((resp.json() or {}).get("reason") or "")
+            except ValueError:
+                reason = ""
+        return Result(resp.status_code, reason)
+
     def close(self) -> None:
         if self._http is not None:
             self._http.close()

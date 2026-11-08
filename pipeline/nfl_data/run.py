@@ -5,6 +5,7 @@
     python -m pipeline.nfl_data.run --seasons 2026  # stats for given seasons only
     python -m pipeline.nfl_data.run --only stats,games  # several loaders
     python -m pipeline.nfl_data.run --game-night    # stats + scores, current season only (game-night refresh)
+    python -m pipeline.nfl_data.run --practice      # this week's practice reports (injuries + practice days, current season)
 """
 from __future__ import annotations
 
@@ -14,11 +15,12 @@ import traceback
 from datetime import date
 from typing import Any
 
-from pipeline.nfl_data.common import fetch_json, fetch_text, log_run, now_iso, service_client, upsert_rows
+from pipeline.nfl_data.common import fetch_json, fetch_text, fetch_text_meta, log_run, now_iso, service_client, upsert_rows
 from pipeline.nfl_data.crosswalk import CROSSWALK_URL, Crosswalk
 from pipeline.nfl_data.games import GAMES_URL, read_csv as read_games_csv, transform_games
 from pipeline.nfl_data.injury_history import build_episodes, build_play_rates
 from pipeline.nfl_data.injuries import ESPN_INJURIES_URLS, NFLVERSE_INJURIES_URL, read_csv as read_injuries_csv, transform_espn, transform_nflverse
+from pipeline.nfl_data import practice_days
 from pipeline.nfl_data.market_values import PICKS_URL, VALUES_URL, read_csv as read_values_csv, transform_picks, transform_values
 from pipeline.nfl_data.nflverse_stats import SNAPS_URL, STATS_URL, read_csv as read_stats_csv, transform_stats
 from pipeline.nfl_data.sleeper_players import INJURY_DETAIL_COLUMNS, SLEEPER_PLAYERS_URL, transform_players
@@ -116,6 +118,7 @@ def sync_injuries(client: Any, crosswalk: Crosswalk, seasons: list[int]) -> int:
                 last_exc = exc
         if payload is None:
             raise last_exc or RuntimeError("no ESPN host reachable")
+        _RUN_ROWS["espn_payload"] = [payload]
         rows = transform_espn(payload, crosswalk)
         client.table("nfl_injuries").delete().neq("espn_id", "").execute()  # current report replaces the old one
         written += upsert_rows(client, "nfl_injuries", rows, on_conflict="espn_id")
@@ -124,15 +127,63 @@ def sync_injuries(client: Any, crosswalk: Crosswalk, seasons: list[int]) -> int:
         print(f"[nfl_data] espn injuries unavailable ({type(exc).__name__}: {exc})", flush=True)
     for season in seasons:
         try:
-            frame = read_injuries_csv(fetch_text(NFLVERSE_INJURIES_URL.format(season=season), timeout=120))
+            text, headers = fetch_text_meta(NFLVERSE_INJURIES_URL.format(season=season), timeout=120)
+            frame = read_injuries_csv(text)
         except Exception as exc:
             print(f"[nfl_data] practice reports {season}: unavailable ({type(exc).__name__})", flush=True)
             continue
         _RUN_ROWS.setdefault("injuries", []).extend(frame.to_dict("records"))
+        _RUN_ROWS.setdefault("nflverse_built", []).append({"season": season, "last_modified": headers.get("Last-Modified") or headers.get("last-modified")})
         rows = transform_nflverse(frame, crosswalk)
         written += upsert_rows(client, "nfl_practice_reports", rows, on_conflict="gsis_id,season,week")
         print(f"[nfl_data] practice reports {season}: {len(rows)} rows", flush=True)
     return written
+
+
+def sync_practice_days(client: Any, crosswalk: Crosswalk, season: int) -> int:
+    """This week's practice line for every report day (nfl_practice_days), from the official report via nflverse and ESPN's notes.
+
+    Reuses what the injuries loader downloaded in this run; fetches it itself when run alone.
+    """
+    games = client.table("nfl_games").select("season, week, gameday, home_team, away_team").eq("season", season).limit(400).execute().data or []
+    schedule = practice_days.upcoming_games(games, season)
+    if not schedule:
+        print(f"[nfl_data] practice days: no {season} schedule loaded", flush=True)
+        return 0
+    rows: list[dict[str, Any]] = []
+    records = [r for r in _RUN_ROWS.get("injuries", []) if str(r.get("season")) == str(season)]
+    built = next((b["last_modified"] for b in _RUN_ROWS.get("nflverse_built", []) if b["season"] == season), None)
+    if not records:
+        try:
+            text, headers = fetch_text_meta(NFLVERSE_INJURIES_URL.format(season=season), timeout=120)
+            records = read_injuries_csv(text).to_dict("records")
+            built = headers.get("Last-Modified") or headers.get("last-modified")
+        except Exception as exc:
+            print(f"[nfl_data] practice days: official report unavailable ({type(exc).__name__})", flush=True)
+    built_at = practice_days.parse_http_date(built)
+    if records and built_at:
+        official = practice_days.from_nflverse(records, crosswalk, schedule, season, built_at)
+        rows += official
+        print(f"[nfl_data] practice days: official report for {practice_days.report_day(built_at)} (file rebuilt {built}): {len(official)} players", flush=True)
+    payload = (_RUN_ROWS.get("espn_payload") or [None])[0]
+    if payload is None:
+        for url in ESPN_INJURIES_URLS:
+            try:
+                payload = fetch_json(url, timeout=60)
+                break
+            except Exception:
+                continue
+    if payload:
+        news = practice_days.from_espn(payload, crosswalk, schedule, season)
+        rows += news
+        print(f"[nfl_data] practice days: ESPN notes: {len(news)} practice lines", flush=True)
+    try:
+        return upsert_rows(client, "nfl_practice_days", rows, on_conflict="gsis_id,season,week,practice_date,source")
+    except Exception as exc:
+        if "nfl_practice_days" in str(exc) and ("PGRST205" in str(exc) or "does not exist" in str(exc) or "schema cache" in str(exc)):
+            print("[nfl_data] practice days skipped: run migration 20261218_practice_days.sql first", flush=True)
+            return 0
+        raise
 
 
 def sync_injury_history(client: Any, crosswalk: Crosswalk, seasons: list[int]) -> int:
@@ -241,7 +292,7 @@ def sync_prospects(client: Any, crosswalk: Crosswalk, seasons: list[int]) -> int
     return written
 
 
-LOADERS = ("players", "stats", "games", "values", "injuries", "injury_history", "prospects", "situational")
+LOADERS = ("players", "stats", "games", "values", "injuries", "practice", "injury_history", "prospects", "situational")
 
 
 def _loaders(value: str) -> set[str]:
@@ -259,7 +310,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seasons", nargs="*", type=int, default=None)
     parser.add_argument("--game-night", action="store_true",
                         help="quick refresh after games finish: stats and scores for the current season only")
+    parser.add_argument("--practice", action="store_true",
+                        help="quick refresh during practice days: injury reports and day-by-day practice for the current season only")
     args = parser.parse_args(argv)
+    if args.practice:
+        args.only = args.only or {"injuries", "practice"}
+        args.seasons = args.seasons or [current_nfl_season()]
     if args.game_night:
         args.only = args.only or {"stats", "games"}
         args.seasons = args.seasons or [current_nfl_season()]
@@ -281,6 +337,8 @@ def main(argv: list[str] | None = None) -> int:
         ok &= _run(client, "dynastyprocess_values", lambda: sync_values(client, crosswalk))
     if picked("injuries"):
         ok &= _run(client, "injuries", lambda: sync_injuries(client, crosswalk, seasons))
+    if picked("practice"):
+        ok &= _run(client, "practice_days", lambda: sync_practice_days(client, crosswalk, current_nfl_season()))
     if picked("injury_history"):
         ok &= _run(client, "injury_history", lambda: sync_injury_history(client, crosswalk, seasons))
     if picked("situational"):

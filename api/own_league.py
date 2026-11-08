@@ -222,6 +222,24 @@ def week_lines(client: Any, season: int, week: int, current: int) -> Mapping[str
     return {**fallback, **(live_stats.fresh_lines(client, season, week) if week == current else {})}
 
 
+def own_scores(season: int, current: int, scoring: Mapping[str, Any], *,
+               rows_for: Callable[[int], list[dict[str, Any]]],
+               lines_for: Callable[[int], Mapping[str, Mapping[str, Any]]]) -> dict[str, Any]:
+    """{"matchups/<week>": rows} for weeks 1..current, each Sleeper row rescored by our engine from our own lines.
+    A week we can't score (no rows, no lines, or a read error) is left out, so it falls back to Sleeper's rows."""
+    out: dict[str, Any] = {}
+    if not scoring:
+        return out
+    for week in range(1, max(1, current) + 1):
+        try:
+            rows, lines = rows_for(week), lines_for(week)
+        except Exception:
+            continue
+        if rows and lines:
+            out[f"matchups/{week}"] = live_stats.rescore(rows, lines, scoring)
+    return out
+
+
 def sync(client: Any, league_id: str, sleeper_id: str, season: int) -> None:
     """Rebuild the app's weeks for one league and hand them to api.sleeper (shared by every owner for LIVE_TTL)."""
     from api import cache, league, sleeper  # here, not at import time: api.league reads api.sleeper too
@@ -240,14 +258,14 @@ def sync(client: Any, league_id: str, sleeper_id: str, season: int) -> None:
         own_from = int(switch.get("own_from_week") or start)
         current = league.current_week()
         if not switch.get("enabled") or current < own_from:
-            sleeper.drop(f"league/{sleeper_id}/")
-            # Still on Sleeper: while the week is being played, live points come from our own watcher's stat lines
-            # (scored by our engine) when it's running, which runs well ahead of Sleeper's live numbers.
-            ours = live_stats.fresh_lines(client, season, current)
-            if ours and current > league.last_scored_week(sleeper_id):
-                scoring = settings.scoring_settings or ((sleeper.raw(f"league/{sleeper_id}") or {}).get("scoring_settings") or {})
-                rows = sleeper.raw(f"league/{sleeper_id}/matchups/{current}", ttl=league.LIVE_TTL) or []
-                sleeper.put(f"league/{sleeper_id}/matchups/{current}", live_stats.rescore(rows, ours, scoring))
+            # Still on Sleeper for rosters and lineups, but every point is ours: each week's starters (Sleeper's rows)
+            # scored by our engine from our own stat lines (week_lines: official finals, the live watcher, and
+            # Sleeper's public stats only as a backup feed).
+            scoring = settings.scoring_settings or ((sleeper.raw(f"league/{sleeper_id}") or {}).get("scoring_settings") or {})
+            sleeper.put_many(f"league/{sleeper_id}/", own_scores(
+                season, current, scoring,
+                rows_for=lambda w: sleeper.raw(f"league/{sleeper_id}/matchups/{w}", ttl=league.LIVE_TTL if w == current else 3600) or [],
+                lines_for=lambda w: week_lines(client, season, w, current)))
             return {"weeks": []}
         teams = client.table("league_teams").select("id,sleeper_roster_id").eq("league_id", league_id).execute().data or []
         roster_of_team = {str(t["id"]): int(t["sleeper_roster_id"]) for t in teams if t.get("sleeper_roster_id") is not None}

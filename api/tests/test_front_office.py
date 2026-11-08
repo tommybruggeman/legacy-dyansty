@@ -80,7 +80,7 @@ def test_stream_events_name_the_lookup_and_pass_text_through():
 
 
 def test_ask_stream_ends_with_done(monkeypatch):
-    def fake_ask(session, question, conversation_id, on_event=None):
+    def fake_ask(session, question, conversation_id, on_event=None, inbox=None):
         on_event("tool", "find_trade_targets")
         on_event("text", "Three fits.")
         return {"ok": True, "text": "Three fits.", "conversation_id": "c1"}
@@ -109,3 +109,59 @@ def test_gm_tools_gives_the_website_the_same_odds_and_matchup_tools(monkeypatch)
     assert callable(seen["odds"]) and len(seen["extra"]) == 1
     front_office.gm_tools(session, None, question=lambda: "q", conversation_id=lambda: None)
     assert seen["odds"] is None and seen["extra"] is None and seen["state"] == {"roster": ["from session"]}
+
+
+def test_resume_replays_the_answer_after_the_phone_drops_off(monkeypatch):
+    import json
+    import threading
+    from types import SimpleNamespace
+
+    gate = threading.Event()
+
+    def fake_ask(session, question, conversation_id, on_event=None, inbox=None):
+        on_event("tool", "find_trade_targets")
+        gate.wait(5)  # the phone has gone away; the answer keeps going
+        on_event("text", "Three fits.")
+        return {"ok": True, "text": "Three fits.", "conversation_id": "c9"}
+
+    monkeypatch.setattr(front_office, "ask", fake_ask)
+    session = SimpleNamespace(owner=SimpleNamespace(user_id="u-resume"))
+    first = front_office.ask_stream(session, "Find me a trade", None)
+    assert json.loads(next(first))["e"] == "status"  # then the app closes
+    gate.set()
+    events = [json.loads(line) for line in front_office.resume_stream(session)]
+    assert events[0] == {"e": "job", "question": "Find me a trade", "conversation_id": None}
+    assert events[-1]["e"] == "done" and events[-1]["text"] == "Three fits." and events[-1]["conversation_id"] == "c9"
+
+
+def test_resume_with_nothing_running_says_none():
+    import json
+    from types import SimpleNamespace
+
+    session = SimpleNamespace(owner=SimpleNamespace(user_id="u-never-asked"))
+    assert [json.loads(line) for line in front_office.resume_stream(session)] == [{"e": "none"}]
+
+
+def test_typing_more_mid_answer_goes_into_that_answer(monkeypatch):
+    import json
+    import threading
+    from types import SimpleNamespace
+
+    gate = threading.Event()
+    seen = {}
+
+    def fake_ask(session, question, conversation_id, on_event=None, inbox=None):
+        gate.wait(5)
+        seen["added"] = inbox(True)
+        seen["after"] = inbox(True)  # nothing more: the inbox closes
+        return {"ok": True, "text": "Done.", "conversation_id": "c1"}
+
+    monkeypatch.setattr(front_office, "ask", fake_ask)
+    session = SimpleNamespace(owner=SimpleNamespace(user_id="u-tell"))
+    stream = front_office.ask_stream(session, "Start Kelce?", None)
+    assert front_office.tell(session, "His ankle is hurt") is True
+    gate.set()
+    events = [json.loads(line) for line in stream]
+    assert {"e": "added", "text": "His ankle is hurt"} in events and events[-1]["e"] == "done"
+    assert seen == {"added": ["His ankle is hurt"], "after": []}
+    assert front_office.tell(session, "Too late") is False  # finished: the app sends it as a new question

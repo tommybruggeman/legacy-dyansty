@@ -14,7 +14,7 @@ import time
 from typing import Any
 
 NAME = "LiveMatchup"  # must match createLiveActivity('LiveMatchup', ...) in the app
-MAX_NAME = 12
+MAX_NAME = 20  # full owner names fit; also the cap for custom team names (the widget shrinks text to fit)
 MIN_CHANGE = 0.05  # points; smaller moves are stat corrections in the noise
 
 

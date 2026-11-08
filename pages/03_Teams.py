@@ -1496,7 +1496,8 @@ def _fetch_week_pairs(league_id: str, week: int):
     Pull raw Sleeper matchups for a week and pair entries with same matchup_id.
     Each pair is (teamA_row, teamB_row).
     """
-    rows = _get_json(f"https://api.sleeper.app/v1/league/{league_id}/matchups/{week}") or []
+    from services import own_scores  # our own scores, same copy as the iOS app
+    rows = own_scores.matchup_rows(sb, league_id, week)
     by_mid: dict[int, list] = {}
     for r in rows:
         mid = r.get("matchup_id")

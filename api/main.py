@@ -8,7 +8,7 @@ reads run as that owner so row-level security applies just like the website.
 from __future__ import annotations
 
 import os
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
@@ -17,8 +17,8 @@ from pydantic import BaseModel
 from supabase import Client, create_client
 
 from api import box_score as box_score_mod
-from api import activity, cache, front_office, home, league, lineups, live_activity, market, nfl_live, own_league, player, playoffs, projections, teams, trade_feed, trade_offers, waivers
-from league_ai import risers as risers_log
+from api import activity, alerts, cache, front_office, home, league, lineups, live_activity, market, nfl_live, own_league, player, playoffs, projections, teams, trade_feed, trade_offers, waivers
+from league_ai import nfl_data
 from season_engine import SeasonResolver
 from services.season_rollover_owner_ui import OwnerRolloverDecisionError, OwnerRolloverDecisionService
 
@@ -117,7 +117,18 @@ def _league_context(client: Client, user: Any) -> tuple[str, dict[int, str], int
         sleeper_id = league.sleeper_league_id(client, team["league_id"])
     except LookupError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
+    _sync_own_league(client, team["league_id"], sleeper_id)
     return sleeper_id, _roster_names(client, team["league_id"], sleeper_id), team["sleeper_roster_id"]
+
+
+def _sync_own_league(client: Client, league_id: str, sleeper_id: str) -> None:
+    """Refresh the app's own scores (live watcher overlay, or the weeks the app runs itself) before any page reads
+    matchups. Shared and cached 15 s in api.own_league, so pages like Matchups and Standings never show a frozen copy."""
+    try:
+        season = cache.cached(("season", league_id), 600, lambda: SeasonResolver(client).get_active_season(league_id))
+        own_league.sync(client, league_id, sleeper_id, int(season.season))
+    except Exception:
+        pass
 
 
 def _team_ids(client: Client, user: Any) -> dict[int, str]:
@@ -129,23 +140,91 @@ def _team_ids(client: Client, user: Any) -> dict[int, str]:
 class PushToken(BaseModel):
     token: str
     platform: str | None = None
+    tz: str | None = None
+
+
+def _push_token_kind(token: str) -> str | None:
+    """'apns' for an Apple device token (hex), None for anything else (Expo tokens are no longer used)."""
+    return "apns" if 32 <= len(token) <= 400 and all(c in "0123456789abcdef" for c in token) else None
 
 
 @app.post("/me/push-token")
 def save_push_token(body: PushToken, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
-    """This phone's Expo push token, so league alerts (a completed trade) reach it."""
+    """This phone's Apple push token (and time zone, for quiet hours), so league alerts reach it."""
     client, user = owner
-    token = body.token.strip()
-    if not token.startswith("ExponentPushToken[") and not token.startswith("ExpoPushToken["):
-        raise HTTPException(status_code=400, detail="Not an Expo push token.")
+    token = body.token.strip().lower()
+    kind = _push_token_kind(token)
+    if not kind:
+        raise HTTPException(status_code=400, detail="Not a push token.")
     league_id = resolve_team(client, user)["league_id"]
+    tz = (body.tz or "").strip()[:64] or None
     try:
         client.table("push_tokens").upsert({"token": token, "user_id": user.id, "league_id": league_id, "platform": body.platform,
+                                            "kind": kind, "tz": tz,
                                             "updated_at": datetime.now().astimezone().isoformat()}, on_conflict="token").execute()
     except Exception as exc:
         print(f"APP_PUSH_TOKEN_ERROR {type(exc).__name__}", flush=True)
         raise HTTPException(status_code=503, detail="Alerts aren't switched on yet.")
     return {"ok": True}
+
+
+class AlertSettings(BaseModel):
+    off: list[str] = []
+    tz: str | None = None
+
+
+def _alert_pref(client: Client, user: Any) -> tuple[str, dict[str, Any] | None]:
+    league_id = resolve_team(client, user)["league_id"]
+    rows = (client.table("push_prefs").select("off,tz").eq("user_id", user.id).eq("league_id", league_id).limit(1)
+            .execute().data or [])
+    return league_id, (rows[0] if rows else None)
+
+
+@app.get("/me/alerts")
+def my_alerts(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """Which alerts I get (each kind on or off), quiet hours and the weekly limit. Same switches as the website."""
+    client, user = owner
+    try:
+        _, pref = _alert_pref(client, user)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print(f"APP_ALERTS_ERROR {type(exc).__name__}", flush=True)
+        raise HTTPException(status_code=503, detail="Alerts aren't switched on yet.")
+    return alerts.settings_view(pref)
+
+
+@app.post("/me/alerts")
+def save_my_alerts(body: AlertSettings, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    try:
+        league_id, pref = _alert_pref(client, user)
+        row = {"user_id": user.id, "league_id": league_id, "off": alerts.clean_off(body.off),
+               "tz": ((body.tz or "").strip()[:64] or (pref or {}).get("tz")),
+               "updated_at": datetime.now(timezone.utc).isoformat()}
+        client.table("push_prefs").upsert(row, on_conflict="user_id,league_id").execute()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print(f"APP_ALERTS_ERROR {type(exc).__name__}", flush=True)
+        raise HTTPException(status_code=503, detail="Alerts aren't switched on yet.")
+    return alerts.settings_view(row)
+
+
+@app.post("/me/alerts/test")
+def test_my_alerts(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """Queue a test alert for my phones; the alert job sends it within about 10 minutes (quiet hours don't apply)."""
+    client, user = owner
+    league_id = resolve_team(client, user)["league_id"]
+    now = datetime.now(timezone.utc)
+    test = alerts.test_alert(now)
+    try:
+        alerts.enqueue(client, alerts.Alert(test.kind, test.key, test.title, test.body, test.url, urgent=True),
+                       league_id=league_id, user_ids=[user.id], expires_at=now + timedelta(hours=1))
+    except Exception as exc:
+        print(f"APP_ALERTS_ERROR {type(exc).__name__}", flush=True)
+        raise HTTPException(status_code=503, detail="Alerts aren't switched on yet.")
+    return {"ok": True, "message": "A test alert is on its way. It arrives within about 10 minutes."}
 
 
 class LiveActivityToken(BaseModel):
@@ -318,10 +397,7 @@ def _season_context(client: Client, user: Any) -> dict[str, Any]:
     if not season.sleeper_league_id:
         raise HTTPException(status_code=409, detail="The active season isn't linked to a Sleeper league yet.")
     sleeper_id = season.sleeper_league_id
-    try:  # weeks the app runs itself (playoffs on) replace Sleeper's matchups for every page below
-        own_league.sync(client, team["league_id"], sleeper_id, int(season.season))
-    except Exception:
-        pass
+    _sync_own_league(client, team["league_id"], sleeper_id)  # our scores replace Sleeper's for every page below
     _process_due_waivers(client, team["league_id"])
     return {
         **team,
@@ -439,7 +515,7 @@ def _team_week(client: Client, ctx: dict[str, Any], roster_id: int | None) -> di
     this week's opponent. None when the team has no game this week."""
     if roster_id is None:
         return None
-    week = league.current_week()
+    week = _home_week(client, ctx["season"], datetime.now(home.HOME_TZ).date())  # same week as Home: Monday's holds until midnight Pacific
     final = week <= league.last_scored_week(ctx["sleeper_id"])
 
     def load() -> dict[str, Any] | None:
@@ -714,9 +790,62 @@ def all_players(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, 
     ids = _saved_ids(client, ctx["league_id"]) or []
     result = market.all_players(pool, state, ppg, _league_team_rows(client, ctx["league_id"]), rosters, ctx["team_id"],
                                 keep_ids=ids, kickers=not ctx["slots"] or "K" in ctx["slots"])
+    _add_this_week(client, ctx, result["players"])
     # The ★ Saved chip's "Plan these moves with the GM" question.
     result["plan_question"] = market.strategy_question(market.targets(ids, state, ctx["team_id"], pool, ppg), ctx["season"])
     return result
+
+
+def _kickoff_utc(game: dict[str, Any]) -> str | None:
+    try:
+        clock = str(game.get("gametime") or "") or "13:00"
+        return datetime.fromisoformat(f"{game['gameday']}T{clock}").replace(tzinfo=home.EASTERN).astimezone(timezone.utc).isoformat()
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _add_this_week(client: Client, ctx: dict[str, Any], rows: list[dict[str, Any]]) -> None:
+    """Market rows get this week's projection (league scoring, matchup-adjusted, same as Home), the season
+    average and last-3 trend in league scoring, and the next game with the defense's rank vs the position.
+    One pass for the whole league, cached half an hour; any piece that fails is just left off."""
+    sid, season, week = ctx["sleeper_id"], ctx["season"], league.current_week()
+
+    def load() -> dict[str, Any]:
+        ids = [r["player_id"] for r in rows if r.get("pos") in ("QB", "RB", "WR", "TE", "K")]
+        pos = {r["player_id"]: r["pos"] for r in rows}
+        team = {r["player_id"]: r["nfl_team"] for r in rows}
+        out: dict[str, Any] = {"proj": {}, "avg": {}, "form": {}, "games": {}, "dvp": {}}
+        try:
+            out["proj"] = projections.week_projections(client, sid, season, week, ids, pos, team)
+        except Exception as exc:
+            print(f"MARKET_PROJ_ERROR {type(exc).__name__}", flush=True)
+        try:
+            avg, _games = projections.season_averages(sid, season, week - 1) if week > 1 else ({}, {})
+            scoring = projections.league_scoring(sid)
+            weekly = []
+            for w in range(week - 1, max(0, week - 1 - market.TREND_WEEKS), -1):
+                lines = projections.week_lines("stats", season, w, 86400)
+                weekly.append({p: projections.score(l["stats"], scoring, l.get("pos")) for p, l in lines.items() if projections.played(l.get("stats"))})
+            out["avg"], out["form"] = avg, market.recent_form(weekly, avg)
+        except Exception as exc:
+            print(f"MARKET_FORM_ERROR {type(exc).__name__}", flush=True)
+        try:
+            out["games"] = nfl_data.week_matchups(nfl_data.season_games(client, season), week)
+            out["dvp"] = nfl_data.defense_vs_position(client, season)
+        except Exception as exc:
+            print(f"MARKET_GAMES_ERROR {type(exc).__name__}", flush=True)
+        return out
+
+    data = cache.cached(("market_week", sid, season, week), 1800, load)
+    find = market.next_games(data["games"], data["dvp"], week, _kickoff_utc)
+    for r in rows:
+        pid = r["player_id"]
+        r["proj"] = data["proj"].get(pid)
+        a = data["avg"].get(pid)
+        r["avg"] = round(a, 1) if a is not None else None
+        form = data["form"].get(pid) or {}
+        r["last3"], r["trend"] = form.get("last3"), form.get("trend")
+        r["next"] = find(nfl_data.team_code(r.get("nfl_team")) or "", r.get("pos") or "")
 
 
 @app.get("/my-team/calls")
@@ -1144,6 +1273,31 @@ def front_office_chat_stream(body: ChatRequest, owner: tuple[Client, Any] = Depe
                              headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
 
 
+class ChatAddRequest(BaseModel):
+    text: str
+
+
+@app.post("/front-office/chat/add")
+def front_office_chat_add(body: ChatAddRequest, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """More context typed while the GM is still answering: it goes into that same answer.
+    {"added": false} means the answer already finished, so the app sends it as a new question instead."""
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Type something first.")
+    if len(text) > 2000:
+        raise HTTPException(status_code=400, detail="That's too long. Keep it under 2,000 characters.")
+    return {"added": front_office.tell(_front_office(*owner), text)}
+
+
+@app.post("/front-office/chat/resume")
+def front_office_chat_resume(owner: tuple[Client, Any] = Depends(owner_client)) -> StreamingResponse:
+    """The owner's latest answer, replayed and followed to the end: for coming back after the app closed mid-answer.
+    No AI call and no daily-question charge here; the answer was already paid for."""
+    session = _front_office(*owner)
+    return StreamingResponse(front_office.resume_stream(session), media_type="application/x-ndjson",
+                             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+
+
 @app.get("/front-office/conversations")
 def front_office_conversations(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
     session = _front_office(*owner)
@@ -1177,7 +1331,7 @@ def _nfl_week(client: Client, season: int, week: int) -> list[dict[str, Any]]:
 
 
 def _risers(client: Client, ctx: dict[str, Any], week: int) -> list[dict[str, Any]]:
-    """GM's Risers for the league this week (the same list for every owner; cached half an hour)."""
+    """Highest projected for the league this week (the same list for every owner; cached half an hour)."""
     sid, season = ctx["sleeper_id"], ctx["season"]
     lines = projections.week_lines("projections", season, week, 1800)
     scoring = projections.league_scoring(sid)
@@ -1185,8 +1339,8 @@ def _risers(client: Client, ctx: dict[str, Any], week: int) -> list[dict[str, An
              and projections.score(line["stats"], scoring) >= home.RISER_MIN_PROJ * 0.8]
     proj = projections.week_projections(client, sid, season, week, skill, {p: lines[p]["pos"] for p in skill}, {p: lines[p]["team"] for p in skill})
     # The average is in league scoring too (the market's PPG is full PPR, which made QBs look like risers).
-    avg, games = projections.season_averages(sid, season, week - 1) if week > 1 else ({}, {})
-    near = [p for p, v in proj.items() if v >= home.RISER_MIN_PROJ and avg.get(p) is not None and v > avg[p]]
+    avg, _games = projections.season_averages(sid, season, week - 1) if week > 1 else ({}, {})
+    near = [p for p, v in proj.items() if v >= home.RISER_MIN_PROJ]
     info = teams.player_info(client, near)
     last_lines = projections.week_lines("stats", season, week - 1, 86400) if week > 1 else {}
     last = {p: projections.score(last_lines[p]["stats"], scoring) for p in near if p in last_lines}
@@ -1194,10 +1348,7 @@ def _risers(client: Client, ctx: dict[str, Any], week: int) -> list[dict[str, An
         owners = league.sleeper_owners(sid)
     except Exception:
         owners = {}
-    return home.risers({p: proj[p] for p in near}, avg, games, info, owners, ctx["names"], None, last)
-
-
-_RISERS_LOGGED: set[tuple[str, int, int]] = set()
+    return home.top_projected({p: proj[p] for p in near}, avg, info, owners, ctx["names"], None, last)
 
 
 def _league_live(client: Client, ctx: dict[str, Any], week: int, starts: dict[str, datetime], now: datetime) -> dict[int, dict[str, Any]]:
@@ -1214,16 +1365,14 @@ def _league_live(client: Client, ctx: dict[str, Any], week: int, starts: dict[st
 
 def _game_day_bottom(client: Client, ctx: dict[str, Any], user: Any, week: int, current: dict[str, Any],
                      pics: dict[int, str | None], now: datetime) -> dict[str, Any]:
-    """The bottom card of game-day Home: GM's Risers, the week's scoreboard, or Shotgun watch."""
+    """The bottom card of game-day Home: Highest projected, the week's scoreboard, or Shotgun watch."""
     sid, my_roster = ctx["sleeper_id"], ctx["sleeper_roster_id"]
     starts = home.kickoffs(_nfl_week(client, ctx["season"], week))
     pick = home.bottom_mode(now, starts)
     if pick["mode"] == "risers":
-        rows = cache.cached(("risers", sid, ctx["season"], week), 1800, lambda: _risers(client, ctx, week))
-        key = (str(user.id), ctx["season"], week)
-        if rows and key not in _RISERS_LOGGED:  # once per owner and week per server; the log also skips saved weeks
-            _RISERS_LOGGED.add(key)
-            risers_log.log(client, league_id=ctx["league_id"], sleeper_id=sid, season=ctx["season"], week=week, rows=rows)
+        # Mode stays "risers" so older app builds still render the card. The GM's Risers grading log
+        # (league_ai/risers.py) is no longer fed: a top-projected list isn't a "beats his average" call.
+        rows = cache.cached(("top_proj", sid, ctx["season"], week), 1800, lambda: _risers(client, ctx, week))
         return {"mode": "risers", "risers": [{**r, "is_mine": r["roster_id"] is not None and r["roster_id"] == my_roster} for r in rows]}
 
     live = _league_live(client, ctx, week, starts, now)
@@ -1238,6 +1387,25 @@ def _text(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _home_week(client: Client, season: int, today: date) -> int:
+    """Home's week from our own NFL schedule (it holds Monday night's week until midnight
+    Pacific); Sleeper's week only when the schedule isn't loaded or the season is over."""
+    def load() -> dict[int, str]:
+        rows = client.table("nfl_games").select("week,gameday").eq("season", season).execute().data or []
+        last: dict[int, str] = {}
+        for r in rows:
+            wk, day = r.get("week"), str(r.get("gameday") or "")[:10]
+            if wk is not None and int(wk) <= 18 and day and day > last.get(int(wk), ""):
+                last[int(wk)] = day
+        return last
+    try:
+        week = home.schedule_week(cache.cached(("nfl_gamedays", season), 3600, load), today)
+    except Exception as exc:
+        print(f"APP_HOME_WEEK_ERROR {type(exc).__name__}", flush=True)
+        week = None
+    return week or league.current_week()
+
+
 @app.get("/home")
 def home_page(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
     client, user = owner
@@ -1247,8 +1415,8 @@ def home_page(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, An
     sid, names, my_roster = ctx["sleeper_id"], ctx["names"], ctx["sleeper_roster_id"]
     sleeper_league = league.sleeper.get(f"league/{sid}") or {}
     playoff_start = int((sleeper_league.get("settings") or {}).get("playoff_week_start") or 15)
-    week = league.current_week()
-    today = datetime.now(front_office.LEAGUE_TZ).date()
+    today = datetime.now(home.HOME_TZ).date()
+    week = _home_week(client, ctx["season"], today)
     phase = home.phase(today, sleeper_league.get("status"), week, playoff_start)
 
     rows, states, standings_rows, cap = _league_teams(client, ctx)

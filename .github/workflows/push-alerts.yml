@@ -1,0 +1,39 @@
+name: Push alerts
+
+# Every 10 minutes: works out which owners should hear about what (lineup problems, injuries, results, waivers,
+# deadlines, over the cap, playoffs, trade offers, rollover), then sends what's due straight to Apple.
+# Free on this public repo. Needs repo secrets APNS_KEY_P8 and APNS_KEY_ID (see api/apns.py); without the key it
+# only queues. Prints counts only.
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: push-alerts
+  cancel-in-progress: false
+
+jobs:
+  alerts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: api/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r api/requirements.txt "httpx[http2]" "pyjwt[crypto]"
+
+      - name: Queue and send alerts
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          APNS_KEY_P8: ${{ secrets.APNS_KEY_P8 }}
+          # The key id is not secret (only the .p8 is); the fallback is the 2026-11-02 "Legacy Live Scores" key.
+          APNS_KEY_ID: ${{ secrets.APNS_KEY_ID || 'M4JQR79FN5' }}
+        run: python scripts/push_alerts.py

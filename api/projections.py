@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any, Iterable
 
 from api import cache, sleeper
+from league_ai.projection_calibration import calibrate as calibrate_points, calibration as projection_calibration
 from league_ai.nfl_data import add_weather, defense_vs_position, season_games, team_code, total_multiplier, week_matchups
 
 ROOT = "https://api.sleeper.app"
@@ -18,20 +19,12 @@ POSITIONS = ("QB", "RB", "WR", "TE", "K", "DEF")
 _QUERY = "season_type=regular&" + "&".join(f"position[]={p}" for p in POSITIONS)
 
 
-def score(stats: dict[str, Any] | None, scoring: dict[str, Any]) -> float:
-    """Points for one stat line under the league's scoring rules (Sleeper stat keys match scoring keys)."""
-    if not stats:
-        return 0.0
-    total = 0.0
-    for key, weight in scoring.items():
-        value = stats.get(key)
-        if value is None:
-            continue
-        try:
-            total += float(value) * float(weight)
-        except (TypeError, ValueError):
-            continue
-    return round(total, 2)
+def score(stats: dict[str, Any] | None, scoring: dict[str, Any], position: str | None = None) -> float:
+    """Points for one stat line under the league's scoring rules, by our own engine (scoring.engine), which also fills
+    in bonus and bucket stats a line leaves out (a projected kicker's 50+ yard field goals, a defense's points-allowed bucket)."""
+    from scoring.engine import player_points
+
+    return player_points(stats, scoring, position)
 
 
 # Sleeper stat keys -> short labels for a score breakdown. Keys not listed still
@@ -111,7 +104,7 @@ def ranks(lines: dict[str, dict[str, Any]], scoring: dict[str, Any], positions: 
         pos = line.get("pos") or (positions or {}).get(pid, "")
         if not pos or not line.get("stats"):
             continue
-        pts = score(line["stats"], scoring)
+        pts = score(line["stats"], scoring, pos)
         if pts == 0 and not line["stats"].get("gp") and not line["stats"].get("off_snp"):
             continue
         by_pos.setdefault(pos, []).append((pid, pts))
@@ -130,8 +123,10 @@ def week_ranks(sleeper_id: str, season: int, week: int, final: bool, positions: 
     return cache.cached(("week_ranks", sleeper_id, season, week), 21600, load) if final else load()
 
 
-def week_projections(client: Any, sleeper_id: str, season: int, week: int, ids: Iterable[str], positions: dict[str, str], teams: dict[str, str]) -> dict[str, float]:
-    """player_id -> projected league points this week, matchup-adjusted."""
+def week_projections(client: Any, sleeper_id: str, season: int, week: int, ids: Iterable[str], positions: dict[str, str], teams: dict[str, str],
+                     calibrate: bool = True) -> dict[str, float]:
+    """player_id -> projected league points this week, matchup-adjusted and calibrated by position
+    (league_ai.projection_calibration; calibrate=False gives the uncalibrated number the calibration learns from)."""
     lines = week_lines("projections", season, week, 1800)
     scoring = league_scoring(sleeper_id)
     try:
@@ -142,20 +137,26 @@ def week_projections(client: Any, sleeper_id: str, season: int, week: int, ids: 
         dvp = defense_vs_position(client, season)
     except Exception:
         dvp = {}
+    cal = projection_calibration(client, sleeper_id, season) if calibrate else {}
+    adj = cal.get("adjust") or {}
+    adjust = adj.get("players") or {} if int(adj.get("season") or 0) == int(season) and int(adj.get("week") or 0) == int(week) else {}
     out: dict[str, float] = {}
     for pid in ids:
         line = lines.get(pid)
         if not line:
             continue
-        base = score(line["stats"], scoring)
         pos = positions.get(pid) or line.get("pos") or ""
+        base = score(line["stats"], scoring, pos)
         team = team_code(teams.get(pid) or line.get("team"))
         game = games.get(team)
         if game is None and games:
             out[pid] = 0.0  # on bye
             continue
         factor = total_multiplier(pos, game, dvp.get((game["opponent"], pos)) if game else None) if pos in ("QB", "RB", "WR", "TE") else 1.0
-        out[pid] = round(base * factor, 1)
+        # learned from every finished week: how far projections at this position have run over or under real scores
+        # plus this week's nudges from the signals that have proven they help (league_ai.projection_learning)
+        nudge = float(adjust.get(pid, 1.0)) if adjust else 1.0
+        out[pid] = round(calibrate_points(base * factor, pos, cal.get("factors") or {}, cal.get("lines")) * nudge, 1)
     return out
 
 
@@ -176,7 +177,7 @@ def season_averages(sleeper_id: str, season: int, through_week: int) -> tuple[di
         for week in range(1, through_week + 1):
             for pid, line in week_lines("stats", season, week, 86400).items():
                 if played(line.get("stats")):
-                    totals[pid] = totals.get(pid, 0.0) + score(line["stats"], scoring)
+                    totals[pid] = totals.get(pid, 0.0) + score(line["stats"], scoring, line.get("pos"))
                     games[pid] = games.get(pid, 0) + 1
         return {pid: round(t / games[pid], 2) for pid, t in totals.items()}, games
     return cache.cached(("season_avg", sleeper_id, season, through_week), 21600, load)

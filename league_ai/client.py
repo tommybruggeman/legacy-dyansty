@@ -56,6 +56,8 @@ class ClientResult:
     text: str
     trace: Trace
     error_code: str | None = None
+    # what each lookup returned, for the fact check (league_ai.fact_check): [{"tool", "input", "result"}]
+    evidence: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _redact(text: str) -> str:
@@ -103,6 +105,13 @@ def _usage(trace: Trace, response: Any) -> None:
             setattr(trace, dst, getattr(trace, dst) + int(_block_attr(usage, src, 0) or 0))
         except Exception:
             pass
+
+
+def added_note(added: list[str]) -> str:
+    """What the owner typed while the GM was still working, as a note in the conversation."""
+    lines = "\n\n".join(a.strip() for a in added if a.strip())
+    return ("The owner sent this while you were working on your answer. Fold it in and answer everything they've asked "
+            f"as one reply (don't mention that it arrived mid-answer):\n\n{lines}")
 
 
 class ClaudeClient:
@@ -158,6 +167,7 @@ class ClaudeClient:
         max_tool_calls: int | None = None,
         on_event: Callable[[str, Any], None] | None = None,
         turn_effort: str | None = None,
+        inbox: Callable[[bool], list[str]] | None = None,
     ) -> ClientResult:
         """Run the tool loop. With on_event, text streams as ("text", delta),
         each model round starts with ("round", n), each tool call is announced
@@ -166,7 +176,12 @@ class ClaudeClient:
 
         turn_effort sets effort for this question only, as a per-message effort change
         placed before the latest user message, which keeps the cached league pack valid.
-        A fixed LEAGUE_AI_EFFORT wins over it."""
+        A fixed LEAGUE_AI_EFFORT wins over it.
+
+        inbox(final) returns anything the owner typed while this answer was being worked on.
+        It's read after every lookup round and folded into that round; when the model has
+        finished, inbox(True) either returns late additions (and the model reworks its answer
+        with them, after a ("reset", None)) or closes the inbox for good."""
         trace = Trace(model=self.config.model)
         start = time.perf_counter()
         limit = self.config.max_tool_calls if max_tool_calls is None else max_tool_calls
@@ -186,6 +201,7 @@ class ClaudeClient:
         kept_text = ""
         ended_on_tools = False
         best_text = ""  # the fullest answer any round wrote, in case the last round only says "Logged."
+        evidence: list[dict[str, Any]] = []
         try:
             while True:
                 kwargs: dict[str, Any] = {
@@ -225,7 +241,15 @@ class ClaudeClient:
                     best_text = text_out
                 tool_uses = [b for b in content if _block_attr(b, "type") == "tool_use"]
                 if trace.stop_reason != "tool_use" or not tool_uses:
-                    break
+                    added = inbox(True) if inbox else []
+                    if not added:
+                        break
+                    # the owner added something while the answer was being written: rework it with that in mind
+                    history.append({"role": "assistant", "content": _content_to_api(content) or [{"type": "text", "text": round_text or "..."}]})
+                    history.append({"role": "user", "content": added_note(added)})
+                    kept_text = text_out = best_text = ""
+                    _emit(on_event, "reset", None)
+                    continue
                 if all(_block_attr(b, "name") in SILENT_TOOLS for b in tool_uses) or len(round_text) >= KEEP_TEXT_CHARS:
                     # the answer came with a bookkeeping call (log/remember), or the model reasoned before a
                     # lookup: keep it, since the next round often builds on it ("with the caveats above")
@@ -243,7 +267,12 @@ class ClaudeClient:
                         trace.tool_calls.append(name)
                         _emit(on_event, "tool", name)
                         result_text = tools.call(name, _block_attr(block, "input") or {}) if tools else "{}"
+                        if name not in SILENT_TOOLS:
+                            evidence.append({"tool": name, "input": _block_attr(block, "input") or {}, "result": str(result_text)[:EVIDENCE_CHARS]})
                     results.append({"type": "tool_result", "tool_use_id": _block_attr(block, "id"), "content": result_text})
+                added = inbox(False) if inbox else []
+                if added:
+                    results.append({"type": "text", "text": added_note(added)})
                 history.append({"role": "user", "content": results})
                 if trace.rounds > limit + 2:
                     ended_on_tools = True
@@ -282,10 +311,11 @@ class ClaudeClient:
             return ClientResult(False, "", trace, trace.error_code)
         if trace.stop_reason == "max_tokens":
             text_out += "\n\n_(answer cut off: output budget reached)_"
-        return ClientResult(True, text_out, trace)
+        return ClientResult(True, text_out, trace, evidence=evidence)
 
 
 PER_MESSAGE_EFFORT_BETA = "mid-conversation-output-config-2026-07-01"
+EVIDENCE_CHARS = 12000  # per tool result kept for the fact check
 SHORT_ANSWER_CHARS = 60
 ACK_CHARS = 25  # a closing line this short after a full answer is an acknowledgement ("Logged.")
 THIN_ANSWER_CHARS = 100  # after real research, an answer shorter than this left its reasons in the model's thinking

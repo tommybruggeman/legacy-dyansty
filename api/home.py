@@ -17,9 +17,12 @@ from services.standings_rules import TOP_FIVE_POINTS, WIN_POINTS
 
 ROLLOVER_MONTH, ROLLOVER_DAY = 6, 30
 ROSTER_MAX = 22
-GAME_DAYS = {3, 4, 5, 6, 0}  # Thu-Mon (Monday=0)
+GAME_DAYS = {2, 3, 4, 5, 6, 0}  # Wed-Mon (Monday=0); only Tuesday is last week's recap (Tommy, 2026-11-04)
 ROUND_NAMES = {1: "Semifinal", 2: "Final"}
 EASTERN = ZoneInfo("America/New_York")
+# Home's day flips at midnight Pacific, so Monday night's final screen stays up
+# until the West Coast's Monday is over (Tommy, 2026-11-02).
+HOME_TZ = ZoneInfo("America/Los_Angeles")
 # nflverse team codes that differ from Sleeper's.
 NFLVERSE_TEAMS = {"LA": "LAR"}
 
@@ -44,6 +47,20 @@ def phase(today: date, league_status: str | None, week: int, playoff_start: int 
     if (today.month, today.day) <= (ROLLOVER_MONTH, ROLLOVER_DAY):
         return "decisions"
     return "draft_prep"
+
+
+def schedule_week(gamedays: dict[int, str], today: date) -> int | None:
+    """The NFL week Home shows, from our own schedule: the first week whose last game
+    day is today or later. Monday night's week holds until that day is over, then
+    the next week starts. None when the schedule is missing or the season is over."""
+    for week in sorted(gamedays):
+        try:
+            last = date.fromisoformat(str(gamedays[week])[:10])
+        except ValueError:
+            continue
+        if last >= today:
+            return week
+    return None
 
 
 def rollover_deadline(today: date) -> date:
@@ -260,7 +277,7 @@ def standings_table(rows: list[dict[str, Any]], team_ids: dict[int, str], pics: 
 
 # ---- the bottom of game-day Home -------------------------------------------------
 #
-# Thu-Sat: GM's Risers (who our projection says beats his normal the most this week).
+# Wed-Sat: Highest projected (the league's top projected players this week, by position).
 # Sunday: the week's scoreboard (every Legacy game) until Shotgun watch takes over
 # midway through the late games. Shotgun watch follows the lowest projected final
 # score (last place shotguns a beer) and everyone close to it: within 10 projected
@@ -273,6 +290,7 @@ SHOTGUN_AFTER = timedelta(hours=1, minutes=45)  # about halftime of the late gam
 SHOTGUN_WINDOWS = {"late": 10.0, "night": 7.0, "monday": 5.0}
 CEILING = 2.5                 # a big game: 2.5x what's left of a projection
 RISER_MIN_PROJ, RISER_MIN_GAMES, RISERS_SHOWN = 8.0, 2, 20
+TOP_PER_POS = 5   # Highest projected: the card shows 5 per position chip
 OUT_TAGS = {"out", "ir", "doubtful", "pup", "sus", "na"}
 
 
@@ -292,9 +310,9 @@ def bottom_mode(now: datetime, starts: dict[str, datetime]) -> dict[str, Any]:
     """
     local = now.astimezone(EASTERN)
     day = local.weekday()
-    if day in (3, 4, 5):
+    if day in (2, 3, 4, 5):
         return {"mode": "risers"}
-    if day == 0:
+    if day == 0 or (day == 1 and now.astimezone(HOME_TZ).weekday() == 0):  # Monday holds until midnight Pacific
         return {"mode": "shotgun", "window": SHOTGUN_WINDOWS["monday"]}
     if day != 6:
         return {"mode": "scoreboard"}
@@ -365,40 +383,70 @@ def scoreboard(games: list[dict[str, Any]], live: dict[int, dict[str, Any]], my_
     return out
 
 
+def _reach(t: dict[str, Any]) -> float:
+    """The most a team can still finish with: its score plus CEILING times what's left (its score once frozen)."""
+    return t["score"] + CEILING * t["rest"]
+
+
+def still_alive(live: dict[int, dict[str, Any]]) -> set[int]:
+    """Teams that can still finish last.
+
+    A team is safe once some other team is sure to finish below it: that team's best possible
+    final (_reach) is under this team's score now. So a frozen owner sitting above someone who is
+    also done (or can't climb past them) drops off the watch.
+    """
+    return {rid for rid, t in live.items()
+            if not any(_reach(o) < t["score"] for oid, o in live.items() if oid != rid)}
+
+
 def shotgun(live: dict[int, dict[str, Any]], names: dict[int, str], pics: dict[int, str | None], my_roster_id: int | None,
             window: float) -> dict[str, Any] | None:
-    """Who is on the can (lowest projected final) and everyone within `window` projected points of them.
+    """Who is on the can (lowest projected final) and everyone who can still finish last within `window` of them.
 
-    Locked once nobody can catch last place: every other team's score now is above the most last place could
-    still reach (its score plus CEILING times what's left of its projection), which also covers everyone frozen.
+    Owners who can no longer finish last (see still_alive) are left off. Locked once only one team can
+    still finish last: nobody can catch them.
     """
     if len(live) < 2:
         return None
+    alive = still_alive(live)
     ranked = sorted(live.items(), key=lambda kv: (kv[1]["projected"], kv[1]["score"]))
-    last_id, last = ranked[0]
-    reach = last["score"] + CEILING * last["rest"]
-    locked = all(t["score"] > reach for rid, t in live.items() if rid != last_id)
-    if locked:  # final order: whoever is lowest right now (they can't move far enough)
-        last_id, last = min(live.items(), key=lambda kv: kv[1]["score"])
+    # The lowest projected final can never be safe (anyone sure to finish under it projects lower).
+    last_id, last = next((kv for kv in ranked if kv[0] in alive), ranked[0])
+    locked = alive == {last_id}
 
     def row(rid: int, t: dict[str, Any]) -> dict[str, Any]:
         return {"roster_id": rid, "name": names.get(rid) or f"Roster {rid}", "avatar": pics.get(rid), "is_me": rid == my_roster_id,
                 "score": t["score"], "projected": t["projected"], "left": t["left"], "playing": t["playing"],
                 "frozen": t["left"] == 0, "gap": round(t["projected"] - last["projected"], 1)}
 
-    others = [row(rid, t) for rid, t in ranked if rid != last_id]
-    # The one number that matters: how much last place needs to pass the next-lowest score right now.
-    chase = min(others, key=lambda o: o["score"], default=None)
-    need = round(chase["score"] - last["score"] + 0.01, 2) if chase and not locked else None
-    if locked:
-        others.sort(key=lambda o: o["score"])
+    if locked:  # the closest escapes, by final score
+        escapes = sorted((row(rid, t) for rid, t in live.items() if rid != last_id), key=lambda o: o["score"])
+        return {"window": window, "locked": True, "last": row(last_id, last), "danger": escapes[:2], "safe": [],
+                "needs": None}
+
+    others = [row(rid, t) for rid, t in ranked if rid != last_id and rid in alive]
+    lr = row(last_id, last)
+    needs = None
+    if not lr["frozen"]:
+        # how much last place needs to pass the lowest score still in the race right now
+        chase = min(others, key=lambda o: o["score"], default=None)
+        if chase and chase["score"] >= last["score"]:
+            needs = {"points": round(chase["score"] - last["score"] + 0.01, 2), "to_pass": chase["name"],
+                     "who": lr["name"], "who_is_me": lr["is_me"], "to_pass_is_me": chase["is_me"]}
+    else:
+        # last place is done: how much the lowest score below them needs to send them to the can
+        below = [o for o in others if o["score"] < last["score"]]
+        if below:
+            chase = min(below, key=lambda o: o["score"])
+            needs = {"points": round(last["score"] - chase["score"] + 0.01, 2), "to_pass": lr["name"],
+                     "who": chase["name"], "who_is_me": chase["is_me"], "to_pass_is_me": lr["is_me"]}
     return {
         "window": window,
-        "locked": locked,
-        "last": row(last_id, last),
-        "danger": [o for o in others if locked or o["gap"] <= window][:5 if not locked else 2],
-        "safe": [] if locked else [o for o in others if o["gap"] > window][:2],
-        "needs": {"points": need, "to_pass": chase["name"]} if need is not None and need > 0 else None,
+        "locked": False,
+        "last": lr,
+        "danger": [o for o in others if o["gap"] <= window][:5],
+        "safe": [o for o in others if o["gap"] > window][:2],
+        "needs": needs,
     }
 
 
@@ -428,3 +476,33 @@ def risers(proj: dict[str, float], avg: dict[str, float], games: dict[str, int],
                      "injury": _text(meta.get("injury_status")) or None})
     rows.sort(key=lambda r: (-r["rise"], -r["proj"]))
     return rows[:limit]
+
+
+def top_projected(proj: dict[str, float], avg: dict[str, float], info: dict[str, dict[str, Any]], owners: dict[str, int],
+                  names: dict[int, str], my_roster_id: int | None, last_week: dict[str, float],
+                  per_pos: int = TOP_PER_POS) -> list[dict[str, Any]]:
+    """Highest projected: the top projected skill players this week, rostered or not, best first.
+
+    Keeps the top per_pos at each position (so every position chip on the card fills) and skips players
+    ruled out. Same row shape as risers(); avg is None for players without games yet and rise is unused.
+    """
+    rows = []
+    for pid, p in proj.items():
+        meta = info.get(pid, {})
+        pos = _text(meta.get("position")).upper()
+        if pos not in ("QB", "RB", "WR", "TE") or _text(meta.get("injury_status")).lower() in OUT_TAGS:
+            continue
+        rid = owners.get(pid)
+        a = avg.get(pid)
+        rows.append({"player_id": pid, "name": _text(meta.get("full_name")) or pid, "pos": pos, "team": _text(meta.get("team")),
+                     "avg": round(a, 1) if a is not None else None, "proj": round(p, 1), "rise": 0.0, "last": last_week.get(pid),
+                     "roster_id": rid, "owner": names.get(rid) if rid is not None else None, "is_mine": rid is not None and rid == my_roster_id,
+                     "injury": _text(meta.get("injury_status")) or None})
+    rows.sort(key=lambda r: -r["proj"])
+    kept: dict[str, int] = {}
+    out = []
+    for r in rows:
+        if kept.get(r["pos"], 0) < per_pos:
+            kept[r["pos"]] = kept.get(r["pos"], 0) + 1
+            out.append(r)
+    return out
