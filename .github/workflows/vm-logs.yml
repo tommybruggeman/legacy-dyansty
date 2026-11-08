@@ -1,0 +1,17 @@
+name: VM watcher logs (diagnostic)
+# Temporary: prints the Live Activity watcher's status + count lines from the free VM. Counts only (public logs).
+on:
+  push:
+    branches: [claude/vm-logs]
+jobs:
+  logs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - run: |
+          gcloud compute ssh legacy-live-watcher --project legacy-dynasty-25024 --zone us-central1-a --quiet --strict-host-key-checking=no \
+            --command "sudo systemctl show legacy-live-activity -p ActiveState -p NRestarts -p ExecMainStartTimestamp; sudo journalctl -u legacy-live-activity --since '-90 min' --no-pager -o cat | grep -E 'pass |APNS|ERROR|done after|not set|Traceback|Error' | tail -40; free -m | head -2"
