@@ -4,7 +4,8 @@ Sleeper publishes a projected stat line and a real stat line for every NFL
 player each week. Both are scored here with this league's own scoring rules
 (league/{id} scoring_settings), so the numbers match how Legacy scores.
 Projections are then tilted by the same matchup context the Front Office
-uses (defense vs position, Vegas total, weather), capped at +/-20%.
+uses (defense vs position, Vegas total), capped at +/-20%, and by the fitted weather and game situation effects
+(league_ai.game_conditions).
 """
 from __future__ import annotations
 
@@ -12,6 +13,7 @@ from typing import Any, Iterable
 
 from api import cache, sleeper
 from league_ai.first_downs import adjust_with_card as adjust_first_downs
+from league_ai.game_conditions import multiplier as condition_multiplier, week_conditions
 from league_ai.projection_calibration import calibrate as calibrate_points, calibration as projection_calibration
 from league_ai.nfl_data import add_weather, defense_vs_position, season_games, team_code, total_multiplier, week_matchups
 
@@ -142,6 +144,10 @@ def week_projections(client: Any, sleeper_id: str, season: int, week: int, ids: 
         dvp = defense_vs_position(client, season)
     except Exception:
         dvp = {}
+    try:   # weather and game situations, fitted on 2021-2025 (league_ai.game_conditions); forecast for games not played yet
+        cond = week_conditions(season_games(client, season), week, games) if games else {}
+    except Exception:
+        cond = {}
     cal = projection_calibration(client, sleeper_id, season) if calibrate else {}
     adj = cal.get("adjust") or {}
     adjust = adj.get("players") or {} if int(adj.get("season") or 0) == int(season) and int(adj.get("week") or 0) == int(week) else {}
@@ -157,7 +163,8 @@ def week_projections(client: Any, sleeper_id: str, season: int, week: int, ids: 
         if game is None and games:
             out[pid] = 0.0  # on bye
             continue
-        factor = total_multiplier(pos, game, dvp.get((game["opponent"], pos)) if game else None) if pos in ("QB", "RB", "WR", "TE") else 1.0
+        factor = total_multiplier(pos, game, dvp.get((game["opponent"], pos)) if game else None, conditions=True) if pos in ("QB", "RB", "WR", "TE") else 1.0
+        factor *= condition_multiplier(pos, cond.get(team) or {})
         # learned from every finished week: how far projections at this position have run over or under real scores
         # plus this week's nudges from the signals that have proven they help (league_ai.projection_learning)
         nudge = float(adjust.get(pid, 1.0)) if adjust else 1.0

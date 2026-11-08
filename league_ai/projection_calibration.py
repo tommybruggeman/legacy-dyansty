@@ -271,10 +271,12 @@ def _td_points(stats: Mapping[str, Any] | None, scoring: Mapping[str, Any]) -> f
 
 
 def week_rows(client: Any, season: int, week: int, scoring: Mapping[str, Any], stats_rows: list[dict[str, Any]],
-              games_all: list[dict[str, Any]], actual: bool = True, fd: Any = None) -> list[dict[str, Any]]:
+              games_all: list[dict[str, Any]], actual: bool = True, fd: Any = None,
+              games: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
     """Every projected player's raw and matchup-tilted projection (as the app makes them, before calibration), and his
     real score when actual=True. The defense ratings use only games played before the week."""
     from api.projections import score
+    from league_ai import game_conditions as gc
     from league_ai.nfl_data import defense_vs_position_from_stats, team_code, total_multiplier, week_matchups
     from league_ai.start_sit_grade import _projection_lines
 
@@ -285,7 +287,11 @@ def week_rows(client: Any, season: int, week: int, scoring: Mapping[str, Any], s
     if actual and not lines:
         return []
     dvp = defense_vs_position_from_stats([r for r in stats_rows if int(r.get("week") or 0) < week])
-    games = week_matchups(games_all, week)
+    games = week_matchups(games_all, week) if games is None else games
+    try:   # weather and game situations, fitted (league_ai.game_conditions); past games use the weather archive
+        cond = gc.week_conditions(games_all, week, games, archive=actual)
+    except Exception:
+        cond = {}
     out = []
     for pid, line in proj.items():
         pos = str(line.get("pos") or "").upper()
@@ -293,9 +299,11 @@ def week_rows(client: Any, season: int, week: int, scoring: Mapping[str, Any], s
         raw = score(stats, dict(scoring), pos)
         if raw <= 0:
             continue
-        game = games.get(team_code(line.get("team")))
-        tilt = total_multiplier(pos, game, dvp.get((game["opponent"], pos)) if game else None) if pos in SKILL and game else 1.0
-        row = {"id": str(pid), "pos": pos, "team": team_code(line.get("team")), "raw": raw, "shown": raw * tilt, "actual": None,
+        team = team_code(line.get("team"))
+        game = games.get(team)
+        tilt = total_multiplier(pos, game, dvp.get((game["opponent"], pos)) if game else None, conditions=True) if pos in SKILL and game else 1.0
+        cm = gc.multiplier(pos, cond.get(team) or {})
+        row = {"id": str(pid), "pos": pos, "team": team, "raw": raw, "shown": raw * tilt * cm, "cond": cm, "actual": None,
                "td_proj": _td_points(stats, scoring)}
         if actual:
             real = lines.get(pid)
@@ -402,14 +410,14 @@ def _learn(client: Any, weeks: list[dict[str, Any]], card_: Mapping[str, Any], s
             def adjust(self, pid: str, pos: str, stats: Any) -> dict[str, Any]:
                 return adjust_with_card(card_.get("first_downs"), pid, pos, stats)
 
-        rows = week_rows(client, cur_season, week, sc, season_stat_rows(client, cur_season), games_all, actual=False,
-                         fd=_SavedFirstDowns())
-        for r in rows:
-            r["cal"] = calibrate(r["shown"], r["pos"], card_.get("factors") or {}, card_.get("lines"))
         try:
             games = add_weather(week_matchups(games_all, week), cur_season, week)
         except Exception:
             games = week_matchups(games_all, week)
+        rows = week_rows(client, cur_season, week, sc, season_stat_rows(client, cur_season), games_all, actual=False, games=games,
+                         fd=_SavedFirstDowns())
+        for r in rows:
+            r["cal"] = calibrate(r["shown"], r["pos"], card_.get("factors") or {}, card_.get("lines"))
         ctx, _ = pl.context(data_for(cur_season), cur_season, week, games)
         out["adjust"] = {"season": cur_season, "week": week, "players": pl.adjustments(rows, ctx, learned)}
     return out
