@@ -153,3 +153,17 @@ def test_watcher_retires_gone_tokens(monkeypatch):
     w = watcher.Watcher(db, push)
     w.tick()
     assert w.counts["gone"] == 1 and db.updates[0][0] == "a1"
+
+
+def test_watcher_rescores_from_our_live_lines_every_pass(monkeypatch):
+    calls = []
+    ctx = {"league_id": "L", "sleeper_id": "S", "season": 2026}
+    monkeypatch.setattr(watcher, "league_ctx", lambda client, lid: ctx)
+    monkeypatch.setattr(watcher, "team_rows", lambda client, lid: [])
+    monkeypatch.setattr(watcher.own_league, "sync", lambda *a: calls.append(a))
+    monkeypatch.setattr(watcher.box_score, "game", lambda *a, **k: _result())
+    db, push = _DB([_row()]), _Push()
+    w = watcher.Watcher(db, push)
+    w.tick()
+    w.tick()
+    assert len(calls) == 2 and calls[0][1:] == ("L", "S", 2026)
