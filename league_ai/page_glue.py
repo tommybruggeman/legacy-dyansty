@@ -239,9 +239,12 @@ from league_ai.front_office import (  # noqa: E402
 )
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def _cached_nfl_week() -> int:
-    return nfl_week()
+@st.cache_data(ttl=600, show_spinner=False)
+def _cached_nfl_week(season: int | None = None) -> int:
+    """This NFL week from our own schedule (Sleeper only when it isn't loaded), same as the app's API."""
+    if season is None:
+        return nfl_week()
+    return runtime.current_week(auth_client(), int(season))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -254,9 +257,9 @@ def _cached_roster_positions(league_id: str, sleeper_league_id: str | None, user
     return runtime.roster_positions(auth_client(), league_id, sleeper_league_id)
 
 
-@st.cache_data(ttl=12 * 3600, show_spinner=False)
-def _cached_playoff_start(sleeper_league_id: str | None) -> int | None:
-    return runtime.playoff_start(sleeper_league_id)
+@st.cache_data(ttl=3600, show_spinner=False)
+def _cached_playoff_start(sleeper_league_id: str | None, league_id: str | None = None, user_id: str = "") -> int | None:
+    return runtime.playoff_start(sleeper_league_id, auth_client() if league_id else None, league_id)
 
 
 @st.cache_data(ttl=12 * 3600, show_spinner=False)
@@ -290,11 +293,11 @@ def front_office_data(*, request_context: Any, team: dict) -> dict[str, Any]:
         rules=lambda: _cached_rules(league_id, user_id, epoch),
         positions=lambda: list(positions),
         standings=lambda: _cached_standings(league_id, season, user_id, sleeper_id),
-        week=_cached_nfl_week,
+        week=lambda: _cached_nfl_week(season),
         byes=lambda: _cached_byes(season),
         power=lambda actual_ppg, week: _cached_power(league_id, season, user_id, epoch, positions, actual_ppg, week),
         opponent=lambda week, roster_to_owner, my_roster_id: _cached_opponent(sleeper_id, week, roster_to_owner, my_roster_id),
-        playoff_start=lambda: _cached_playoff_start(sleeper_id),
+        playoff_start=lambda: _cached_playoff_start(sleeper_id, league_id, user_id),
     )
     return runtime.front_office_data(client, owner, league, load)
 
@@ -615,11 +618,49 @@ def _render_accuracy(client: Any, request_context: Any) -> None:
     st.markdown("\n".join(lines))
 
 
+def _render_projection_accuracy(client: Any, request_context: Any) -> None:
+    """Weekly projections vs real scores and the learned position factors, same as the app's report card."""
+    from league_ai import projection_calibration
+
+    try:
+        card = projection_calibration.card(client, request_context.league_id)
+    except Exception:
+        card = None
+    overall = (card or {}).get("overall") or {}
+    player = overall.get("as_shown") or overall.get("calibrated")
+    if not player:
+        return
+    st.markdown(f"**Weekly projections, {card['season']}** <span class='fo-note'>every projection vs the real score</span>", unsafe_allow_html=True)
+    team, before = overall.get("team_calibrated"), overall.get("shown")
+    lines = [f"- Average miss {player['mae']:.1f} pts per player" + (f", {team['mae']:.1f} per team" if team else "") + f" ({player['n']:,} graded)"]
+    if before:
+        lines.append(f"- Before learning from results: {before['mae']:.1f} per player, running {abs(before['bias']):.1f} pts {'high' if before['bias'] < 0 else 'low'}")
+    factors = card.get("factors") or {}
+    scaled = [f"{p} {round(100 * factors[p])}%" for p in ("QB", "RB", "WR", "TE", "K") if p in factors and abs(factors[p] - 1) >= 0.02]
+    if scaled:
+        lines.append("- Learned so far (share of the raw projection): " + " · ".join(scaled))
+    recent = [(w["week"], w.get("as_shown") or w.get("calibrated")) for w in (card.get("by_week") or [])[-6:]]
+    if recent:
+        lines.append("- Last weeks: " + " · ".join(f"W{wk} {m['mae']:.1f}" for wk, m in recent if m))
+    st.markdown("\n".join(lines))
+    learning = card.get("learning") or {}
+    if learning.get("signals"):
+        on = [s["label"] for s in learning["signals"] if s.get("on")]
+        st.markdown(f"**What projections are learning** <span class='fo-note'>{len(on)} of {len(learning['signals'])} signals on, retested every morning</span>",
+                    unsafe_allow_html=True)
+        out = ["- On now: " + (" · ".join(on) if on else "no extra signal beats the corrected projection yet")]
+        for m in (learning.get("last_misses") or [])[:5]:
+            out.append(f"- W{m['week']} {_esc(m.get('player') or m['pos'])}: {m['projected']:.1f} projected, {m['actual']:.1f} scored ({_esc(' · '.join(m.get('why') or []))})")
+        if learning.get("gaps"):
+            out.append("- Costing the most with no data that fixes it yet: " + " · ".join(f"{_esc(g['label'])} ({g['misses']} misses)" for g in learning["gaps"]))
+        st.markdown("\n".join(out))
+
+
 def render_report_card(request_context: Any) -> None:
     """'How my calls have graded': this owner's record, recent graded calls with the diagnosis, and the playbook."""
     client = auth_client()
     ledger = Ledger(client, league_id=request_context.league_id, user_id=request_context.user_id, league_team_id=request_context.league_team_id,
-                    season=int(request_context.current_season), week=_cached_nfl_week())
+                    season=int(request_context.current_season), week=_cached_nfl_week(int(request_context.current_season)))
     rec = ledger.track_record(limit=6)
     try:
         lessons = (client.table("league_ai_lessons").select("lesson, evidence_count").eq("league_id", request_context.league_id).eq("active", True)
@@ -638,6 +679,7 @@ def render_report_card(request_context: Any) -> None:
             st.markdown(f"{mark} **{_esc(r['when'])}** · {_esc(r['call'])} ({_esc(r['points'])})" + (f"  \n<span class='fo-note'>{_esc(r['why'])}</span>" if r.get("why") else ""),
                         unsafe_allow_html=True)
         _render_accuracy(client, request_context)
+        _render_projection_accuracy(client, request_context)
         if lessons:
             st.markdown("**What I've learned in this league**")
             for l in lessons:

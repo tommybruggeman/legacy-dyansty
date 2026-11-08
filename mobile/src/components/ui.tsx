@@ -1,27 +1,37 @@
 import * as Haptics from 'expo-haptics';
 import { router, useNavigation } from 'expo-router';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { ActivityIndicator, Animated, Dimensions, Easing, PanResponder, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, type ScrollViewInstance, type StyleProp, type ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { refreshPage } from '../lib/api';
 import { colors } from '../lib/theme';
 import { useSlow } from './ScreenState';
 
 // Shared pieces from the page designs: cards, tiles, the gold segmented
 // switcher, position badges and status pills.
 
-export function Screen({ children, loading, onRefresh }: { children: ReactNode; loading?: boolean; onRefresh?: () => void }) {
+// Every page refreshes on a gentle pull (the gold spinner), and opens search only on a much longer pull.
+// scrollTo: a y offset inside the page (its children) to glide to once, e.g. a card the page was opened for.
+export function Screen({ children, loading, scrollTo }: { children: ReactNode; loading?: boolean; scrollTo?: number | null }) {
   const insets = useSafeAreaInsets();
   const scroll = useRef<ScrollViewInstance>(null);
   useScrollTopOnTab(scroll);
+  const scrolled = useRef(false);
+  useEffect(() => {
+    if (scrollTo == null || scrolled.current) return;
+    scrolled.current = true;
+    scroll.current?.scrollTo({ y: Math.max(0, scrollTo - 8), animated: true });
+  }, [scrollTo]);
   const pull = usePullToSearch();
-  const slow = useSlow(!!loading);
+  const refresh = usePullToRefresh();
+  const slow = useSlow(!!loading || refresh.refreshing);
   return (
     <ScrollView
       ref={scroll}
       style={styles.screen}
       contentContainerStyle={[styles.content, { paddingTop: insets.top + 8 }]}
-      refreshControl={onRefresh ? <RefreshControl refreshing={!!loading} onRefresh={onRefresh} tintColor={colors.gold} /> : undefined}
+      refreshControl={refresh.control}
       scrollEventThrottle={16}
       {...pull.handlers}
     >
@@ -32,11 +42,31 @@ export function Screen({ children, loading, onRefresh }: { children: ReactNode; 
   );
 }
 
+// Pull to refresh: reloads everything on the page in view. The spinner stays at least a beat so a fast
+// answer still reads as "refreshed" instead of a flicker.
+const MIN_SPIN_MS = 700;
+export function usePullToRefresh() {
+  const [refreshing, setRefreshing] = useState(false);
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    const started = Date.now();
+    try {
+      await refreshPage();
+    } finally {
+      const left = MIN_SPIN_MS - (Date.now() - started);
+      if (left > 0) await new Promise((done) => setTimeout(done, left));
+      setRefreshing(false);
+    }
+  }, []);
+  const control = <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.gold} />;
+  return { refreshing, control };
+}
+
 // Pull-down search, only on purpose: the page must already be resting at the top when the finger lands
-// (a flick that bounces off the top doesn't count), and the pull has to go about twice as far as a refresh.
-// A tap says it's far enough; letting go there opens search, sliding back up cancels it.
-const PULL_TO_SEARCH = 150;
-const PULL_HINT = 80;
+// (a flick that bounces off the top doesn't count), and the pull has to go much further than a refresh
+// (a refresh starts around 65pt). A tap says it's far enough; letting go there opens search, sliding back up cancels it.
+const PULL_TO_SEARCH = 220;
+const PULL_HINT = 150;
 const STILL_MS = 150;
 type ScrollEvent = { nativeEvent: { contentOffset: { y: number } } };
 

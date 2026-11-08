@@ -1,6 +1,6 @@
 import { fetch as streamingFetch } from 'expo/fetch';
 import { useFocusEffect } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppState } from 'react-native';
 
@@ -115,6 +115,16 @@ export function prefetch(paths: string[]) {
   }
 }
 
+// Pull to refresh: every useApi on the page you're looking at (including the cards inside it) signs up
+// while that page is in view, so one pull reloads everything on it, not just the page's main call.
+const onPage = new Set<() => Promise<void>>();
+export async function refreshPage() {
+  await Promise.all([...onPage].map((reload) => reload()));
+}
+
+// How often a page with live games re-fetches while it's open (one number for every live page).
+export const LIVE_POLL_MS = 10_000;
+
 // refreshEvery (ms) quietly re-fetches while the screen is open and the app
 // is in front, e.g. live scores. Pass 0 to stop.
 export function useApi<T>(path: string, refreshEvery = 0) {
@@ -153,12 +163,31 @@ export function useApi<T>(path: string, refreshEvery = 0) {
 
   useFocusEffect(
     useCallback(() => {
+      const reload = () => load(true);
+      onPage.add(reload);
+      return () => { onPage.delete(reload); };
+    }, [load]),
+  );
+
+  // Live pages also catch up the moment you come back to them (another tab, or the app returning to the
+  // front), instead of showing old scores until the next tick. The first focus on a path skips it: the load above runs.
+  const seen = useRef<string | null>(null);
+  useFocusEffect(
+    useCallback(() => {
       if (!refreshEvery) return undefined;
+      if (seen.current === path) load(true);
+      seen.current = path;
       const timer = setInterval(() => {
         if (AppState.currentState === 'active') load(true);
       }, refreshEvery);
-      return () => clearInterval(timer);
-    }, [load, refreshEvery]),
+      const wake = AppState.addEventListener('change', (state) => {
+        if (state === 'active') load(true);
+      });
+      return () => {
+        clearInterval(timer);
+        wake.remove();
+      };
+    }, [load, path, refreshEvery]),
   );
 
   // Stable across renders, so screens can list it in effect dependencies.
@@ -193,6 +222,7 @@ export type Standings = { weeks_played: number; playoff_teams: number; rows: Sta
 export type MatchupTeam = {
   roster_id: number; name: string; score: number; rank: number; top5: boolean; projected?: number | null;
   avatar?: string | null; record?: string; playing?: number; to_play?: number;
+  ranked?: boolean; // the weekly rank shows only once a team has 50+ points that week
 };
 export type Game = { matchup_id: number; teams: [MatchupTeam, MatchupTeam]; win_chance?: [number, number] | null; next_kickoff?: string | null };
 export type Matchups = {
@@ -485,6 +515,11 @@ export type LeaguePlayer = {
   rank_ppg: number | null; last_ppg: number | null; points: number | null;
   team_id: string | null; owner_name: string | null; is_mine: boolean;
   salary: number | null; years_left: number | null; rookie_deal: boolean; designation: 'taxi' | 'ir' | null;
+  // This week, in league scoring (missing on older servers): projection, season average, last-3 form, next game.
+  proj?: number | null; avg?: number | null; last3?: number | null; trend?: number | null; next?: NextGame | null;
+};
+export type NextGame = {
+  week: number; bye: boolean; opp?: string; home?: boolean; kickoff?: string | null; opp_rank?: number | null; teams?: number | null; final?: boolean;
 };
 export type LeagueOwner = { team_id: string; owner_name: string; team_name: string; is_mine: boolean };
 export type LeaguePlayers = {
@@ -520,6 +555,7 @@ export type ReportCard = {
   recent: { when: string; call: string; right: boolean; points: string; why: string | null }[];
   lessons: { lesson: string; seen: number }[];
   accuracy?: Accuracy | null;
+  projections?: ProjectionCard | null;
 };
 // How the start/sit engine did on every lineup in the league (weekly, free), and this owner's own line.
 export type AccuracyPair = { engine: number; owners: number; calls: number };
@@ -530,6 +566,23 @@ export type Accuracy = {
   by_position: (AccuracyPair & { pos: string })[];
   by_week: (AccuracyPair & { week: number })[];
   you?: { engine: number; you: number; calls: number; points_per_call: number };
+};
+export type MissStats = { n: number; mae: number; bias: number; sd: number };
+export type ProjectionCard = {
+  season: number;
+  through_week: number;
+  factors: Record<string, number>;
+  overall: { shown?: MissStats | null; calibrated?: MissStats | null; team_shown?: MissStats | null; team_calibrated?: MissStats | null; as_shown?: MissStats | null };
+  by_position: (MissStats & { pos: string; factor: number })[];
+  by_week: { week: number; shown?: MissStats | null; calibrated?: MissStats | null; team_calibrated?: MissStats | null; as_shown?: MissStats | null }[];
+  learning?: ProjectionLearning | null;
+};
+export type ProjectionLearning = {
+  signals: { signal: string; label: string; on: boolean; player_gain: number | null; team_gain: number | null }[];
+  active: string[];
+  causes: { cause: string; label: string; misses: number; points: number; status: string }[];
+  gaps: { cause: string; label: string; misses: number; points: number; status: string }[];
+  last_misses: { id: string; pos: string; week: number; player: string; projected: number; actual: number; why: string[] }[];
 };
 export type FoMove = { action: 'start' | 'sit'; player: string; slot: string; note: string };
 export type FoHeader = {
@@ -561,6 +614,9 @@ export type ChatEvent =
   | { e: 'text'; d: string }
   | { e: 'reset' }
   | { e: 'round' }
+  | { e: 'job'; question: string; conversation_id: string | null }
+  | { e: 'none' }
+  | { e: 'added'; text: string }
   | ({ e: 'done' } & ChatReply);
 export type Conversations = { conversations: { id: string; title: string; updated_at: string | null }[] };
 export type Conversation = { id: string; title: string; messages: ChatMessage[] };
@@ -585,7 +641,7 @@ export type RookieDeal = {
   choice: 'keep' | 'walk' | 'review' | null; open: boolean; status: string;
 };
 export type Riser = {
-  player_id: string; name: string; pos: string; team: string; avg: number; proj: number; rise: number; last: number | null;
+  player_id: string; name: string; pos: string; team: string; avg: number | null; proj: number; rise: number; last: number | null;
   roster_id: number | null; owner: string | null; is_mine: boolean; injury: string | null;
 };
 export type BoardSide = { roster_id: number; name: string; score: number; top5: boolean; left: number; projected?: number | null; is_me: boolean; avatar: string | null };

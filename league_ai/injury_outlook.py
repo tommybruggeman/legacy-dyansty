@@ -422,3 +422,30 @@ def project_return(pre: Mapping[str, Any], comps: Mapping[str, Any] | None, team
     out["inputs"] = {"his_old_opps_pg": round(pre_opps, 1), "his_old_ppr_pg": round(pre_ppr, 1), "team_volume_now_vs_then": round(volume, 2),
                      "ppr_per_opp_used": round(eff, 2)}
     return out
+
+
+# ---- day-by-day practice (nfl_practice_days) ------------------------------------
+PRACTICE_SOURCE_RANK = {"nflverse": 0, "espn_news": 1}
+PRACTICE_SOURCE_LABEL = {"nflverse": "official report", "espn_news": "ESPN news"}
+
+
+def practice_week(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """One line per practice day, oldest first, official report preferred over the news."""
+    best: dict[str, Mapping[str, Any]] = {}
+    for r in rows:
+        key = str(r.get("practice_date"))
+        cur = best.get(key)
+        if cur is None or PRACTICE_SOURCE_RANK.get(str(r.get("source")), 9) < PRACTICE_SOURCE_RANK.get(str(cur.get("source")), 9):
+            best[key] = r
+    return [
+        {k: v for k, v in {"day": r.get("day"), "date": str(r.get("practice_date")), "practice": r.get("practice_status"),
+                            "source": PRACTICE_SOURCE_LABEL.get(str(r.get("source")), r.get("source")), "game_status": r.get("game_status")}.items() if v}
+        for _, r in sorted(best.items())
+    ]
+
+
+def practice_trend(days: list[Mapping[str, Any]]) -> str | None:
+    """'Wed DNP -> Thu Limited -> Fri Full'."""
+    if not days:
+        return None
+    return " -> ".join(f"{d.get('day')} {d.get('practice')}" for d in days)

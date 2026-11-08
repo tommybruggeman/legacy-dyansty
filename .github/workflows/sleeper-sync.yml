@@ -36,7 +36,7 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: python scripts/run_sleeper_sync.py
 
-      # Alerts every owner's phone when a trade completes (free, via Expo). Never fails the sync.
+      # Queues a "trade completed" alert for every owner (sent by the Push alerts job). Never fails the sync.
       - name: Trade alerts
         if: always()
         continue-on-error: true

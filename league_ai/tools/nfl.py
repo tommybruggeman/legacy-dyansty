@@ -332,6 +332,36 @@ class NflData:
                 return e
         return None
 
+    def practice_days(self, p: Mapping[str, Any], season: int | None, week: int | None) -> list[dict[str, Any]]:
+        """This week's practice line by day (official report first, ESPN notes otherwise), oldest first."""
+        if not season or not week or not p.get("gsis_id"):
+            return []
+
+        def load() -> list[dict[str, Any]]:
+            try:
+                rows = (self.client.table("nfl_practice_days").select("practice_date, day, source, practice_status, game_status")
+                        .eq("gsis_id", p["gsis_id"]).eq("season", season).eq("week", week).limit(20).execute().data or [])
+            except Exception:
+                return []
+            return io.practice_week(rows)
+
+        return _cached(("practice_days", p["gsis_id"], season, week), load)
+
+    def practice_this_week(self, p: Mapping[str, Any]) -> dict[str, Any]:
+        """What the GM says about this week's practice: each day, the trend, or why there is nothing yet."""
+        season, week, gameday = self.current_game(p.get("team"))
+        if season and week and not gameday:
+            return {"week": week, "note": "his team is on bye this week, so there is no practice report"}
+        days = self.practice_days(p, season, week)
+        out: dict[str, Any] = {"week": week, "game_day": gameday}
+        if days:
+            out["days"] = days
+            out["trend"] = io.practice_trend(days)
+        else:
+            out["note"] = ("no practice report for him yet this week. Teams post after each practice (about 4-6pm ET; Wed-Fri before a Sunday game). "
+                           "Players who aren't on the report practiced fully. ESPN's notes reach us that evening, the official line by the next morning.")
+        return out
+
     def official_report(self, p: Mapping[str, Any], season: int | None, week: int | None) -> dict[str, Any] | None:
         if not season or not week or not (p.get("gsis_id") or p.get("sleeper_id")):
             return None
@@ -351,6 +381,8 @@ class NflData:
         official = self.official_report(p, season, week)
         if official:
             report_injury = official.get("report_injury") or official.get("practice_injury")
+        days = self.practice_days(p, season, week)
+        latest_day = days[-1] if days else {}
         injury = io.injury_key(report_injury or (raw or {}).get("injury_type") or p.get("injury_body_part"))
         open_ep = absence if absence is not None else self.open_absence(p)
         injury = injury or (open_ep or {}).get("injury")
@@ -360,13 +392,16 @@ class NflData:
             return {"chance_to_play": "0%", "probability": 0.0, "verdict": "on bye", "factors": ["his team is on bye this week"]}
         typical = io.typical_absence(self.injury_episodes(injury), p.get("position"), injury) if injury else None
         out = io.play_chance(
-            position=p.get("position"), injury=injury, official_status=(official or {}).get("report_status"), official_practice=(official or {}).get("practice_status"),
+            position=p.get("position"), injury=injury, official_status=(official or {}).get("report_status") or latest_day.get("game_status"),
+            official_practice=latest_day.get("practice") or (official or {}).get("practice_status"),
             sleeper_status=p.get("injury_status") or (p.get("status") if str(p.get("status") or "").lower() in ("injured reserve", "physically unable to perform") else None),
             sleeper_practice=p.get("practice_participation"), espn_status=(raw or {}).get("status"), return_date=(raw or {}).get("return_date"), game_date=gameday,
             comments=io.comment_signal((raw or {}).get("short_comment"), (raw or {}).get("long_comment"), p.get("practice_description")), rates=self.play_rates(),
             absence=typical, games_missed_so_far=int(open_ep["games_missed"]) if open_ep else None)
         if out:
             out["week"] = week
+            if days:
+                out["practice_this_week"] = io.practice_trend(days)
             if typical:
                 out["typical_time_missed"] = f"{typical['median_games_missed']:g} games median ({typical['middle_half']}) for a {injury} across {typical['absences']} {typical['scope']}"
         return out
@@ -537,6 +572,18 @@ class NflData:
         return out
 
     # ---- stats -------------------------------------------------------------
+    def league_points(self, sleeper_id: str, season: int) -> list[tuple[int, float]]:
+        """[(week, points in this league's scoring)] from our saved official lines; [] when unavailable."""
+        league_id = self.league_state.get("league_id") if isinstance(self.league_state, Mapping) else None
+        if not sleeper_id or not league_id:
+            return []
+        try:
+            from league_ai.league_points import weekly_points
+
+            return weekly_points(self.client, str(league_id), int(season), [str(sleeper_id)]).get(str(sleeper_id), [])
+        except Exception:
+            return []
+
     def weekly(self, sleeper_id: str | None, gsis_id: str | None, seasons: Iterable[int] | None = None) -> list[dict[str, Any]]:
         q = self.client.table("nfl_player_stats").select("*")
         if gsis_id:
@@ -577,9 +624,15 @@ class NflData:
         for r in rows:
             by_season[int(r["season"])].append(r)
         result: dict[str, Any] = {"seasons": {}}
+        sid = str(sleeper_id or next((r.get("sleeper_id") for r in rows if r.get("sleeper_id")), "") or "")
+        league_weeks = {season: dict(self.league_points(sid, season)) for season in by_season} if sid else {}
         for season in sorted(by_season, reverse=True):
             srows = by_season[season]
             entry: dict[str, Any] = {"totals": self.aggregate(srows), "teams": sorted({r.get("team") for r in srows if r.get("team")})}
+            lw = league_weeks.get(season) or {}
+            if lw:  # this league's own scoring, from our saved official lines
+                entry["totals"]["ppg_league"] = _round(sum(lw.values()) / len(lw), 2)
+                entry["totals"]["league_scored_games"] = len(lw)
             if split == "home_away":
                 entry["home"] = self.aggregate([r for r in srows if r.get("is_home") is True])
                 entry["away"] = self.aggregate([r for r in srows if r.get("is_home") is False])
@@ -588,10 +641,17 @@ class NflData:
             latest_season = max(by_season)
             recent = sorted(by_season[latest_season], key=lambda r: int(r["week"]), reverse=True)[:recent_weeks]
             result["recent"] = {"season": latest_season, "weeks": [int(r["week"]) for r in recent], "totals": self.aggregate(recent)}
+            lw = league_weeks.get(latest_season) or {}
+            recent_league = [lw[int(r["week"])] for r in recent if int(r["week"]) in lw]
+            if recent_league:
+                result["recent"]["totals"]["ppg_league"] = _round(sum(recent_league) / len(recent_league), 2)
             result["game_log_latest"] = [
-                {k: r.get(k) for k in ("week", "opponent", "is_home", "fantasy_points_ppr", "targets", "receptions", "receiving_yards", "carries", "rushing_yards", "passing_yards", "passing_tds", "rushing_tds", "receiving_tds", "offense_pct", "target_share")}
+                {**{k: r.get(k) for k in ("week", "opponent", "is_home", "fantasy_points_ppr", "targets", "receptions", "receiving_yards", "carries", "rushing_yards", "passing_yards", "passing_tds", "rushing_tds", "receiving_tds", "offense_pct", "target_share")},
+                 **({"league_points": lw[int(r["week"])]} if int(r["week"]) in lw else {})}
                 for r in sorted(by_season[latest_season], key=lambda r: int(r["week"]), reverse=True)[:8]
             ]
+            if lw:
+                result["scoring_note"] = "ppg_league and league_points are this league's own scoring; quote those, not the generic PPR figures"
         return result
 
 
@@ -654,8 +714,10 @@ def tool_get_injury_report(data: NflData, name: str, position: str | None = None
         "nfl_team": p.get("team"),
         "sleeper_status": {"status": p.get("injury_status"), "body_part": p.get("injury_body_part"), "note": p.get("injury_notes"), "nfl_status": p.get("status"), "as_of": str(p.get("refreshed_at") or "")[:16]},
         "current": current or "not on ESPN's current injury report",
+        "practice_this_week": data.practice_this_week(p),
         "history": data.practice_history(p.get("sleeper_id"), p.get("gsis_id")),
-        "how_to_read": "estimated_return is ESPN's projection and moves; practice trend (DNP -> Limited -> Full) across a week is the best short-term signal; weeks_out per season shows durability. "
+        "how_to_read": "practice_this_week is this week's report day by day (DNP / Limited / Full) and is the best short-term signal: a DNP -> Limited -> Full trend means he's trending to play; "
+                       "history.this_season_weekly is only each past week's final practice. estimated_return is ESPN's projection and moves; weeks_out per season shows durability. "
                        "chance_to_play_this_week is built from how often players with the same tag and practice actually played, nudged by the news, ESPN's return date and the usual recovery time.",
     }
     if p.get("injury_start_date") or p.get("practice_participation"):

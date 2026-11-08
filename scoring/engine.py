@@ -20,6 +20,9 @@ THRESHOLDS = {
 }
 # position catch bonuses: one per catch by a player at that position
 CATCH_BONUS = {"bonus_rec_te": "TE", "bonus_rec_rb": "RB", "bonus_rec_wr": "WR"}
+# field goals made by distance: the long buckets a league may split, and the shorter ones
+FG_LONG = ("fgm_50_59", "fgm_60p")
+FG_SHORT = ("fgm_0_19", "fgm_20_29", "fgm_30_39", "fgm_40_49")
 # team defense buckets: (low, high) inclusive, high None = and up
 PTS_ALLOW = {"pts_allow_0": (0, 0), "pts_allow_1_6": (1, 6), "pts_allow_7_13": (7, 13), "pts_allow_14_20": (14, 20),
              "pts_allow_21_27": (21, 27), "pts_allow_28_34": (28, 34), "pts_allow_35p": (35, None)}
@@ -61,6 +64,20 @@ def full_line(stats: Mapping[str, Any] | None, position: str | None = None, rule
     for key, catch_pos in CATCH_BONUS.items():
         if key in rules and key not in line:
             line[key] = stat("rec") if pos == catch_pos else 0
+    # kickers: a projected line (or a feed) may give 50+ yard field goals as one number, or only fgm and the shorter
+    # buckets, and attempts instead of misses; leagues that split 50-59 / 60+ or charge misses still need them
+    fifty = [k for k in FG_LONG if k in rules]
+    if fifty and not set(FG_LONG) & set(line):
+        if "fgm_50p" in line:
+            long_fg = stat("fgm_50p")
+        elif "fgm" in line:
+            long_fg = max(0.0, stat("fgm") - sum(stat(k) for k in FG_SHORT))
+        else:
+            long_fg = 0.0
+        if long_fg:
+            line[fifty[0]] = long_fg   # all of it in the first split bucket (50-59): 60+ makes are rare
+    if "fgmiss" in rules and "fgmiss" not in line and "fga" in line and "fgm" in line:
+        line["fgmiss"] = max(0.0, stat("fga") - stat("fgm"))
     for family, raw in ((PTS_ALLOW, "pts_allow"), (YDS_ALLOW, "yds_allow")):
         if pos == "DEF" and rules & set(family) and not set(family) & set(line):
             hit = _bucket(_num(line.get(raw)), family)

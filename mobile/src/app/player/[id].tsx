@@ -17,8 +17,11 @@ export { ScreenError as ErrorBoundary } from '../../components/ScreenState';
 // league, the points chart (tap it for the full game log), next game,
 // contract history and health.
 export default function Player() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  // section=health (from Home's Lineup check) opens the page scrolled to the Health card.
+  const { id, section } = useLocalSearchParams<{ id: string; section?: string }>();
   const [live, setLive] = useState(false);
+  const [stackY, setStackY] = useState<number | null>(null);
+  const [healthY, setHealthY] = useState<number | null>(null);
   // While his game is on, refresh as often as the team page does.
   const { data, error, loading, reload } = useApi<PlayerPage>(`/players/${id}`, live ? LIVE_REFRESH_MS : 0);
   useEffect(() => setLive(!!data?.live), [data]);
@@ -72,9 +75,9 @@ export default function Player() {
       : { label: 'Bid', style: styles.pillBid, onPress: data.transactions_enabled ? bid : sleeper };
 
   return (
-    <Screen loading={loading} onRefresh={reload}>
+    <Screen loading={loading} scrollTo={section === 'health' && stackY != null && healthY != null ? stackY + healthY : null}>
       <Back label="Back" />
-      <View style={styles.stack}>
+      <View style={styles.stack} onLayout={(e) => setStackY(e.nativeEvent.layout.y)}>
         <View style={styles.hero}>
           <Headshot playerId={data.player_id} pos={data.pos} team={data.nfl_team} size={84} />
           <View style={styles.heroText}>
@@ -156,7 +159,7 @@ export default function Player() {
           </View>
         ) : null}
 
-        <View style={styles.card}>
+        <View style={styles.card} onLayout={(e) => setHealthY(e.nativeEvent.layout.y)}>
           <Text style={styles.cardTitle}>Health</Text>
           <View style={styles.healthRow}>
             <View style={[styles.healthDot, { backgroundColor: h.healthy ? colors.live : '#E8826F' }]} />

@@ -50,10 +50,6 @@ def league_ctx(client: Any, league_id: str) -> dict[str, Any]:
     def load() -> dict[str, Any]:
         season = SeasonResolver(client).get_active_season(league_id)
         sid = season.sleeper_league_id
-        try:
-            own_league.sync(client, league_id, sid, int(season.season))
-        except Exception:
-            pass
         return {
             "league_id": league_id,
             "season": int(season.season),
@@ -63,6 +59,20 @@ def league_ctx(client: Any, league_id: str) -> dict[str, Any]:
         }
 
     return cache.cached(("watch_ctx", league_id), 600, load)
+
+
+def fresh_scores(client: Any, ctx: dict[str, Any]) -> None:
+    """Rescore the week from our own live stat lines (ESPN feed), like the server does on every request.
+
+    Without this each check read Sleeper's matchups, which run minutes behind (and only got our fast numbers
+    once every 10 minutes, when the cached league context reloaded): the lock screen lagged the app.
+    own_league.sync caches its work for 15 seconds, so calling it every pass costs little."""
+    if not ctx.get("sleeper_id"):
+        return
+    try:
+        own_league.sync(client, ctx["league_id"], ctx["sleeper_id"], int(ctx["season"]))
+    except Exception as exc:
+        print(f"WATCH_SYNC_ERROR {type(exc).__name__}", flush=True)
 
 
 def team_rows(client: Any, league_id: str) -> list[dict[str, Any]]:
@@ -125,6 +135,7 @@ class Watcher:
             league_id, week, matchup_id = key
             try:
                 ctx = league_ctx(self.client, league_id)
+                fresh_scores(self.client, ctx)
                 result = box_score.game(self.client, ctx, week, matchup_id, team_rows(self.client, league_id))
             except Exception as exc:
                 self.counts["errors"] += 1

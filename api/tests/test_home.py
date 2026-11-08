@@ -115,6 +115,7 @@ def test_bottom_mode_by_day_and_late_games():
     sunday = datetime(2026, 11, 1, 12, 0, tzinfo=et)
     starts = {"BUF": datetime(2026, 11, 1, 13, 0, tzinfo=et), "KC": datetime(2026, 11, 1, 16, 25, tzinfo=et),
               "SF": datetime(2026, 11, 1, 16, 5, tzinfo=et), "DAL": datetime(2026, 11, 1, 20, 20, tzinfo=et)}
+    assert home.bottom_mode(datetime(2026, 10, 28, 20, 0, tzinfo=et), starts)["mode"] == "risers"   # Wednesday
     assert home.bottom_mode(datetime(2026, 10, 29, 20, 0, tzinfo=et), starts)["mode"] == "risers"   # Thursday
     assert home.bottom_mode(datetime(2026, 10, 31, 20, 0, tzinfo=et), starts)["mode"] == "risers"   # Saturday
     assert home.bottom_mode(sunday, starts)["mode"] == "scoreboard"
@@ -208,3 +209,32 @@ def test_top5_line_projected_then_final():
     assert home.top5_line(live) == {"line": 115.0, "final": False}
     assert home.top5_line(live, final=True) == {"line": 95.0, "final": True}
     assert home.top5_line({1: live[1]}) is None
+
+
+def test_home_week_holds_monday_night_until_midnight():
+    gamedays = {9: "2026-11-02", 10: "2026-11-09"}
+    assert home.schedule_week(gamedays, date(2026, 11, 2)) == 9    # Monday night, games over
+    assert home.schedule_week(gamedays, date(2026, 11, 3)) == 10   # Tuesday (Pacific) -> recap of 9
+    assert home.phase(date(2026, 11, 2), "in_season", 9, 15) == "game_day"
+    assert home.phase(date(2026, 11, 3), "in_season", 10, 15) == "recap"
+    assert home.phase(date(2026, 11, 4), "in_season", 10, 15) == "game_day"   # Wednesday: this week's matchup
+    assert home.schedule_week(gamedays, date(2026, 11, 10)) is None
+    assert home.schedule_week({}, date(2026, 11, 2)) is None
+
+
+def test_shotgun_holds_until_midnight_pacific():
+    late_monday = datetime(2026, 11, 3, 5, 45, tzinfo=timezone.utc)   # 12:45 AM Tue ET, 9:45 PM Mon PT
+    assert home.bottom_mode(late_monday, {})["mode"] == "shotgun"
+    tuesday = datetime(2026, 11, 3, 8, 30, tzinfo=timezone.utc)       # 12:30 AM Tue PT
+    assert home.bottom_mode(tuesday, {})["mode"] == "scoreboard"
+
+
+def test_top_projected_keeps_five_per_position_best_first():
+    proj = {f"r{i}": 20.0 - i for i in range(7)} | {"q": 25.0, "out": 30.0, "new": 18.5}
+    info = {p: {"full_name": p, "position": "RB", "team": "DET"} for p in proj}
+    info["q"]["position"] = "QB"
+    info["out"]["injury_status"] = "IR"
+    rows = home.top_projected(proj, {"q": 21.0, "r0": 15.0}, info, {"q": 3}, {3: "Tommy"}, 3, {"q": 30.2})
+    assert [r["player_id"] for r in rows] == ["q", "r0", "r1", "new", "r2", "r3"]   # out skipped, 5 RBs kept
+    assert rows[0]["is_mine"] and rows[0]["last"] == 30.2 and rows[0]["avg"] == 21.0
+    assert rows[3]["avg"] is None and rows[3]["owner"] is None

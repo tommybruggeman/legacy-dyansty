@@ -1,8 +1,9 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { Tabs } from 'expo-router';
-import type { ComponentProps } from 'react';
+import { Tabs, router } from 'expo-router';
+import { useEffect, type ComponentProps } from 'react';
 import { StyleSheet, Text, View, type ColorValue } from 'react-native';
 
+import { recentChat } from '../../lib/lastChat';
 import { colors } from '../../lib/theme';
 
 type IconName = ComponentProps<typeof Ionicons>['name'];
@@ -23,6 +24,14 @@ function FrontOfficeIcon({ focused }: { focused: boolean }) {
 // Bottom tabs from the approved design: Home, My Team, Front Office (middle),
 // League, Market. Each screen draws its own title.
 export default function TabsLayout() {
+  // Opening the app within 30 minutes of leaving a Front Office chat goes straight back into it.
+  useEffect(() => {
+    recentChat().then((chat) => {
+      if (!chat) return;
+      router.navigate({ pathname: '/front-office', params: { c: chat.id ?? 'new', resume: chat.pending ? '1' : '', at: String(Date.now()) } });
+    });
+  }, []);
+
   return (
     <Tabs
       screenOptions={{

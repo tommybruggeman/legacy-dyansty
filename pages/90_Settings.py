@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 import pandas as pd
 import streamlit as st
 from components.sidebar_nav import render_nav
-from auth import auth_client, require_login, service_client
+from auth import auth_client, current_user, require_login, service_client
 from services.config import configured_value
 from services.team_roster_state import invalidate_team_state_session_cache
 import html
@@ -873,6 +873,7 @@ if is_commissioner:
     nav_options += ["League Tools", "Draft", "FA Auction"]
 else:
     nav_options += ["My Access"]
+nav_options.append("Alerts")
 
 if is_platform_admin:
     nav_options.append("Platform Admin")
@@ -1319,6 +1320,19 @@ elif section == "My Access":
 
     st.info("Owner and co-owner rollover decisions are separate from commissioner-only controls.")
     render_owner_rollover_decisions(sb_client, active_league_id)
+
+
+elif section == "Alerts":
+    section_header(
+        "Alerts",
+        "Pick which alerts reach your phone.",
+    )
+    from services.alert_settings import render_alert_settings
+    _me = current_user() or {}
+    if _me.get("id"):
+        render_alert_settings(sb_client, league_id=active_league_id, user_id=str(_me["id"]))
+    else:
+        st.info("Sign in again to change your alerts.")
 
 
 # ============================================================

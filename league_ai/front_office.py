@@ -111,14 +111,24 @@ def team_record(standings: list[dict[str, Any]], owner: str) -> dict[str, Any] |
 
 # ---- player strengths from nfl_* tables ------------------------------------------
 
-def free_agent_strength(client: Any, nfl_row: Mapping[str, Any], season: int, team_id: str) -> PlayerStrength:
-    """A player outside the league's rosters, valued like a rostered one (production this season, injury, team), for pickup questions."""
+def free_agent_strength(client: Any, nfl_row: Mapping[str, Any], season: int, team_id: str, league_id: str | None = None) -> PlayerStrength:
+    """A player outside the league's rosters, valued like a rostered one (production this season, injury, team), for pickup questions.
+    Points are in the league's scoring when league_id is given and we have his weeks (generic PPR otherwise)."""
     sid = str(nfl_row.get("sleeper_id") or "")
-    try:
-        rows = client.table("nfl_player_stats").select("week, fantasy_points_ppr").eq("season", season).eq("season_type", "REG").eq("sleeper_id", sid).execute().data or []
-    except Exception:
-        rows = []
-    pts = [_num(r.get("fantasy_points_ppr")) for r in sorted(rows, key=lambda r: int(r.get("week") or 0))]
+    pts: list[float] = []
+    if league_id:
+        try:
+            from league_ai.league_points import weekly_points
+
+            pts = [p for _, p in weekly_points(client, league_id, season, [sid]).get(sid, [])]
+        except Exception:
+            pts = []
+    if not pts:
+        try:
+            rows = client.table("nfl_player_stats").select("week, fantasy_points_ppr").eq("season", season).eq("season_type", "REG").eq("sleeper_id", sid).execute().data or []
+        except Exception:
+            rows = []
+        pts = [_num(r.get("fantasy_points_ppr")) for r in sorted(rows, key=lambda r: int(r.get("week") or 0))]
     recent = pts[-4:]
     p = player_strength({"sleeper_player_id": sid, "player_name": nfl_row.get("full_name") or "", "position": nfl_row.get("position") or "", "league_team_id": team_id},
                         recent_ppg=round(sum(recent) / len(recent), 2) if recent else None, season_ppg=round(sum(pts) / len(pts), 2) if pts else None,
@@ -172,11 +182,19 @@ def build_player_strengths(client: Any, state: Mapping[str, Any], season: int) -
                     injuries[str(r["sleeper_id"])] = str(r["status"])
         except Exception:
             pass
+    # points in this league's own scoring from our own final stat lines; generic PPR only for a player we have no league weeks for
+    try:
+        from league_ai.league_points import weekly_points
+
+        league_pts = weekly_points(client, state.get("league_id"), season, ids)
+    except Exception as exc:
+        print(f"FO_LEAGUE_POINTS_ERROR {type(exc).__name__}", flush=True)
+        league_pts = {}
     out: list[PlayerStrength] = []
     for row in roster:
         sid = str(row.get("sleeper_player_id") or row.get("player_id") or "")
         weeks = sorted(stats.get(sid, []), key=lambda r: int(r.get("week") or 0))
-        pts = [_num(r.get("fantasy_points_ppr")) for r in weeks]
+        pts = [p for _, p in league_pts[sid]] if league_pts.get(sid) else [_num(r.get("fantasy_points_ppr")) for r in weeks]
         season_ppg = round(sum(pts) / len(pts), 2) if pts else None
         recent = pts[-4:]
         recent_ppg = round(sum(recent) / len(recent), 2) if recent else None
@@ -188,12 +206,32 @@ def build_player_strengths(client: Any, state: Mapping[str, Any], season: int) -
 
 def power_rankings(client: Any, state: Mapping[str, Any], season: int, roster_positions: list[str], actual_ppg: Mapping[str, float] | None = None,
                    byes: Mapping[str, int] | None = None, week: int | None = None,
-                   games: Mapping[str, Mapping[str, Any]] | None = None, dvp: Mapping[tuple[str, str], Mapping[str, Any]] | None = None, situational: Any = None) -> list[TeamPower]:
+                   games: Mapping[str, Mapping[str, Any]] | None = None, dvp: Mapping[tuple[str, str], Mapping[str, Any]] | None = None, situational: Any = None,
+                   week_points: Callable[[list[PlayerStrength]], Mapping[str, float]] | None = None) -> list[TeamPower]:
     """games: NFL team -> this week's game (league_ai.nfl_data.week_matchups); dvp: (defense, position) -> rating;
-    situational: league_ai.team_context.Situational (blitz / box tendencies), optional."""
+    situational: league_ai.team_context.Situational (blitz / box tendencies), optional.
+    week_points: players -> sleeper id -> this week's calibrated projection (api.projections.week_projections); when given,
+    it replaces the form-based week_now for everyone it projects."""
     players = build_player_strengths(client, state, season)
     apply_matchups(players, games or {}, dvp or {}, situational)
+    if week_points:
+        use_projections(players, week_points(players))
     return compute_power(players, state.get("teams", []), roster_positions, actual_ppg, byes=byes, week=week)
+
+
+SD_A, SD_B = 2.0, 0.4   # a player's spread from his projection: 2 x sqrt(points) + 0.4 (scoring/live_projection_study.py)
+
+
+def use_projections(players: list[PlayerStrength], points: Mapping[str, float]) -> None:
+    """This week's number from the projection (Sleeper's line in league scoring, matchup-tilted and calibrated) instead of
+    recent form. Graded on every league game 2024-26 (scoring/win_odds_study.py): win odds from projections were right
+    about the favorite 62% of the time (Brier 0.233) vs 55% from form (0.258, worse than a coin flip)."""
+    for p in players:
+        pts = points.get(p.sleeper_id)
+        if pts is None:
+            continue
+        p.week_now = round(float(pts), 2)
+        p.week_sd = round(SD_A * max(float(pts), 0.0) ** 0.5 + SD_B, 2)
 
 
 def apply_matchups(players: list[PlayerStrength], games: Mapping[str, Mapping[str, Any]], dvp: Mapping[tuple[str, str], Mapping[str, Any]], situational: Any = None) -> None:

@@ -1,5 +1,6 @@
 #!/bin/bash
-# Boot script for the free e2-micro that runs the game-day live stats watcher (scripts/live_watcher.py).
+# Boot script for the free e2-micro that runs the game-day live stats watcher (scripts/live_watcher.py)
+# and, every 5 minutes, the owners' push alert job (scripts/push_alerts.py; GitHub's schedule ran hours late).
 # Runs on every boot: installs what's missing, pulls the latest main from the public repo, reads the Supabase
 # settings from Google Secret Manager (secrets legacy-supabase-url and legacy-supabase-service-key), and starts
 # the watcher as a systemd service that restarts itself if it ever stops. It also pulls the latest code daily.
@@ -22,6 +23,8 @@ if [ ! -d "$APP/.git" ]; then
 fi
 python3 -m venv "$APP/.venv"
 "$APP/.venv/bin/pip" install --quiet --upgrade supabase requests pandas
+# The alert job uses the app's server code (api/), which needs the website's packages plus HTTP/2 + JWT for Apple.
+"$APP/.venv/bin/pip" install --quiet --upgrade -r "$APP/requirements.txt" "httpx[http2]" "pyjwt[crypto]"
 
 secret() { gcloud secrets versions access latest --secret="$1" --quiet; }
 umask 077
@@ -71,6 +74,68 @@ OnCalendar=*-*-* 09:00:00 UTC
 WantedBy=timers.target
 UNIT
 
+# Push alerts: the Apple key (secret legacy-apns-key, the .p8 text) goes in its own env file with its line breaks
+# written as \n (api/apns.py turns them back). No key yet: the job still queues and sends once it's there.
+{
+  echo "SUPABASE_URL=$(secret legacy-supabase-url)"
+  echo "SUPABASE_SERVICE_ROLE_KEY=$(secret legacy-supabase-service-key)"
+  echo "APNS_KEY_P8='$(secret legacy-apns-key 2>/dev/null | awk '{printf "%s\\n", $0}')'"
+  echo "APNS_KEY_ID=$(secret legacy-apns-key-id 2>/dev/null || echo M4JQR79FN5)"
+} > /etc/legacy-alerts.env
+
+cat > /etc/systemd/system/legacy-alerts.service <<UNIT
+[Unit]
+Description=Legacy Dynasty push alerts (one pass)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/legacy-alerts.env
+WorkingDirectory=$APP
+ExecStartPre=-/usr/bin/git -C $APP pull --ff-only --quiet
+ExecStart=$APP/.venv/bin/python scripts/push_alerts.py
+TimeoutStartSec=240
+MemoryMax=600M
+UNIT
+cat > /etc/systemd/system/legacy-alerts.timer <<UNIT
+[Unit]
+Description=Push alerts every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target
+UNIT
+
+# Lock screen Live Activities: always on (GitHub's game-window schedule started it up to 4 hours late). With no
+# activity running it checks Supabase once a minute; with one, every 15 seconds. Same env file as the alerts.
+cat > /etc/systemd/system/legacy-live-activity.service <<UNIT
+[Unit]
+Description=Legacy Dynasty lock screen Live Activity watcher
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/etc/legacy-alerts.env
+Environment=MAX_MINUTES=1500 INTERVAL=15
+WorkingDirectory=$APP
+ExecStartPre=-/usr/bin/git -C $APP pull --ff-only --quiet
+ExecStart=$APP/.venv/bin/python scripts/live_activity_watcher.py
+Restart=always
+RestartSec=20
+MemoryMax=450M
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+# The daily 9:00 UTC update restarts it too, so it runs the latest code.
+sed -i 's|^ExecStart=/bin/systemctl restart legacy-watcher.service$|ExecStart=/bin/systemctl restart legacy-watcher.service legacy-live-activity.service|' \
+  /etc/systemd/system/legacy-watcher-update.service
+
 systemctl daemon-reload
-systemctl enable --now legacy-watcher.service legacy-watcher-update.timer
-systemctl restart legacy-watcher.service
+systemctl enable --now legacy-watcher.service legacy-watcher-update.timer legacy-alerts.timer legacy-live-activity.service
+systemctl restart legacy-watcher.service legacy-live-activity.service

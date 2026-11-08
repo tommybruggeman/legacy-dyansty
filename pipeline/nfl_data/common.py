@@ -142,6 +142,15 @@ def fetch_text(url: str, timeout: int = 120) -> str:
     return resp.text
 
 
+def fetch_text_meta(url: str, timeout: int = 120) -> tuple[str, dict[str, str]]:
+    """Body plus response headers (e.g. Last-Modified, for when a published file was rebuilt)."""
+    import requests
+
+    resp = requests.get(url, timeout=timeout, headers=HEADERS)
+    resp.raise_for_status()
+    return resp.text, dict(resp.headers)
+
+
 def fetch_json(url: str, timeout: int = 120) -> Any:
     import requests
 

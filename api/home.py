@@ -17,9 +17,12 @@ from services.standings_rules import TOP_FIVE_POINTS, WIN_POINTS
 
 ROLLOVER_MONTH, ROLLOVER_DAY = 6, 30
 ROSTER_MAX = 22
-GAME_DAYS = {3, 4, 5, 6, 0}  # Thu-Mon (Monday=0)
+GAME_DAYS = {2, 3, 4, 5, 6, 0}  # Wed-Mon (Monday=0); only Tuesday is last week's recap (Tommy, 2026-11-04)
 ROUND_NAMES = {1: "Semifinal", 2: "Final"}
 EASTERN = ZoneInfo("America/New_York")
+# Home's day flips at midnight Pacific, so Monday night's final screen stays up
+# until the West Coast's Monday is over (Tommy, 2026-11-02).
+HOME_TZ = ZoneInfo("America/Los_Angeles")
 # nflverse team codes that differ from Sleeper's.
 NFLVERSE_TEAMS = {"LA": "LAR"}
 
@@ -44,6 +47,20 @@ def phase(today: date, league_status: str | None, week: int, playoff_start: int 
     if (today.month, today.day) <= (ROLLOVER_MONTH, ROLLOVER_DAY):
         return "decisions"
     return "draft_prep"
+
+
+def schedule_week(gamedays: dict[int, str], today: date) -> int | None:
+    """The NFL week Home shows, from our own schedule: the first week whose last game
+    day is today or later. Monday night's week holds until that day is over, then
+    the next week starts. None when the schedule is missing or the season is over."""
+    for week in sorted(gamedays):
+        try:
+            last = date.fromisoformat(str(gamedays[week])[:10])
+        except ValueError:
+            continue
+        if last >= today:
+            return week
+    return None
 
 
 def rollover_deadline(today: date) -> date:
@@ -260,7 +277,7 @@ def standings_table(rows: list[dict[str, Any]], team_ids: dict[int, str], pics: 
 
 # ---- the bottom of game-day Home -------------------------------------------------
 #
-# Thu-Sat: GM's Risers (who our projection says beats his normal the most this week).
+# Wed-Sat: Highest projected (the league's top projected players this week, by position).
 # Sunday: the week's scoreboard (every Legacy game) until Shotgun watch takes over
 # midway through the late games. Shotgun watch follows the lowest projected final
 # score (last place shotguns a beer) and everyone close to it: within 10 projected
@@ -273,6 +290,7 @@ SHOTGUN_AFTER = timedelta(hours=1, minutes=45)  # about halftime of the late gam
 SHOTGUN_WINDOWS = {"late": 10.0, "night": 7.0, "monday": 5.0}
 CEILING = 2.5                 # a big game: 2.5x what's left of a projection
 RISER_MIN_PROJ, RISER_MIN_GAMES, RISERS_SHOWN = 8.0, 2, 20
+TOP_PER_POS = 5   # Highest projected: the card shows 5 per position chip
 OUT_TAGS = {"out", "ir", "doubtful", "pup", "sus", "na"}
 
 
@@ -292,9 +310,9 @@ def bottom_mode(now: datetime, starts: dict[str, datetime]) -> dict[str, Any]:
     """
     local = now.astimezone(EASTERN)
     day = local.weekday()
-    if day in (3, 4, 5):
+    if day in (2, 3, 4, 5):
         return {"mode": "risers"}
-    if day == 0:
+    if day == 0 or (day == 1 and now.astimezone(HOME_TZ).weekday() == 0):  # Monday holds until midnight Pacific
         return {"mode": "shotgun", "window": SHOTGUN_WINDOWS["monday"]}
     if day != 6:
         return {"mode": "scoreboard"}
@@ -458,3 +476,33 @@ def risers(proj: dict[str, float], avg: dict[str, float], games: dict[str, int],
                      "injury": _text(meta.get("injury_status")) or None})
     rows.sort(key=lambda r: (-r["rise"], -r["proj"]))
     return rows[:limit]
+
+
+def top_projected(proj: dict[str, float], avg: dict[str, float], info: dict[str, dict[str, Any]], owners: dict[str, int],
+                  names: dict[int, str], my_roster_id: int | None, last_week: dict[str, float],
+                  per_pos: int = TOP_PER_POS) -> list[dict[str, Any]]:
+    """Highest projected: the top projected skill players this week, rostered or not, best first.
+
+    Keeps the top per_pos at each position (so every position chip on the card fills) and skips players
+    ruled out. Same row shape as risers(); avg is None for players without games yet and rise is unused.
+    """
+    rows = []
+    for pid, p in proj.items():
+        meta = info.get(pid, {})
+        pos = _text(meta.get("position")).upper()
+        if pos not in ("QB", "RB", "WR", "TE") or _text(meta.get("injury_status")).lower() in OUT_TAGS:
+            continue
+        rid = owners.get(pid)
+        a = avg.get(pid)
+        rows.append({"player_id": pid, "name": _text(meta.get("full_name")) or pid, "pos": pos, "team": _text(meta.get("team")),
+                     "avg": round(a, 1) if a is not None else None, "proj": round(p, 1), "rise": 0.0, "last": last_week.get(pid),
+                     "roster_id": rid, "owner": names.get(rid) if rid is not None else None, "is_mine": rid is not None and rid == my_roster_id,
+                     "injury": _text(meta.get("injury_status")) or None})
+    rows.sort(key=lambda r: -r["proj"])
+    kept: dict[str, int] = {}
+    out = []
+    for r in rows:
+        if kept.get(r["pos"], 0) < per_pos:
+            kept[r["pos"]] = kept.get(r["pos"], 0) + 1
+            out.append(r)
+    return out

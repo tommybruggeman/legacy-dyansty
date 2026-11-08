@@ -17,8 +17,8 @@ function go(path: Parameters<typeof router.push>[0]) {
   router.push(path);
 }
 
-// While any of this team's players is on the field, the page refreshes this often (the server scores at most every 15 s).
-export const LIVE_REFRESH_MS = 15_000;
+// While any of this team's players is on the field, the page refreshes this often (10 s, same as every live page).
+export { LIVE_POLL_MS as LIVE_REFRESH_MS } from '../../lib/api';
 export const isLive = (team: TeamPage | null) => !!team?.week && !team.week.is_final && Object.values(team.week.players).some((p) => p.status === 'playing');
 
 // One owner's team with the same three tabs as My Team (league activity lives on League > Teams). Other owners' teams
