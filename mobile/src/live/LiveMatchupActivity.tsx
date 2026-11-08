@@ -8,10 +8,10 @@
 //
 // The 'widget' function runs in a separate runtime inside the widget extension: no hooks, no imports
 // beyond @expo/ui, and nothing from outside the function (colors and helpers are declared inside it).
-import { Gauge, HStack, Rectangle, Spacer, Text, VStack } from '@expo/ui/swift-ui';
+import { Gauge, HStack, Rectangle, Spacer, Text, VStack, ZStack } from '@expo/ui/swift-ui';
 import {
-  activityBackgroundTint, background, font, foregroundStyle, frame, gaugeStyle, lineLimit, monospacedDigit, opacity,
-  padding, scaleEffect, tint,
+  activityBackgroundTint, background, font, foregroundStyle, frame, gaugeStyle, lineLimit, minimumScaleFactor, monospacedDigit,
+  opacity, padding, scaleEffect, tint,
 } from '@expo/ui/swift-ui/modifiers';
 import { createLiveActivity, type LiveActivityEnvironment } from 'expo-widgets';
 
@@ -39,24 +39,27 @@ const LiveMatchup = (props: LiveMatchupProps, environment: LiveActivityEnvironme
 
   const pts = (n: number) => (Math.round((n || 0) * 10) / 10).toFixed(1);
   const odds = typeof props.odds === 'number' ? Math.max(0, Math.min(100, Math.round(props.odds))) : null;
-  const status = props.final ? 'FINAL' : stale ? 'PAUSED' : '● LIVE';
-  const statusColor = props.final ? GOLD : stale ? MUTED : LIVE;
+  // No "paused" label: between game windows the widget just shows the latest numbers.
+  const status = props.final ? 'FINAL' : stale ? '' : '● LIVE';
+  const statusColor = props.final ? GOLD : LIVE;
 
-  // Win odds as a ring: gold fill on a muted green track, the percent in the middle.
-  const ring = (scale: number) => (
-    <Gauge
-      value={odds === null ? 0 : odds / 100}
-      min={0}
-      max={1}
-      currentValueLabel={
-        <Text modifiers={[font({ size: 13, weight: 'heavy' }), monospacedDigit(), foregroundStyle(GOLD)]}>
+  // Win odds as a ring: gold fill on a muted green track, the percent drawn on top in the middle (the gauge's
+  // own value label doesn't show on the lock screen). Fixed frame so the scaled ring never overlaps the scores.
+  const ring = (size: number) => (
+    <ZStack modifiers={[frame({ width: size, height: size })]}>
+      <Gauge
+        value={odds === null ? 0 : odds / 100}
+        min={0}
+        max={1}
+        modifiers={[gaugeStyle('circularCapacity'), tint(GOLD), scaleEffect(size / 50), opacity(odds === null ? 0.5 : 1)]}
+      />
+      <VStack spacing={0}>
+        <Text modifiers={[font({ size: size * 0.27, weight: 'heavy' }), monospacedDigit(), foregroundStyle(GOLD)]}>
           {odds === null ? '–' : `${odds}%`}
         </Text>
-      }
-      modifiers={[gaugeStyle('circularCapacity'), tint(GOLD), scaleEffect(scale), opacity(odds === null ? 0.5 : 1)]}
-    >
-      <Text modifiers={[font({ size: 8, weight: 'bold' }), foregroundStyle(MUTED)]}>WIN</Text>
-    </Gauge>
+        <Text modifiers={[font({ size: size * 0.13, weight: 'bold' }), foregroundStyle(MUTED)]}>WIN</Text>
+      </VStack>
+    </ZStack>
   );
 
   const change = props.last;
@@ -73,7 +76,7 @@ const LiveMatchup = (props: LiveMatchupProps, environment: LiveActivityEnvironme
 
   const side = (s: LiveSide, mine: boolean, size: number) => (
     <VStack alignment={mine ? 'leading' : 'trailing'} spacing={1}>
-      <Text modifiers={[font({ size: 11, weight: 'bold' }), foregroundStyle(mine ? GOLD : MUTED), lineLimit(1)]}>{s.name}</Text>
+      <Text modifiers={[font({ size: 11, weight: 'bold' }), foregroundStyle(mine ? GOLD : MUTED), lineLimit(1), minimumScaleFactor(0.7)]}>{s.name}</Text>
       <Text modifiers={[font({ size, weight: 'heavy' }), monospacedDigit(), foregroundStyle(mine ? CREAM : DIM)]}>{pts(s.score)}</Text>
       <Text modifiers={[font({ size: 11 }), monospacedDigit(), foregroundStyle(MUTED)]}>{`proj ${s.proj}`}</Text>
     </VStack>
@@ -99,7 +102,7 @@ const LiveMatchup = (props: LiveMatchupProps, environment: LiveActivityEnvironme
       <HStack alignment="center">
         {side(props.me, true, 32)}
         <Spacer />
-        {ring(1.25)}
+        {ring(66)}
         <Spacer />
         {side(props.them, false, 32)}
       </HStack>
@@ -115,18 +118,17 @@ const LiveMatchup = (props: LiveMatchupProps, environment: LiveActivityEnvironme
     minimal: odds === null
       ? <Text modifiers={[font({ size: 12, weight: 'heavy' }), foregroundStyle(GOLD)]}>LD</Text>
       : (
-        <Gauge
-          value={odds / 100}
-          currentValueLabel={<Text modifiers={[font({ size: 9, weight: 'heavy' }), foregroundStyle(GOLD)]}>{`${odds}`}</Text>}
-          modifiers={[gaugeStyle('circularCapacity'), tint(GOLD), scaleEffect(0.6)]}
-        />
+        <ZStack>
+          <Gauge value={odds / 100} modifiers={[gaugeStyle('circularCapacity'), tint(GOLD), scaleEffect(0.45)]} />
+          <Text modifiers={[font({ size: 9, weight: 'heavy' }), foregroundStyle(GOLD)]}>{`${odds}`}</Text>
+        </ZStack>
       ),
     expandedLeading: <VStack modifiers={[padding({ leading: 6 })]}>{side(props.me, true, 26)}</VStack>,
     expandedTrailing: <VStack modifiers={[padding({ trailing: 6 })]}>{side(props.them, false, 26)}</VStack>,
     expandedCenter: (
       <VStack spacing={2}>
         <Text modifiers={[font({ size: 10, weight: 'bold' }), foregroundStyle(statusColor)]}>{status}</Text>
-        {ring(1)}
+        {ring(52)}
       </VStack>
     ),
     expandedBottom: <VStack modifiers={[padding({ horizontal: 6, top: 4 })]}>{changeLine}</VStack>,
