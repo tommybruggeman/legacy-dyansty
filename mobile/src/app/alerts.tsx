@@ -53,7 +53,7 @@ export default function Alerts() {
   };
 
   return (
-    <Screen loading={loading} onRefresh={reload}>
+    <Screen loading={loading}>
       <Back label="Settings" />
       <Title>Alerts</Title>
       {!allowed ? (

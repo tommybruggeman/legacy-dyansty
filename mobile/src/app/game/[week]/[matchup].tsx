@@ -39,7 +39,7 @@ export default function Game() {
   const open = (teamId: string | null) => (teamId ? () => router.push(`/team/${teamId}`) : undefined);
 
   return (
-    <Screen loading={loading} onRefresh={reload}>
+    <Screen loading={loading}>
       <Back label="Matchups" />
       <Text style={styles.eyebrow}>WEEK {data.week} · {firstName(a.name).toUpperCase()} VS {firstName(b.name).toUpperCase()}</Text>
       <View style={styles.header}>

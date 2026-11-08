@@ -57,7 +57,7 @@ export default function Home() {
     : data.phase === 'playoffs' ? `Playoffs · Week ${data.week}` : `Week ${data.week}`;
 
   return (
-    <Screen loading={loading} onRefresh={reload}>
+    <Screen loading={loading}>
       <View style={styles.top}>
         <View style={ui.flex}>
           <Text style={styles.hey}>{heading}</Text>
