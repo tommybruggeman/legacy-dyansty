@@ -9,6 +9,7 @@ from typing import Any, Iterable
 
 from api import cache, home, league, live_stats, nfl_live, projections, teams
 from api.front_office import LEAGUE_TZ
+from league_ai import projection_calibration
 
 PROJ_TTL = 900
 BENCH_ORDER = {"QB": 0, "RB": 1, "WR": 2, "TE": 3, "K": 4, "DEF": 5}
@@ -85,6 +86,10 @@ def add_projections(client: Any, ctx: dict[str, Any], week: int, final: bool, re
         except Exception:
             active, proj_opps = {}, {}
     try:
+        frozen = projection_calibration.pregame(client, sid, season, week)
+    except Exception:
+        frozen = {}
+    try:
         ranks = rank_job.result()
     except Exception:
         ranks = {}
@@ -114,7 +119,8 @@ def add_projections(client: Any, ctx: dict[str, Any], week: int, final: bool, re
             kick = starts.get(home.NFLVERSE_TEAMS.get(p["team"] or "", p["team"] or ""))
             p["kickoff"] = kick.isoformat() if kick else None
             p["line"] = nfl_live.stat_line((lines.get(pid) or {}).get("stats"), p["pos"]) if p["status"] in ("playing", "final") else []
-            p["proj"] = proj.get(pid)
+            # once his game starts, show the projection frozen before kickoff (so "projected vs scored" is fair)
+            p["proj"] = frozen.get(pid, proj.get(pid)) if p["status"] in ("playing", "final") else proj.get(pid)
             p["rank"] = (ranks.get(pid) or {}).get("label") if p["status"] in ("playing", "final") and p["points"] else None
             p["breakdown"] = projections.breakdown((lines.get(pid) or {}).get("stats"), scoring) if p["status"] in ("playing", "final") else []
             base = active.get(pid, p["proj"]) if p["status"] == "playing" else p["proj"]

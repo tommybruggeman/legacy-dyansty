@@ -455,6 +455,53 @@ def snapshot(client: Any, league_id: str, sleeper_league_id: str, now: datetime)
     return len(shown)
 
 
+PREGAME_WINDOW_MIN = 75   # the frequent snapshot only works when a game kicks off within this many minutes
+
+
+def pregame_snapshots(client: Any, now: datetime | None = None) -> dict[str, int]:
+    """Game days, every 10 minutes (pregame-projections workflow): when a kickoff is near, save every not-yet-started
+    player's current projection, so each player's number is frozen within minutes of his kickoff. Counts only."""
+    from datetime import timedelta
+
+    from api.home import kickoffs
+    from league_ai.nfl_data import current_week_from_games, season_games
+
+    now = now or datetime.now(timezone.utc)
+    season = now.year if now.month >= 3 else now.year - 1
+    games_all = season_games(client, season)
+    week = current_week_from_games(games_all)
+    if not week:
+        return {}
+    starts = kickoffs([g for g in games_all if int(g.get("week") or 0) == week]).values()
+    if not any(now < k <= now + timedelta(minutes=PREGAME_WINDOW_MIN) for k in starts):
+        return {}
+    out = {}
+    for n, lg in enumerate(client.table("leagues").select("id, sleeper_league_id").execute().data or [], start=1):
+        if lg.get("sleeper_league_id"):
+            try:
+                out[f"league {n}"] = snapshot(client, str(lg["id"]), str(lg["sleeper_league_id"]), now)
+            except Exception as exc:
+                print(f"league {n}: snapshot failed ({type(exc).__name__})", flush=True)
+    return out
+
+
+def pregame(client: Any, sleeper_id: str, season: int, week: int) -> dict[str, float]:
+    """player -> his projection as saved before his game kicked off (the frozen pregame number); {} when none."""
+    from api import cache
+
+    def load() -> dict[str, float]:
+        try:
+            lid = _league_id(client, sleeper_id)
+            snap = _snapshots(client, lid).get(f"{season}-{week}") if lid else None
+        except Exception:
+            return {}
+        return {str(k): float(v) for k, v in ((snap or {}).get("projections") or {}).items()}
+
+    if client is None:
+        return {}
+    return cache.cached(("pregame_proj", str(sleeper_id), int(season), int(week)), 300, load)
+
+
 def run(client: Any, *, now: datetime | None = None, dry_run: bool = False) -> dict[str, Any]:
     """Every league: snapshot this week's projections, replay every finished week, save factors + card. Counts only."""
     now = now or datetime.now(timezone.utc)
@@ -495,8 +542,12 @@ def main() -> int:
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--pregame", action="store_true", help="only freeze projections for games about to kick off")
     args = parser.parse_args()
     client = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_ROLE_KEY"])
+    if args.pregame:
+        print(f"pregame snapshot: {pregame_snapshots(client) or 'no kickoff soon'}", flush=True)
+        return 0
     for n, (_, res) in enumerate(run(client, dry_run=args.dry_run).items(), start=1):
         print(f"league {n}: {res}", flush=True)
     return 0
