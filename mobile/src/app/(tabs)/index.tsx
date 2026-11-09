@@ -849,9 +849,9 @@ const styles = StyleSheet.create({
   matchRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   matchOut: { opacity: 0.45 },
   matchTbd: { color: colors.muted, fontSize: 10, fontWeight: '700', paddingVertical: 2 },
-  bk: { flexDirection: 'row', alignItems: 'center', marginTop: 10 },
+  bk: { flexDirection: 'row', alignItems: 'center', marginTop: 22 },
   bkSide: { flex: 1, gap: 4 },
-  bkMid: { flex: 1, gap: 4 },
+  bkMid: { flex: 1, gap: 4, transform: [{ translateY: -12 }] }, // the final sits a little above the semis
   bkLine: { width: 8, height: 1.5, backgroundColor: colors.gold, opacity: 0.6 },
   bkWeeks: { color: colors.muted, fontSize: 9, fontWeight: '700', textAlign: 'center', opacity: 0.8 },
   matchName: { color: colors.text, fontSize: 11, fontWeight: '700', flex: 1 },
