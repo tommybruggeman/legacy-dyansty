@@ -35,13 +35,12 @@ const LiveMatchup = (props: LiveMatchupProps, environment: LiveActivityEnvironme
   const LIVE = '#4CC38A';
   const RED = '#E05555';
   const DARK = '#071A12';
-  const stale = environment.isStale === true;
 
   const pts = (n: number) => (Math.round((n || 0) * 10) / 10).toFixed(1);
   const odds = typeof props.odds === 'number' ? Math.max(0, Math.min(100, Math.round(props.odds))) : null;
-  // No "paused" label: between game windows the widget just shows the latest numbers.
-  const status = props.final ? 'FINAL' : stale ? '' : '● LIVE';
-  const statusColor = props.final ? GOLD : LIVE;
+  // Only a finished game gets a label (Tommy: no "LIVE" tag; the moving scores say it's live).
+  const status = props.final ? 'FINAL' : '';
+  const statusColor = GOLD;
 
   // Win odds as a ring: gold fill on a muted green track, the percent drawn on top in the middle (the gauge's
   // own value label doesn't show on the lock screen). Fixed frame so the scaled ring never overlaps the scores.

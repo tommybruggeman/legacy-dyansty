@@ -96,8 +96,11 @@ def top_scorer(result: dict[str, Any], my_roster_id: int | None) -> dict[str, An
                key=lambda p: float(p.get("points") or 0), default=None)
     if not best:
         return None
+    stats = " ".join(item["text"] for item in (best.get("line") or [])[:3])
+    game = game_text(best.get("game"))
+    team = best.get("team") or ""
     return {"pts": f"{float(best['points']):.1f}", "good": True, "mine": True, "who": short_name(best.get("name") or ""),
-            "what": "top scorer", "game": ""}
+            "what": stats or "top scorer", "game": f"{team} {game}".strip() if game else ""}
 
 
 def props(result: dict[str, Any], my_roster_id: int | None, before: dict[str, float] | None = None,
