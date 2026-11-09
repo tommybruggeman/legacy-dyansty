@@ -254,3 +254,5 @@ def save_rules(client: Any, league_id: str, values: Mapping[str, Any], scoring: 
         save_settings(client, ai)
     except Exception as exc:
         raise ValueError(tool_error(exc)) from None
+    from api import cache
+    cache.forget("saved_scoring", league_id)  # projections and ranks pick up new points per stat right away

@@ -93,7 +93,25 @@ def week_lines(kind: str, season: int, week: int, ttl: int) -> dict[str, dict[st
         return {}
 
 
+# Sleeper league id -> (client, our league id), filled by every page that resolves the owner's league, so code that
+# only knows the Sleeper id still scores with the rules saved in our Settings.
+_LEAGUES: dict[str, tuple[Any, str]] = {}
+
+
+def remember_league(client: Any, league_id: str, sleeper_id: str) -> None:
+    _LEAGUES[str(sleeper_id)] = (client, str(league_id))
+
+
 def league_scoring(sleeper_id: str) -> dict[str, Any]:
+    """This league's points per stat: the rules saved in our Settings (Commissioner > Rules and scoring), which the
+    scoring engine, projections, ranks and the GM all share. Sleeper's copy only if none are saved."""
+    known = _LEAGUES.get(str(sleeper_id))
+    if known:
+        from league_ai.league_points import league_scoring as saved_scoring
+        client, league_id = known
+        saved = cache.cached(("saved_scoring", league_id), 300, lambda: saved_scoring(client, league_id))
+        if saved:
+            return saved
     try:
         return (sleeper.get(f"league/{sleeper_id}", ttl=3600) or {}).get("scoring_settings") or {}
     except Exception:

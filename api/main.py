@@ -133,6 +133,7 @@ def _league_context(client: Client, user: Any) -> tuple[str, dict[int, str], int
 def _sync_own_league(client: Client, league_id: str, sleeper_id: str) -> None:
     """Refresh the app's own scores (live watcher overlay, or the weeks the app runs itself) before any page reads
     matchups. Shared and cached 15 s in api.own_league, so pages like Matchups and Standings never show a frozen copy."""
+    projections.remember_league(client, league_id, sleeper_id)  # projections and ranks score with our saved rules
     try:
         season = cache.cached(("season", league_id), 600, lambda: SeasonResolver(client).get_active_season(league_id))
         own_league.sync(client, league_id, sleeper_id, int(season.season))
