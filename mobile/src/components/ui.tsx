@@ -226,6 +226,14 @@ export function Note({ children }: { children: ReactNode }) {
 
 export const money = (n: number | null | undefined) => `${(n ?? 0) < 0 ? '-' : ''}$${Math.abs(n ?? 0).toFixed(1)}`;
 export const firstName = (name: string) => name.split(' ')[0];
+// Teams on Standings, Teams, Matchups and Home go by their team name; tight spots use the short name when the full
+// one is long. Other pages keep owner names.
+export const teamLabel = (t: { name?: string; team_name?: string | null; team_abbr?: string | null }, tight = false) => {
+  if (!t.team_name) return tight ? (t.name ?? '').split(' ')[0] : t.name ?? ''; // no team name yet: the owner
+  if (!tight || t.team_name.length <= 12) return t.team_name;
+  return t.team_abbr || t.team_name.split(' ')[0];
+};
+
 export const record = (w: number, l: number, t = 0) => `${w}-${l}${t ? `-${t}` : ''}`;
 export const ordinal = (n: number | null | undefined) => {
   if (!n) return '—';

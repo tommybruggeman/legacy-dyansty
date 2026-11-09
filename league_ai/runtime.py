@@ -366,6 +366,8 @@ def chat_turn(client: Any, owner: Owner, *, question: str, history: list[dict[st
         return got
 
     memory = owner.memory(client)
+    from league_ai import owner_prefs  # answer length and contend/rebuild from the owner's Settings
+    week_context = owner_prefs.with_prefs(week_context, owner_prefs.load(client, owner.user_id))
     topic = question_topic(question)
     sources = LeagueDataSources(client=client, league_id=owner.league_id, season=owner.season)
     model = pick_model(topic, conversation_id or question)

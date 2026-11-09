@@ -867,13 +867,12 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-nav_options = ["Owners"]
+nav_options = ["My Team", "Owners"]
 
 if is_commissioner:
     nav_options += ["League Tools", "Draft", "FA Auction"]
 else:
     nav_options += ["My Access"]
-nav_options.append("Alerts")
 
 if is_platform_admin:
     nav_options.append("Platform Admin")
@@ -1312,6 +1311,16 @@ if section == "Owners":
 # ============================================================
 # MY ACCESS
 # ============================================================
+elif section == "My Team":
+    section_header("My Team", "Your team's name, short name and picture, and how the GM answers you.")
+    from services.profile_settings_ui import render_my_team_settings
+    _me = current_user() or {}
+    if _me.get("id"):
+        render_my_team_settings(sb_client, active_league_id, str(_me["id"]))
+    else:
+        st.info("Sign in again to change your team.")
+
+
 elif section == "My Access":
     section_header(
         "My Access",

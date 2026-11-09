@@ -52,7 +52,11 @@ export function LineupSheet({ lineup, players, picking, onClose, onSaved }: {
   async function save(next: (string | null)[]) {
     setSaving(true);
     try {
-      await apiSend('POST', '/my-team/lineup', { week: lineup.week, slots: next });
+      if (lineup.commissioner_team_id) {
+        await apiSend('POST', '/commissioner/lineup', { team_id: lineup.commissioner_team_id, week: lineup.week, slots: next });
+      } else {
+        await apiSend('POST', '/my-team/lineup', { week: lineup.week, slots: next });
+      }
       onClose();
       onSaved();
     } catch (e) {

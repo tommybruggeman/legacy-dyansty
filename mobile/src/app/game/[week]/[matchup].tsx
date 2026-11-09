@@ -5,7 +5,7 @@ import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Avatar } from '../../../components/Pictures';
 import { ErrorState, Loading } from '../../../components/ScreenState';
-import { Back, Screen, firstName } from '../../../components/ui';
+import { Back, Screen, firstName, teamLabel } from '../../../components/ui';
 import { type BoxPlayer, type BoxScore, LIVE_POLL_MS, useApi } from '../../../lib/api';
 import { colors } from '../../../lib/theme';
 
@@ -40,7 +40,7 @@ export default function Game() {
   return (
     <Screen loading={loading}>
       <Back label="Matchups" />
-      <Text style={styles.eyebrow}>WEEK {data.week} · {firstName(a.name).toUpperCase()} VS {firstName(b.name).toUpperCase()}</Text>
+      <Text style={styles.eyebrow}>WEEK {data.week} · {teamLabel(a, true).toUpperCase()} VS {teamLabel(b, true).toUpperCase()}</Text>
       <View style={styles.header}>
         <ScoreSide side={a} other={b} final={data.is_final} onPress={open(a.team_id)} me />
         <ScoreSide side={b} other={a} final={data.is_final} onPress={open(b.team_id)} right />
@@ -81,7 +81,7 @@ function Lineup({ left, right, onScore, bench }: { left: BoxPlayer[]; right: Box
 
 function ScoreSide({ side, other, final, onPress, me, right }: { side: Side; other: Side; final: boolean; onPress?: () => void; me?: boolean; right?: boolean }) {
   const won = side.score > other.score;
-  const sub = final ? `${firstName(side.name)} · ${won ? 'W' : side.score < other.score ? 'L' : 'T'}` : side.projected != null ? `proj ${side.projected.toFixed(1)}` : firstName(side.name);
+  const sub = final ? `${teamLabel(side, true)} · ${won ? 'W' : side.score < other.score ? 'L' : 'T'}` : side.projected != null ? `proj ${side.projected.toFixed(1)}` : teamLabel(side, true);
   return (
     <Pressable onPress={onPress} style={[styles.scoreSide, right && styles.scoreSideRight]}>
       <Avatar name={side.name} size={36} me={me} />
@@ -108,7 +108,7 @@ function WinOdds({ odds }: { odds: number[] }) {
 function FinalBanner({ a, b }: { a: Side; b: Side }) {
   const top = [...a.players, ...b.players].reduce<BoxPlayer | null>((best, p) => (!best || p.points > best.points ? p : best), null);
   const margin = Math.abs(a.score - b.score).toFixed(1);
-  const lead = a.score === b.score ? 'Tied' : `${firstName(a.score > b.score ? a.name : b.name)} wins by ${margin}`;
+  const lead = a.score === b.score ? 'Tied' : `${teamLabel(a.score > b.score ? a : b, true)} wins by ${margin}`;
   return <Text style={styles.banner}>{lead}{top && top.points > 0 ? ` · ${shortName(top.name)} top scorer (${top.points.toFixed(1)})` : ''}</Text>;
 }
 

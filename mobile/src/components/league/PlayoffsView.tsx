@@ -3,6 +3,7 @@ import { router } from 'expo-router';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Avatar } from '../Pictures';
+import { teamLabel } from '../ui';
 import type { PlayoffGame, PlayoffSlot, PlayoffTeam, PlayoffWeek } from '../../lib/api';
 import { colors } from '../../lib/theme';
 
@@ -71,7 +72,7 @@ function TreeSlot({ slot, game }: { slot: PlayoffSlot; game: PlayoffGame }) {
   return (
     <View style={[styles.treeSlot, lost && styles.lost]}>
       <Seed n={slot.seed} small />
-      <Text style={[styles.treeName, slot.is_me && styles.treeMe]} numberOfLines={1}>{first(slot.name)}{champ ? ' 🏆' : ''}</Text>
+      <Text style={[styles.treeName, slot.is_me && styles.treeMe]} numberOfLines={1}>{teamLabel(slot, true)}{champ ? ' 🏆' : ''}</Text>
       {game.state !== 'pre' ? <Text style={styles.treeScore}>{slot.score.toFixed(0)}</Text> : null}
     </View>
   );
@@ -110,10 +111,10 @@ function TeamRow({ slot, game, big }: { slot: PlayoffSlot; game: PlayoffGame; bi
   return (
     <View style={[styles.teamRow, big && styles.bigRow, lost && styles.lost]}>
       <Seed n={slot.seed} />
-      <Avatar uri={slot.avatar} name={slot.name} size={big ? 38 : 30} me={slot.is_me} />
+      <Avatar uri={slot.avatar} name={teamLabel(slot)} size={big ? 38 : 30} me={slot.is_me} />
       <View style={styles.nameBox}>
         <View style={styles.nameLine}>
-          <Text style={styles.teamName} numberOfLines={1}>{first(slot.name)}</Text>
+          <Text style={styles.teamName} numberOfLines={1}>{teamLabel(slot, true)}</Text>
           {slot.is_me ? <Text style={styles.you}>YOU</Text> : null}
           {slot.record ? <Text style={styles.record}>{slot.record}</Text> : null}
         </View>
@@ -145,7 +146,7 @@ function Losers({ view }: { view: PlayoffWeek }) {
           </Pressable>
         );
       })}
-      {view.byes.length ? <Text style={styles.bye}>Bye: {view.byes.map((t) => first(t.name)).join(', ')}</Text> : null}
+      {view.byes.length ? <Text style={styles.bye}>Bye: {view.byes.map((t) => teamLabel(t, true)).join(', ')}</Text> : null}
     </View>
   );
 }
@@ -156,7 +157,7 @@ function MiniSide({ slot, game, right }: { slot: PlayoffSlot; game: PlayoffGame;
   }
   const lost = game.winner != null && game.winner !== slot.roster_id;
   const score = game.state === 'pre' ? null : <Text style={styles.miniScore}>{slot.score.toFixed(1)}</Text>;
-  const name = <Text style={[styles.miniName, slot.is_me && styles.treeMe, right && styles.right]} numberOfLines={1}>{first(slot.name)}</Text>;
+  const name = <Text style={[styles.miniName, slot.is_me && styles.treeMe, right && styles.right]} numberOfLines={1}>{teamLabel(slot, true)}</Text>;
   return (
     <View style={[styles.miniSide, right && styles.miniRight, lost && styles.lost]}>
       {right ? <>{score}{name}<Seed n={slot.seed} small /></> : <><Seed n={slot.seed} small />{name}{score}</>}

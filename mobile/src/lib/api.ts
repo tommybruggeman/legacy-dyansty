@@ -73,7 +73,7 @@ export async function apiStream<E>(path: string, body: unknown, onEvent: (event:
 // phone), then refresh quietly in the background. Cleared on sign out.
 // Bump CACHE_VERSION when a response changes shape, so an app update never
 // draws an old saved copy with the new screen.
-const CACHE_VERSION = 'v7';
+const CACHE_VERSION = 'v8';
 const CACHE_PREFIX = 'api:';
 const memory = new Map<string, unknown>();
 
@@ -259,6 +259,8 @@ export type TeamSummary = {
   team_id: string;
   owner_name: string;
   team_name: string;
+  team_abbr?: string;
+  avatar?: string | null;
   roster_id: number | null;
   rank: number | null;
   wins: number;
@@ -296,6 +298,7 @@ export type Lineup = {
   slots: { index: number; slot: string; label: string; player_id: string | null; locked: boolean }[];
   locked: string[];
   fits: Record<string, string[]>;
+  commissioner_team_id?: string; // set when the commissioner is editing another team's lineup
 };
 // A contract on the value board: PPG per cap dollar, graded against the whole league.
 export type ValuedContract = Player & { through: number; per_dollar: number | null; grade: 'bargain' | 'fair' | 'overpaid' | 'stash' | null };
@@ -749,3 +752,30 @@ export type WaiverSheet = {
   players: (BidPlayer & { salary: number; dead_cap_text: string; designation: 'taxi' | 'ir' | null; locked: boolean;
     dead_cap: { this_season: number; total: number; through: number | null } })[];
 };
+
+// Settings (behind the initials circle on Home).
+export type OwnerProfile = { display_name: string; team_name: string; team_abbr: string; picture_url: string | null };
+export type GmPrefs = { answer_length: 'short' | 'detailed'; team_plan: 'auto' | 'contend' | 'rebuild' };
+export type TeamPeople = {
+  co_owners: { user_id: string; email: string | null; is_me: boolean }[];
+  invites: { id: string; email: string; expires_at: string | null }[];
+  can_invite: boolean;
+};
+export type MySettings = {
+  email: string | null; role: string; is_commissioner: boolean; is_co_owner: boolean; team_id: string;
+  profile: OwnerProfile; gm: GmPrefs; people: TeamPeople;
+};
+export type RulesView = { groups: { title: string; rows: [string, string][] }[]; house_rules: string | null };
+
+// Settings > Commissioner.
+export type CommishTeam = {
+  team_id: string; owner_name: string; team_name: string; team_abbr?: string; avatar?: string | null;
+  people: { user_id: string; email: string | null; role: string }[];
+  invites: { id: string; email: string; role: string }[];
+};
+export type CommishHome = { season: number; teams: CommishTeam[]; switch: { enabled: boolean; own_from_week: number | null } };
+export type CommishField = { key: string; label: string; kind: 'money' | 'int' | 'pct' | 'bool' | 'text'; value: number | string | boolean | null };
+export type ScoringRow = { group: string; rule: string; key: string; points: number };
+export type CommishRules = { fields: CommishField[]; scoring: ScoringRow[] };
+export type DropPreview = { player_id: string; team_name: string; salary: number; years_left: number; dead_cap: number; dead_cap_pct: number };
+export type ContractFix = { contract_id: string; team_id: string; end_season: number; seasons: { season: number; salary: number }[] };
