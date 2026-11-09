@@ -1,4 +1,4 @@
-import * as ImagePicker from 'expo-image-picker';
+import ImageCropPicker from 'react-native-image-crop-picker';
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
@@ -31,15 +31,19 @@ export default function Profile() {
   const set = (patch: Partial<OwnerProfile>) => setForm({ ...form, ...patch });
 
   const pick = async () => {
-    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: true, aspect: [1, 1], quality: 0.4, base64: true });
-    if (res.canceled || !res.assets?.[0]) return;
+    // Round crop box, like the picture shows everywhere; saved as a 400px square JPEG (about 30 KB).
+    const res = await ImageCropPicker.openPicker({
+      mediaType: 'photo', cropping: true, cropperCircleOverlay: true, width: 400, height: 400,
+      compressImageQuality: 0.75, forceJpg: true, includeBase64: true, cropperToolbarTitle: 'Move and scale',
+    }).catch(() => null); // cancelled
+    if (!res) return;
     setBusy('upload');
     try {
-      const base64 = res.assets[0].base64;
+      const base64 = res.data;
       if (!base64) throw new Error('No picture data.');
       const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
       const path = `${data.team_id}/${Date.now()}.jpg`; // a new name each time, so phones don't show the old one
-      const { error: upErr } = await supabase.storage.from(BUCKET).upload(path, bytes, { contentType: 'image/jpeg', upsert: true });
+      const { error: upErr } = await supabase.storage.from(BUCKET).upload(path, bytes, { contentType: 'image/jpeg', upsert: false });
       if (upErr) throw upErr;
       setPicture(supabase.storage.from(BUCKET).getPublicUrl(path).data.publicUrl);
     } catch (e: any) {

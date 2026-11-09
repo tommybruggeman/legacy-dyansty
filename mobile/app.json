@@ -10,9 +10,10 @@
       "supportsTablet": false,
       "bundleIdentifier": "com.tommybruggeman.legacydynasty",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSPhotoLibraryUsageDescription": "Pick a picture for your team."
       },
-      "buildNumber": "80"
+      "buildNumber": "81"
     },
     "android": {
       "adaptiveIcon": {
@@ -42,14 +43,6 @@
         {
           "enablePushNotifications": true,
           "frequentUpdates": true
-        }
-      ],
-      [
-        "expo-image-picker",
-        {
-          "photosPermission": "Pick a picture for your team.",
-          "cameraPermission": false,
-          "microphonePermission": false
         }
       ],
       [
