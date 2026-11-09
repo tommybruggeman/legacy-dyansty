@@ -219,29 +219,45 @@ def chips(facts: dict[str, Any]) -> list[str]:
     return out[:4]
 
 
-def run(client: Any, ai: Any, season: int, week: int | None, dry_run: bool = False, workers: int = 6) -> dict[str, Any]:
+def loaded_teams(rows: Iterable[dict[str, Any]], week: int) -> set[str]:
+    """Teams whose box scores for this week are in our stats. A player with no row is only 'did not play'
+    when his teammates' rows are there; otherwise the week simply hasn't loaded for his team yet."""
+    return {team_code(r.get("team")) for r in rows if int(r.get("week") or 0) == week and r.get("team")}
+
+
+def run(client: Any, ai: Any, season: int, week: int | None, dry_run: bool = False, workers: int = 6,
+        redo: bool = False) -> dict[str, Any]:
     rows = load_stats(client, season)
     if not rows:
         return {"week": week, "players": 0, "written": 0, "note": "no stats"}
     week = week or max(int(r["week"]) for r in rows)
+    teams = loaded_teams(rows, week)
+    if not teams:
+        return {"week": week, "players": 0, "written": 0, "note": "week not loaded yet"}
     games, injuries = load_games(client, season), load_injuries(client)
     ranks = week_ranks(rows, week)
     by_player: dict[str, list[dict[str, Any]]] = {}
     for r in rows:
         if int(r["week"]) <= week:
             by_player.setdefault(str(r["gsis_id"]), []).append(r)
+    if redo and not dry_run:
+        # Throw the week's saved recaps away first, so a recap written before the stats landed can't linger.
+        client.table("player_writeups").delete().eq("season", season).eq("week", week).execute()
     done = set() if dry_run else already_written(client, season, week)
     todo = []
     for gsis, prs in by_player.items():
         if gsis in done:
             continue
+        played = any(int(r["week"]) == week for r in prs)
+        if not played and team_code(prs[-1].get("team")) not in teams:
+            continue  # his team's game isn't in our stats yet; the backup run picks him up
         f = player_facts(prs, week, rank=ranks.get(gsis), games=games, injury=injuries.get(gsis))
         if f:
             todo.append((gsis, str(prs[-1].get("sleeper_id") or ""), f))
     todo.sort(key=lambda t: -_n((t[2].get("season_per_game") or {}).get("ppr_points")))
     todo = todo[:MAX_PLAYERS]
     if dry_run or ai is None:
-        return {"week": week, "players": len(todo), "written": 0, "skipped_existing": len(done), "dry_run": True}
+        return {"week": week, "players": len(todo), "written": 0, "skipped_existing": len(done), "teams_loaded": len(teams), "dry_run": True}
 
     def one(item: tuple[str, str, dict[str, Any]]) -> tuple[dict[str, Any] | None, int, int]:
         gsis, sleeper, f = item
@@ -263,7 +279,7 @@ def run(client: Any, ai: Any, season: int, week: int | None, dry_run: bool = Fal
     for start in range(0, len(saved), 200):
         client.table("player_writeups").upsert(saved[start:start + 200], on_conflict="season,week,gsis_id").execute()
     cost = round(tin / 1e6 * PRICE_IN + tout / 1e6 * PRICE_OUT, 3)
-    return {"week": week, "players": len(todo), "written": len(saved), "skipped_existing": len(done),
+    return {"week": week, "players": len(todo), "written": len(saved), "skipped_existing": len(done), "teams_loaded": len(teams),
             "input_tokens": tin, "output_tokens": tout, "cost_usd": cost}
 
 
@@ -272,6 +288,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--season", type=int, default=None)
     ap.add_argument("--week", type=int, default=None)
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--redo", action="store_true", help="delete the week's saved recaps and write them again")
     args = ap.parse_args(argv)
     from supabase import create_client
 
@@ -289,7 +306,7 @@ def main(argv: list[str] | None = None) -> int:
         from league_ai.config import api_key
 
         ai = anthropic.Anthropic(api_key=api_key() or None, max_retries=3)
-    summary = run(client, ai, season, args.week, dry_run=args.dry_run)
+    summary = run(client, ai, season, args.week, dry_run=args.dry_run, redo=args.redo)
     print({"season": season, **summary})
     return 0
 

@@ -23,6 +23,10 @@ class Query:
     def limit(self, *_a): return self
     def range(self, a, b): self._range = (a, b); return self
 
+    def delete(self):
+        self.db.deleted.append(self.table_name)
+        return self
+
     def upsert(self, rows, **_k):
         self.db.saved.extend(rows)
         return self
@@ -35,7 +39,7 @@ class Query:
 
 
 class FakeDB:
-    def __init__(self, tables): self.tables, self.saved = tables, []
+    def __init__(self, tables): self.tables, self.saved, self.deleted = tables, [], []
     def table(self, name): return Query(self, name)
 
 
@@ -80,6 +84,26 @@ class WriteupsTest(unittest.TestCase):
         db.tables["player_writeups"] = [{"gsis_id": "00-1"}]
         self.assertEqual(w.run(db, ai, 2026, 3)["written"], 0)
         self.assertEqual(ai.calls, 1)
+
+    def test_week_not_loaded_for_his_team_is_not_did_not_play(self):
+        kc = lambda wk: row(wk, gsis_id="00-2", sleeper_id="222", team="KC")
+        stats = [row(1), row(2), row(3), kc(1), kc(2), kc(3), kc(4)]  # DEN week 4 not loaded yet
+        db = FakeDB({"nfl_player_stats": stats, "nfl_games": [], "nfl_injuries": [], "player_writeups": []})
+        self.assertEqual(w.run(db, None, 2026, 4, dry_run=True)["players"], 1)  # only the KC player
+        # once a DEN teammate's week-4 row is in, the missing DEN regular really didn't play
+        stats.append(row(4, gsis_id="00-3", team="DEN", offense_pct=0.1))
+        self.assertEqual(w.run(db, None, 2026, 4, dry_run=True)["players"], 2)
+
+    def test_nothing_loaded_writes_nothing(self):
+        db = FakeDB({"nfl_player_stats": [row(1), row(2), row(3)], "nfl_games": [], "nfl_injuries": [], "player_writeups": []})
+        ai = FakeAI()
+        out = w.run(db, ai, 2026, 4)
+        self.assertEqual((out["written"], out["note"], ai.calls), (0, "week not loaded yet", 0))
+
+    def test_redo_clears_the_week_first(self):
+        db = FakeDB({"nfl_player_stats": [row(1), row(2), row(3)], "nfl_games": [], "nfl_injuries": [], "player_writeups": []})
+        w.run(db, FakeAI(), 2026, 3, redo=True)
+        self.assertEqual(db.deleted, ["player_writeups"])
 
     def test_dry_run_calls_nothing(self):
         db = FakeDB({"nfl_player_stats": [row(1), row(2), row(3)], "nfl_games": [], "nfl_injuries": []})
