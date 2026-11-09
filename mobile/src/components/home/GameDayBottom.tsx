@@ -125,12 +125,13 @@ function Shotgun({ data }: { data: Shot }) {
     return (
       <Card style={styles.shotCard}>
         <View style={styles.lock}>
-          <Avatar uri={last.avatar} name={last.name} size={64} me={last.is_me} />
+          <Avatar uri={last.avatar} name={last.name} size={72} me={last.is_me} />
           <Text style={styles.lockName}>{last.is_me ? "You're shotgunning" : `${firstName(last.name)} is shotgunning`}</Text>
-          <Text style={styles.sub}>{pts(last.score)} pts{data.danger[0] ? ` · ${pts(data.danger[0].score - last.score)} behind ${who(data.danger[0])}` : ''}</Text>
-          <Text style={styles.stamp}>LOCKED IN</Text>
+          <View style={styles.lockStampRow}>
+            <Text style={styles.stamp}>LOCKED IN</Text>
+            <Image source={BEER_MUG} style={styles.lockMug} />
+          </View>
         </View>
-        {data.danger.length ? <Zone title="CLOSEST ESCAPES" rows={data.danger} muted /> : null}
       </Card>
     );
   }
@@ -256,10 +257,12 @@ const styles = StyleSheet.create({
   leftText: { color: colors.live, fontSize: 11, fontWeight: '700', textAlign: 'right' },
   frozen: { color: '#7FB2E0', backgroundColor: 'rgba(127,178,224,0.15)', fontSize: 9, fontWeight: '800', borderRadius: 6, overflow: 'hidden', paddingHorizontal: 5, paddingVertical: 2 },
   cut: { borderTopWidth: 1, borderTopColor: RED, borderStyle: 'dashed', marginVertical: 4 },
-  lock: { alignItems: 'center', paddingTop: 14, paddingBottom: 4, gap: 6 },
+  lock: { alignItems: 'center', paddingTop: 10, paddingBottom: 8, gap: 6 },
   lockName: { color: colors.text, fontSize: 24, fontWeight: '900', marginTop: 4 },
+  lockStampRow: { flexDirection: 'row', alignItems: 'center', gap: 14, marginTop: 10 },
+  lockMug: { width: 46, height: 51, transform: [{ rotate: '10deg' }] },
   stamp: {
-    color: RED, borderWidth: 2, borderColor: RED, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4, fontWeight: '900',
-    letterSpacing: 2, fontSize: 13, marginTop: 6, transform: [{ rotate: '-4deg' }],
+    color: RED, borderWidth: 3, borderColor: RED, borderRadius: 10, paddingHorizontal: 18, paddingVertical: 7, fontWeight: '900',
+    letterSpacing: 3, fontSize: 24, transform: [{ rotate: '-5deg' }],
   },
 });
