@@ -73,7 +73,7 @@ export async function apiStream<E>(path: string, body: unknown, onEvent: (event:
 // phone), then refresh quietly in the background. Cleared on sign out.
 // Bump CACHE_VERSION when a response changes shape, so an app update never
 // draws an old saved copy with the new screen.
-const CACHE_VERSION = 'v7';
+const CACHE_VERSION = 'v8';
 const CACHE_PREFIX = 'api:';
 const memory = new Map<string, unknown>();
 
