@@ -67,7 +67,7 @@ def nfl_line(row: dict[str, Any] | None, pos: str) -> dict[str, Any] | None:
     line = {
         "carries": _int(row.get("carries")), "rush_yds": _int(row.get("rushing_yards")), "rush_td": _int(row.get("rushing_tds")),
         "targets": _int(row.get("targets")), "rec": _int(row.get("receptions")), "rec_yds": _int(row.get("receiving_yards")),
-        "rec_td": _int(row.get("receiving_tds")), "snap_pct": snap_pct(row),
+        "rec_td": _int(row.get("receiving_tds")), "fum": _int(row.get("fumbles_lost")), "snap_pct": snap_pct(row),
     }
     if pos == "QB":
         line.update({
@@ -82,6 +82,7 @@ SLEEPER_TO_NFL = {
     "pass_cmp": "completions", "pass_att": "attempts", "pass_yd": "passing_yards", "pass_td": "passing_tds", "pass_int": "interceptions",
     "rush_att": "carries", "rush_yd": "rushing_yards", "rush_td": "rushing_tds",
     "rec_tgt": "targets", "rec": "receptions", "rec_yd": "receiving_yards", "rec_td": "receiving_tds",
+    "fum_lost": "fumbles_lost",
 }
 
 
