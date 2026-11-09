@@ -736,6 +736,7 @@ def remove_from_ir(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[st
 def box_score(
     week: int,
     matchup_id: int,
+    carry: str | None = Query(default=None, max_length=64),
     owner: tuple[Client, Any] = Depends(owner_client),
 ) -> dict[str, Any]:
     client, user = owner
@@ -745,7 +746,21 @@ def box_score(
     result = box_score_mod.game(client, ctx, week, matchup_id, _league_team_rows(client, ctx["league_id"]))
     if result is None:
         raise HTTPException(status_code=404, detail="Game not found.")
+    if carry:
+        box_score_mod.add_round(result, _parse_carry(carry))
     return result
+
+
+def _parse_carry(raw: str) -> dict[int, float]:
+    """'roster:points,roster:points' -> {roster: points} (points banked in earlier weeks of a playoff round)."""
+    out: dict[int, float] = {}
+    for part in raw.split(","):
+        rid, _, pts = part.partition(":")
+        try:
+            out[int(rid)] = float(pts)
+        except ValueError:
+            continue
+    return out
 
 
 def _season_state(client: Client, ctx: dict[str, Any]) -> dict[str, Any]:
@@ -1372,7 +1387,12 @@ def home_page(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, An
         raise HTTPException(status_code=404, detail="This account isn't linked to a team yet.")
     sid, names, my_roster = ctx["sleeper_id"], ctx["names"], ctx["sleeper_roster_id"]
     sleeper_league = league.sleeper.get(f"league/{sid}") or {}
-    playoff_start = int((sleeper_league.get("settings") or {}).get("playoff_week_start") or 15)
+    try:  # our playoff format from Settings, not Sleeper's
+        rules = cache.cached(("playoff_rules", ctx["league_id"]), 300, lambda: league.playoff_rules(client, ctx["league_id"]))
+        playoff_start = int(rules["playoff_week_start"])
+    except Exception:
+        rules = None
+        playoff_start = int((sleeper_league.get("settings") or {}).get("playoff_week_start") or 15)
     today = datetime.now(home.HOME_TZ).date()
     week = _home_week(client, ctx["season"], today)
     phase = home.phase(today, sleeper_league.get("status"), week, playoff_start)
@@ -1463,22 +1483,14 @@ def home_page(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, An
             out["series"] = teams.head_to_head(sid, weeks, my_roster, them["roster_id"])
         out["weeks_left"] = max(0, playoff_start - week)
     if phase == "playoffs":
+        # Our own bracket (seeds from our standings, format from Settings); Sleeper is only the score feed.
         try:
-            matches = league.sleeper.get(f"league/{sid}/winners_bracket", ttl=300) or []
-        except Exception:
-            matches = []
-        points: dict[tuple[int, int], float] = {}
-        for rnd in {int(m.get("r") or 0) for m in matches if m.get("r")}:
-            for game in league.matchups(sid, names, playoff_start + rnd - 1, my_roster)["games"]:
-                for side in game["teams"]:
-                    points[(rnd, side["roster_id"])] = side["score"]
-        out["bracket"] = home.bracket(matches, names, points, playoff_start)
-        for rnd in out["bracket"]:
-            for g in rnd["games"]:
-                for key in ("a", "b"):
-                    if g[key]:
-                        g[key]["avatar"] = pics.get(g[key]["roster_id"])
-                        g[key]["seed"] = by_roster.get(g[key]["roster_id"], {}).get("rank")
+            view = league.playoff_view(sid, names, week, my_roster, rules, pics) if rules else None
+        except Exception as exc:
+            print(f"APP_HOME_PLAYOFFS_ERROR {type(exc).__name__}", flush=True)
+            view = None
+        out["bracket"] = home.bracket_from_view(view)
+        out["playoff_game"] = home.playoff_game(view)
     if phase == "decisions":
         ppg = teams.player_ppg(sid, weeks)
         try:

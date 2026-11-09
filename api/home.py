@@ -108,6 +108,57 @@ def bracket(matches: list[dict[str, Any]], names: dict[int, str], points: dict[t
             for r, games in sorted(rounds.items())]
 
 
+def bracket_from_view(view: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """The title path of our own playoff bracket (api/playoffs.build) as rounds of games for the Home card.
+
+    Same shape as the old Sleeper bracket (round, week, label, games of a/b/winner) plus each empty side's
+    placeholder ("Winner of 1 v 4"). Scores are round totals (both weeks of a two-week round).
+    """
+    rounds: dict[int, dict[str, Any]] = {}
+    for g in (view or {}).get("tree") or []:
+        if g.get("bracket") != "winners" or g.get("place") not in (None, 1):
+            continue
+        sides = [t if t.get("roster_id") else None for t in g["teams"]]
+        rnd = rounds.setdefault(g["round"], {"round": g["round"], "week": g["weeks"][0], "weeks": g["weeks"], "label": g["label"], "games": []})
+        rnd["games"].append({
+            "a": _bracket_side(sides[0]), "b": _bracket_side(sides[1]), "winner": g.get("winner"), "state": g.get("state"),
+            "placeholders": [None if s else (t.get("placeholder") or "TBD") for s, t in zip(sides, g["teams"])],
+        })
+    return [rounds[r] for r in sorted(rounds)]
+
+
+def _bracket_side(t: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not t:
+        return None
+    started = any(leg is not None for leg in t.get("legs") or [])
+    return {"roster_id": t["roster_id"], "name": t["name"], "score": t["score"] if started else None, "avatar": t.get("avatar"), "seed": t.get("seed")}
+
+
+def playoff_game(view: dict[str, Any] | None) -> dict[str, Any] | None:
+    """My game this playoff round from our bracket: round totals, seeds, and what each side banked in earlier
+    weeks of the round (carry), so this week's projection + carry = the projected round total."""
+    if not view:
+        return None
+    game = next((g for g in [*view.get("games", []), *view.get("losers", [])] if g.get("mine")), None)
+    if not game:
+        return None
+    leg = int(view.get("leg") or 1)
+    sides = [t for t in game["teams"] if t.get("roster_id")]
+    me = next((t for t in sides if t.get("is_me")), None)
+    if not me:
+        return None
+    them = next((t for t in sides if t is not me), None)
+
+    def side(t: dict[str, Any] | None) -> dict[str, Any] | None:
+        if not t:
+            return None
+        carry = round(sum(p for p in (t.get("legs") or [])[:leg - 1] if p is not None), 2)
+        return {"roster_id": t["roster_id"], "name": t["name"], "score": t["score"], "avatar": t.get("avatar"), "seed": t.get("seed"), "carry": carry}
+
+    return {"label": game["label"], "bracket": game["bracket"], "leg": leg, "legs": int(view.get("legs") or 1),
+            "matchup_id": game.get("matchup_id"), "state": game.get("state"), "me": side(me), "them": side(them)}
+
+
 def rookie_decisions(decisions: list[dict[str, Any]], roster: Iterable[dict[str, Any]], ppg: dict[str, float]) -> list[dict[str, Any]]:
     """My rollover decisions with the player's name, position, salary and PPG."""
     by_id = {_text(r.get("sleeper_player_id")): r for r in roster}

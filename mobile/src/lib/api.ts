@@ -376,6 +376,8 @@ export type BoxScore = {
   my_roster_id: number | null;
   teams: { roster_id: number; team_id: string | null; name: string; score: number; projected?: number; players: BoxPlayer[]; bench?: BoxPlayer[] }[];
   win_chance?: [number, number] | null;
+  // Two-week playoff rounds (asked with ?carry=): round totals and round win odds, in teams order.
+  round?: { projected: [number, number]; score: [number, number]; win_chance: [number, number] | null } | null;
 };
 
 export type PlayerPage = {
@@ -656,6 +658,12 @@ export type TableRow = {
 export type RaceRow = { rank: number; roster_id: number; name: string; score: number; top5: boolean; is_me: boolean; avatar: string | null };
 export type HomeGame = { matchup_id?: number; me?: HomeSide; them?: HomeSide | null };
 export type BracketSide = { roster_id: number; name: string; score: number | null; avatar?: string | null; seed?: number | null } | null;
+export type PlayoffSide = { roster_id: number; name: string; score: number; avatar?: string | null; seed?: number | null; carry: number };
+// My game this playoff round from our own bracket: round totals, and points banked in earlier weeks of the round (carry).
+export type HomePlayoffGame = {
+  label: string; bracket: 'winners' | 'losers'; leg: number; legs: number; matchup_id: number | null;
+  state: 'pre' | 'live' | 'final'; me: PlayoffSide; them: PlayoffSide | null;
+};
 export type RookieDeal = {
   decision_id: string | null; player_id: string; name: string; pos: string; salary: number; ppg: number | null;
   choice: 'keep' | 'walk' | 'review' | null; open: boolean; status: string;
@@ -698,7 +706,11 @@ export type HomeData = {
   top5_line?: { line: number; final: boolean } | null;
   series?: { wins: number; losses: number; ties: number } | null;
   weeks_left?: number;
-  bracket?: { round: number; week: number; label: string; games: { a: BracketSide; b: BracketSide; winner: number | null }[] }[];
+  bracket?: {
+    round: number; week: number; weeks?: number[]; label: string;
+    games: { a: BracketSide; b: BracketSide; winner: number | null; state?: string; placeholders?: (string | null)[] }[];
+  }[];
+  playoff_game?: HomePlayoffGame | null;
   decisions?: { window_open: boolean; deadline: string; players: RookieDeal[] };
   picks?: { year: number | null; picks: Pick[] };
   who_has_money?: { name: string; space: number; is_me: boolean; team_id: string | null; open_spots: number | null }[];
