@@ -14,4 +14,4 @@ jobs:
       - uses: google-github-actions/setup-gcloud@v2
       - run: |
           gcloud compute ssh legacy-live-watcher --project legacy-dynasty-25024 --zone us-central1-a --quiet --strict-host-key-checking=no \
-            --command "sudo systemctl restart legacy-live-activity; sleep 25; sudo git -C /opt/legacy log --oneline -1 | cut -c1-7; sudo systemctl show legacy-live-activity -p ActiveState -p NRestarts; sudo journalctl -u legacy-live-activity --since '-1 min' --no-pager -o cat | grep -cE 'ERROR|Traceback'"
+            --command "sudo systemctl restart legacy-live-activity; sleep 25; sudo git -C /opt/legacy log --oneline -1 | cut -c1-7; sudo systemctl show legacy-live-activity -p ActiveState -p NRestarts; sudo journalctl -u legacy-live-activity --since '-1 min' --no-pager -o cat | grep -cE 'ERROR|Traceback' || true"
