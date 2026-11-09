@@ -143,9 +143,17 @@ function Shotgun({ data }: { data: Shot }) {
         <View style={ui.flex}>
           <Text style={styles.sirenKicker}>PROJECTED LAST</Text>
           <Text style={styles.sirenName} numberOfLines={1}>{who(last)}</Text>
-          <Text style={styles.sirenSub}>
-            {pts(last.projected)} proj · {pts(last.score)} now · {last.frozen ? 'frozen' : `${last.left} left`}
-          </Text>
+          <View style={styles.sirenStats}>
+            <Text style={styles.sirenScore}>{pts(last.score)}</Text>
+            {last.frozen ? (
+              <Text style={styles.sirenFinal}>FINAL</Text>
+            ) : (
+              <>
+                <Text style={styles.sirenSub}>proj {pts(last.projected)}</Text>
+                <Text style={styles.sirenLeft}>{last.left} left</Text>
+              </>
+            )}
+          </View>
         </View>
         <Image source={BEER_MUG} style={styles.sirenMug} />
       </View>
@@ -229,7 +237,14 @@ const styles = StyleSheet.create({
   sirenKicker: { color: '#FF8A80', fontSize: 10, fontWeight: '900', letterSpacing: 2.5 },
   sirenMug: { width: 52, height: 57, transform: [{ rotate: '-8deg' }] },
   sirenName: { color: colors.text, fontSize: 28, fontWeight: '900', marginTop: 2 },
-  sirenSub: { color: colors.muted, fontSize: 12, fontWeight: '600', marginTop: 3 },
+  sirenStats: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 4 },
+  sirenScore: { color: colors.text, fontSize: 15, fontWeight: '800' },
+  sirenSub: { color: colors.muted, fontSize: 12, fontWeight: '600' },
+  sirenLeft: { color: colors.live, fontSize: 12, fontWeight: '700' },
+  sirenFinal: {
+    color: colors.text, backgroundColor: 'rgba(245,235,215,0.12)', fontSize: 9, fontWeight: '900', letterSpacing: 1,
+    borderRadius: 7, overflow: 'hidden', paddingHorizontal: 7, paddingVertical: 3,
+  },
   zone: { color: '#E0A95A', fontSize: 11, fontWeight: '800', letterSpacing: 0.6, marginTop: 14, marginBottom: 2 },
   zHead: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 30, marginTop: 4 },
   zHeadTop: { marginTop: 14 },
