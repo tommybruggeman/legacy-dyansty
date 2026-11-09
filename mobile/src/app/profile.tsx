@@ -39,7 +39,7 @@ export default function Profile() {
       if (!base64) throw new Error('No picture data.');
       const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
       const path = `${data.team_id}/${Date.now()}.jpg`; // a new name each time, so phones don't show the old one
-      const { error: upErr } = await supabase.storage.from(BUCKET).upload(path, bytes, { contentType: 'image/jpeg', upsert: true });
+      const { error: upErr } = await supabase.storage.from(BUCKET).upload(path, bytes, { contentType: 'image/jpeg', upsert: false });
       if (upErr) throw upErr;
       setPicture(supabase.storage.from(BUCKET).getPublicUrl(path).data.publicUrl);
     } catch (e: any) {
