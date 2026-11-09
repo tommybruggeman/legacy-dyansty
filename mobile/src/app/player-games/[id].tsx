@@ -32,6 +32,7 @@ export default function PlayerGames() {
   const tabs = TABS.filter((t) => (data.pos === 'QB' ? t.key !== 'rec' : t.key !== 'pass'))
     .sort((x, y) => Number(y.key === first) - Number(x.key === first));
   const active = tabs.find((t) => t.key === tab) ?? tabs.find((t) => t.key === DEFAULT_TAB[data.pos]) ?? tabs[0];
+  const snaps = data.pos !== 'QB';
   const games = log.filter((g) => g.line && g.status !== 'bye' && g.status !== 'out');
   const scored = log.filter((g) => g.points != null);
   const avgPts = scored.length ? scored.reduce((s, g) => s + (g.points ?? 0), 0) / scored.length : null;
@@ -62,7 +63,7 @@ export default function PlayerGames() {
             <Text style={[styles.th, styles.cOpp]}>OPP</Text>
             <Text style={[styles.th, styles.cNum, styles.cPts, { color: colors.gold }]}>PTS</Text>
             {active.cols.map((c) => <Text key={c.label} style={[styles.th, styles.cNum]}>{c.label}</Text>)}
-            <Text style={[styles.th, styles.cNum]}>SNP</Text>
+            {snaps ? <Text style={[styles.th, styles.cNum]}>SNP</Text> : null}
           </View>
           {log.map((g) => {
             const off = g.status === 'bye' || g.status === 'out' || !g.line;
@@ -74,11 +75,11 @@ export default function PlayerGames() {
                   {g.status === 'out' ? 'OUT' : g.points != null ? g.points.toFixed(1) : '–'}
                 </Text>
                 {active.cols.map((c) => (
-                  <Text key={c.label} style={[styles.cell, styles.cNum, c.td && !off && (c.get(g.line!) ?? 0) > 0 && styles.td]}>
+                  <Text key={c.label} style={[styles.cell, styles.cNum, !off && (c.get(g.line!) ?? 0) > 0 && (c.td ? styles.td : c.bad ? styles.bad : null)]}>
                     {off ? '–' : String(c.get(g.line!) ?? 0)}
                   </Text>
                 ))}
-                <Text style={[styles.cell, styles.cNum, styles.dim]}>{!off && g.line?.snap_pct != null ? `${g.line.snap_pct}%` : '–'}</Text>
+                {snaps ? <Text style={[styles.cell, styles.cNum, styles.dim]}>{!off && g.line?.snap_pct != null ? `${g.line.snap_pct}%` : '–'}</Text> : null}
               </View>
             );
           })}
@@ -91,7 +92,7 @@ export default function PlayerGames() {
                 const v = games.reduce((s, g) => s + (c.get(g.line!) ?? 0), 0) / games.length;
                 return <Text key={c.label} style={[styles.cell, styles.cNum, styles.bold]}>{v >= 100 ? v.toFixed(0) : v.toFixed(1)}</Text>;
               })}
-              <Text style={[styles.cell, styles.cNum, styles.bold]}>{snapAvg(games)}</Text>
+              {snaps ? <Text style={[styles.cell, styles.cNum, styles.bold]}>{snapAvg(games)}</Text> : null}
             </View>
           ) : null}
         </View>
@@ -102,7 +103,7 @@ export default function PlayerGames() {
 }
 
 type Line = NonNullable<GameLogRow['line']>;
-type Col = { label: string; get: (l: Line) => number | undefined; td?: boolean };
+type Col = { label: string; get: (l: Line) => number | undefined; td?: boolean; bad?: boolean };
 type TabKey = 'rec' | 'rush' | 'pass';
 const TABS: { key: TabKey; label: string; cols: Col[] }[] = [
   { key: 'rec', label: 'Receiving', cols: [
@@ -115,7 +116,7 @@ const TABS: { key: TabKey; label: string; cols: Col[] }[] = [
   ] },
   { key: 'pass', label: 'Passing', cols: [
     { label: 'CMP', get: (l) => l.comp }, { label: 'ATT', get: (l) => l.att },
-    { label: 'YDS', get: (l) => l.pass_yds }, { label: 'TD', get: (l) => l.pass_td, td: true }, { label: 'INT', get: (l) => l.ints },
+    { label: 'YDS', get: (l) => l.pass_yds }, { label: 'TD', get: (l) => l.pass_td, td: true }, { label: 'INT', get: (l) => l.ints, bad: true },
   ] },
 ];
 const DEFAULT_TAB: Record<string, TabKey> = { QB: 'pass', RB: 'rush', WR: 'rec', TE: 'rec' };
@@ -148,6 +149,7 @@ const styles = StyleSheet.create({
   started: { color: colors.gold },
   live: { color: colors.live },
   td: { color: colors.live, fontWeight: '800' },
+  bad: { color: '#E8826F', fontWeight: '800' },
   dim: { color: colors.muted },
   bold: { fontWeight: '800' },
   note: { color: colors.muted, fontSize: 12, lineHeight: 18 },
