@@ -42,6 +42,11 @@ jobs:
           for s in $(gcloud secrets list --project "$PROJECT" --format 'value(name.basename())'); do
             n=$(gcloud secrets versions list "$s" --project "$PROJECT" --filter 'state=ENABLED' --format 'value(name)' | wc -l); echo "  $n"
           done | awk '{t+=$1; c++} END {print "  " c " secrets, " t " enabled versions"}' || true
+          for s in $(gcloud secrets list --project "$PROJECT" --format 'value(name.basename())'); do
+            echo "  $s: $(gcloud secrets versions list "$s" --project "$PROJECT" --filter 'state=ENABLED' --format 'value(name)' | wc -l) enabled"
+          done || true
+          echo "image cleanup policy:"; gcloud artifacts repositories describe legacy --project "$PROJECT" --location "$REGION" --format 'yaml(cleanupPolicies,cleanupPolicyDryRun)' || true
+          echo "images:"; gcloud artifacts docker images list "$REGION-docker.pkg.dev/$PROJECT/legacy" --include-tags --format 'value(package.basename(),createTime.date("%Y-%m-%d"))' 2>/dev/null | awk '{print $1}' | sort | uniq -c || true
       - name: Last 30 days of usage (Cloud Monitoring)
         run: |
           TOKEN=$(gcloud auth print-access-token)
@@ -62,7 +67,7 @@ jobs:
           q 'metric.type="compute.googleapis.com/instance/cpu/utilization"' ALIGN_MEAN "VM CPU utilization mean (30d, of the e2-micro share)"
           # the same, last 7 days split by day for a feel of game days vs quiet days
           START=$(date -u -d '7 days ago' +%Y-%m-%dT00:00:00Z)
-          for m in run.googleapis.com/container/billable_instance_time compute.googleapis.com/instance/network/sent_bytes_count; do
+          for m in run.googleapis.com/container/billable_instance_time run.googleapis.com/request_count compute.googleapis.com/instance/network/sent_bytes_count compute.googleapis.com/instance/network/received_bytes_count; do
             echo "$m per day (last 7 days):"
             curl -sS -G -H "Authorization: Bearer $TOKEN" "https://monitoring.googleapis.com/v3/projects/$PROJECT/timeSeries" \
               --data-urlencode "filter=metric.type=\"$m\"" --data-urlencode "interval.startTime=$START" --data-urlencode "interval.endTime=$END" \
