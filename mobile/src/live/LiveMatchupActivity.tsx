@@ -34,6 +34,7 @@ const LiveMatchup = (props: LiveMatchupProps, environment: LiveActivityEnvironme
   const DIM = '#8F9A8F';
   const LIVE = '#4CC38A';
   const RED = '#E05555';
+  const TRACK = '#3A5446';
   const DARK = '#071A12';
 
   const pts = (n: number) => (Math.round((n || 0) * 10) / 10).toFixed(1);
@@ -41,6 +42,24 @@ const LiveMatchup = (props: LiveMatchupProps, environment: LiveActivityEnvironme
   // Only a finished game gets a label (Tommy: no "LIVE" tag; the moving scores say it's live).
   const status = props.final ? 'FINAL' : '';
   const statusColor = GOLD;
+
+  // Top-left while games are on: my starters as dots (green = on the field, dim = still to play) and the counts.
+  const playing = Math.max(0, props.me.playing || 0);
+  const left = Math.max(0, props.me.left || 0);
+  const dots = (n: number) => '●'.repeat(Math.min(n, 9));
+  const inPlay = props.final ? null : playing + left === 0 ? (
+    <Text modifiers={[font({ size: 11, weight: 'bold' }), foregroundStyle(MUTED)]}>ALL DONE</Text>
+  ) : (
+    <HStack spacing={5}>
+      <HStack spacing={0}>
+        <Text modifiers={[font({ size: 9 }), foregroundStyle(LIVE)]}>{dots(playing)}</Text>
+        <Text modifiers={[font({ size: 9 }), foregroundStyle(TRACK)]}>{dots(left)}</Text>
+      </HStack>
+      <Text modifiers={[font({ size: 11, weight: 'bold' }), foregroundStyle(LIVE), lineLimit(1)]}>
+        {[playing ? `${playing} PLAYING` : '', left ? `${left} LEFT` : ''].filter(Boolean).join(' · ')}
+      </Text>
+    </HStack>
+  );
 
   // Win odds as a ring: gold fill on a muted green track, the percent drawn on top in the middle (the gauge's
   // own value label doesn't show on the lock screen). Fixed frame so the scaled ring never overlaps the scores.
@@ -94,7 +113,7 @@ const LiveMatchup = (props: LiveMatchupProps, environment: LiveActivityEnvironme
       ]}
     >
       <HStack>
-        <Text modifiers={[font({ size: 11, weight: 'bold' }), foregroundStyle(statusColor)]}>{status}</Text>
+        {inPlay ?? <Text modifiers={[font({ size: 11, weight: 'bold' }), foregroundStyle(statusColor)]}>{status}</Text>}
         <Spacer />
         <Text modifiers={[font({ size: 11, weight: 'semibold' }), foregroundStyle(MUTED)]}>{`LEGACY · WEEK ${props.week}`}</Text>
       </HStack>
