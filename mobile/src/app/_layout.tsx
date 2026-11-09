@@ -4,6 +4,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 
 import { LaunchIntro } from '../components/LaunchIntro';
+import { AppLockProvider } from '../lib/appLock';
 import { listenForTaps, registerForPush } from '../lib/push';
 import { SessionProvider, useSession } from '../lib/session';
 import { colors } from '../lib/theme';
@@ -24,6 +25,7 @@ function RootStack() {
   if (loading) return null;
 
   return (
+    <AppLockProvider active={signedIn}>
     <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.bg } }}>
       <Stack.Protected guard={!!session}>
         <Stack.Screen name="(tabs)" />
@@ -36,13 +38,15 @@ function RootStack() {
         <Stack.Screen name="chats" />
         <Stack.Screen name="report-card" />
         <Stack.Screen name="settings" />
-        <Stack.Screen name="alerts" />
+        <Stack.Screen name="profile" />
+        <Stack.Screen name="league-rules" />
         <Stack.Screen name="search" options={{ animation: 'fade_from_bottom' }} />
       </Stack.Protected>
       <Stack.Protected guard={!session}>
         <Stack.Screen name="sign-in" />
       </Stack.Protected>
     </Stack>
+    </AppLockProvider>
   );
 }
 

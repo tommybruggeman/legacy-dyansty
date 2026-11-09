@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from supabase import Client, create_client
 
 from api import box_score as box_score_mod
-from api import activity, alerts, cache, front_office, home, league, lineups, live_activity, market, market_week, nfl_live, own_league, player, playoffs, projections, teams, trade_feed, trade_offers, waivers
+from api import activity, alerts, cache, owner_settings, profiles, front_office, home, league, lineups, live_activity, market, market_week, nfl_live, own_league, player, playoffs, projections, teams, trade_feed, trade_offers, waivers
 from season_engine import SeasonResolver
 from services.season_rollover_owner_ui import OwnerRolloverDecisionError, OwnerRolloverDecisionService
 
@@ -179,6 +179,109 @@ def _alert_pref(client: Client, user: Any) -> tuple[str, dict[str, Any] | None]:
     return league_id, (rows[0] if rows else None)
 
 
+class ProfileBody(BaseModel):
+    display_name: str | None = None
+    team_name: str | None = None
+    team_abbr: str | None = None
+    picture_url: str | None = None
+    keep_picture: bool = True
+
+
+class GmPrefsBody(BaseModel):
+    answer_length: str | None = None
+    team_plan: str | None = None
+
+
+class InviteBody(BaseModel):
+    email: str
+
+
+def _settings_team(client: Client, user: Any) -> dict[str, Any]:
+    team = resolve_team(client, user)
+    if not team.get("team_id"):
+        raise HTTPException(status_code=404, detail="This account isn't linked to a team yet.")
+    return team
+
+
+@app.get("/me/settings")
+def my_settings(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """Everything on the Settings page: my profile, Front Office preferences, co-owner and who I am."""
+    client, user = owner
+    team = _settings_team(client, user)
+    jobs = {
+        "profile": cache.pool.submit(owner_settings.profile_view, client, team),
+        "gm": cache.pool.submit(owner_settings.gm_prefs, client, user.id),
+        "people": cache.pool.submit(owner_settings.people, client, team),
+    }
+    role = str(team.get("role") or "owner").lower()
+    return {
+        "email": getattr(user, "email", None), "role": role, "is_commissioner": role == "commissioner", "team_id": team["team_id"],
+        "is_co_owner": role in ("co_owner", "co-owner"),
+        "profile": jobs["profile"].result(), "gm": jobs["gm"].result(), "people": jobs["people"].result(),
+    }
+
+
+@app.post("/me/profile")
+def save_my_profile(body: ProfileBody, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    team = _settings_team(client, user)
+    data = body.model_dump()
+    if data.pop("keep_picture"):
+        data.pop("picture_url", None)
+    try:
+        return owner_settings.save_profile(client, team, data)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/me/gm-prefs")
+def save_my_gm_prefs(body: GmPrefsBody, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    try:
+        return owner_settings.save_gm_prefs(client, user.id, body.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/me/co-owner")
+def invite_my_co_owner(body: InviteBody, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    try:
+        return owner_settings.invite_co_owner(client, user.id, _settings_team(client, user), body.email)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.delete("/me/co-owner/invite/{invite_id}")
+def cancel_my_co_owner_invite(invite_id: str, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    try:
+        owner_settings.cancel_invite(client, _settings_team(client, user), invite_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"ok": True}
+
+
+@app.delete("/me/co-owner/{member_user_id}")
+def remove_my_co_owner(member_user_id: str, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, _ = owner
+    try:
+        owner_settings.remove_co_owner(client, member_user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"ok": True}
+
+
+@app.get("/league/rules")
+def league_rules(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    try:
+        return owner_settings.rules_view(client, resolve_team(client, user)["league_id"])
+    except Exception as exc:
+        print(f"APP_RULES_ERROR {type(exc).__name__}", flush=True)
+        raise HTTPException(status_code=502, detail="Couldn't load the league rules. Try again.")
+
+
 @app.get("/me/alerts")
 def my_alerts(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
     """Which alerts I get (each kind on or off), quiet hours and the weekly limit. Same switches as the website."""
@@ -317,7 +420,7 @@ def matchups(
     result["current_week"] = min(league.current_week(), last_week)
     result["last_week"] = last_week
     try:  # playoff weeks: our bracket, never Sleeper's made-up regular-season pairings
-        pics = home.avatars(league.sleeper.get(f"league/{sleeper_id}/users") or [], league.sleeper.get(f"league/{sleeper_id}/rosters") or [])
+        pics = _pictures(owner[0], league_id, sleeper_id)
         view = league.playoff_view(sleeper_id, names, shown, my_roster_id, rules, pics)
     except Exception as exc:
         print(f"APP_PLAYOFFS_ERROR {type(exc).__name__}", flush=True)
@@ -328,7 +431,7 @@ def matchups(
         result["summary"] = None
         return result
     try:
-        _add_card_owners(sleeper_id, names, my_roster_id, result)
+        _add_card_owners(owner[0], league_id, sleeper_id, names, my_roster_id, result)
     except Exception as exc:
         print(f"APP_MATCHUP_OWNERS_ERROR {type(exc).__name__}", flush=True)
     if not result["is_final"]:
@@ -339,9 +442,16 @@ def matchups(
     return result
 
 
-def _add_card_owners(sleeper_id: str, names: dict[int, str], my_roster_id: int | None, result: dict[str, Any]) -> None:
+def _pictures(client: Client, league_id: str, sleeper_id: str) -> dict[int, str | None]:
+    """roster id -> owner picture: the owner's own from Settings, else their Sleeper one."""
+    sleeper_pics = home.avatars(league.sleeper.get(f"league/{sleeper_id}/users") or [], league.sleeper.get(f"league/{sleeper_id}/rosters") or [])
+    return profiles.pictures(profiles.by_roster(client, league_id), sleeper_pics)
+
+
+def _add_card_owners(client: Client, league_id: str, sleeper_id: str, names: dict[int, str], my_roster_id: int | None,
+                     result: dict[str, Any]) -> None:
     """Each card row's owner picture and season record."""
-    pics = home.avatars(league.sleeper.get(f"league/{sleeper_id}/users") or [], league.sleeper.get(f"league/{sleeper_id}/rosters") or [])
+    pics = _pictures(client, league_id, sleeper_id)
     rows = cache.cached(("standings", sleeper_id), 300, lambda: league.standings(sleeper_id, names, my_roster_id))["rows"]
     records = {r["roster_id"]: r for r in rows}
     for game in result["games"]:
@@ -445,6 +555,8 @@ def team_list(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, An
     client, user = owner
     ctx = _season_context(client, user)
     rows, _, _, cap = _league_teams(client, ctx)
+    mine = profiles.by_team(client, ctx["league_id"])
+    rows = [profiles.overlay_team(dict(r), mine.get(r["team_id"])) for r in rows]
     return {"season": ctx["season"], "salary_cap": cap, "my_team_id": ctx["team_id"], "teams": rows}
 
 
@@ -474,6 +586,7 @@ def _team_page(client: Client, ctx: dict[str, Any], team_id: str) -> dict[str, A
     summary = next((t for t in rows if t["team_id"] == team_id), None)
     if summary is None:
         raise HTTPException(status_code=404, detail="Team not found in your league.")
+    summary = profiles.overlay_team(dict(summary), profiles.by_team(client, ctx["league_id"]).get(team_id))
 
     state = states[0]
     weeks = league.last_scored_week(ctx["sleeper_id"])
@@ -1417,7 +1530,7 @@ def home_page(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, An
     pics: dict[int, str | None] = {}
     if phase in ("game_day", "recap", "playoffs"):
         try:
-            pics = home.avatars(league.sleeper.get(f"league/{sid}/users") or [], league.sleeper.get(f"league/{sid}/rosters") or [])
+            pics = _pictures(client, ctx["league_id"], sid)
         except Exception:
             pics = {}
         by_roster = {r["roster_id"]: r for r in standings_rows}

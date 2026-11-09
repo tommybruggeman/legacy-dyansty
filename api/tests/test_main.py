@@ -125,8 +125,17 @@ def test_matchup_cards_get_owner_pictures_and_records(monkeypatch):
     monkeypatch.setattr(main.cache, "cached", lambda key, seconds, load: load())
     monkeypatch.setattr(league.sleeper, "get", lambda path, ttl=60: [{"user_id": "u1", "avatar": "abc"}] if path.endswith("users") else [{"roster_id": 1, "owner_id": "u1"}])
     monkeypatch.setattr(league, "standings", lambda sid, names, me: {"rows": [{"roster_id": 1, "wins": 5, "losses": 2, "ties": 0}, {"roster_id": 2, "wins": 3, "losses": 3, "ties": 1}]})
+    monkeypatch.setattr(main.profiles, "by_roster", lambda client, league_id: {})
     result = {"games": [{"teams": [{"roster_id": 1}, {"roster_id": 2}]}]}
-    main._add_card_owners("S", {}, 1, result)
+    main._add_card_owners(None, "L", "S", {}, 1, result)
     a, b = result["games"][0]["teams"]
     assert a["avatar"].endswith("/abc") and a["record"] == "5-2"
     assert b["avatar"] is None and b["record"] == "3-3-1"
+
+
+def test_owner_pictures_from_settings_win_over_sleeper(monkeypatch):
+    from api import league
+    monkeypatch.setattr(league.sleeper, "get", lambda path, ttl=60: [{"user_id": "u1", "avatar": "abc"}] if path.endswith("users") else [{"roster_id": 1, "owner_id": "u1"}, {"roster_id": 2, "owner_id": "u2"}])
+    monkeypatch.setattr(main.profiles, "by_roster", lambda client, league_id: {1: {"picture_url": "https://x.supabase.co/mine.jpg"}})
+    pics = main._pictures(None, "L", "S")
+    assert pics == {1: "https://x.supabase.co/mine.jpg", 2: None}

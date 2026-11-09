@@ -465,7 +465,8 @@ def deliver(client: Any, push: Any, now: datetime | None = None) -> dict[str, in
         pref = prefs.get((uid, row["league_id"])) or {}
         phones = tokens.get(uid, [])
         tz = pref.get("tz") or next((t.get("tz") for t in phones if t.get("tz")), None)
-        verdict = gate(row, now=now, off=set(pref.get("off") or []), tz=tz, sent_this_week=sent_count.get(uid, 0))
+        # Everyone gets every alert (Tommy, 2026-11-09): saved per-owner switches no longer turn any off.
+        verdict = gate(row, now=now, off=set(), tz=tz, sent_this_week=sent_count.get(uid, 0))
         if not verdict.send:
             if verdict.status:
                 _mark(client, row, verdict.status, now)

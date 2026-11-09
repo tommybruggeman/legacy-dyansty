@@ -218,7 +218,7 @@ class _Client:
 
 
 class DeliveryTests(unittest.TestCase):
-    def test_queue_once_then_deliver_with_switches_and_quiet_hours(self):
+    def test_queue_once_then_deliver_to_everyone_with_quiet_hours(self):
         db = {"push_tokens": [{"token": "aa", "user_id": "u1", "kind": "apns", "tz": "America/New_York"},
                               {"token": "bb", "user_id": "u2", "kind": "apns", "tz": "America/New_York"},
                               {"token": "ExponentPushToken[x]", "user_id": "u3", "kind": "expo"}],
@@ -233,13 +233,14 @@ class DeliveryTests(unittest.TestCase):
 
         night = at(2026, 11, 15, 3, 5)  # 3 AM Eastern: held for morning
         counts = alerts.deliver(client, push, night)
-        self.assertEqual((counts["held"], counts["off"], counts["sent"]), (2, 1, 0))
+        # everyone gets every alert: u2's old "waivers off" switch no longer stops it
+        self.assertEqual((counts["held"], counts["off"], counts["sent"]), (3, 0, 0))
 
         morning = at(2026, 11, 15, 10, 5)  # 8 AM in Denver too (u3 has no time zone: the league's)
         counts = alerts.deliver(client, push, morning)
-        self.assertEqual((counts["sent"], counts["no_phone"]), (1, 1))
+        self.assertEqual((counts["sent"], counts["no_phone"]), (2, 1))
+        self.assertEqual(sorted(c[0][0] for c in push.send_alert.call_args_list), ["aa", "bb"])
         token, body = push.send_alert.call_args[0]
-        self.assertEqual(token, "aa")
         self.assertEqual(body, {"aps": {"alert": {"title": "Waivers processed", "body": "4 moves went through in Legacy Dynasty."},
                                         "sound": "default"}, "url": "/activity", "body": {"url": "/activity"}})
         self.assertEqual(alerts.deliver(client, push, morning)["sent"], 0)  # nothing twice

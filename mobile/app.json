@@ -43,6 +43,20 @@
           "enablePushNotifications": true,
           "frequentUpdates": true
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Pick a picture for your team.",
+          "cameraPermission": false,
+          "microphonePermission": false
+        }
+      ],
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Use Face ID to open Legacy Dynasty."
+        }
       ]
     ],
     "scheme": "legacydynasty",

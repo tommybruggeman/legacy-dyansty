@@ -749,3 +749,17 @@ export type WaiverSheet = {
   players: (BidPlayer & { salary: number; dead_cap_text: string; designation: 'taxi' | 'ir' | null; locked: boolean;
     dead_cap: { this_season: number; total: number; through: number | null } })[];
 };
+
+// Settings (behind the initials circle on Home).
+export type OwnerProfile = { display_name: string; team_name: string; team_abbr: string; picture_url: string | null };
+export type GmPrefs = { answer_length: 'short' | 'detailed'; team_plan: 'auto' | 'contend' | 'rebuild' };
+export type TeamPeople = {
+  co_owners: { user_id: string; email: string | null; is_me: boolean }[];
+  invites: { id: string; email: string; expires_at: string | null }[];
+  can_invite: boolean;
+};
+export type MySettings = {
+  email: string | null; role: string; is_commissioner: boolean; is_co_owner: boolean; team_id: string;
+  profile: OwnerProfile; gm: GmPrefs; people: TeamPeople;
+};
+export type RulesView = { groups: { title: string; rows: [string, string][] }[]; house_rules: string | null };

@@ -51,11 +51,13 @@ def roster_names(client: Any, league_id: str, sleeper_id: str) -> dict[int, str]
     display = {
         u.get("user_id"): (u.get("display_name") or u.get("username") or "").strip() for u in users
     }
-    return {
+    current = {
         r.get("roster_id"): app_names.get(r.get("roster_id"), display.get(r.get("owner_id")) or f"Roster {r.get('roster_id')}")
         for r in rosters
         if r.get("roster_id") is not None
     }
+    from api import profiles  # each owner's own name from Settings wins
+    return profiles.names(profiles.by_roster(client, league_id), current)
 
 
 def last_scored_week(sleeper_id: str) -> int:

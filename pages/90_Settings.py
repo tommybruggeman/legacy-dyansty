@@ -873,7 +873,6 @@ if is_commissioner:
     nav_options += ["League Tools", "Draft", "FA Auction"]
 else:
     nav_options += ["My Access"]
-nav_options.append("Alerts")
 
 if is_platform_admin:
     nav_options.append("Platform Admin")
