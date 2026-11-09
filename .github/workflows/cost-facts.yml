@@ -1,0 +1,75 @@
+name: Live scoring cost facts
+
+# Prints what the live scoring setup uses in Google Cloud over the last 30 days, next to the always-free limits:
+# Cloud Run requests and billable instance time, the e2-micro's network traffic, disk and IP, image storage and
+# secrets. Numbers and settings only (the repo and its logs are public): no keys, IPs or names.
+on:
+  workflow_dispatch:
+  push:
+    branches: [claude/speed-test]
+    paths: [.github/workflows/cost-facts.yml]
+
+jobs:
+  facts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PROJECT: legacy-dynasty-25024
+      ZONE: us-central1-a
+      VM: legacy-live-watcher
+      REGION: us-central1
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: VM settings
+        run: |
+          gcloud compute instances describe "$VM" --project "$PROJECT" --zone "$ZONE" \
+            --format 'table(status,machineType.basename(),scheduling.provisioningModel,networkInterfaces[0].accessConfigs[0].networkTier,networkInterfaces[0].accessConfigs[0].type,creationTimestamp)' || true
+          gcloud compute disks list --project "$PROJECT" --format 'table(name.basename():label=DISK,sizeGb,type.basename(),zone.basename())' | sed 's/legacy-live-watcher/VM disk/' || true
+          echo "static addresses reserved:"; gcloud compute addresses list --project "$PROJECT" --format 'value(addressType,status)' | sort | uniq -c || true
+          echo "other VMs:"; gcloud compute instances list --project "$PROJECT" --format 'value(machineType.basename(),zone.basename(),status)' | sort | uniq -c || true
+      - name: Cloud Run settings
+        run: |
+          gcloud run services list --project "$PROJECT" --format 'table(metadata.name,region)' || true
+          gcloud run services describe legacy-api --project "$PROJECT" --region "$REGION" --format 'yaml(spec.template.metadata.annotations,spec.template.spec.containers[0].resources,spec.template.spec.containerConcurrency)' || true
+          echo "Cloud Scheduler jobs:"; gcloud scheduler jobs list --project "$PROJECT" --location "$REGION" --format 'table(name.basename(),schedule,state)' 2>&1 | tail -n +1 | head -20 || true
+      - name: Image storage and secrets
+        run: |
+          gcloud artifacts repositories list --project "$PROJECT" --format 'table(name.basename(),format,location,sizeBytes)' || true
+          echo "secrets (active versions):"
+          for s in $(gcloud secrets list --project "$PROJECT" --format 'value(name.basename())'); do
+            n=$(gcloud secrets versions list "$s" --project "$PROJECT" --filter 'state=ENABLED' --format 'value(name)' | wc -l); echo "  $n"
+          done | awk '{t+=$1; c++} END {print "  " c " secrets, " t " enabled versions"}' || true
+      - name: Last 30 days of usage (Cloud Monitoring)
+        run: |
+          TOKEN=$(gcloud auth print-access-token)
+          END=$(date -u +%Y-%m-%dT%H:%M:%SZ); START=$(date -u -d '30 days ago' +%Y-%m-%dT%H:%M:%SZ)
+          q() {  # $1 metric filter, $2 aligner, $3 label
+            curl -sS -G -H "Authorization: Bearer $TOKEN" "https://monitoring.googleapis.com/v3/projects/$PROJECT/timeSeries" \
+              --data-urlencode "filter=$1" --data-urlencode "interval.startTime=$START" --data-urlencode "interval.endTime=$END" \
+              --data-urlencode "aggregation.alignmentPeriod=2592000s" --data-urlencode "aggregation.perSeriesAligner=$2" \
+              --data-urlencode "aggregation.crossSeriesReducer=REDUCE_SUM" \
+              | python3 -c "import json,sys; d=json.load(sys.stdin); e=d.get('error');
+          print('$3:', e.get('status') if e else sum(float(p['value'].get('int64Value') or p['value'].get('doubleValue') or 0) for s in d.get('timeSeries',[]) for p in s.get('points',[])))"
+          }
+          q 'metric.type="run.googleapis.com/request_count" AND resource.labels.service_name="legacy-api"' ALIGN_SUM "Cloud Run requests (30d)"
+          q 'metric.type="run.googleapis.com/container/billable_instance_time" AND resource.labels.service_name="legacy-api"' ALIGN_SUM "Cloud Run billable instance seconds (30d)"
+          q 'metric.type="run.googleapis.com/container/network/sent_bytes_count" AND resource.labels.service_name="legacy-api"' ALIGN_SUM "Cloud Run bytes sent (30d)"
+          q 'metric.type="compute.googleapis.com/instance/network/sent_bytes_count"' ALIGN_SUM "VM bytes sent (30d)"
+          q 'metric.type="compute.googleapis.com/instance/network/received_bytes_count"' ALIGN_SUM "VM bytes received (30d)"
+          q 'metric.type="compute.googleapis.com/instance/cpu/utilization"' ALIGN_MEAN "VM CPU utilization mean (30d, of the e2-micro share)"
+          # the same, last 7 days split by day for a feel of game days vs quiet days
+          START=$(date -u -d '7 days ago' +%Y-%m-%dT00:00:00Z)
+          for m in run.googleapis.com/container/billable_instance_time compute.googleapis.com/instance/network/sent_bytes_count; do
+            echo "$m per day (last 7 days):"
+            curl -sS -G -H "Authorization: Bearer $TOKEN" "https://monitoring.googleapis.com/v3/projects/$PROJECT/timeSeries" \
+              --data-urlencode "filter=metric.type=\"$m\"" --data-urlencode "interval.startTime=$START" --data-urlencode "interval.endTime=$END" \
+              --data-urlencode "aggregation.alignmentPeriod=86400s" --data-urlencode "aggregation.perSeriesAligner=ALIGN_SUM" \
+              --data-urlencode "aggregation.crossSeriesReducer=REDUCE_SUM" \
+              | python3 -c "import json,sys; d=json.load(sys.stdin); e=d.get('error'); print('  ', e.get('status')) if e else [print('  ', p['interval']['endTime'][:10], round(float(p['value'].get('int64Value') or p['value'].get('doubleValue') or 0))) for s in d.get('timeSeries',[]) for p in sorted(s.get('points',[]), key=lambda p: p['interval']['endTime'])]"
+          done
+      - name: Billing (if this account may read it)
+        run: |
+          gcloud billing projects describe "$PROJECT" --format 'value(billingEnabled)' 2>&1 | head -2 || true
