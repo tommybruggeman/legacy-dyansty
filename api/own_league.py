@@ -281,7 +281,7 @@ def sync(client: Any, league_id: str, sleeper_id: str, season: int) -> None:
             season=season, own_from=own_from, current_week=current, league=info,
             rosters=app_rosters(client, league_id, season, roster_of_team),
             team_of_roster={rid: tid for tid, rid in roster_of_team.items()},
-            saved=saved, scoring=settings.scoring_settings or {}, slots=lineups.starter_slots(settings.roster_positions),
+            saved=saved, scoring=settings.scoring_settings or ((sleeper.raw(f"league/{sleeper_id}") or {}).get("scoring_settings") or {}), slots=lineups.starter_slots(settings.roster_positions),
             sleeper_rows=lambda w: sleeper.raw(f"league/{sleeper_id}/matchups/{w}", ttl=league.LIVE_TTL if w == current else 3600) or [],
             lines_for=lambda w: week_lines(client, season, w, current),
             standings_for=standings_for,
