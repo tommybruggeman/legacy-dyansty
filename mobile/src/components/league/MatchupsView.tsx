@@ -110,7 +110,7 @@ function TeamRow({ team, state, isMe, winner, showRanks }: {
       ) : null}
       <Avatar uri={team.avatar} name={teamLabel(team)} size={30} me={isMe} />
       <View style={styles.nameBox}>
-        <Text style={styles.teamName} numberOfLines={1}>{teamLabel(team, true)}</Text>
+        <Text style={styles.teamName} numberOfLines={2} adjustsFontSizeToFit minimumFontScale={0.85}>{teamLabel(team)}</Text>
         {isMe ? <Text style={styles.you}>YOU</Text> : null}
         {team.record ? <Text style={styles.record}>{team.record}</Text> : null}
       </View>
