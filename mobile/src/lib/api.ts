@@ -403,6 +403,7 @@ export type PlayerPage = {
   sleeper_league_id?: string;
   rostered_by?: { roster_id: number; owner_name: string; team_id: string | null } | null;
   bye_week: number | null;
+  writeups?: { week: number; text: string; chips: string[]; date: string | null }[];
   nfl_ranked?: {
     games: number;
     pool: number | null;

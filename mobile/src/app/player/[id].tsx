@@ -5,6 +5,7 @@ import { Alert, Linking, Pressable, StyleSheet, Text, View } from 'react-native'
 import { Headshot } from '../../components/Pictures';
 import { InjuryReport } from '../../components/player/InjuryReport';
 import { NflStatsCard } from '../../components/player/NflStatsCard';
+import { WriteupCard } from '../../components/player/WriteupCard';
 import { PointsChart } from '../../components/player/PointsChart';
 import { ErrorState, Loading } from '../../components/ScreenState';
 import { Back, Screen, money } from '../../components/ui';
@@ -98,6 +99,8 @@ export default function Player() {
           <Tile label="PPG" value={ls.ppg != null ? ls.ppg.toFixed(1) : '—'} sub={ls.ppg_started != null ? `${ls.ppg_started.toFixed(1)} as starter` : 'this season'} />
           <Tile label={`${data.pos} RANK`} value={ls.rank ? `#${ls.rank.rank}` : '—'} sub="in this league" />
         </View>
+
+        {data.writeups?.length ? <WriteupCard writeups={data.writeups} /> : null}
 
         {data.nfl_ranked ? (
           <NflStatsCard ranked={data.nfl_ranked} season={nfl ?? null} pos={data.pos} />
