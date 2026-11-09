@@ -53,7 +53,7 @@ jobs:
             # our own scores (every week, our stat lines) vs Sleeper's: totals that differ, winner flips (saves nothing)
             own_scores_check) python -m scripts.own_scores_check ;;
             # why our scores differ from Sleeper's: stat keys behind each starter's gap, last 2 weeks (saves nothing)
-            score_gaps) python -m scripts.score_gaps --all ;;
+            score_gaps) python -m scripts.score_gaps --all 9 --roster=1 --roster=2 ;;
             # weekly projections vs real scores, and whether learned corrections would help (saves nothing)
             projection_accuracy) python -m scoring.projection_accuracy ;;
             # the daily projection calibration (factors + accuracy card) without saving anything

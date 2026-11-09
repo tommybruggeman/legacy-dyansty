@@ -28,8 +28,10 @@ def main(argv: list[str]) -> int:
     seasons = (client.table("league_seasons").select("league_id,season,sleeper_league_id")
                .eq("is_active", True).eq("season", 2026).execute().data or [])
     args = [a for a in argv if a != "--all"]
-    weeks = [int(a) for a in args] or (list(range(1, current + 1)) if "--all" in argv else [current - 1, current])
+    weeks = [int(a) for a in args if not a.startswith("--roster=")] or (list(range(1, current + 1)) if "--all" in argv else [current - 1, current])
     every_player = "--all" in argv
+    detail = {int(a.split("=")[1]) for a in argv if a.startswith("--roster=")}
+    weeks = [int(a) for a in args if not a.startswith("--roster=")] or weeks
     for s in seasons:
         sid = s["sleeper_league_id"]
         scoring = load_settings(client, s["league_id"]).scoring_settings or (sleeper.raw(f"league/{sid}") or {}).get("scoring_settings") or {}
@@ -70,6 +72,22 @@ def main(argv: list[str]) -> int:
                         explained = True
                 if not explained:
                     keys_n["(same stats, Sleeper's points differ: stat correction or adjustment)"] += 1
+            for r in rows:  # team totals and the stat keys behind each differing starter (positions only, no player ids)
+                if int(r.get("roster_id") or 0) not in detail:
+                    continue
+                mine_total = 0.0
+                for pid in [str(p) for p in r.get("starters") or [] if p and str(p) != "0"]:
+                    line = ours.get(pid)
+                    mine = engine.player_points(line.get("stats"), scoring, line.get("pos")) if line else sleeper_pts.get(pid, 0)
+                    mine_total += mine
+                    pos = (line or {}).get("pos")
+                    a = engine.full_line((line or {}).get("stats"), pos, scoring)
+                    b = engine.full_line((theirs.get(pid) or {}).get("stats"), pos, scoring)
+                    keys = {k: (a.get(k), b.get(k)) for k in scoring if float(a.get(k) or 0) != float(b.get(k) or 0)}
+                    if abs(mine - sleeper_pts.get(pid, 0)) >= 0.005 or keys:
+                        print(f"  roster {r['roster_id']} {pos}: ours {mine:.2f} sleeper {sleeper_pts.get(pid, 0):.2f} "
+                              f"source {'official' if pid in official else 'live' if pid in live else 'none'} stats ours/sleeper {keys}", flush=True)
+                print(f"  roster {r['roster_id']} total ours {mine_total:.2f} sleeper {float(r.get('points') or 0):.2f}", flush=True)
             print(f"week {week}: {n_diff} of {len(starters)} starters differ, net {total:+.2f} pts; by source/pos {dict(kinds)}", flush=True)
             for key, n in keys_n.most_common():
                 print(f"  {key}: {n} players, {keys_pts.get(key, 0):+.2f} pts (ours minus Sleeper's line)", flush=True)
