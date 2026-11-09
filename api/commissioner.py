@@ -181,12 +181,40 @@ def rules_form(client: Any, league_id: str) -> dict[str, Any]:
     from scoring.rules import rows_from_rules
     rules = (client.table("league_rules").select("*").eq("league_id", league_id).limit(1).execute().data or [{}])[0]
     ai = load_settings(client, league_id)
+    if not ai.scoring_settings:
+        ai = _copy_sleeper_rules_once(client, league_id, ai)
     fields = []
     for key, label, where, kind in RULE_FIELDS:
         value = rules.get(key) if where == "rules" else getattr(ai, key)
         fields.append({"key": key, "label": label, "kind": kind, "value": value})
     scoring = rows_from_rules(ai.scoring_settings)
     return {"fields": fields, "scoring": scoring}
+
+
+def _copy_sleeper_rules_once(client: Any, league_id: str, ai: Any) -> Any:
+    """No points per stat saved yet: copy today's Sleeper rules in once and save them as ours, so this form, the
+    scoring engine and the GM all read the same saved rules. Only empty settings are filled; nothing is overwritten."""
+    from api import league
+    from league_ai.settings_store import fetch_sleeper_scoring, save_settings
+    try:
+        payload = fetch_sleeper_scoring(league.sleeper_league_id(client, league_id))
+    except Exception:
+        return ai
+    if not payload.get("scoring_settings"):
+        return ai
+    ai.scoring_settings = {k: v for k, v in payload["scoring_settings"].items() if v}
+    ai.scoring_source = "sleeper"
+    ai.scoring_synced_at = datetime.now(timezone.utc).isoformat()
+    if not ai.roster_positions and payload.get("roster_positions"):
+        ai.roster_positions = list(payload["roster_positions"])
+    deadline = (payload.get("league_settings") or {}).get("trade_deadline")
+    if not ai.trade_deadline and deadline not in (None, "", 0, 99):
+        ai.trade_deadline = f"week {deadline}"
+    try:
+        save_settings(client, ai)
+    except Exception:
+        pass  # still shown; saved on the commissioner's next Save
+    return ai
 
 
 def save_rules(client: Any, league_id: str, values: Mapping[str, Any], scoring: list[Mapping[str, Any]] | None) -> None:
@@ -216,8 +244,9 @@ def save_rules(client: Any, league_id: str, values: Mapping[str, Any], scoring: 
             rules_row[key] = value
         else:
             setattr(ai, key, value)
-    if scoring is not None:
-        ai.scoring_settings = rules_from_rows(scoring)
+    new_scoring = rules_from_rows(scoring) if scoring is not None else {}
+    if new_scoring:  # an all-blank list never wipes the league's scoring
+        ai.scoring_settings = new_scoring
         ai.scoring_source = "app"
     try:
         if rules_row:
@@ -225,3 +254,5 @@ def save_rules(client: Any, league_id: str, values: Mapping[str, Any], scoring: 
         save_settings(client, ai)
     except Exception as exc:
         raise ValueError(tool_error(exc)) from None
+    from api import cache
+    cache.forget("saved_scoring", league_id)  # projections and ranks pick up new points per stat right away
