@@ -652,6 +652,14 @@ def load_episodes(client: Any, player_id: str) -> list[dict[str, Any]]:
     return sorted(rows, key=lambda r: (int(r.get("last_game_season") or 0), int(r.get("last_game_week") or 0)), reverse=True)
 
 
+def load_writeups(client: Any, player_id: str, season: int) -> list[dict[str, Any]]:
+    """His weekly recaps (league_ai.writeups), newest first: [{week, text, chips}]."""
+    rows = _safe(lambda: client.table("player_writeups").select("week,text,chips,created_at").eq("sleeper_id", player_id)
+                 .eq("season", season).order("week", desc=True).limit(8).execute().data or [], [])
+    return [{"week": int(r["week"]), "text": r["text"], "chips": r.get("chips") or [], "date": str(r.get("created_at") or "")[:10] or None}
+            for r in rows if r.get("text")]
+
+
 def load_history(client: Any, league_id: str, player_id: str) -> list[dict[str, Any]]:
     return _safe(lambda: client.rpc("read_player_contract_history_authenticated", {"p_league_id": league_id, "p_player_id": player_id}).execute().data or [], [])
 
@@ -700,6 +708,7 @@ def page_extras(
         "practice_days": lambda: load_practice_days(client, player_id, season),
         "episodes": lambda: load_episodes(client, player_id),
         "history": lambda: load_history(client, league_id, player_id),
+        "writeups": lambda: load_writeups(client, player_id, season),
         "ranks": lambda: _safe(lambda: load_ranks(client, league_id, sleeper_id, last_week, player_info), {}),
         "pool": lambda: _safe(lambda: position_pool(client, season, pos), []) if pos in RANK_STATS else [],
         "dvp": lambda: _safe(lambda: defense_vs_position(client, season), {}) if pos in DVP_POSITIONS else {},
@@ -758,6 +767,7 @@ def page_extras(
         "next_game": upcoming,
         "health": h,
         "history": contract_history(got["history"] or [], years_left),
+        "writeups": got["writeups"] or [],
     }
 
 
