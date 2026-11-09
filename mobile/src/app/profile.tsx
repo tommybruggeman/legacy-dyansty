@@ -1,4 +1,3 @@
-import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
@@ -12,7 +11,6 @@ import { supabase } from '../lib/supabase';
 import { colors } from '../lib/theme';
 
 const BUCKET = 'owner-pictures';
-const SIZE = 400; // pictures are stored square, 400px, as JPEG (about 30 KB)
 
 // The team's name, short name and picture, plus the owner's own name. What the league sees everywhere.
 export default function Profile() {
@@ -33,14 +31,13 @@ export default function Profile() {
   const set = (patch: Partial<OwnerProfile>) => setForm({ ...form, ...patch });
 
   const pick = async () => {
-    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: true, aspect: [1, 1], quality: 1 });
+    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: true, aspect: [1, 1], quality: 0.4, base64: true });
     if (res.canceled || !res.assets?.[0]) return;
     setBusy('upload');
     try {
-      const ctx = ImageManipulator.manipulate(res.assets[0].uri).resize({ width: SIZE, height: SIZE });
-      const image = await (await ctx.renderAsync()).saveAsync({ format: SaveFormat.JPEG, compress: 0.75, base64: true });
-      if (!image.base64) throw new Error('No picture data.');
-      const bytes = Uint8Array.from(atob(image.base64), (c) => c.charCodeAt(0));
+      const base64 = res.assets[0].base64;
+      if (!base64) throw new Error('No picture data.');
+      const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
       const path = `${data.team_id}/${Date.now()}.jpg`; // a new name each time, so phones don't show the old one
       const { error: upErr } = await supabase.storage.from(BUCKET).upload(path, bytes, { contentType: 'image/jpeg', upsert: true });
       if (upErr) throw upErr;
