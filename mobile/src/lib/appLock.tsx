@@ -1,9 +1,22 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as LocalAuthentication from 'expo-local-authentication';
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { AppState, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { colors } from './theme';
+
+// Loaded only when used, inside try/catch, so a problem with the native Face ID module can never stop the app opening.
+type LocalAuth = typeof import('expo-local-authentication');
+let localAuth: LocalAuth | null | undefined;
+function auth(): LocalAuth | null {
+  if (localAuth === undefined) {
+    try {
+      localAuth = require('expo-local-authentication') as LocalAuth;
+    } catch {
+      localAuth = null;
+    }
+  }
+  return localAuth;
+}
 
 // Optional Face ID (or Touch ID / passcode) to open the app, switched on in Settings > Account. It asks when the
 // app opens and when it comes back after more than a minute away, so quick app switches don't nag.
@@ -21,21 +34,25 @@ export function AppLockProvider({ children, active }: { children: ReactNode; act
   const leftAt = useRef<number | null>(null);
 
   const unlock = useCallback(async () => {
-    const result = await LocalAuthentication.authenticateAsync({ promptMessage: 'Open Legacy Dynasty' }).catch(() => null);
+    const la = auth();
+    if (!la) return setLocked(false);
+    const result = await la.authenticateAsync({ promptMessage: 'Open Legacy Dynasty' }).catch(() => null);
     if (result?.success) setLocked(false);
   }, []);
 
   useEffect(() => {
     (async () => {
-      const hardware = await LocalAuthentication.hasHardwareAsync().catch(() => false);
-      const enrolled = hardware && (await LocalAuthentication.isEnrolledAsync().catch(() => false));
+      const la = auth();
+      if (!la) return;
+      const hardware = await la.hasHardwareAsync().catch(() => false);
+      const enrolled = hardware && (await la.isEnrolledAsync().catch(() => false));
       setAvailable(!!enrolled);
-      const types: LocalAuthentication.AuthenticationType[] = await LocalAuthentication.supportedAuthenticationTypesAsync().catch(() => []);
-      if (!types.includes(LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION)) setLabel('Touch ID');
+      const types = await la.supportedAuthenticationTypesAsync().catch(() => [] as number[]);
+      if (!types.includes(la.AuthenticationType.FACIAL_RECOGNITION)) setLabel('Touch ID');
       const on = (await AsyncStorage.getItem(KEY).catch(() => null)) === '1';
       setEnabledState(on && !!enrolled);
       if (on && enrolled) setLocked(true);
-    })();
+    })().catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -52,7 +69,7 @@ export function AppLockProvider({ children, active }: { children: ReactNode; act
 
   const setEnabled = useCallback(async (on: boolean) => {
     if (on) {
-      const result = await LocalAuthentication.authenticateAsync({ promptMessage: 'Turn on to open Legacy Dynasty' }).catch(() => null);
+      const result = await auth()?.authenticateAsync({ promptMessage: 'Turn on to open Legacy Dynasty' }).catch(() => null);
       if (!result?.success) return;
     }
     setEnabledState(on);
