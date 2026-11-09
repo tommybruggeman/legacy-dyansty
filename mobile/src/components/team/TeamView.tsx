@@ -168,7 +168,8 @@ function PlayerRow({ p, first, showSlot, chip, onEmpty, w, season }: { p: Player
   const label = showSlot && p.slot ? p.slot : p.pos;
   const live = w?.status === 'playing';
   return (
-    <Pressable onPress={() => go(`/player/${p.player_id}`)}>
+    // A hurt player opens straight to the Health section of his page.
+    <Pressable onPress={() => go(injury ? `/player/${p.player_id}?section=health` : `/player/${p.player_id}`)}>
       <View style={[styles.prow, first && styles.prowFirst, live && styles.prowLive]}>
         <View style={styles.pmain}>
           {chip}

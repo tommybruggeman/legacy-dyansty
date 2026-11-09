@@ -37,6 +37,14 @@ class WordingTests(unittest.TestCase):
         self.assertEqual(alerts.inactive(week=10, name="X", player_id="4", sub=None).key, alerts.ruled_out(
             week=10, day="Sunday", name="X", player_id="4", body_part=None, sub=None).key)  # never both
 
+    def test_hurt_starter_opens_health(self):
+        hurt = [alerts.lineup_problem(week=10, day="Sunday", slot="WR", problem="on IR", name="A", player_id="1", sub=None),
+                alerts.ruled_out(week=10, day="Sunday", name="B", player_id="3", body_part=None, sub=None),
+                alerts.inactive(week=10, name="C", player_id="4", sub=None)]
+        self.assertEqual([a.url for a in hurt], ["/player/1?section=health", "/player/3?section=health", "/player/4?section=health"])
+        bye = alerts.lineup_problem(week=10, day="Sunday", slot="TE", problem="bye", name="D", player_id="2", sub=None)
+        self.assertEqual(bye.url, "/my-team")
+
     def test_results(self):
         url = "/game/9/1"
         a = alerts.final_result(season=2026, week=9, opp="Dylan", me=128.4, them=112.0, top5=True, rank=2, cut=110, game_url=url)
