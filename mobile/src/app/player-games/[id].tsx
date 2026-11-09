@@ -27,7 +27,10 @@ export default function PlayerGames() {
   if (!data) return null;
 
   const log = [...(data.game_log ?? [])].sort((x, y) => x.week - y.week);
-  const tabs = TABS.filter((t) => t.key !== 'pass' || data.pos === 'QB');
+  // His main tab comes first (RB: Rushing, WR/TE: Receiving, QB: Passing then Rushing); QBs skip Receiving.
+  const first = DEFAULT_TAB[data.pos] ?? 'rec';
+  const tabs = TABS.filter((t) => (data.pos === 'QB' ? t.key !== 'rec' : t.key !== 'pass'))
+    .sort((x, y) => Number(y.key === first) - Number(x.key === first));
   const active = tabs.find((t) => t.key === tab) ?? tabs.find((t) => t.key === DEFAULT_TAB[data.pos]) ?? tabs[0];
   const games = log.filter((g) => g.line && g.status !== 'bye' && g.status !== 'out');
   const scored = log.filter((g) => g.points != null);
