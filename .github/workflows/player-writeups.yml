@@ -15,6 +15,10 @@ on:
         description: "Only count players, call nothing"
         type: boolean
         default: false
+      redo:
+        description: "Delete this week's saved recaps and write them again"
+        type: boolean
+        default: false
 
 jobs:
   write:
@@ -39,4 +43,5 @@ jobs:
           ARGS=""
           if [ -n "${{ github.event.inputs.week }}" ]; then ARGS="$ARGS --week ${{ github.event.inputs.week }}"; fi
           if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then ARGS="$ARGS --dry-run"; fi
+          if [ "${{ github.event.inputs.redo }}" = "true" ]; then ARGS="$ARGS --redo"; fi
           python -m league_ai.writeups $ARGS
