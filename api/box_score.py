@@ -119,6 +119,7 @@ def add_projections(client: Any, ctx: dict[str, Any], week: int, final: bool, re
             kick = starts.get(home.NFLVERSE_TEAMS.get(p["team"] or "", p["team"] or ""))
             p["kickoff"] = kick.isoformat() if kick else None
             p["line"] = nfl_live.stat_line((lines.get(pid) or {}).get("stats"), p["pos"]) if p["status"] in ("playing", "final") else []
+            p["short_line"] = nfl_live.short_line((lines.get(pid) or {}).get("stats"), p["pos"]) if p["status"] in ("playing", "final") else []
             # once his game starts, show the projection frozen before kickoff (so "projected vs scored" is fair)
             p["proj"] = frozen.get(pid, proj.get(pid)) if p["status"] in ("playing", "final") else proj.get(pid)
             p["rank"] = (ranks.get(pid) or {}).get("label") if p["status"] in ("playing", "final") and p["points"] else None

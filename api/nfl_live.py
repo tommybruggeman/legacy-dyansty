@@ -136,6 +136,46 @@ def stat_line(stats: dict[str, Any] | None, pos: str) -> list[dict[str, str]]:
     return out
 
 
+def short_line(stats: dict[str, Any] | None, pos: str) -> list[dict[str, str]]:
+    """One short, same-shaped line for the app's matchup rows: '57 rush · 31 rec · 1 TD', '279 pass · 16 rush · 2 TD · 4 INT'.
+
+    Yards lead, then TDs (all kinds added up), then INTs and fumbles; zeros other than the main yards are left out.
+    """
+    s = stats or {}
+    n = lambda key: _int(s.get(key))
+    out: list[dict[str, str]] = []
+    add = lambda text, tone="": out.append({"text": text, "tone": tone})
+    tds = n("pass_td") + n("rush_td") + n("rec_td")
+    if pos == "QB":
+        if not (n("pass_att") or n("rush_att")):
+            return []
+        add(f"{n('pass_yd')} pass")
+        if n("rush_yd") >= 10:
+            add(f"{n('rush_yd')} rush")
+    elif pos == "RB":
+        if not (n("rush_att") or n("rec_tgt") or n("rec")):
+            return []
+        add(f"{n('rush_yd')} rush")
+        if n("rec"):
+            add(f"{n('rec_yd')} rec")
+    elif pos in ("WR", "TE"):
+        if not (n("rec_tgt") or n("rec")):
+            return []
+        add(f"{n('rec')} rec")
+        add(f"{n('rec_yd')} yds")
+        if n("rush_yd") >= 10:
+            add(f"{n('rush_yd')} rush")
+    else:
+        return []
+    if tds:
+        add(f"{tds} TD", "good")
+    if n("pass_int"):
+        add(f"{n('pass_int')} INT", "bad")
+    if n("fum_lost"):
+        add(f"{n('fum_lost')} FUM", "bad")
+    return out
+
+
 QUARTER_MINUTES = 15
 
 
