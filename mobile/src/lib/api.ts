@@ -479,7 +479,7 @@ export type GameLogRow = {
   live?: boolean; // game still going: points and line update every refresh
   line: {
     carries: number; rush_yds: number; rush_td: number;
-    targets: number; rec: number; rec_yds: number; rec_td: number;
+    targets: number; rec: number; rec_yds: number; rec_td: number; fum?: number;
     snap_pct: number | null;
     comp?: number; att?: number; pass_yds?: number; pass_td?: number; ints?: number;
   } | null;

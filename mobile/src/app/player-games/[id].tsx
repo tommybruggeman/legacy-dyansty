@@ -105,18 +105,20 @@ export default function PlayerGames() {
 type Line = NonNullable<GameLogRow['line']>;
 type Col = { label: string; get: (l: Line) => number | undefined; td?: boolean; bad?: boolean };
 type TabKey = 'rec' | 'rush' | 'pass';
+// Fumbles lost (all kinds) sit at the end of every tab, red like INTs.
+const FUM: Col = { label: 'FUM', get: (l) => l.fum ?? 0, bad: true };
 const TABS: { key: TabKey; label: string; cols: Col[] }[] = [
   { key: 'rec', label: 'Receiving', cols: [
     { label: 'REC', get: (l) => l.rec }, { label: 'TAR', get: (l) => l.targets },
-    { label: 'YDS', get: (l) => l.rec_yds }, { label: 'TD', get: (l) => l.rec_td, td: true },
+    { label: 'YDS', get: (l) => l.rec_yds }, { label: 'TD', get: (l) => l.rec_td, td: true }, FUM,
   ] },
   { key: 'rush', label: 'Rushing', cols: [
     { label: 'CAR', get: (l) => l.carries }, { label: 'YDS', get: (l) => l.rush_yds },
-    { label: 'YPC', get: (l) => (l.carries ? Math.round((l.rush_yds / l.carries) * 10) / 10 : 0) }, { label: 'TD', get: (l) => l.rush_td, td: true },
+    { label: 'YPC', get: (l) => (l.carries ? Math.round((l.rush_yds / l.carries) * 10) / 10 : 0) }, { label: 'TD', get: (l) => l.rush_td, td: true }, FUM,
   ] },
   { key: 'pass', label: 'Passing', cols: [
     { label: 'CMP', get: (l) => l.comp }, { label: 'ATT', get: (l) => l.att },
-    { label: 'YDS', get: (l) => l.pass_yds }, { label: 'TD', get: (l) => l.pass_td, td: true }, { label: 'INT', get: (l) => l.ints, bad: true },
+    { label: 'YDS', get: (l) => l.pass_yds }, { label: 'TD', get: (l) => l.pass_td, td: true }, { label: 'INT', get: (l) => l.ints, bad: true }, FUM,
   ] },
 ];
 const DEFAULT_TAB: Record<string, TabKey> = { QB: 'pass', RB: 'rush', WR: 'rec', TE: 'rec' };
