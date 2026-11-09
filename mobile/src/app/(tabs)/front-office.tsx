@@ -7,7 +7,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Markdown } from '../../components/frontoffice/Markdown';
 import { ErrorState, Loading } from '../../components/ScreenState';
-import { Pill, usePullToRefresh, useScrollTopOnTab } from '../../components/ui';
+import { usePullDown } from '../../components/PullDown';
+import { Pill, useScrollTopOnTab } from '../../components/ui';
 import { type ChatEvent, type ChatMessage, type Conversation, type FoHeader, type FoMove, type FrontOffice, apiGet, apiSend, apiStream, useApi } from '../../lib/api';
 import { clearLastChat, saveLastChat } from '../../lib/lastChat';
 import { colors } from '../../lib/theme';
@@ -42,8 +43,9 @@ export default function FrontOfficeScreen() {
   const convoRef = useRef<string | null>(null);
   convoRef.current = conversationId;
   const scroll = useRef<ScrollViewInstance>(null);
-  const pullRefresh = usePullToRefresh();
   const insets = useSafeAreaInsets();
+  // Front Office is a chat, so a pull only refreshes here (no pull to search).
+  const pull = usePullDown({ search: false, top: insets.top + 8 });
   const navigation = useNavigation();
   // Bumped when a chat is closed, so an answer still streaming for it is dropped.
   const chat = useRef(0);
@@ -257,8 +259,9 @@ export default function FrontOfficeScreen() {
         contentContainerStyle={[styles.content, { paddingTop: insets.top + 8 }]}
         onContentSizeChange={() => messages.length && scroll.current?.scrollToEnd({ animated: true })}
         keyboardShouldPersistTaps="handled"
-        refreshControl={pullRefresh.control}
+        {...pull.scrollProps}
       >
+        {pull.spacer}
         <View style={styles.header}>
           <Text style={styles.title}>Front Office</Text>
           <Pill label="GM" tone="gold" />
@@ -316,6 +319,7 @@ export default function FrontOfficeScreen() {
         ) : null}
         {problem ? <Text style={styles.problem}>{problem}</Text> : null}
       </ScrollView>
+      {pull.overlay}
 
       {!focused ? (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipsBar} contentContainerStyle={styles.chips} keyboardShouldPersistTaps="handled">
