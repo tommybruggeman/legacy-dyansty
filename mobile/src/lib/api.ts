@@ -403,6 +403,12 @@ export type PlayerPage = {
   sleeper_league_id?: string;
   rostered_by?: { roster_id: number; owner_name: string; team_id: string | null } | null;
   bye_week: number | null;
+  nfl_ranked?: {
+    games: number;
+    pool: number | null;
+    min_games: number;
+    stats: { key: string; label: string; lower_better: boolean; total: number; per_game: number; rank_total: number | null; rank_per_game: number | null }[];
+  } | null;
   nfl_season: {
     games: number;
     tiles: { value: string; label: string }[];
@@ -438,9 +444,18 @@ export type PlayerPage = {
     detail: string | null;
     update: string | null;
     return: string | null;
-    this_week: { week: number; practice: string | null; game_status: string | null; injury: string | null } | null;
+    this_week: { week: number; practice: string | null; game_status: string | null; injury: string | null; days?: { day: string; practice: string | null }[] } | null;
     missed: { injury: string; season: number; games: number; back: boolean }[];
     estimate?: { injury: string; median_games: number; range: string; absences: number; scope: string; text: string } | null;
+    report?: {
+      hurt: { week: number; opp: string | null } | null;
+      missed_weeks: number[];
+      on_ir: boolean;
+      eligible_week: number | null;
+      estimate: { weeks?: [number, number | null]; past_usual?: boolean } | null;
+      detail: string | null;
+      news: { text: string; date: string | null } | null;
+    } | null;
   };
   history: {
     kind: string;

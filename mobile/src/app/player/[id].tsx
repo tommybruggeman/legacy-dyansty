@@ -3,6 +3,8 @@ import { useEffect, useState } from 'react';
 import { Alert, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Headshot } from '../../components/Pictures';
+import { InjuryReport } from '../../components/player/InjuryReport';
+import { NflStatsCard } from '../../components/player/NflStatsCard';
 import { PointsChart } from '../../components/player/PointsChart';
 import { ErrorState, Loading } from '../../components/ScreenState';
 import { Back, Screen, money } from '../../components/ui';
@@ -40,7 +42,6 @@ export default function Player() {
   const owner = c?.owner_name ?? data.rostered_by?.owner_name ?? '';
   const eyebrow = [data.pos, data.nfl_team, data.age ? `AGE ${Math.floor(data.age)}` : null, c?.is_rookie ? 'ROOKIE' : null].filter(Boolean).join(' · ');
   const h: PlayerPage['health'] = data.health ?? { healthy: true, status: 'Healthy', detail: null, update: null, return: null, this_week: null, missed: [] };
-  const missed = h.missed ?? [];
   // Trade (another owner's player), Drop (yours) or Bid (free agent). Until the league leaves Sleeper, all three open Sleeper.
   const ownerTeam = c?.team_id ?? data.rostered_by?.team_id ?? null;
   const sleeper = () => data.sleeper_league_id && Linking.openURL(`https://sleeper.com/leagues/${data.sleeper_league_id}`);
@@ -98,7 +99,9 @@ export default function Player() {
           <Tile label={`${data.pos} RANK`} value={ls.rank ? `#${ls.rank.rank}` : '—'} sub="in this league" />
         </View>
 
-        {nfl ? (
+        {data.nfl_ranked ? (
+          <NflStatsCard ranked={data.nfl_ranked} season={nfl ?? null} pos={data.pos} />
+        ) : nfl ? (
           <View style={styles.card}>
             <Text style={styles.label}>IN THE NFL · {nfl.games} GAME{nfl.games === 1 ? '' : 'S'}</Text>
             <View style={styles.statRow}>
@@ -159,25 +162,8 @@ export default function Player() {
           </View>
         ) : null}
 
-        <View style={styles.card} onLayout={(e) => setHealthY(e.nativeEvent.layout.y)}>
-          <Text style={styles.cardTitle}>Health</Text>
-          <View style={styles.healthRow}>
-            <View style={[styles.healthDot, { backgroundColor: h.healthy ? colors.live : '#E8826F' }]} />
-            <Text style={styles.value}>{h.healthy ? 'Healthy' : `${h.status}${h.detail ? ` · ${h.detail}` : ''}`}</Text>
-          </View>
-          {h.this_week?.practice || h.this_week?.game_status ? (
-            <Text style={styles.small}>Week {h.this_week.week}: {[h.this_week.practice, h.this_week.game_status].filter(Boolean).join(' · ')}</Text>
-          ) : null}
-          {h.estimate ? <Text style={[styles.small, styles.estimate]}>{h.estimate.text}</Text> : null}
-          {h.update ? <Text style={styles.small}>{h.update}</Text> : null}
-          {h.return ? <Text style={styles.small}>Expected back {h.return}</Text> : null}
-          {missed.length ? (
-            <Text style={styles.small}>
-              Missed: {missed.map((m) => `${m.injury} (${m.season}, ${m.games} game${m.games === 1 ? '' : 's'})`).join(' · ')}
-            </Text>
-          ) : (
-            <Text style={styles.small}>No missed games on file.</Text>
-          )}
+        <View onLayout={(e) => setHealthY(e.nativeEvent.layout.y)}>
+          <InjuryReport h={h} />
         </View>
 
         <Pressable onPress={() => router.navigate({ pathname: '/front-office', params: { q: `${data.is_mine ? 'Should I keep, start or trade' : 'What do you think of'} ${name}?`, at: String(Date.now()) } })} style={styles.ask}>
@@ -299,7 +285,6 @@ const styles = StyleSheet.create({
   tiles: { flexDirection: 'row', gap: 8 },
   tile: { flex: 1, backgroundColor: colors.card, borderRadius: 14, padding: 12 },
   label: { color: colors.muted, fontSize: 10, fontWeight: '700', letterSpacing: 1 },
-  estimate: { color: colors.text },
   tileValue: { color: colors.text, fontSize: 22, fontWeight: '800', marginTop: 4 },
   tileSub: { color: colors.muted, fontSize: 11 },
   card: { backgroundColor: colors.card, borderRadius: 16, padding: 16, gap: 10 },
@@ -338,8 +323,6 @@ const styles = StyleSheet.create({
   tagBlue: { color: '#9DC0E0', backgroundColor: '#1A2A38' },
   tagGreen: { color: colors.live, backgroundColor: '#143D2B' },
   tagMuted: { color: colors.muted, backgroundColor: '#1F3F31' },
-  healthRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  healthDot: { width: 10, height: 10, borderRadius: 5 },
   ask: { flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: 1, borderColor: colors.gold, borderRadius: 24, paddingVertical: 12, paddingHorizontal: 16 },
   fo: { width: 22, height: 22, borderRadius: 11, backgroundColor: colors.gold, alignItems: 'center', justifyContent: 'center' },
   foText: { color: colors.bg, fontSize: 11, fontWeight: '800' },
