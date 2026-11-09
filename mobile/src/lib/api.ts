@@ -259,6 +259,8 @@ export type TeamSummary = {
   team_id: string;
   owner_name: string;
   team_name: string;
+  team_abbr?: string;
+  avatar?: string | null;
   roster_id: number | null;
   rank: number | null;
   wins: number;

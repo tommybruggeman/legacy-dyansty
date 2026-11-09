@@ -104,6 +104,16 @@ def _resolve_team(client: Client, user: Any) -> dict[str, Any]:
     }
 
 
+def _with_team_names(owner: tuple[Client, Any], result: Any) -> Any:
+    """Standings, Matchups, a game and Home name teams by their team name (or short name where space is tight)."""
+    client, user = owner
+    try:
+        profiles.label_teams(result, profiles.team_labels(client, resolve_team(client, user)["league_id"]))
+    except Exception as exc:
+        print(f"APP_TEAM_NAMES_ERROR {type(exc).__name__}", flush=True)
+    return result
+
+
 @app.get("/me")
 def me(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
     client, user = owner
@@ -395,6 +405,10 @@ def end_live_activity(activity_id: str, owner: tuple[Client, Any] = Depends(owne
 
 @app.get("/standings")
 def standings(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    return _with_team_names(owner, _standings_raw(owner))
+
+
+def _standings_raw(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
     sleeper_id, names, my_roster_id = _league_context(*owner)
     result = league.standings(sleeper_id, names, my_roster_id)
     ids = _team_ids(*owner)
@@ -404,7 +418,11 @@ def standings(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, An
 
 
 @app.get("/matchups")
-def matchups(
+def matchups(week: int | None = Query(default=None, ge=1, le=25), owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    return _with_team_names(owner, _matchups_raw(week, owner))
+
+
+def _matchups_raw(
     week: int | None = Query(default=None, ge=1, le=25),
     owner: tuple[Client, Any] = Depends(owner_client),
 ) -> dict[str, Any]:
@@ -798,7 +816,7 @@ def _commish_call(fn: Any, *args: Any, **kwargs: Any) -> Any:
 
 def _after_commish_change(league_id: str) -> None:
     """Rosters, contracts and names show the change on the next load."""
-    for kind in ("state", "cap", "league_teams", "names", "profiles", "rules_view", "playoff_rules"):
+    for kind in ("state", "cap", "league_teams", "names", "profiles", "team_labels", "rules_view", "playoff_rules"):
         cache.forget(kind, league_id)
 
 
@@ -1034,7 +1052,12 @@ def remove_from_ir(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[st
 
 
 @app.get("/matchups/{week}/{matchup_id}")
-def box_score(
+def box_score(week: int, matchup_id: int, carry: str | None = Query(default=None, max_length=64),
+              owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    return _with_team_names(owner, _box_score_raw(week, matchup_id, carry, owner))
+
+
+def _box_score_raw(
     week: int,
     matchup_id: int,
     carry: str | None = Query(default=None, max_length=64),
@@ -1683,6 +1706,10 @@ def _home_week(client: Client, season: int, today: date) -> int:
 
 @app.get("/home")
 def home_page(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    return _with_team_names(owner, _home_raw(owner))
+
+
+def _home_raw(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
     client, user = owner
     ctx = _season_context(client, user)
     if not ctx.get("team_id"):

@@ -7,7 +7,7 @@ import { type HomeBottom, type Riser, type ShotgunRow } from '../../lib/api';
 import { colors } from '../../lib/theme';
 import { Avatar } from '../Pictures';
 import { PlayerFace } from '../PlayerFace';
-import { Card, firstName, ui } from '../ui';
+import { Card, firstName, teamLabel, ui } from '../ui';
 
 // The bottom of game-day Home, picked by the server from the clock:
 // Highest projected Thu-Sat, the week's scoreboard on Sunday, then Shotgun watch
@@ -90,7 +90,7 @@ export function Scoreboard({ games, week }: { games: Extract<HomeBottom, { mode:
                 return (
                   <View key={t.roster_id} style={[styles.gameRow, i > 0 && styles.gap4]}>
                     <Avatar uri={t.avatar} name={t.name} size={18} me={t.is_me} />
-                    <Text style={[styles.gameName, !lead && styles.dim, t.is_me && ui.gold]} numberOfLines={1}>{t.is_me ? 'You' : firstName(t.name)}</Text>
+                    <Text style={[styles.gameName, !lead && styles.dim, t.is_me && ui.gold]} numberOfLines={1}>{t.is_me ? 'You' : teamLabel(t, true)}</Text>
                     <Text style={[styles.gameScore, !lead && styles.dim]}>{pts(t.score)}</Text>
                   </View>
                 );

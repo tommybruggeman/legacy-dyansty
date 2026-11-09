@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Avatar } from '../Pictures';
+import { teamLabel } from '../ui';
 import { ErrorState, Loading } from '../ScreenState';
 import { type Game, type Matchups as MatchupsData, type MatchupTeam, LIVE_POLL_MS, prefetch, useApi } from '../../lib/api';
 import { colors } from '../../lib/theme';
@@ -107,9 +108,9 @@ function TeamRow({ team, state, isMe, winner, showRanks }: {
           </View>
         ) : <View style={styles.rankBlank} />
       ) : null}
-      <Avatar uri={team.avatar} name={team.name} size={30} me={isMe} />
+      <Avatar uri={team.avatar} name={teamLabel(team)} size={30} me={isMe} />
       <View style={styles.nameBox}>
-        <Text style={styles.teamName} numberOfLines={1}>{first(team.name)}</Text>
+        <Text style={styles.teamName} numberOfLines={1}>{teamLabel(team, true)}</Text>
         {isMe ? <Text style={styles.you}>YOU</Text> : null}
         {team.record ? <Text style={styles.record}>{team.record}</Text> : null}
       </View>

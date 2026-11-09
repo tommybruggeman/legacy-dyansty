@@ -85,3 +85,37 @@ def clean(value: Any) -> str | None:
 
 def _text(value: Any) -> str:
     return str(value or "").strip()
+
+
+def team_labels(client: Any, league_id: str) -> dict[int, dict[str, str]]:
+    """roster id -> {team_name, team_abbr}: the owner's own team name from Settings, else the one we had."""
+    def load() -> list[dict[str, Any]]:
+        return client.table("league_teams").select("id,team_name,owner_name,sleeper_roster_id").eq("league_id", league_id).execute().data or []
+    mine = by_team(client, league_id)
+    out: dict[int, dict[str, str]] = {}
+    for row in cache.cached(("team_labels", league_id), 600, load):
+        try:
+            rid = int(row.get("sleeper_roster_id"))
+        except (TypeError, ValueError):
+            continue
+        profile = mine.get(str(row.get("id"))) or {}
+        name = _text(profile.get("team_name")) or _text(row.get("team_name"))
+        if name and name.casefold() != _text(row.get("owner_name")).casefold():  # no real team name yet: owner name stays
+            out[rid] = {"team_name": name, "team_abbr": _text(profile.get("team_abbr")) or abbr(name)}
+    return out
+
+
+def label_teams(payload: Any, labels: Mapping[int, Mapping[str, str]]) -> Any:
+    """Adds team_name / team_abbr to every dict in a response that names a roster (has roster_id and name), in place.
+    Pages about teams competing (Standings, Teams, Matchups, Home) show these; the rest keep owner names."""
+    if isinstance(payload, dict):
+        rid = payload.get("roster_id")
+        if "name" in payload and isinstance(rid, int) and rid in labels:
+            payload["team_name"] = labels[rid]["team_name"]
+            payload["team_abbr"] = labels[rid]["team_abbr"]
+        for value in payload.values():
+            label_teams(value, labels)
+    elif isinstance(payload, list):
+        for value in payload:
+            label_teams(value, labels)
+    return payload

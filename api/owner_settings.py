@@ -72,6 +72,7 @@ def forget_names(league_id: str) -> None:
     """New names and pictures show on the next page load, not in ten minutes."""
     cache.forget("profiles", league_id)
     cache.forget("names", league_id)
+    cache.forget("team_labels", league_id)
 
 
 # ---- Front Office preferences -------------------------------------------------------------------------

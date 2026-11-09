@@ -5,6 +5,7 @@ import { type TeamList, useApi } from '../../lib/api';
 import { colors } from '../../lib/theme';
 import { LatestActivity } from './ActivityView';
 import { ErrorState, Loading } from '../ScreenState';
+import { Avatar } from '../Pictures';
 import { Card, Row, money, ordinal, record, ui } from '../ui';
 
 const initials = (name: string) =>
@@ -23,13 +24,15 @@ export function TeamsView() {
       <Card style={styles.list}>
         {data.teams.map((team, i) => (
           <Row key={team.team_id} first={i === 0} onPress={() => router.push(`/team/${team.team_id}`)}>
-            <View style={[styles.avatar, team.is_me && styles.avatarMe]}>
-              <Text style={styles.avatarText}>{initials(team.owner_name)}</Text>
-            </View>
+            {team.avatar ? <Avatar uri={team.avatar} name={team.team_name} size={40} me={team.is_me} /> : (
+              <View style={[styles.avatar, team.is_me && styles.avatarMe]}>
+                <Text style={styles.avatarText}>{team.team_abbr || initials(team.owner_name)}</Text>
+              </View>
+            )}
             <View style={ui.flex}>
-              <Text style={[ui.name, team.is_me && ui.gold]} numberOfLines={1}>{team.owner_name}</Text>
+              <Text style={[ui.name, team.is_me && ui.gold]} numberOfLines={1}>{team.team_name}</Text>
               <Text style={ui.sub} numberOfLines={1}>
-                {team.team_name} · {record(team.wins, team.losses, team.ties)} · {ordinal(team.rank)}
+                {team.owner_name} · {record(team.wins, team.losses, team.ties)} · {ordinal(team.rank)}
               </Text>
             </View>
             <View style={ui.right}>

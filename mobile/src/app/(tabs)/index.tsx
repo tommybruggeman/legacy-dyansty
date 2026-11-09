@@ -5,7 +5,7 @@ import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-nativ
 import { GameDayBottom, Scoreboard } from '../../components/home/GameDayBottom';
 import { Avatar, Headshot, type Ring } from '../../components/Pictures';
 import { ErrorState, Loading } from '../../components/ScreenState';
-import { Bar, Card, Pill, Screen, firstName, money, ordinal, record, ui } from '../../components/ui';
+import { Bar, Card, Pill, Screen, firstName, money, teamLabel, ordinal, record, ui } from '../../components/ui';
 import { type BoxScore, type HomeData, type HomeSide, type LivePlayer, type HomePlayoffGame, type PlayoffSide, type RaceRow, type RookieDeal, type TableRow, apiSend, LIVE_POLL_MS, prefetch, useApi } from '../../lib/api';
 import { syncLiveActivity } from '../../lib/liveActivity';
 import { colors } from '../../lib/theme';
@@ -151,7 +151,7 @@ function Hero({ title, pill, me, them, week, matchupId, meLabel, themLabel, badg
             <Text style={styles.vsText}>VS</Text>
             {odds ? <SplitOdds odds={odds} /> : null}
           </View>
-          <Side s={them} label={themLabel ?? (them ? firstName(them.name) : 'Bye')} lead={!total || !ahead} projected={them ? proj?.[1] : undefined} />
+          <Side s={them} label={themLabel ?? (them ? teamLabel(them, true) : 'Bye')} lead={!total || !ahead} projected={them ? proj?.[1] : undefined} />
         </View>
         <View style={styles.bar}><Bar fraction={total ? me.score / total : 0.5} /></View>
         {badges.length ? <Badges items={badges} /> : null}
@@ -278,7 +278,7 @@ function Table({ title, right, onRight, onPress, head, rows, cutAfter }: {
           <Text style={[styles.tRank, r.me && ui.gold]}>{r.rank}</Text>
           <View style={[styles.tOwner, styles.tOwnerCell]}>
             <Avatar uri={r.avatar} name={r.name} size={24} me={r.me} />
-            <Text style={[styles.tName, r.me && ui.gold]} numberOfLines={1}>{r.me ? 'You' : firstName(r.name)}</Text>
+            <Text style={[styles.tName, r.me && ui.gold]} numberOfLines={1}>{r.me ? 'You' : teamLabel(r, true)}</Text>
           </View>
           <Text style={[styles.td, r.me && ui.gold]}>{r.a}</Text>
           <Text style={[styles.td, r.me && ui.gold]}>{r.b}</Text>
@@ -339,7 +339,7 @@ function UpNext({ them, week, series }: { them: HomeSide; week: number; series?:
         <View style={styles.upNext}>
           <Avatar uri={them.avatar} name={them.name} size={40} />
           <View style={ui.flex}>
-            <Text style={ui.name}>{them.name}</Text>
+            <Text style={ui.name}>{teamLabel(them)}</Text>
             <Text style={ui.sub}>
               {record(them.wins ?? 0, them.losses ?? 0, them.ties ?? 0)} · {ordinal(them.season_rank)}{them.ppg != null ? ` · ${them.ppg.toFixed(1)} PPG` : ''}
             </Text>
@@ -374,7 +374,7 @@ function Recap({ data }: { data: HomeData }) {
     <>
       {game?.me ? (
         <Hero
-          title={`WEEK ${r!.week} FINAL${game.them ? ` · VS ${firstName(game.them.name).toUpperCase()}` : ''}`}
+          title={`WEEK ${r!.week} FINAL${game.them ? ` · VS ${teamLabel(game.them, true).toUpperCase()}` : ''}`}
           pill={<Pill label={won ? 'WIN' : game.me.score === game.them?.score ? 'TIE' : 'LOSS'} tone={won ? 'live' : 'out'} />}
           me={game.me}
           them={game.them}
@@ -406,7 +406,7 @@ function GameDay({ data }: { data: HomeData }) {
   const mine = data.players?.me ?? [];
   const theirs = data.players?.them ?? [];
   const started = g.me.score > 0 || (g.them?.score ?? 0) > 0 || mine.some((p) => p.status !== 'waiting' && p.status !== 'empty' && p.status !== 'bye');
-  const title = `WEEK ${data.week}${g.them ? ` · VS ${firstName(g.them.name).toUpperCase()}` : ''}`;
+  const title = `WEEK ${data.week}${g.them ? ` · VS ${teamLabel(g.them, true).toUpperCase()}` : ''}`;
 
   if (!started) {
     const first = mine.filter((p) => p.kickoff).sort((a, b) => (a.kickoff! < b.kickoff! ? -1 : 1));
@@ -425,7 +425,7 @@ function GameDay({ data }: { data: HomeData }) {
   const ahead = g.me.score >= (g.them?.score ?? 0);
   if (data.weekday === 0 && !g.is_final) {
     const still = [...mine.filter((p) => p.status !== 'final' && p.player_id && p.status !== 'bye').map((p) => ({ ...p, side: 'You' })),
-      ...theirs.filter((p) => p.status !== 'final' && p.player_id && p.status !== 'bye').map((p) => ({ ...p, side: firstName(g.them?.name ?? '') }))];
+      ...theirs.filter((p) => p.status !== 'final' && p.player_id && p.status !== 'bye').map((p) => ({ ...p, side: teamLabel(g.them ?? {}, true) }))];
     const gap = Math.abs(g.me.score - (g.them?.score ?? 0));
     // Every starter on both sides has played (the week itself may still have MNF games left in other matchups).
     const done = mine.length > 0 && left(mine) === 0 && left(theirs) === 0;
@@ -449,7 +449,7 @@ function GameDay({ data }: { data: HomeData }) {
                 </View>
               ))}
             </View>
-            {g.them ? <Text style={styles.needs}>{ahead ? `${firstName(g.them.name)} needs ${pts(gap)} to pass you` : `You need ${pts(gap)} to win`}</Text> : null}
+            {g.them ? <Text style={styles.needs}>{ahead ? `${teamLabel(g.them, true)} needs ${pts(gap)} to pass you` : `You need ${pts(gap)} to win`}</Text> : null}
           </Card>
         ) : null}
         {data.bottom?.mode === 'shotgun' && data.bottom.scoreboard?.length ? <Scoreboard games={data.bottom.scoreboard} week={data.week} /> : null}
@@ -478,7 +478,7 @@ function GameDay({ data }: { data: HomeData }) {
 function PreGameHero({ data, title }: { data: HomeData; title: string }) {
   const g = data.game!;
   const { proj } = useMatchupProj(data);
-  const them = g.them ? firstName(g.them.name).toUpperCase() : 'BYE';
+  const them = g.them ? teamLabel(g.them, true).toUpperCase() : 'BYE';
   return (
     <Hero
       title={title}
@@ -544,11 +544,11 @@ const asSide = (s: PlayoffSide, score?: number): HomeSide => ({ roster_id: s.ros
 // The playoff matchup: the weekend card with seeds and no bottom box (only the score matters now).
 // Scores are round totals; in week 2 of a two-week round the projections and win odds count week 1 too.
 function PlayoffHero({ data, pg }: { data: HomeData; pg: HomePlayoffGame }) {
-  const title = `${pg.label.toUpperCase()}${pg.them ? ` · VS ${firstName(pg.them.name).toUpperCase()}` : ''}`;
+  const title = `${pg.label.toUpperCase()}${pg.them ? ` · VS ${teamLabel(pg.them, true).toUpperCase()}` : ''}`;
   const props = { data, pg, title };
   return pg.matchup_id != null && pg.state !== 'pre' ? <PlayoffHeroLive {...props} mid={pg.matchup_id} /> : (
     <Hero title={title} pill={<LivePill data={data} />} me={asSide(pg.me)} them={pg.them ? asSide(pg.them) : null} week={data.week}
-      meLabel={seedLabel('You', pg.me)} themLabel={pg.them ? seedLabel(firstName(pg.them.name), pg.them) : undefined}
+      meLabel={seedLabel('You', pg.me)} themLabel={pg.them ? seedLabel(teamLabel(pg.them, true), pg.them) : undefined}
       showScores={pg.state !== 'pre'} final={pg.state === 'final'} badges={[]} />
   );
 }
@@ -567,7 +567,7 @@ function PlayoffHeroLive({ data, pg, title, mid }: { data: HomeData; pg: HomePla
   const odds = final || !pg.them ? null : pick(round ? round.win_chance : box?.win_chance);
   return (
     <Hero title={title} pill={<LivePill data={data} />} me={asSide(pg.me, score?.[0])} them={pg.them ? asSide(pg.them, score?.[1]) : null}
-      week={data.week} matchupId={mid} meLabel={seedLabel('You', pg.me)} themLabel={pg.them ? seedLabel(firstName(pg.them.name), pg.them) : undefined}
+      week={data.week} matchupId={mid} meLabel={seedLabel('You', pg.me)} themLabel={pg.them ? seedLabel(teamLabel(pg.them, true), pg.them) : undefined}
       proj={proj} odds={odds} final={final} badges={[]} />
   );
 }
@@ -589,7 +589,7 @@ function MatchBox({ game, gold }: { game: BracketRound['games'][number]; gold?: 
         return (
           <View key={j} style={[styles.matchRow, out && styles.matchOut]}>
             <Avatar uri={s.avatar} name={s.name} size={18} />
-            <Text style={[styles.matchName, leads && ui.gold]} numberOfLines={1}>{firstName(s.name)}</Text>
+            <Text style={[styles.matchName, leads && ui.gold]} numberOfLines={1}>{teamLabel(s, true)}</Text>
             <Text style={[styles.matchScore, leads && ui.gold]}>{s.score ? pts(s.score) : ''}</Text>
           </View>
         );

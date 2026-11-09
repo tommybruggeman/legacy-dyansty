@@ -53,3 +53,14 @@ class InviteAndToolErrorTest(unittest.TestCase):
         self.assertEqual(commissioner.tool_error(Exception("P0001 contract_season_missing")),
                          "That season isn't set up in the league yet, so the contract can't run that long.")
         self.assertEqual(commissioner.tool_error(Exception("Commissioner authority required")), "Only the commissioner can do that.")
+
+
+class TeamLabelsTest(unittest.TestCase):
+    def test_label_teams_walks_the_response(self):
+        out = profiles.label_teams({"games": [{"teams": [{"roster_id": 1, "name": "Tommy"}, {"roster_id": 2, "name": "Dylan"}]}],
+                                    "me": {"roster_id": 1, "name": "Tommy", "players": [{"name": "Josh Allen"}]}},
+                                   {1: {"team_name": "Legacy Kings", "team_abbr": "LK"}})
+        self.assertEqual(out["games"][0]["teams"][0]["team_name"], "Legacy Kings")
+        self.assertNotIn("team_name", out["games"][0]["teams"][1])
+        self.assertEqual(out["me"]["team_abbr"], "LK")
+        self.assertNotIn("team_name", out["me"]["players"][0])
