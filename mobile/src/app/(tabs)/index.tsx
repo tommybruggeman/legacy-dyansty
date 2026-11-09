@@ -6,7 +6,7 @@ import { GameDayBottom, Scoreboard } from '../../components/home/GameDayBottom';
 import { Avatar, Headshot, type Ring } from '../../components/Pictures';
 import { ErrorState, Loading } from '../../components/ScreenState';
 import { Bar, Card, Pill, Screen, firstName, money, ordinal, record, ui } from '../../components/ui';
-import { type BoxScore, type HomeData, type HomeSide, type LivePlayer, type RaceRow, type RookieDeal, type TableRow, apiSend, LIVE_POLL_MS, prefetch, useApi } from '../../lib/api';
+import { type BoxScore, type HomeData, type HomeSide, type LivePlayer, type HomePlayoffGame, type PlayoffSide, type RaceRow, type RookieDeal, type TableRow, apiSend, LIVE_POLL_MS, prefetch, useApi } from '../../lib/api';
 import { syncLiveActivity } from '../../lib/liveActivity';
 import { colors } from '../../lib/theme';
 
@@ -525,60 +525,121 @@ function LineupCheck({ issues }: { issues: LivePlayer[] }) {
 }
 
 function Playoffs({ data }: { data: HomeData }) {
-  const g = data.game;
   const mine = data.players?.me ?? [];
-  const seed = (s?: HomeSide | null) => {
-    const found = data.bracket?.flatMap((r) => r.games.flatMap((x) => [x.a, x.b])).find((b) => b && s && b.roster_id === s.roster_id);
-    return found?.seed ? ` · ${ordinal(found.seed).replace(/(st|nd|rd|th)$/, '')} seed` : '';
-  };
-  const round = data.bracket?.find((r) => r.week === data.week);
+  const pg = data.playoff_game;
   return (
     <>
-      {g?.me ? (
-        <Hero
-          title={`${(round?.label ?? 'Playoffs').toUpperCase()}${g.them ? ` · VS ${firstName(g.them.name).toUpperCase()}` : ''}`}
-          pill={<LivePill data={data} />}
-          me={g.me}
-          them={g.them}
-          week={data.week}
-          matchupId={g.matchup_id}
-          meLabel={`You${seed(g.me)}`}
-          themLabel={g.them ? `${firstName(g.them.name)}${seed(g.them)}` : undefined}
-          final={!!g.is_final}
-          badges={g.is_final ? [] : [[String(left(mine)), 'LEFT: YOU'], [String(left(data.players?.them ?? [])), 'LEFT: THEM'], [ordinal(g.me.rank), 'HIGH SCORE']]}
-        />
-      ) : null}
-      {data.bracket?.length ? (
-        <Card>
-          <Eyebrow right={`Top ${data.playoff_teams}`}>BRACKET</Eyebrow>
-          <View style={styles.bracket}>
-            {data.bracket.map((rnd) => (
-              <View key={rnd.round} style={styles.roundCol}>
-                <Text style={styles.roundLabel}>{rnd.label.toUpperCase()} · WK {rnd.week}</Text>
-                {rnd.games.map((game, i) => (
-                  <View key={i} style={styles.match}>
-                    {[game.a, game.b].map((s, j) => {
-                      const other = j === 0 ? game.b : game.a;
-                      const leads = game.winner ? game.winner === s?.roster_id : (s?.score ?? 0) > (other?.score ?? 0);
-                      return (
-                        <View key={j} style={styles.matchRow}>
-                          <Avatar uri={s?.avatar} name={s?.name ?? '?'} size={20} />
-                          <Text style={[styles.matchName, leads && ui.gold]} numberOfLines={1}>{s ? firstName(s.name) : 'TBD'}</Text>
-                          <Text style={[styles.matchScore, leads && ui.gold]}>{s?.score ? pts(s.score) : ''}</Text>
-                        </View>
-                      );
-                    })}
-                  </View>
-                ))}
-              </View>
-            ))}
-          </View>
-        </Card>
-      ) : null}
+      {pg ? <PlayoffHero data={data} pg={pg} /> : null}
+      {data.bracket?.length ? <BracketCard rounds={data.bracket} playoffTeams={data.playoff_teams} /> : null}
       <PlayerHeads title="YOUR PLAYERS RIGHT NOW" players={mine.filter((p) => p.player_id).sort((a, b) => order(a) - order(b) || b.points - a.points).slice(0, 3)} sub={statusLine} />
       <AskBar placeholder="Who should I start this week?" />
-      {!g?.me && data.standings?.length ? <Standings rows={data.standings} playoffTeams={data.playoff_teams} /> : null}
+      {!pg && data.standings?.length ? <Standings rows={data.standings} playoffTeams={data.playoff_teams} /> : null}
     </>
+  );
+}
+
+const seedLabel = (base: string, s?: { seed?: number | null } | null) => (s?.seed ? `${base} · ${s.seed}` : base);
+const asSide = (s: PlayoffSide, score?: number): HomeSide => ({ roster_id: s.roster_id, name: s.name, score: score ?? s.score, avatar: s.avatar });
+
+// The playoff matchup: the weekend card with seeds and no bottom box (only the score matters now).
+// Scores are round totals; in week 2 of a two-week round the projections and win odds count week 1 too.
+function PlayoffHero({ data, pg }: { data: HomeData; pg: HomePlayoffGame }) {
+  const title = `${pg.label.toUpperCase()}${pg.them ? ` · VS ${firstName(pg.them.name).toUpperCase()}` : ''}`;
+  const props = { data, pg, title };
+  return pg.matchup_id != null && pg.state !== 'pre' ? <PlayoffHeroLive {...props} mid={pg.matchup_id} /> : (
+    <Hero title={title} pill={<LivePill data={data} />} me={asSide(pg.me)} them={pg.them ? asSide(pg.them) : null} week={data.week}
+      meLabel={seedLabel('You', pg.me)} themLabel={pg.them ? seedLabel(firstName(pg.them.name), pg.them) : undefined}
+      showScores={pg.state !== 'pre'} final={pg.state === 'final'} badges={[]} />
+  );
+}
+
+function PlayoffHeroLive({ data, pg, title, mid }: { data: HomeData; pg: HomePlayoffGame; title: string; mid: number }) {
+  const final = pg.state === 'final';
+  const carry = pg.leg > 1 && pg.them ? `?carry=${pg.me.roster_id}:${pg.me.carry},${pg.them.roster_id}:${pg.them.carry}` : '';
+  const { data: box } = useApi<BoxScore>(`/matchups/${data.week}/${mid}${carry}`, final ? 0 : LIVE_POLL_MS);
+  const sides = box?.teams ?? [];
+  const i = box && sides.length === 2 ? sides.findIndex((t) => t.roster_id === pg.me.roster_id) : -1;
+  const pick = <T,>(pair?: [T, T] | null): [T, T] | null => (pair && i >= 0 ? [pair[i], pair[1 - i]] : null);
+  const round = carry ? box?.round : null;
+  const score = round ? pick(round.score) : null;
+  const proj = final ? null : round ? pick(round.projected)
+    : i >= 0 ? [sides[i].projected ?? sides[i].score, sides[1 - i].projected ?? sides[1 - i].score] as [number, number] : null;
+  const odds = final || !pg.them ? null : pick(round ? round.win_chance : box?.win_chance);
+  return (
+    <Hero title={title} pill={<LivePill data={data} />} me={asSide(pg.me, score?.[0])} them={pg.them ? asSide(pg.them, score?.[1]) : null}
+      week={data.week} matchupId={mid} meLabel={seedLabel('You', pg.me)} themLabel={pg.them ? seedLabel(firstName(pg.them.name), pg.them) : undefined}
+      proj={proj} odds={odds} final={final} badges={[]} />
+  );
+}
+
+type BracketRound = NonNullable<HomeData['bracket']>[number];
+const weeksLabel = (r: BracketRound) => {
+  const w = r.weeks?.length ? r.weeks : [r.week];
+  return `WK ${w[0]}${w.length > 1 ? `-${w[w.length - 1]}` : ''}`;
+};
+
+function MatchBox({ game, gold }: { game: BracketRound['games'][number]; gold?: boolean }) {
+  return (
+    <View style={[styles.match, gold && styles.matchGold]}>
+      {[game.a, game.b].map((s, j) => {
+        const other = j === 0 ? game.b : game.a;
+        const leads = !!s && (game.winner ? game.winner === s.roster_id : (s.score ?? 0) > (other?.score ?? 0));
+        const out = !!s && !!game.winner && game.winner !== s.roster_id;
+        if (!s) return <Text key={j} style={styles.matchTbd} numberOfLines={1} adjustsFontSizeToFit>{game.placeholders?.[j] ?? 'TBD'}</Text>;
+        return (
+          <View key={j} style={[styles.matchRow, out && styles.matchOut]}>
+            <Avatar uri={s.avatar} name={s.name} size={18} />
+            <Text style={[styles.matchName, leads && ui.gold]} numberOfLines={1}>{firstName(s.name)}</Text>
+            <Text style={[styles.matchScore, leads && ui.gold]}>{s.score ? pts(s.score) : ''}</Text>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+function SemiCol({ round, k }: { round: BracketRound; k: number }) {
+  return (
+    <View style={styles.bkSide}>
+      <Text style={styles.roundLabel}>{round.label.toUpperCase()}</Text>
+      <MatchBox game={round.games[k]} />
+      <Text style={styles.bkWeeks}>{weeksLabel(round)}</Text>
+    </View>
+  );
+}
+
+// A real bracket: semifinal on each side, the final in the middle with lines running in from both semis.
+// Other shapes (6+ teams with a quarterfinal round) keep the column-per-round layout.
+function BracketCard({ rounds, playoffTeams }: { rounds: BracketRound[]; playoffTeams?: number }) {
+  const last = rounds[rounds.length - 1];
+  const semis = rounds[rounds.length - 2];
+  const classic = rounds.length === 2 && semis.games.length === 2 && last.games.length === 1;
+  return (
+    <Card>
+      <Eyebrow right={playoffTeams ? `Top ${playoffTeams}` : undefined}>BRACKET</Eyebrow>
+      {classic ? (
+        <View style={styles.bk}>
+          <SemiCol round={semis} k={0} />
+          <View style={styles.bkLine} />
+          <View style={styles.bkMid}>
+            <Text style={[styles.roundLabel, ui.gold]}>{last.label.toUpperCase()}</Text>
+            <MatchBox game={last.games[0]} gold />
+            <Text style={styles.bkWeeks}>{weeksLabel(last)}</Text>
+          </View>
+          <View style={styles.bkLine} />
+          <SemiCol round={semis} k={1} />
+        </View>
+      ) : (
+        <View style={styles.bracket}>
+          {rounds.map((rnd) => (
+            <View key={rnd.round} style={styles.roundCol}>
+              <Text style={styles.roundLabel}>{rnd.label.toUpperCase()} · {weeksLabel(rnd)}</Text>
+              {rnd.games.map((game, i) => <MatchBox key={i} game={game} gold={rnd === last} />)}
+            </View>
+          ))}
+        </View>
+      )}
+    </Card>
   );
 }
 
@@ -784,9 +845,17 @@ const styles = StyleSheet.create({
   roundCol: { flex: 1, gap: 8, justifyContent: 'center' },
   roundLabel: { color: colors.muted, fontSize: 9, fontWeight: '800', letterSpacing: 0.8, textAlign: 'center' },
   match: { backgroundColor: colors.row, borderRadius: 10, padding: 8, gap: 4 },
-  matchRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  matchName: { color: colors.text, fontSize: 12, fontWeight: '700', flex: 1 },
-  matchScore: { color: colors.text, fontSize: 12, fontWeight: '700' },
+  matchGold: { borderWidth: 1, borderColor: colors.gold },
+  matchRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  matchOut: { opacity: 0.45 },
+  matchTbd: { color: colors.muted, fontSize: 10, fontWeight: '700', paddingVertical: 2 },
+  bk: { flexDirection: 'row', alignItems: 'center', marginTop: 22 },
+  bkSide: { flex: 1, gap: 4 },
+  bkMid: { flex: 1, gap: 4, transform: [{ translateY: -12 }] }, // the final sits a little above the semis
+  bkLine: { width: 8, height: 1.5, backgroundColor: colors.gold, opacity: 0.6 },
+  bkWeeks: { color: colors.muted, fontSize: 9, fontWeight: '700', textAlign: 'center', opacity: 0.8 },
+  matchName: { color: colors.text, fontSize: 11, fontWeight: '700', flex: 1 },
+  matchScore: { color: colors.text, fontSize: 11, fontWeight: '700' },
   deal: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 10 },
   dealLine: { borderTopWidth: 1, borderTopColor: colors.row },
   choice: { borderWidth: 1, borderColor: colors.line, borderRadius: 10, paddingVertical: 6, paddingHorizontal: 10 },

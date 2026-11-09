@@ -34,6 +34,16 @@ def game(client: Any, ctx: dict[str, Any], week: int, matchup_id: int, team_rows
     return result
 
 
+def add_round(result: dict[str, Any], carry: dict[int, float]) -> None:
+    """Two-week playoff rounds: add each side's points from earlier weeks of the round, giving the projected
+    round total and round win odds (only this week's unplayed points are still uncertain)."""
+    sides = [{**t, "score": (t.get("score") or 0) + carry.get(t["roster_id"], 0.0),
+              "projected": (t.get("projected") if t.get("projected") is not None else t.get("score") or 0) + carry.get(t["roster_id"], 0.0)}
+             for t in result["teams"]]
+    result["round"] = {"projected": [round(t["projected"], 2) for t in sides], "score": [round(t["score"], 2) for t in sides],
+                       "win_chance": nfl_live.win_chance(sides, bool(result.get("is_final")))}
+
+
 def week_kickoffs(client: Any, season: int, week: int) -> dict[str, datetime]:
     try:
         nfl = cache.cached(("nfl_games", season, week), 600, lambda: client.table("nfl_games").select("gameday,gametime,home_team,away_team")

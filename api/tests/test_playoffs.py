@@ -71,3 +71,20 @@ def test_legacy_cards_for_old_app_builds():
 def test_own_league_loser_layout_is_trimmed_to_playoff_rounds():
     assert max(g[0] for g in own_league.loser_layout(6, 2)) == 2
     assert own_league.loser_layout(3, 2) == []
+
+
+def test_home_bracket_and_my_game_from_our_view():
+    from api import box_score, home
+    v = view(16, 16, 15)  # semis, week 2 of 2: week 15 is banked
+    rounds = home.bracket_from_view(v)
+    assert [(r["label"], r["weeks"], len(r["games"])) for r in rounds] == [("Semifinal", [15, 16], 2), ("Championship", [17, 18], 1)]
+    semi = next(g for g in rounds[0]["games"] if g["a"]["roster_id"] == 1)
+    assert semi["a"]["score"] == 99 + 50 and semi["placeholders"] == [None, None]
+    final = rounds[1]["games"][0]
+    assert final["a"] is None and final["placeholders"] == ["Winner of 1 v 4", "Winner of 2 v 3"]
+    g = home.playoff_game(v)
+    assert (g["leg"], g["legs"], g["label"]) == (2, 2, "Semifinal")
+    assert (g["me"]["roster_id"], g["me"]["carry"], g["them"]["roster_id"], g["them"]["carry"]) == (2, 98, 3, 97)
+    box = {"is_final": False, "teams": [{"roster_id": 2, "score": 10, "projected": 90, "players": []}, {"roster_id": 3, "score": 20, "projected": 95, "players": []}]}
+    box_score.add_round(box, {2: 98, 3: 97})
+    assert box["round"]["projected"] == [188, 192] and box["round"]["score"] == [108, 117]
