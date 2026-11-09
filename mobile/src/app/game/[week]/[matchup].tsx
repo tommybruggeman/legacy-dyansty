@@ -112,8 +112,9 @@ function FinalBanner({ a, b }: { a: Side; b: Side }) {
   return <Text style={styles.banner}>{lead}{top && top.points > 0 ? ` · ${shortName(top.name)} top scorer (${top.points.toFixed(1)})` : ''}</Text>;
 }
 
-// One player's half of a row. Live = gold edge on the outside + warm tint; has the ball = brighter; red zone = red edge.
-// Every row is the same three lines: name + points, one short stat line, game + projection.
+// One player's half of a row, ESPN style: name + team, game, one stat line ("5/7 REC, 49 YDS, TD"),
+// with big points and the projection on the inside edge next to the slot. The right side is mirrored.
+// Live = gold edge on the outside + warm tint; has the ball = brighter; red zone = red edge.
 // The slot winner's points are gold once both players have played.
 function Half({ p, vs, side, onScore, bench, first }: { p?: BoxPlayer; vs?: BoxPlayer; side: 'l' | 'r'; onScore: (p: BoxPlayer) => void; bench?: boolean; first?: boolean }) {
   if (!p || !p.player_id || p.player_id === '0') return <View style={[styles.half, bench && styles.halfBench, !first && styles.divider]}><Text style={styles.empty}>{p ? 'Empty' : ''}</Text></View>;
@@ -126,46 +127,46 @@ function Half({ p, vs, side, onScore, bench, first }: { p?: BoxPlayer; vs?: BoxP
   const vsScored = !!vs && (vs.status === 'playing' || vs.status === 'final');
   const lead = !bench && scored && vsScored && vs ? (p.points > vs.points ? 'win' : p.points < vs.points ? 'lose' : null) : null;
   const line = p.short_line ?? p.line ?? [];
+  const align = right ? styles.textRight : null;
   return (
-    <View style={[styles.half, bench && styles.halfBench, !first && styles.divider, right ? { borderRightWidth: 4, borderRightColor: edge ?? 'transparent' } : { borderLeftWidth: 4, borderLeftColor: edge ?? 'transparent' }]}>
+    <View style={[styles.half, right && styles.halfRight, bench && styles.halfBench, !first && styles.divider, right ? { borderRightWidth: 4, borderRightColor: edge ?? 'transparent' } : { borderLeftWidth: 4, borderLeftColor: edge ?? 'transparent' }]}>
       {tint ? <LinearGradient colors={tint as [string, string]} start={{ x: right ? 1 : 0, y: 0 }} end={{ x: right ? 0.2 : 0.8, y: 0 }} style={StyleSheet.absoluteFill} /> : null}
-      <View style={styles.line}>
-        <Pressable onPress={() => router.push(`/player/${p.player_id}`)} hitSlop={4} style={styles.nameWrap}>
+      <View style={[styles.info, right && styles.infoRight]}>
+        <Pressable onPress={() => router.push(`/player/${p.player_id}`)} hitSlop={4} style={[styles.nameWrap, right && styles.nameWrapRight]}>
           <Text style={styles.name} numberOfLines={1}>{shortName(p.name)}</Text>
           {bench && p.pos ? <Text style={styles.benchPos}>{p.pos}</Text> : null}
           {p.team ? <Text style={styles.team}>{p.team}</Text> : null}
           {on && g?.possession ? <View style={styles.ball}><View style={styles.lace} /></View> : null}
         </Pressable>
-        <Pressable onPress={() => onScore(p)} hitSlop={8}>
-          <Text style={[styles.points, lead === 'win' && styles.gold, lead === 'lose' && styles.pointsLose, bench && styles.pointsBench]}>{scored || p.points ? p.points.toFixed(1) : '–'}</Text>
-        </Pressable>
+        <GameText p={p} right={right} />
+        <Text style={[styles.stats, align]} numberOfLines={1}>
+          {line.length
+            ? line.map((x, i) => (
+                <Text key={i} style={x.tone === 'good' ? styles.good : x.tone === 'bad' ? styles.bad : undefined}>{i ? ', ' : ''}{x.text}</Text>
+              ))
+            : <Text style={styles.statsEmpty}>{p.status === 'bye' ? 'On bye' : scored ? 'No stats yet' : ' '}</Text>}
+        </Text>
+        {on && g?.possession ? (
+          <Text style={[styles.offense, g.red_zone && styles.redZone, align]}>{g.red_zone ? 'RED ZONE' : 'ON OFFENSE'}{g.down ? ` · ${g.down}` : ''}</Text>
+        ) : null}
       </View>
-      <Text style={styles.stats} numberOfLines={1}>
-        {line.length
-          ? line.map((x, i) => (
-              <Text key={i} style={x.tone === 'good' ? styles.good : x.tone === 'bad' ? styles.bad : undefined}>{i ? ' · ' : ''}{x.text}</Text>
-            ))
-          : <Text style={styles.statsEmpty}>{p.status === 'bye' ? 'On bye' : scored ? 'No stats yet' : 'Not played yet'}</Text>}
-      </Text>
-      <View style={styles.line}>
-        <GameText p={p} />
+      <Pressable onPress={() => onScore(p)} hitSlop={8} style={[styles.pts, right && styles.ptsRight]}>
+        <Text style={[styles.points, lead === 'win' && styles.gold, lead === 'lose' && styles.pointsLose, bench && styles.pointsBench]}>{scored || p.points ? p.points.toFixed(1) : '–'}</Text>
         <Text style={[styles.proj, on && p.live_proj != null && styles.projLive]}>{shownProj(p)}</Text>
-      </View>
-      {on && g?.possession ? (
-        <Text style={[styles.offense, g.red_zone && styles.redZone]}>{g.red_zone ? 'RED ZONE' : 'ON OFFENSE'}{g.down ? ` · ${g.down}` : ''}</Text>
-      ) : null}
+      </Pressable>
     </View>
   );
 }
 
 // "Q3 8:42 24-13 vs MIA" live, "Final W 34-20 vs MIA" after, "Sun 11:00 AM vs MIA" before, or BYE.
-function GameText({ p }: { p: BoxPlayer }) {
+function GameText({ p, right }: { p: BoxPlayer; right?: boolean }) {
   const g = p.game;
-  if (p.status === 'bye') return <Text style={styles.game}>BYE</Text>;
+  const al = right ? styles.textRight : null;
+  if (p.status === 'bye') return <Text style={[styles.game, al]}>BYE</Text>;
   const vs = g ? `${g.home ? 'vs' : '@'} ${g.opp}` : '';
   if (g && (p.status === 'playing' || g.state === 'in')) {
     return (
-      <View style={styles.gameRow}>
+      <View style={[styles.gameRow, right && styles.gameRowRight]}>
         <View style={styles.dot} />
         <Text style={styles.game} numberOfLines={1}><Text style={styles.clock}>{g.quarter > 4 ? 'OT' : `Q${g.quarter}`} {g.clock}</Text> {g.score}-{g.opp_score} {vs}</Text>
       </View>
@@ -173,10 +174,10 @@ function GameText({ p }: { p: BoxPlayer }) {
   }
   if (g && (p.status === 'final' || g.state === 'post')) {
     const res = g.score > g.opp_score ? 'W' : g.score < g.opp_score ? 'L' : 'T';
-    return <Text style={styles.game} numberOfLines={1}>{res} {g.score}-{g.opp_score} {vs}</Text>;
+    return <Text style={[styles.game, al]} numberOfLines={1}>{res} {g.score}-{g.opp_score} {vs}</Text>;
   }
-  if (p.status === 'final') return <Text style={styles.game}>{p.rank ?? 'Final'}</Text>;
-  return <Text style={styles.game} numberOfLines={1}>{[p.kickoff ? kickoffText(p.kickoff) : null, vs].filter(Boolean).join(' ')}</Text>;
+  if (p.status === 'final') return <Text style={[styles.game, al]}>{p.rank ?? 'Final'}</Text>;
+  return <Text style={[styles.game, al]} numberOfLines={1}>{[p.kickoff ? kickoffText(p.kickoff) : null, vs].filter(Boolean).join(' ')}</Text>;
 }
 
 // Mid-game the projection follows the game: points so far plus his projection for the time left.
@@ -261,32 +262,39 @@ const styles = StyleSheet.create({
   oddsFill: { height: 6, backgroundColor: colors.live },
   oddsLabel: { color: colors.muted, fontSize: 10, fontWeight: '800' },
   banner: { color: colors.gold, fontSize: 12, fontWeight: '700', backgroundColor: '#122B20', borderRadius: 10, overflow: 'hidden', paddingHorizontal: 10, paddingVertical: 8, marginBottom: 10 },
-  table: { borderRadius: 14, overflow: 'hidden', backgroundColor: colors.card },
+  table: { borderRadius: 14, overflow: 'hidden', backgroundColor: colors.card, marginHorizontal: -10 },
   section: { color: colors.gold, fontSize: 11, fontWeight: '800', letterSpacing: 1.2, marginBottom: 6 },
   sectionBench: { color: colors.muted, marginTop: 16 },
   row: { flexDirection: 'row', alignItems: 'stretch' },
-  half: { flex: 1, minWidth: 0, backgroundColor: colors.card, paddingHorizontal: 10, paddingVertical: 9, overflow: 'hidden' },
+  half: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: colors.card, paddingLeft: 10, paddingRight: 6, paddingVertical: 9, overflow: 'hidden' },
+  halfRight: { flexDirection: 'row-reverse', paddingLeft: 6, paddingRight: 10 },
+  info: { flex: 1, minWidth: 0 },
+  infoRight: { alignItems: 'flex-end' },
+  nameWrapRight: { flexDirection: 'row-reverse' },
+  textRight: { textAlign: 'right' },
+  gameRowRight: { flexDirection: 'row-reverse' },
+  pts: { alignItems: 'flex-end', minWidth: 38 },
+  ptsRight: { alignItems: 'flex-start' },
   divider: { borderTopWidth: 1, borderTopColor: '#1F3F31' },
   halfBench: { backgroundColor: '#0E2119' },
   empty: { color: colors.muted, fontSize: 13 },
-  slot: { width: 32, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.card },
+  slot: { width: 28, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.card },
   slotText: { color: '#8E8676', fontSize: 10, fontWeight: '800' },
-  line: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 4 },
   nameWrap: { flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 1 },
   name: { color: colors.text, fontSize: 14, fontWeight: '800', flexShrink: 1 },
   team: { flexShrink: 0, color: '#8E8676', fontSize: 10, fontWeight: '700' },
-  points: { color: colors.text, fontSize: 16, fontWeight: '800', fontVariant: ['tabular-nums'] },
+  points: { color: colors.text, fontSize: 17, fontWeight: '800', fontVariant: ['tabular-nums'] },
   pointsBench: { color: '#C9C2B2' },
   pointsLose: { color: colors.muted },
   benchPos: { flexShrink: 0, color: colors.muted, fontSize: 10, fontWeight: '800' },
-  proj: { color: colors.muted, fontSize: 10.5 },
+  proj: { color: colors.muted, fontSize: 10.5, marginTop: 1 },
   projLive: { color: colors.text, fontWeight: '700' },
   gameRow: { flexDirection: 'row', alignItems: 'center', flexShrink: 1 },
-  game: { color: colors.muted, fontSize: 10.5, marginTop: 2, flexShrink: 1 },
+  game: { color: colors.muted, fontSize: 10.5, marginTop: 2, flexShrink: 1, alignSelf: 'stretch' },
   clock: { color: colors.live, fontWeight: '800' },
   ball: { flexShrink: 0, width: 14, height: 9, borderRadius: 5, backgroundColor: '#9A5A2B', justifyContent: 'center', alignItems: 'center' },
   lace: { width: 5, height: 1, backgroundColor: '#FFFFFF' },
-  stats: { color: '#D9D0BD', fontSize: 11, fontWeight: '600', marginTop: 3, lineHeight: 15 },
+  stats: { color: '#D9D0BD', fontSize: 11, fontWeight: '600', marginTop: 2, lineHeight: 15, alignSelf: 'stretch' },
   statsEmpty: { color: '#8E8676', fontWeight: '500' },
   good: { color: colors.live, fontWeight: '800' },
   bad: { color: '#EF7A7A', fontWeight: '800' },
