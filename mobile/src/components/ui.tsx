@@ -1,17 +1,16 @@
-import * as Haptics from 'expo-haptics';
 import { router, useNavigation } from 'expo-router';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { ActivityIndicator, Animated, Dimensions, Easing, PanResponder, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, type ScrollViewInstance, type StyleProp, type ViewStyle } from 'react-native';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { ActivityIndicator, Animated, Dimensions, Easing, PanResponder, Pressable, ScrollView, StyleSheet, Text, View, type ScrollViewInstance, type StyleProp, type ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { refreshPage } from '../lib/api';
 import { colors } from '../lib/theme';
+import { usePullDown } from './PullDown';
 import { useSlow } from './ScreenState';
 
 // Shared pieces from the page designs: cards, tiles, the gold segmented
 // switcher, position badges and status pills.
 
-// Every page refreshes on a gentle pull (the gold spinner), and opens search only on a much longer pull.
+// Every page refreshes on a gentle pull (the gold football), and opens search only on a much longer pull (PullDown).
 // scrollTo: a y offset inside the page (its children) to glide to once, e.g. a card the page was opened for.
 export function Screen({ children, loading, scrollTo }: { children: ReactNode; loading?: boolean; scrollTo?: number | null }) {
   const insets = useSafeAreaInsets();
@@ -23,81 +22,23 @@ export function Screen({ children, loading, scrollTo }: { children: ReactNode; l
     scrolled.current = true;
     scroll.current?.scrollTo({ y: Math.max(0, scrollTo - 8), animated: true });
   }, [scrollTo]);
-  const pull = usePullToSearch();
-  const refresh = usePullToRefresh();
-  const slow = useSlow(!!loading || refresh.refreshing);
+  const pull = usePullDown({ top: insets.top + 8 });
+  const slow = useSlow(!!loading || pull.refreshing);
   return (
-    <ScrollView
-      ref={scroll}
-      style={styles.screen}
-      contentContainerStyle={[styles.content, { paddingTop: insets.top + 8 }]}
-      refreshControl={refresh.control}
-      scrollEventThrottle={16}
-      {...pull.handlers}
-    >
-      {pull.hint ? <Text style={[styles.pullHint, { top: insets.top - 12 }]}>{pull.hint === 'ready' ? 'Let go to search' : 'Keep pulling to search'}</Text> : null}
-      <View style={slow && styles.faded} pointerEvents={slow ? 'none' : 'auto'}>{children}</View>
-      {slow ? <ActivityIndicator size="large" color={colors.gold} style={[styles.wheel, { top: insets.top + 140 }]} /> : null}
-    </ScrollView>
+    <View style={styles.screen}>
+      <ScrollView
+        ref={scroll}
+        style={styles.screen}
+        contentContainerStyle={[styles.content, { paddingTop: insets.top + 8 }]}
+        {...pull.scrollProps}
+      >
+        {pull.spacer}
+        <View style={slow && styles.faded} pointerEvents={slow ? 'none' : 'auto'}>{children}</View>
+        {slow ? <ActivityIndicator size="large" color={colors.gold} style={[styles.wheel, { top: insets.top + 140 }]} /> : null}
+      </ScrollView>
+      {pull.overlay}
+    </View>
   );
-}
-
-// Pull to refresh: reloads everything on the page in view. The spinner stays at least a beat so a fast
-// answer still reads as "refreshed" instead of a flicker.
-const MIN_SPIN_MS = 700;
-export function usePullToRefresh() {
-  const [refreshing, setRefreshing] = useState(false);
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    const started = Date.now();
-    try {
-      await refreshPage();
-    } finally {
-      const left = MIN_SPIN_MS - (Date.now() - started);
-      if (left > 0) await new Promise((done) => setTimeout(done, left));
-      setRefreshing(false);
-    }
-  }, []);
-  const control = <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.gold} />;
-  return { refreshing, control };
-}
-
-// Pull-down search, only on purpose: the page must already be resting at the top when the finger lands
-// (a flick that bounces off the top doesn't count), and the pull has to go much further than a refresh
-// (a refresh starts around 65pt). A tap says it's far enough; letting go there opens search, sliding back up cancels it.
-const PULL_TO_SEARCH = 220;
-const PULL_HINT = 150;
-const STILL_MS = 150;
-type ScrollEvent = { nativeEvent: { contentOffset: { y: number } } };
-
-function usePullToSearch() {
-  const state = useRef({ armed: false, ready: false, lastMove: 0 });
-  const [hint, setHint] = useState<null | 'pull' | 'ready'>(null);
-  const handlers = useMemo(() => ({
-    onScrollBeginDrag: (e: ScrollEvent) => {
-      const s = state.current;
-      s.armed = e.nativeEvent.contentOffset.y <= 1 && Date.now() - s.lastMove > STILL_MS;
-      s.ready = false;
-    },
-    onScroll: (e: ScrollEvent) => {
-      const s = state.current;
-      s.lastMove = Date.now();
-      if (!s.armed) return;
-      const y = e.nativeEvent.contentOffset.y;
-      const ready = y <= -PULL_TO_SEARCH;
-      if (ready && !s.ready) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
-      s.ready = ready;
-      setHint(ready ? 'ready' : y <= -PULL_HINT ? 'pull' : null);
-    },
-    onScrollEndDrag: () => {
-      const s = state.current;
-      if (s.armed && s.ready) router.push('/search');
-      s.armed = false;
-      s.ready = false;
-      setHint(null);
-    },
-  }), []);
-  return { handlers, hint };
 }
 
 // Tapping a tab in the tab bar always opens that tab at the top. Pages outside the tabs never get tabPress, so they keep their place.
@@ -339,5 +280,4 @@ const styles = StyleSheet.create({
   note: { color: colors.muted, fontSize: 12, textAlign: 'center', marginTop: 4 },
   faded: { opacity: 0.35 },
   wheel: { position: 'absolute', left: 0, right: 0 },
-  pullHint: { position: 'absolute', left: 0, right: 0, textAlign: 'center', color: colors.gold, fontSize: 12, fontWeight: '800', letterSpacing: 0.5 },
 });
