@@ -11,7 +11,7 @@ on:
       check:
         description: Which check to run
         type: choice
-        options: [odds_backtest, odds_trial, odds_grade, start_sit_grade, practice_test, weekly_cards, shadow_scoring, live_projection_study, espn_feed_check, final_scores_check, projection_accuracy, projection_calibration, win_odds_study, trade_backtest, answer_eval, fd_check, own_scores_check, projection_by_stat, weather_study]
+        options: [odds_backtest, odds_trial, odds_grade, start_sit_grade, practice_test, weekly_cards, shadow_scoring, live_projection_study, espn_feed_check, final_scores_check, projection_accuracy, projection_calibration, win_odds_study, trade_backtest, answer_eval, fd_check, own_scores_check, projection_by_stat, weather_study, projection_trace]
         default: odds_backtest
 
 jobs:
@@ -24,7 +24,7 @@ jobs:
         with:
           python-version: "3.13"
       - run: pip install supabase requests pandas
-      - if: inputs.check == 'start_sit_grade' || inputs.check == 'practice_test' || inputs.check == 'weekly_cards' || inputs.check == 'projection_accuracy' || inputs.check == 'projection_calibration' || inputs.check == 'win_odds_study' || inputs.check == 'trade_backtest' || inputs.check == 'answer_eval' || inputs.check == 'own_scores_check' || inputs.check == 'projection_by_stat' || inputs.check == 'weather_study'
+      - if: inputs.check == 'start_sit_grade' || inputs.check == 'practice_test' || inputs.check == 'weekly_cards' || inputs.check == 'projection_accuracy' || inputs.check == 'projection_calibration' || inputs.check == 'win_odds_study' || inputs.check == 'trade_backtest' || inputs.check == 'answer_eval' || inputs.check == 'own_scores_check' || inputs.check == 'projection_by_stat' || inputs.check == 'weather_study' || inputs.check == 'projection_trace'
         run: pip install -r api/requirements.txt
       - if: inputs.check == 'live_projection_study'
         run: pip install pyarrow numpy
@@ -52,6 +52,8 @@ jobs:
             final_scores_check) python -m scripts.final_scores --dry ;;
             # our own scores (every week, our stat lines) vs Sleeper's: totals that differ, winner flips (saves nothing)
             own_scores_check) python -m scripts.own_scores_check ;;
+            # one player's projection step by step (Sleeper line, matchup factor, calibration); NFL names only
+            projection_trace) python -m scripts.projection_trace "E. Wilson" "D. Vele" "R. Flournoy" ;;
             # weekly projections vs real scores, and whether learned corrections would help (saves nothing)
             projection_accuracy) python -m scoring.projection_accuracy ;;
             # the daily projection calibration (factors + accuracy card) without saving anything

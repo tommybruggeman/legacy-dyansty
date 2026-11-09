@@ -36,17 +36,20 @@ const shortOwner = (name: string) => {
 };
 const ppgText = (n: number | null | undefined) => (n != null ? n.toFixed(1) : '—');
 
-// ESPN-style row: star, face, name with team and any tag, two short lines, then PROJ (this week) and PPG columns.
-// Line 2 is the owner and contract for rostered players, last-3 form for free agents; line 3 is the next game with
-// the defense's rank against his position (green = easy matchup, red = tough). Your own and saved players get a gold name.
+// ESPN-style row: star, face, name with team and any tag, two short lines, then three numbers: this week (projection
+// before kickoff, live points in green during his game, final points after), the last-3 average (green or red when
+// it's more than a point off his season) and PPG with games played under it. Line 2 is the owner and contract for
+// rostered players, age and position rank for free agents; line 3 is his game: kickoff with a tough/soft defense
+// note, the live clock, or the final score. Your own and saved players get a gold name.
 function PlayerRow({ p, line }: { p: LeaguePlayer; line: string | null }) {
   const { isTarget, toggle } = useTargets();
   const saved = isTarget(p.player_id);
   const tag = p.injury ? { label: injuryLabel(p.injury), tone: 'out' as const }
     : p.designation ? { label: p.designation.toUpperCase(), tone: 'gold' as const }
     : p.rookie ? { label: 'ROOKIE', tone: 'gold' as const } : null;
-  const out = !!p.injury && OUT.has(p.injury.toLowerCase());
   const ppg = p.avg ?? p.rank_ppg;
+  const facts = [p.age != null ? `Age ${p.age}` : null, p.pos_rank ?? null].filter(Boolean).join(' · ');
+  const off = p.last3 != null && p.trend != null && Math.abs(p.trend) > 1 ? (p.trend > 0 ? GREEN : RED) : colors.text;
   return (
     <Pressable onPress={() => router.push(`/player/${p.player_id}`)} style={styles.row}>
       <Pressable onPress={() => toggle(p.player_id)} hitSlop={10} style={styles.star}>
@@ -59,13 +62,35 @@ function PlayerRow({ p, line }: { p: LeaguePlayer; line: string | null }) {
           <Text style={styles.rowTeam}>{p.nfl_team === 'FA' ? '' : p.nfl_team}</Text>
           {tag ? <Pill label={tag.label} tone={tag.tone} /> : null}
         </View>
-        {line ? <Text style={styles.rowLine} numberOfLines={1}>{line}</Text> : null}
-        {line == null ? <Form trend={p.trend} last3={p.last3} /> : null}
+        {line ?? facts ? <Text style={styles.rowLine} numberOfLines={1}>{line ?? facts}</Text> : null}
         <NextLine next={p.next} />
       </View>
-      <View style={[styles.col, styles.colProj]}><Text style={styles.proj}>{p.proj != null && !out && !p.next?.bye ? p.proj.toFixed(1) : '—'}</Text></View>
-      <View style={styles.col}><Text style={styles.ppg}>{ppgText(ppg)}</Text></View>
+      <WeekCell p={p} />
+      <View style={styles.col}><Text style={[styles.last3, { color: off }]}>{p.last3 != null ? p.last3.toFixed(1) : '—'}</Text></View>
+      <View style={styles.col}>
+        <Text style={styles.ppg}>{ppgText(ppg)}</Text>
+        {p.games ? <Text style={styles.games}>{p.games} gms</Text> : null}
+      </View>
     </Pressable>
+  );
+}
+
+// This week's number: projection before kickoff, live points (green, with a dot) during, final points after.
+function WeekCell({ p }: { p: LeaguePlayer }) {
+  const state = p.next?.state;
+  const out = !!p.injury && OUT.has(p.injury.toLowerCase());
+  let text = p.proj != null ? p.proj.toFixed(1) : '—';
+  let style = styles.proj;
+  if (p.next?.bye) { text = 'BYE'; style = styles.weekDim; }
+  else if ((state === 'in' || state === 'post') && p.week_pts != null) { text = p.week_pts.toFixed(1); style = state === 'in' ? styles.weekLive : styles.proj; }
+  else if (out) { text = injuryLabel(p.injury ?? ''); style = styles.weekDim; }
+  return (
+    <View style={[styles.col, styles.colProj]}>
+      <View style={styles.weekRow}>
+        {state === 'in' && !p.next?.bye ? <View style={styles.liveDot} /> : null}
+        <Text style={style}>{text}</Text>
+      </View>
+    </View>
   );
 }
 
@@ -78,29 +103,30 @@ const shortName = (name: string) => {
   return rest.length ? `${first[0]}. ${rest.join(' ')}` : first;
 };
 
-function Form({ trend, last3 }: { trend?: number | null; last3?: number | null }) {
-  if (trend == null) return last3 != null ? <Text style={styles.rowLine}>last 3: {last3.toFixed(1)}</Text> : null;
-  const up = trend > 0;
-  return (
-    <Text style={styles.rowLine} numberOfLines={1}>
-      last 3 <Text style={{ color: trend === 0 ? colors.muted : up ? GREEN : RED }}>{up ? '+' : ''}{trend.toFixed(1)} {trend === 0 ? '→' : up ? '↑' : '↓'}</Text>
-    </Text>
-  );
-}
-
-const ordinal = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' } as Record<number, string>)[n % 10] ?? 'th'}`;
 function NextLine({ next }: { next?: NextGame | null }) {
   if (!next) return null;
   if (next.bye) return <Text style={styles.rowLine}>Bye week</Text>;
-  const when = next.final ? 'Played' : next.kickoff
+  const where = `${next.home ? 'vs' : '@'} ${next.opp}`;
+  if (next.state === 'post' || (next.final && next.state == null)) {
+    const won = next.score != null && next.opp_score != null ? (next.score > next.opp_score ? 'W' : next.score < next.opp_score ? 'L' : 'T') : null;
+    return <Text style={styles.rowLine} numberOfLines={1}>Final{won ? ` · ${won} ${next.score}-${next.opp_score}` : ''} {where}</Text>;
+  }
+  if (next.state === 'in') {
+    return (
+      <Text style={styles.rowLine} numberOfLines={1}>
+        <Text style={{ color: GREEN }}>● {next.detail || 'Live'}</Text>{` · ${where}`}{next.score != null ? ` · ${next.score}-${next.opp_score}` : ''}
+      </Text>
+    );
+  }
+  const when = next.kickoff
     ? (() => { const d = new Date(next.kickoff); return `${d.toLocaleDateString(undefined, { weekday: 'short' })} ${d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`; })()
     : '';
   const teams = next.teams ?? 32;
-  // rank 1 = fewest points allowed to the position (toughest); the top third reads red, the bottom third green
-  const tone = next.opp_rank == null ? colors.muted : next.opp_rank <= teams / 3 ? RED : next.opp_rank > (teams * 2) / 3 ? GREEN : colors.muted;
+  // rank 1 = fewest points allowed to his position (toughest): the top third is a tough defense, the bottom third a soft one
+  const matchup = next.opp_rank == null ? null : next.opp_rank <= teams / 3 ? { text: 'tough D', color: RED } : next.opp_rank > (teams * 2) / 3 ? { text: 'soft D', color: GREEN } : null;
   return (
     <Text style={styles.rowLine} numberOfLines={1}>
-      {when ? `${when} ` : ''}{next.home ? 'vs' : '@'}{next.opp}{next.opp_rank != null ? <Text style={{ color: tone }}> ({ordinal(next.opp_rank)})</Text> : null}
+      {when ? `${when} · ` : ''}{where}{matchup ? <Text style={{ color: matchup.color }}>{` · ${matchup.text}`}</Text> : null}
     </Text>
   );
 }
@@ -173,6 +199,7 @@ function PlayersList({ query }: { query?: string }) {
       && anyOf(filters.type, (v) => typeOk(p, v)));
     return filters.sort === 'Points' ? out : [...out].sort(SORTERS[filters.sort]);
   }, [data, needle, status, filters, saved]);
+  const weekNo = data?.players.find((p) => p.next?.week)?.next?.week;
 
   if (loading && !data) return <Loading />;
   if (error && !data) return <ErrorState message={error} onRetry={reload} />;
@@ -217,7 +244,8 @@ function PlayersList({ query }: { query?: string }) {
       {rows.length ? (
         <View style={styles.head}>
           <Text style={[styles.headText, styles.headPlayer]}>PLAYER</Text>
-          <View style={[styles.col, styles.colProj, styles.headProj]}><Text style={[styles.headText, styles.headGold]}>PROJ</Text></View>
+          <View style={[styles.col, styles.colProj, styles.headProj]}><Text style={[styles.headText, styles.headGold, styles.headCenter]}>{weekNo ? `WEEK\n${weekNo}` : 'WEEK'}</Text></View>
+          <View style={styles.col}><Text style={[styles.headText, styles.headCenter]}>LAST{'\n'}3</Text></View>
           <View style={styles.col}><Text style={styles.headText}>PPG</Text></View>
         </View>
       ) : null}
@@ -347,10 +375,17 @@ const styles = StyleSheet.create({
   rowNameGold: { color: colors.gold },
   rowTeam: { color: colors.muted, fontSize: 11, fontWeight: '700' },
   rowLine: { color: colors.muted, fontSize: 11, marginTop: 1 },
-  col: { width: 46, alignItems: 'center', justifyContent: 'center', alignSelf: 'stretch' },
+  col: { width: 44, alignItems: 'center', justifyContent: 'center', alignSelf: 'stretch' },
   colProj: { backgroundColor: colors.row },
   proj: { color: colors.text, fontSize: 15, fontWeight: '800' },
+  weekLive: { color: GREEN, fontSize: 15, fontWeight: '800' },
+  weekDim: { color: colors.muted, fontSize: 11, fontWeight: '800', opacity: 0.8 },
+  weekRow: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  liveDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: GREEN },
+  last3: { fontSize: 14, fontWeight: '800' },
   ppg: { color: colors.gold, fontSize: 15, fontWeight: '800' },
+  games: { color: colors.muted, fontSize: 9, fontWeight: '600', marginTop: 1 },
+  headCenter: { textAlign: 'center' },
   more: { alignItems: 'center', paddingVertical: 8, marginBottom: 4 },
   plan: { backgroundColor: colors.gold, borderRadius: 12, paddingVertical: 12, alignItems: 'center', marginTop: 10 },
   planText: { color: colors.bg, fontWeight: '800', fontSize: 15 },
