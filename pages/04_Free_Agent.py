@@ -28,7 +28,7 @@ from services.publication_context import publication_generation
 import sys  # noqa: E402
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
-from api import market as app_market, sleeper as app_sleeper, teams as app_teams  # noqa: E402
+from api import market as app_market, market_week as app_market_week, sleeper as app_sleeper, teams as app_teams  # noqa: E402
 from auth import _sb  # noqa: E402
 from season_engine import SeasonResolver  # noqa: E402
 from services.team_roster_state import load_team_state  # noqa: E402
@@ -804,7 +804,7 @@ def _cached_league_players(league_id: str, team_id: str, active_season: int, con
     client = _sb(st.session_state.get("sb_access_token"))
     season = SeasonResolver(client).get_active_season(league_id)
     rosters = app_sleeper.get(f"league/{season.sleeper_league_id}/rosters") or [] if season.sleeper_league_id else []
-    return app_market.all_players(
+    result = app_market.all_players(
         app_market.player_pool(service_client()),
         load_team_state(client, league_id, active_season),
         _ppg,
@@ -813,6 +813,12 @@ def _cached_league_players(league_id: str, team_id: str, active_season: int, con
         team_id,
         keep_ids=list(saved_ids),
     )
+    if season.sleeper_league_id:  # this week, last 3, games, rank and game state: the same numbers as the app's Market
+        try:
+            app_market_week.add_this_week(service_client(), str(season.sleeper_league_id), int(active_season), result["players"])
+        except Exception:
+            pass
+    return result
 
 
 def _saved_player_ids(league_id: str) -> list[str] | None:
@@ -913,19 +919,33 @@ with league_players_tab:
         st.caption(f"{len(lp_rows)} players")
         if lp_rows:
             lp_visible = lp_rows[:150]
+            lp_week = next((p["next"]["week"] for p in lp_visible if (p.get("next") or {}).get("week")), None)
+            lp_week_label = f"Week {lp_week}" if lp_week else "This week"
+
+            def _lp_ppg(p: dict) -> str:
+                return _ppg_text(p.get("avg") if p.get("avg") is not None else p["rank_ppg"])
+
             _render_html_table(pd.DataFrame([{
                 "Player": f"★ {p['name']}" if p["player_id"] in lp_star else p["name"],
                 "Pos": p["pos"],
                 "NFL": p["nfl_team"],
+                "Age": p["age"] if p.get("age") is not None else "—",
+                "Rank": p.get("pos_rank") or "—",
                 "Owner": _lp_owner(p),
                 "Contract": _lp_contract(p),
-                lp_rank: _ppg_text(p["rank_ppg"]),
+                lp_week_label: app_market_week.week_text(p),
+                "Last 3": _ppg_text(p.get("last3")),
+                lp_rank: _lp_ppg(p),
+                "Games": p.get("games") or "—",
                 "Points": f"{p['points']:.0f}" if p["points"] is not None else "—",
+                "Game": app_market_week.game_text(p),
                 "Notes": _lp_note(p) or "",
             } for p in lp_visible]))
             _render_player_cards([
-                (p["pos"], f"★ {p['name']}" if p["player_id"] in lp_star else p["name"], f"{_lp_owner(p)} · {_lp_contract(p)}" if p["team_id"] else f"{p['nfl_team']} · Free agent",
-                 [(_ppg_text(p["rank_ppg"]), lp_rank, True)])
+                (p["pos"], f"★ {p['name']}" if p["player_id"] in lp_star else p["name"],
+                 " · ".join(filter(None, [f"{_lp_owner(p)} · {_lp_contract(p)}" if p["team_id"] else f"{p['nfl_team']} · Free agent",
+                                          app_market_week.game_text(p)])),
+                 [(app_market_week.week_text(p), lp_week_label, True), (_ppg_text(p.get("last3")), "Last 3", False), (_lp_ppg(p), lp_rank, False)])
                 for p in lp_visible
             ])
             if len(lp_rows) > len(lp_visible):

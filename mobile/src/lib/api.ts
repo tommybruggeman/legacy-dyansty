@@ -517,9 +517,12 @@ export type LeaguePlayer = {
   salary: number | null; years_left: number | null; rookie_deal: boolean; designation: 'taxi' | 'ir' | null;
   // This week, in league scoring (missing on older servers): projection, season average, last-3 form, next game.
   proj?: number | null; avg?: number | null; last3?: number | null; trend?: number | null; next?: NextGame | null;
+  games?: number | null; pos_rank?: string | null; week_pts?: number | null; // games played, "WR41", points this week once his game starts
 };
 export type NextGame = {
   week: number; bye: boolean; opp?: string; home?: boolean; kickoff?: string | null; opp_rank?: number | null; teams?: number | null; final?: boolean;
+  // live game state (pre / in / post) with the score from his team's side once it starts (from build 66's server)
+  state?: 'pre' | 'in' | 'post'; score?: number | null; opp_score?: number | null; detail?: string | null;
 };
 export type LeagueOwner = { team_id: string; owner_name: string; team_name: string; is_mine: boolean };
 export type LeaguePlayers = {
