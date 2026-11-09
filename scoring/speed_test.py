@@ -332,6 +332,11 @@ def run(wait: float, minutes: float, every: float, smoke: bool = False) -> tuple
     if ours_vs_espn:
         out.append(f"  ours vs this test's own ESPN read: median {median(ours_vs_espn):+.0f}s, 90th pct {pct(ours_vs_espn, 0.9):+.0f}s "
                    f"(our watcher + database step; negative = watcher saw it first)")
+    last_espn = {pid: hist[-1][1] for pid, hist in espn_h.h.items() if hist}
+    last_ours = {pid: hist[-1][1] for pid, hist in ours_h.h.items() if hist}
+    both = [pid for pid in last_espn if pid in last_ours and (last_espn[pid] or last_ours[pid])]
+    same = sum(1 for pid in both if abs(last_espn[pid] - last_ours[pid]) < 0.02)
+    out.append(f"  at the end, our saved points equal ESPN-derived points for {same}/{len(both)} players")
     if heartbeat_ages:
         out.append(f"  newest saved row age while live: median {median(heartbeat_ages):.0f}s, worst {max(heartbeat_ages):.0f}s")
     out.append(f"  watcher saves of the tracked game rows: {save_count} ({save_count / elapsed_h:.0f}/hour)")
