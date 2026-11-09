@@ -352,6 +352,7 @@ export type BoxPlayer = {
   breakdown?: { label: string; value: number; points: number }[];
   game?: NflGame | null;
   line?: { text: string; tone: '' | 'good' | 'bad' }[];
+  short_line?: { text: string; tone: '' | 'good' | 'bad' }[];
   kickoff?: string | null;
 };
 // A player's NFL game from his team's side (ESPN scoreboard): pre, in or post.
