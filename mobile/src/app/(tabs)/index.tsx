@@ -177,16 +177,20 @@ function useMatchupProj(data: HomeData) {
   return { proj, odds };
 }
 
-function LiveHero({ data, title }: { data: HomeData; title: string }) {
+// Monday passes its own MNF pill and done flag (every starter on both sides has played) so the card
+// looks the same as the weekend one.
+function LiveHero({ data, title, pill, done }: { data: HomeData; title: string; pill?: ReactNode; done?: boolean }) {
   const g = data.game!;
   const me = g.me!;
-  const final = !!g.is_final;
-  const { proj, odds } = useMatchupProj(data);
+  const final = done ?? !!g.is_final;
+  const { proj: rawProj, odds: rawOdds } = useMatchupProj(data);
+  const proj = final ? null : rawProj;
+  const odds = final ? null : rawOdds;
   const line = data.top5_line;
   return (
     <Hero
       title={title}
-      pill={<LivePill data={data} />}
+      pill={pill ?? <LivePill data={data} />}
       me={me}
       them={g.them}
       week={data.week}
@@ -427,15 +431,11 @@ function GameDay({ data }: { data: HomeData }) {
     const done = mine.length > 0 && left(mine) === 0 && left(theirs) === 0;
     return (
       <>
-        <Hero
+        <LiveHero
+          data={data}
           title={title}
           pill={done ? <Pill label="FINAL" tone="gold" /> : <LivePill data={data} label="MNF" waiting="MNF TONIGHT" />}
-          me={g.me}
-          them={g.them}
-          week={data.week}
-          matchupId={g.matchup_id}
-          final={done}
-          badges={done ? [] : [[String(left(mine)), 'LEFT: YOU'], [String(left(theirs)), `LEFT: ${firstName(g.them?.name ?? 'THEM').toUpperCase()}`], [ordinal(g.me.rank), 'HIGH SCORE']]}
+          done={done}
         />
         {still.length ? (
           <Card>
