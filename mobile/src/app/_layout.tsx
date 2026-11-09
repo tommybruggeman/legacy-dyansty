@@ -40,6 +40,10 @@ function RootStack() {
         <Stack.Screen name="settings" />
         <Stack.Screen name="profile" />
         <Stack.Screen name="league-rules" />
+        <Stack.Screen name="commissioner" />
+        <Stack.Screen name="commish-team" />
+        <Stack.Screen name="commish-add" />
+        <Stack.Screen name="commish-rules" />
         <Stack.Screen name="search" options={{ animation: 'fade_from_bottom' }} />
       </Stack.Protected>
       <Stack.Protected guard={!session}>

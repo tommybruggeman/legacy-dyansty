@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from supabase import Client, create_client
 
 from api import box_score as box_score_mod
-from api import activity, alerts, cache, owner_settings, profiles, front_office, home, league, lineups, live_activity, market, market_week, nfl_live, own_league, player, playoffs, projections, teams, trade_feed, trade_offers, waivers
+from api import activity, alerts, cache, commissioner, owner_settings, profiles, front_office, home, league, lineups, live_activity, market, market_week, nfl_live, own_league, player, playoffs, projections, teams, trade_feed, trade_offers, waivers
 from season_engine import SeasonResolver
 from services.season_rollover_owner_ui import OwnerRolloverDecisionError, OwnerRolloverDecisionService
 
@@ -690,8 +690,12 @@ def _app_lineup(client: Client, ctx: dict[str, Any], team_id: str):
         starts, now = _week_kickoffs(client, ctx["season"], week), datetime.now(timezone.utc)
         info = teams.player_info(client, active)
         locked = {pid for pid in active if lineups.is_locked(pid, info.get(pid, {}).get("team"), starts, now)}
-        editable = team_id == ctx["team_id"] and bool(slots)
-        return [(lineups.label(s), ids[i]) for i, s in enumerate(slots)], lineups.view(slots, ids, week, locked, editable)
+        mine = team_id == ctx["team_id"]
+        commish = str(ctx.get("role") or "").lower() == "commissioner"  # sets an away owner's lineup, same locks
+        view = lineups.view(slots, ids, week, locked, bool(slots) and (mine or commish))
+        if not mine and commish:
+            view["commissioner_team_id"] = team_id
+        return [(lineups.label(s), ids[i]) for i, s in enumerate(slots)], view
     return build
 
 
@@ -717,6 +721,190 @@ def set_lineup(body: LineupRequest, owner: tuple[Client, Any] = Depends(owner_cl
         }}).execute()
     except Exception as exc:
         raise HTTPException(status_code=400, detail=lineups.friendly(exc))
+    return {"ok": True}
+
+
+class CommishLineupRequest(BaseModel):
+    team_id: str
+    week: int
+    slots: list[str | None]
+
+
+def _commissioner_ctx(client: Client, user: Any) -> dict[str, Any]:
+    ctx = _season_context(client, user)
+    if str(ctx.get("role") or "").lower() != "commissioner":
+        raise HTTPException(status_code=403, detail="Only the commissioner can do that.")
+    return ctx
+
+
+@app.post("/commissioner/lineup")
+def commissioner_lineup(body: CommishLineupRequest, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """The commissioner sets an away owner's lineup, under the same slot rules and kickoff locks."""
+    client, user = owner
+    ctx = _commissioner_ctx(client, user)
+    slots = _lineup_slots(client, ctx["league_id"])
+    if len(body.slots) != len(slots):
+        raise HTTPException(status_code=400, detail=lineups.ERRORS["lineup_shape_invalid"])
+    try:
+        commissioner.set_lineup(client, league_id=ctx["league_id"], team_id=body.team_id, season=ctx["season"], week=body.week,
+                                slots=slots, player_ids=body.slots)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"ok": True}
+
+
+class CommishAdd(BaseModel):
+    team_id: str
+    player_id: str
+    salary: float = 1.0
+    years: int = 1
+    notes: str = ""
+
+
+class CommishDrop(BaseModel):
+    player_id: str
+    notes: str = ""
+
+
+class CommishContract(BaseModel):
+    contract_id: str
+    salary: float | None = None
+    end_season: int | None = None
+    notes: str = ""
+
+
+class CommishInvite(BaseModel):
+    team_id: str
+    email: str
+    role: str = "owner"
+
+
+class CommishSwitch(BaseModel):
+    enabled: bool
+    own_from_week: int | None = None
+
+
+class CommishRules(BaseModel):
+    values: dict[str, Any] = {}
+    scoring: list[dict[str, Any]] | None = None
+
+
+def _commish_call(fn: Any, *args: Any, **kwargs: Any) -> Any:
+    try:
+        return fn(*args, **kwargs)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+def _after_commish_change(league_id: str) -> None:
+    """Rosters, contracts and names show the change on the next load."""
+    for kind in ("state", "cap", "league_teams", "names", "profiles", "rules_view", "playoff_rules"):
+        cache.forget(kind, league_id)
+
+
+@app.get("/commissioner")
+def commissioner_home(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    ctx = _commissioner_ctx(client, user)
+    return {"season": ctx["season"], **_commish_call(commissioner.overview, client, ctx["league_id"])}
+
+
+@app.post("/commissioner/add")
+def commissioner_add(body: CommishAdd, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    ctx = _commissioner_ctx(client, user)
+    if body.salary < 0 or not 1 <= body.years <= 10:
+        raise HTTPException(status_code=400, detail="Check the salary and years.")
+    _commish_call(commissioner.add_player, client, league_id=ctx["league_id"], season=ctx["season"], team_id=body.team_id,
+                  player_id=body.player_id, salary=body.salary, years=body.years, notes=body.notes)
+    _after_commish_change(ctx["league_id"])
+    return {"ok": True}
+
+
+@app.get("/commissioner/drop/{player_id}")
+def commissioner_drop_preview(player_id: str, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    ctx = _commissioner_ctx(client, user)
+    return _commish_call(commissioner.drop_preview, client, ctx["league_id"], player_id)
+
+
+@app.post("/commissioner/drop")
+def commissioner_drop(body: CommishDrop, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    ctx = _commissioner_ctx(client, user)
+    _commish_call(commissioner.drop_player, client, ctx["league_id"], body.player_id, body.notes)
+    _after_commish_change(ctx["league_id"])
+    return {"ok": True}
+
+
+@app.get("/commissioner/contract/{player_id}")
+def commissioner_contract(player_id: str, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    ctx = _commissioner_ctx(client, user)
+    return _commish_call(commissioner.contract_for, client, ctx["league_id"], player_id)
+
+
+@app.post("/commissioner/contract")
+def commissioner_fix_contract(body: CommishContract, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    ctx = _commissioner_ctx(client, user)
+    _commish_call(commissioner.fix_contract, client, body.contract_id, body.salary, body.end_season, body.notes)
+    _after_commish_change(ctx["league_id"])
+    return {"ok": True}
+
+
+@app.post("/commissioner/invite")
+def commissioner_invite(body: CommishInvite, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    ctx = _commissioner_ctx(client, user)
+    if body.role not in ("owner", "co_owner"):
+        raise HTTPException(status_code=400, detail="Pick owner or co-owner.")
+    return _commish_call(owner_settings.create_invite, client, user_id=user.id, league_id=ctx["league_id"], team_id=body.team_id,
+                         email=body.email, role=body.role)
+
+
+@app.delete("/commissioner/invite/{invite_id}")
+def commissioner_cancel_invite(invite_id: str, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    ctx = _commissioner_ctx(client, user)
+    try:
+        client.table("league_invites").update({"status": "revoked"}).eq("id", invite_id).eq("league_id", ctx["league_id"]).execute()
+    except Exception:
+        raise HTTPException(status_code=400, detail="That didn't save. Try again.")
+    return {"ok": True}
+
+
+@app.delete("/commissioner/member/{member_user_id}")
+def commissioner_remove_member(member_user_id: str, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    ctx = _commissioner_ctx(client, user)
+    _commish_call(commissioner.remove_member, client, ctx["league_id"], member_user_id)
+    cache.clear()  # the removed person's team lookup is cached by user
+    return {"ok": True}
+
+
+@app.post("/commissioner/switch")
+def commissioner_switch(body: CommishSwitch, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    ctx = _commissioner_ctx(client, user)
+    result = _commish_call(commissioner.set_switch, client, ctx["league_id"], body.enabled, body.own_from_week)
+    cache.clear()
+    return {"ok": True, "switch": result}
+
+
+@app.get("/commissioner/rules")
+def commissioner_rules(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    ctx = _commissioner_ctx(client, user)
+    return commissioner.rules_form(client, ctx["league_id"])
+
+
+@app.post("/commissioner/rules")
+def commissioner_save_rules(body: CommishRules, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    ctx = _commissioner_ctx(client, user)
+    _commish_call(commissioner.save_rules, client, ctx["league_id"], body.values, body.scoring)
+    _after_commish_change(ctx["league_id"])
     return {"ok": True}
 
 
@@ -891,7 +1079,8 @@ def _market_ppg(client: Client, ctx: dict[str, Any]) -> tuple[list[dict[str, Any
 
 
 @app.get("/market/free-agents")
-def free_agents(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+def free_agents(limit: int = Query(default=market.LIST_SIZE, ge=1, le=3000),
+                owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
     client, user = owner
     ctx = _season_context(client, user)
     state = _season_state(client, ctx)
@@ -900,7 +1089,7 @@ def free_agents(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, 
         rostered = league.sleeper_owners(ctx["sleeper_id"])
     except Exception:
         rostered = {}
-    return market.free_agents(pool, state, ppg, rostered=rostered)
+    return market.free_agents(pool, state, ppg, limit=limit, rostered=rostered)
 
 
 @app.get("/market/players")

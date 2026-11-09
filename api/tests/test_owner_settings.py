@@ -34,3 +34,22 @@ class OwnerPrefsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class InviteAndToolErrorTest(unittest.TestCase):
+    def test_invite_row_stores_only_the_hash(self):
+        from unittest import mock
+        from api import owner_settings
+        client = mock.MagicMock()
+        out = owner_settings.create_invite(client, user_id="u", league_id="L", team_id="T", email=" Dylan@Example.com ", role="co_owner")
+        row = client.table.return_value.insert.call_args[0][0]
+        self.assertEqual((row["email"], row["role"], row["token"], row["status"]), ("dylan@example.com", "co_owner", None, "pending"))
+        self.assertIn("invite_token=", out["link"])
+        with self.assertRaises(ValueError):
+            owner_settings.create_invite(client, user_id="u", league_id="L", team_id="T", email="nope", role="owner")
+
+    def test_commissioner_errors_read_plainly(self):
+        from api import commissioner
+        self.assertEqual(commissioner.tool_error(Exception("P0001 contract_season_missing")),
+                         "That season isn't set up in the league yet, so the contract can't run that long.")
+        self.assertEqual(commissioner.tool_error(Exception("Commissioner authority required")), "Only the commissioner can do that.")

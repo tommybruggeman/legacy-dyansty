@@ -6,8 +6,12 @@ Everything runs as the signed-in owner, so the database's row-level security and
 """
 from __future__ import annotations
 
+import hashlib
+import re
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
+from urllib.parse import quote
 
 from api import cache, profiles
 
@@ -118,25 +122,33 @@ def people(client: Any, team: Mapping[str, Any]) -> dict[str, Any]:
     return {"co_owners": co_owners, "invites": invites, "can_invite": not co_owners and not invites}
 
 
-def invite_co_owner(client: Any, user_id: str, team: Mapping[str, Any], email: str) -> dict[str, Any]:
-    """A co-owner invite for my team. Returns the link to send them (it opens the website's sign-up)."""
-    from services.invitations import build_invite_url, generate_invite_token, hash_invite_token, normalize_email, validate_email
-    address = normalize_email(email)
-    if not validate_email(address):
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def create_invite(client: Any, *, user_id: str, league_id: str, team_id: str, email: str, role: str) -> dict[str, Any]:
+    """A pending invite row (only the token's hash is stored, like the website's) and the sign-up link to share.
+    The same token format as services/invitations.py, so the website's sign-up accepts it."""
+    address = (email or "").strip().lower()
+    if not EMAIL_RE.match(address):
         raise ValueError("That email doesn't look right.")
-    if not people(client, team)["can_invite"]:
-        raise ValueError("Your team already has a co-owner or an invite waiting.")
-    token = generate_invite_token()
+    token = secrets.token_urlsafe(32)
     row = {
-        "league_id": team["league_id"], "league_team_id": team["team_id"], "email": address, "role": "co_owner",
-        "token": None, "token_hash": hash_invite_token(token), "status": "pending", "invited_by": user_id,
+        "league_id": league_id, "league_team_id": team_id, "email": address, "role": role,
+        "token": None, "token_hash": hashlib.sha256(token.encode("utf-8")).hexdigest(), "status": "pending", "invited_by": user_id,
         "expires_at": (datetime.now(timezone.utc) + timedelta(days=INVITE_DAYS)).isoformat(), "last_sent_at": None, "send_count": 0,
     }
     try:
         client.table("league_invites").insert(row).execute()
     except Exception as exc:
         raise ValueError(friendly(exc)) from None
-    return {"email": address, "link": build_invite_url(token, base_url=WEBSITE)}
+    return {"email": address, "link": f"{WEBSITE}?invite_token={quote(token)}"}
+
+
+def invite_co_owner(client: Any, user_id: str, team: Mapping[str, Any], email: str) -> dict[str, Any]:
+    """A co-owner invite for my team. Returns the link to send them (it opens the website's sign-up)."""
+    if not people(client, team)["can_invite"]:
+        raise ValueError("Your team already has a co-owner or an invite waiting.")
+    return create_invite(client, user_id=user_id, league_id=team["league_id"], team_id=team["team_id"], email=email, role="co_owner")
 
 
 def cancel_invite(client: Any, team: Mapping[str, Any], invite_id: str) -> None:

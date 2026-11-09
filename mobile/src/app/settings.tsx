@@ -27,6 +27,17 @@ export default function Settings() {
       <Back label="Home" />
       <Title>Settings</Title>
       <ProfileCard data={data} />
+      {data.is_commissioner ? (
+        <Card title="Commissioner" gold>
+          <Row first onPress={() => router.push('/commissioner')}>
+            <View style={ui.flex}>
+              <Text style={ui.value}>League tools</Text>
+              <Text style={ui.sub}>Lineups, adds and drops, contracts, rules, owners, league switch</Text>
+            </View>
+            <Text style={ui.link}>›</Text>
+          </Row>
+        </Card>
+      ) : null}
       <FrontOfficeCard gm={data.gm} onSaved={refresh} />
       {!data.is_co_owner ? <CoOwnerCard data={data} onChange={refresh} /> : null}
       <Card title="League">

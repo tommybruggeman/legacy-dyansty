@@ -296,6 +296,7 @@ export type Lineup = {
   slots: { index: number; slot: string; label: string; player_id: string | null; locked: boolean }[];
   locked: string[];
   fits: Record<string, string[]>;
+  commissioner_team_id?: string; // set when the commissioner is editing another team's lineup
 };
 // A contract on the value board: PPG per cap dollar, graded against the whole league.
 export type ValuedContract = Player & { through: number; per_dollar: number | null; grade: 'bargain' | 'fair' | 'overpaid' | 'stash' | null };
@@ -763,3 +764,16 @@ export type MySettings = {
   profile: OwnerProfile; gm: GmPrefs; people: TeamPeople;
 };
 export type RulesView = { groups: { title: string; rows: [string, string][] }[]; house_rules: string | null };
+
+// Settings > Commissioner.
+export type CommishTeam = {
+  team_id: string; owner_name: string; team_name: string; team_abbr?: string; avatar?: string | null;
+  people: { user_id: string; email: string | null; role: string }[];
+  invites: { id: string; email: string; role: string }[];
+};
+export type CommishHome = { season: number; teams: CommishTeam[]; switch: { enabled: boolean; own_from_week: number | null } };
+export type CommishField = { key: string; label: string; kind: 'money' | 'int' | 'pct' | 'bool' | 'text'; value: number | string | boolean | null };
+export type ScoringRow = { group: string; rule: string; key: string; points: number };
+export type CommishRules = { fields: CommishField[]; scoring: ScoringRow[] };
+export type DropPreview = { player_id: string; team_name: string; salary: number; years_left: number; dead_cap: number; dead_cap_pct: number };
+export type ContractFix = { contract_id: string; team_id: string; end_season: number; seasons: { season: number; salary: number }[] };
