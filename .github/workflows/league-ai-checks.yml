@@ -11,7 +11,7 @@ on:
       check:
         description: Which check to run
         type: choice
-        options: [odds_backtest, odds_trial, odds_grade, start_sit_grade, practice_test, weekly_cards, shadow_scoring, live_projection_study, espn_feed_check, final_scores_check, projection_accuracy, projection_calibration, win_odds_study, trade_backtest, answer_eval, fd_check, own_scores_check, projection_by_stat, weather_study, projection_trace, seed_owner_profiles]
+        options: [odds_backtest, odds_trial, odds_grade, start_sit_grade, practice_test, weekly_cards, shadow_scoring, live_projection_study, espn_feed_check, final_scores_check, projection_accuracy, projection_calibration, win_odds_study, trade_backtest, answer_eval, fd_check, own_scores_check, projection_by_stat, weather_study, projection_trace, seed_owner_profiles, save_scoring]
         default: odds_backtest
 
 jobs:
@@ -24,7 +24,7 @@ jobs:
         with:
           python-version: "3.13"
       - run: pip install supabase requests pandas
-      - if: inputs.check == 'start_sit_grade' || inputs.check == 'practice_test' || inputs.check == 'weekly_cards' || inputs.check == 'projection_accuracy' || inputs.check == 'projection_calibration' || inputs.check == 'win_odds_study' || inputs.check == 'trade_backtest' || inputs.check == 'answer_eval' || inputs.check == 'own_scores_check' || inputs.check == 'projection_by_stat' || inputs.check == 'weather_study' || inputs.check == 'projection_trace' || inputs.check == 'seed_owner_profiles'
+      - if: inputs.check == 'start_sit_grade' || inputs.check == 'practice_test' || inputs.check == 'weekly_cards' || inputs.check == 'projection_accuracy' || inputs.check == 'projection_calibration' || inputs.check == 'win_odds_study' || inputs.check == 'trade_backtest' || inputs.check == 'answer_eval' || inputs.check == 'own_scores_check' || inputs.check == 'projection_by_stat' || inputs.check == 'weather_study' || inputs.check == 'projection_trace' || inputs.check == 'seed_owner_profiles' || inputs.check == 'save_scoring'
         run: pip install -r api/requirements.txt
       - if: inputs.check == 'live_projection_study'
         run: pip install pyarrow numpy
@@ -41,6 +41,7 @@ jobs:
             odds_trial) python -m league_ai.odds_trial ;;
             # one time: today's team names and Sleeper pictures become each owner's default profile, stored by us
             seed_owner_profiles) python -m scripts.seed_owner_profiles ;;
+            save_scoring) python -m scripts.save_scoring ;;
             odds_grade) python -m league_ai.matchup_odds ;;
             start_sit_grade) python -m league_ai.start_sit_grade ;;
             practice_test) python -m league_ai.practice_test ;;
