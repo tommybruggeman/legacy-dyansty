@@ -67,7 +67,7 @@ def nfl_line(row: dict[str, Any] | None, pos: str) -> dict[str, Any] | None:
     line = {
         "carries": _int(row.get("carries")), "rush_yds": _int(row.get("rushing_yards")), "rush_td": _int(row.get("rushing_tds")),
         "targets": _int(row.get("targets")), "rec": _int(row.get("receptions")), "rec_yds": _int(row.get("receiving_yards")),
-        "rec_td": _int(row.get("receiving_tds")), "snap_pct": snap_pct(row),
+        "rec_td": _int(row.get("receiving_tds")), "fum": _int(row.get("fumbles_lost")), "snap_pct": snap_pct(row),
     }
     if pos == "QB":
         line.update({
@@ -82,6 +82,7 @@ SLEEPER_TO_NFL = {
     "pass_cmp": "completions", "pass_att": "attempts", "pass_yd": "passing_yards", "pass_td": "passing_tds", "pass_int": "interceptions",
     "rush_att": "carries", "rush_yd": "rushing_yards", "rush_td": "rushing_tds",
     "rec_tgt": "targets", "rec": "receptions", "rec_yd": "receiving_yards", "rec_td": "receiving_tds",
+    "fum_lost": "fumbles_lost",
 }
 
 
@@ -229,6 +230,77 @@ def season_tiles(nfl_rows: list[dict[str, Any]], pos: str) -> dict[str, Any] | N
         last = sum(recent) / len(recent)
         trend = "up" if last >= avg + 5 else "down" if last <= avg - 5 else None
     return {"games": len(games), "tiles": tiles, "snap_pct": avg, "snap_trend": trend}
+
+
+# Option 1 stat card: four numbers per position, per game and season total, ranked among NFL players at the position.
+RANK_MIN_GAMES = 3
+RANK_STATS: dict[str, list[tuple[str, str, tuple[str, ...], bool]]] = {
+    # key, label, columns summed, lower is better
+    "QB": [("pass_yds", "pass yds", ("passing_yards",), False), ("pass_td", "pass TDs", ("passing_tds",), False),
+           ("ints", "INTs", ("interceptions",), True), ("rush_yds", "rush yds", ("rushing_yards",), False)],
+    "RB": [("rush_yds", "rush yds", ("rushing_yards",), False), ("rec", "catches", ("receptions",), False),
+           ("rec_yds", "rec yds", ("receiving_yards",), False), ("td", "TDs", ("rushing_tds", "receiving_tds"), False)],
+    "WR": [("rec", "catches", ("receptions",), False), ("rec_yds", "rec yds", ("receiving_yards",), False),
+           ("targets", "targets", ("targets",), False), ("td", "TDs", ("rushing_tds", "receiving_tds"), False)],
+}
+RANK_STATS["TE"] = RANK_STATS["WR"]
+RANK_COLUMNS = sorted({c for defs in RANK_STATS.values() for _, _, cols, _ in defs for c in cols})
+
+
+def stat_totals(rows: Iterable[dict[str, Any]], pos: str) -> tuple[int, dict[str, float]]:
+    """Games and season totals for the position's four stats."""
+    games = [r for r in rows if r.get("week") is not None]
+    return len(games), {key: sum(_n(r.get(c)) for r in games for c in cols) for key, _, cols, _ in RANK_STATS.get(pos, [])}
+
+
+def position_pool(client: Any, season: int, pos: str) -> list[dict[str, Any]]:
+    """Every NFL player at the position this season with RANK_MIN_GAMES+ games: sleeper_id, games, totals. Shared for 6 hours."""
+    def load() -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for start in range(0, 20000, 1000):
+            chunk = (client.table("nfl_player_stats").select(",".join(["gsis_id", "sleeper_id", "week", *RANK_COLUMNS]))
+                     .eq("season", season).eq("season_type", "REG").eq("position", pos)
+                     .order("gsis_id").order("week").range(start, start + 999).execute().data or [])
+            rows.extend(chunk)
+            if len(chunk) < 1000:
+                break
+        by_player: dict[str, list[dict[str, Any]]] = {}
+        for r in rows:
+            by_player.setdefault(str(r.get("gsis_id")), []).append(r)
+        pool = []
+        for player_rows in by_player.values():
+            games, totals = stat_totals(player_rows, pos)
+            if games >= RANK_MIN_GAMES:
+                pool.append({"sleeper_id": str(player_rows[0].get("sleeper_id") or ""), "games": games, "totals": totals})
+        return pool
+    return cache.cached(("pos_pool", season, pos), 21600, load)
+
+
+def ranked_stats(nfl_rows: list[dict[str, Any]], pos: str, pool: list[dict[str, Any]], player_id: str) -> dict[str, Any] | None:
+    """His four stats per game and for the season, each with his rank among the pool (1 = best).
+
+    He is ranked against everyone else in the pool, so a player under the games cutoff still gets a rank.
+    """
+    defs = RANK_STATS.get(pos)
+    games, totals = stat_totals(nfl_rows, pos)
+    if not defs or not games:
+        return None
+    others = [p for p in pool if p["sleeper_id"] != str(player_id)]
+    size = len(others) + 1
+
+    def rank(mine: float, theirs: list[float], lower: bool) -> int:
+        return 1 + sum(1 for v in theirs if (v < mine if lower else v > mine))
+
+    stats = []
+    for key, label, _, lower in defs:
+        total, per_game = totals[key], totals[key] / games
+        stats.append({
+            "key": key, "label": label, "lower_better": lower,
+            "total": round(total), "per_game": round(per_game, 1),
+            "rank_total": rank(total, [p["totals"][key] for p in others], lower) if others else None,
+            "rank_per_game": rank(per_game, [p["totals"][key] / p["games"] for p in others], lower) if others else None,
+        })
+    return {"games": games, "pool": size if others else None, "min_games": RANK_MIN_GAMES, "stats": stats}
 
 
 def league_ranks(weeks: Iterable[list[dict[str, Any]]], positions: dict[str, str]) -> dict[str, dict[str, Any]]:
@@ -444,6 +516,76 @@ def health(
     }
 
 
+PLAYED = ("started", "bench", "free_agent")
+IR_STATUSES = {"ir", "injured reserve", "pup", "pup-r"}
+IR_MIN_GAMES = 4
+
+
+def _games_later(game_weeks: list[int], first: int, n: float) -> int | None:
+    """The week of his team's game after missing n games, counting from `first` (byes skipped)."""
+    ahead = [w for w in game_weeks if w >= first]
+    k = max(0, int(round(n)))
+    return ahead[k] if k < len(ahead) else None
+
+
+def injury_report(h: dict[str, Any], log: list[dict[str, Any]], schedule: dict[int, dict[str, Any]],
+                  espn: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The labelled rows of the player page's injury report: when he got hurt, games missed so far,
+    the earliest week IR allows him back and the week range players like him usually return.
+
+    log is the game log (newest first). Only built for a player with an injury tag.
+    """
+    if h.get("healthy"):
+        return None
+    missed: list[int] = []
+    hurt = None
+    for g in log:  # newest first: the run of missed games back to his last game
+        if g.get("status") == "bye" or g.get("live"):
+            continue
+        if g.get("status") == "out":
+            missed.append(int(g["week"]))
+            continue
+        if g.get("status") in PLAYED:
+            hurt = {"week": int(g["week"]), "opp": g.get("opp") or None}
+        break
+    missed.sort()
+    game_weeks = sorted(schedule)
+    last_logged = max((int(g["week"]) for g in log), default=0)
+    first_out = missed[0] if missed else next((w for w in game_weeks if w > last_logged), None)
+    on_ir = str(h.get("status") or "").strip().lower() in IR_STATUSES
+    eligible = _games_later(game_weeks, first_out, IR_MIN_GAMES) if on_ir and first_out else None
+    est = h.get("estimate") or None
+    estimate = None
+    if est and first_out and est.get("p25") is not None and est.get("p75") is not None:
+        if len(missed) > float(est["p75"]):
+            estimate = {"past_usual": True}
+        else:
+            lo = _games_later(game_weeks, first_out, float(est["p25"]))
+            hi = _games_later(game_weeks, first_out, float(est["p75"]))
+            next_game = next((w for w in game_weeks if w > last_logged), None)
+            if lo and next_game:
+                lo = max(lo, next_game)
+            if lo and eligible:
+                lo = max(lo, eligible)
+            if hi and lo:
+                hi = max(hi, lo)
+            estimate = {"weeks": [lo, hi]} if lo else None
+    espn = espn or {}
+    detail = " ".join(x for x in (_text(espn.get("side")), _text(espn.get("detail"))) if x and x.lower() != "not specified") or None
+    news = None
+    if _text(espn.get("short_comment")):
+        news = {"text": _text(espn.get("short_comment")), "date": (_text(espn.get("reported_at")) or "")[:10] or None}
+    return {
+        "hurt": hurt,
+        "missed_weeks": missed,
+        "on_ir": on_ir,
+        "eligible_week": eligible,
+        "estimate": estimate,
+        "detail": detail,
+        "news": news,
+    }
+
+
 def injury_name(meta: dict[str, Any], espn: dict[str, Any] | None, practice: list[dict[str, Any]]) -> str | None:
     """The body part to compare against past absences: this week's report first, then ESPN, then Sleeper."""
     latest = practice[0] if practice else {}
@@ -461,6 +603,8 @@ def injury_estimate(episodes: list[dict[str, Any]], pos: str, injury: str | None
         "injury": injury,
         "median_games": med,
         "range": typical["middle_half"],
+        "p25": typical.get("p25"),
+        "p75": typical.get("p75"),
         "absences": typical["absences"],
         "scope": typical["scope"],
         "text": f"{injury.capitalize()}: usually {med:g} game{'' if med == 1 else 's'} out ({typical['middle_half']}) across {typical['absences']} {typical['scope']}",
@@ -489,7 +633,7 @@ def load_nfl_rows(client: Any, player_id: str, season: int) -> list[dict[str, An
 
 
 def load_espn(client: Any, player_id: str) -> dict[str, Any] | None:
-    rows = _safe(lambda: client.table("nfl_injuries").select("status,injury_type,short_comment,return_date").eq("sleeper_id", player_id).limit(1).execute().data or [], [])
+    rows = _safe(lambda: client.table("nfl_injuries").select("status,injury_type,detail,side,short_comment,return_date,reported_at").eq("sleeper_id", player_id).limit(1).execute().data or [], [])
     return rows[0] if rows else None
 
 
@@ -558,6 +702,7 @@ def page_extras(
         "episodes": lambda: load_episodes(client, player_id),
         "history": lambda: load_history(client, league_id, player_id),
         "ranks": lambda: _safe(lambda: load_ranks(client, league_id, sleeper_id, last_week, player_info), {}),
+        "pool": lambda: _safe(lambda: position_pool(client, season, pos), []) if pos in RANK_STATS else [],
         "dvp": lambda: _safe(lambda: defense_vs_position(client, season), {}) if pos in DVP_POSITIONS else {},
         "week_ranks": lambda: weekly_ranks(sleeper_id, season, last_week, player_id, pos, open_weeks),
     }
@@ -588,6 +733,8 @@ def page_extras(
     if _text(meta.get("injury_status")) or _text((got["espn"] or {}).get("status")):
         injury = _safe(lambda: injury_name(meta, got["espn"], got["practice"] or []), None)
         estimate = _safe(lambda: injury_estimate(load_injury_episodes(client, injury), pos, injury), None) if injury else None
+    h = health(meta, got["espn"], got["practice"] or [], got["episodes"] or [], season, estimate, got["practice_days"] or [])
+    h["report"] = _safe(lambda: injury_report(h, log, schedule_by_week(games, team) if team else {}, got["espn"]), None)
     scored = [w["points"] for w in league_weeks if w.get("points")]
     best = max((g for g in done if g.get("points") is not None and g["status"] in ("started", "bench")), key=lambda g: g["points"], default=None)
     ppg = sum(scored) / len(scored) if scored else None
@@ -597,6 +744,7 @@ def page_extras(
     return {
         "bye_week": bye,
         "nfl_season": season_tiles(nfl_rows, pos),
+        "nfl_ranked": _safe(lambda: ranked_stats(nfl_rows, pos, got["pool"] or [], player_id), None),
         "league_season": {
             "ppg": round(ppg, 1) if ppg is not None else None,
             "ppg_started": _avg([g["points"] for g in done if g["status"] == "started" and g["points"] is not None]),
@@ -609,7 +757,7 @@ def page_extras(
         "game_log": log,
         "live": bool(live),
         "next_game": upcoming,
-        "health": health(meta, got["espn"], got["practice"] or [], got["episodes"] or [], season, estimate, got["practice_days"] or []),
+        "health": h,
         "history": contract_history(got["history"] or [], years_left),
     }
 
