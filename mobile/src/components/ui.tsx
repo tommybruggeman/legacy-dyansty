@@ -55,13 +55,13 @@ export function Back({ label }: { label: string }) {
   );
 }
 
-export function Title({ children, eyebrow, right, badge }: { children: ReactNode; eyebrow?: string; right?: ReactNode; badge?: ReactNode }) {
+export function Title({ children, eyebrow, right, badge }: { children?: ReactNode; eyebrow?: string; right?: ReactNode; badge?: ReactNode }) {
   return (
     <View style={styles.titleRow}>
       <View style={styles.flex}>
         {eyebrow ? <Text style={styles.eyebrow}>{eyebrow}</Text> : null}
         <View style={styles.titleLine}>
-          <Text style={[styles.title, styles.titleShrink]} numberOfLines={1}>{children}</Text>
+          {children != null ? <Text style={[styles.title, styles.titleShrink]} numberOfLines={1}>{children}</Text> : null}
           {badge}
         </View>
       </View>

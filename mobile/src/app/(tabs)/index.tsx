@@ -422,11 +422,7 @@ function GameDay({ data }: { data: HomeData }) {
     );
   }
 
-  const ahead = g.me.score >= (g.them?.score ?? 0);
   if (data.weekday === 0 && !g.is_final) {
-    const still = [...mine.filter((p) => p.status !== 'final' && p.player_id && p.status !== 'bye').map((p) => ({ ...p, side: 'You' })),
-      ...theirs.filter((p) => p.status !== 'final' && p.player_id && p.status !== 'bye').map((p) => ({ ...p, side: teamLabel(g.them ?? {}, true) }))];
-    const gap = Math.abs(g.me.score - (g.them?.score ?? 0));
     // Every starter on both sides has played (the week itself may still have MNF games left in other matchups).
     const done = mine.length > 0 && left(mine) === 0 && left(theirs) === 0;
     return (
@@ -437,21 +433,6 @@ function GameDay({ data }: { data: HomeData }) {
           pill={done ? <Pill label="FINAL" tone="gold" /> : <LivePill data={data} label="MNF" waiting="MNF TONIGHT" />}
           done={done}
         />
-        {still.length ? (
-          <Card>
-            <Eyebrow>STILL TO PLAY</Eyebrow>
-            <View style={styles.heads}>
-              {still.slice(0, 4).map((p, i) => (
-                <View key={`${p.player_id}-${i}`} style={styles.head}>
-                  <Headshot playerId={p.player_id} pos={p.pos} team={p.team} ring={p.side === 'You' ? 'gold' : 'them'} size={56} />
-                  <Text style={styles.headName} numberOfLines={1}>{shortName(p.name)}</Text>
-                  <Text style={styles.headSub} numberOfLines={1}>{p.side} · {p.status === 'playing' ? pts(p.points) : KICK(p.kickoff)}</Text>
-                </View>
-              ))}
-            </View>
-            {g.them ? <Text style={styles.needs}>{ahead ? `${teamLabel(g.them, true)} needs ${pts(gap)} to pass you` : `You need ${pts(gap)} to win`}</Text> : null}
-          </Card>
-        ) : null}
         {data.bottom?.mode === 'shotgun' && data.bottom.scoreboard?.length ? <Scoreboard games={data.bottom.scoreboard} week={data.week} /> : null}
         {data.bottom ? <GameDayBottom bottom={data.bottom} week={data.week} /> : <Race rows={data.race ?? []} title="TOP 5 RACE" window="bubble" />}
         <AskBar placeholder="What do I need tonight?" />

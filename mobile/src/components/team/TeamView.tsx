@@ -48,7 +48,8 @@ export function TeamView({ team, eyebrow, badge, top, onChange }: { team: TeamPa
   }
   return (
     <>
-      <Title eyebrow={eyebrow} badge={badge}>{team.team_name}</Title>
+      {/* My Team: no team name on top, just the portal label (and the pending trades badge). */}
+      <Title eyebrow={eyebrow} badge={badge} />
       {top}
       <TopTiles team={team} tab={tab} />
       <UnderlineTabs value={tab} onChange={setTab} />
