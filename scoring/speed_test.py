@@ -39,7 +39,8 @@ ESPN = espn_feed.ESPN
 SLEEPER = "https://api.sleeper.app"
 LEGACY_SLEEPER_ID = "1361083066197491712"
 KEEP = {"QB", "RB", "WR", "TE", "K"}
-BIG = 4.0  # a points change this big is a touchdown-sized play
+BIG = 4.0
+LANES = (("machine", 0), ("free", 10000))  # live_stat_lines season offset per watcher lane (scripts/live_watcher.SEASON_OFFSET)  # a points change this big is a touchdown-sized play
 
 
 class Meter:
@@ -181,14 +182,16 @@ def run(wait: float, minutes: float, every: float, smoke: bool = False) -> tuple
     del week_rows
 
     start = time.time()
-    espn_h, ours_h, sleeper_h = History(start), History(start), History(start)
+    espn_h, sleeper_h = History(start), History(start)
+    lane_hist = {lane: History(start) for lane, _ in LANES}
+    saves: dict[str, dict[str, str]] = {lane: {} for lane, _ in LANES}
+    save_count: dict[str, int] = defaultdict(int)
+    row_ages: dict[str, list[float]] = defaultdict(list)
+    errors: dict[str, int] = defaultdict(int)
     events: list[dict[str, Any]] = []
     seen_play: set[str] = set()
     espn_prev: dict[str, float] | None = None
     espn_games: dict[str, dict[str, Any]] = {}
-    saves: dict[str, str] = {}
-    save_count = 0
-    heartbeat_ages: list[float] = []
     loops = 0
     cpu0 = time.process_time()
     end = start + minutes * 60
@@ -200,7 +203,7 @@ def run(wait: float, minutes: float, every: float, smoke: bool = False) -> tuple
         board = meter.get("espn", f"{ESPN}/scoreboard") or board
         games = espn_feed.games(board)
         live_ids = [g["id"] for g in games if g["state"] == "in" or (smoke and g["state"] == "post")][: 2 if smoke else None]
-        tracked = [g["id"] for g in games if g["id"] in live_ids or g["id"] in saves]
+        tracked = [g["id"] for g in games if g["id"] in live_ids or any(g["id"] in v for v in saves.values())]
         if not live_ids:
             ended_at = ended_at or time.time()
             if time.time() - ended_at > 600:  # 10 minutes after the last whistle, for late feeds to settle
@@ -238,38 +241,44 @@ def run(wait: float, minutes: float, every: float, smoke: bool = False) -> tuple
             espn_h.update(t_espn, espn_pts)
             espn_prev = espn_pts
 
-        # 2) Ours: the rows the watcher saved, as the server reads them.
-        t_ours = time.time()
-        try:
-            rows = (client.table("live_stat_lines").select("game_id,lines,updated_at").eq("season", season).eq("week", week)
-                    .in_("game_id", tracked + ["_watcher"]).execute().data or [])
-            meter.bytes["supabase"] += len(json.dumps(rows))
-            meter.calls["supabase"] += 1
-        except Exception as exc:
-            print(f"[speed] supabase read failed: {type(exc).__name__}", flush=True)
-            rows = None
-        if rows is not None:
+        # 2) Ours: the rows each watcher saved, as the server reads them (machine = live lane; free = Cloud Run test lane).
+        for lane, offset in LANES:
+            t_ours = time.time()
+            try:
+                rows = (client.table("live_stat_lines").select("game_id,lines,updated_at").eq("season", season + offset).eq("week", week)
+                        .in_("game_id", tracked + ["_watcher"]).execute().data or [])
+                meter.bytes["supabase"] += len(json.dumps(rows))
+                meter.calls["supabase"] += 1
+            except Exception as exc:
+                print(f"[speed] supabase read failed: {type(exc).__name__}", flush=True)
+                errors[lane] += 1
+                continue
             our_lines: dict[str, dict[str, Any]] = {}
             for row in rows:
                 gid, stamp = str(row.get("game_id")), str(row.get("updated_at") or "")
                 if gid == "_watcher":
                     continue
-                if gid in live_ids or gid in saves:
-                    if saves.get(gid) not in (None, stamp):
-                        save_count += 1
-                    saves[gid] = stamp
+                if gid in live_ids or gid in saves[lane]:
+                    if saves[lane].get(gid) not in (None, stamp):
+                        save_count[lane] += 1
+                    saves[lane][gid] = stamp
                 our_lines.update(row.get("lines") or {})
-            newest = max((str(r.get("updated_at") or "") for r in rows), default="")
-            try:
-                heartbeat_ages.append(t_ours - datetime.fromisoformat(newest.replace("Z", "+00:00")).timestamp())
-            except ValueError:
-                pass
-            ours_h.update(t_ours, scored(our_lines, scoring))
+            game_rows = [r for r in rows if str(r.get("game_id")) != "_watcher"]
+            newest = max((str(r.get("updated_at") or "") for r in game_rows), default="")
+            if newest and live_ids:
+                try:
+                    row_ages[lane].append(t_ours - datetime.fromisoformat(newest.replace("Z", "+00:00")).timestamp())
+                except ValueError:
+                    pass
+            if game_rows or lane_hist[lane].began is not None:
+                lane_hist[lane].update(t_ours, scored(our_lines, scoring))
 
         # 3) Sleeper's public stat lines (every player in the week; only changes matter).
         t_sl = time.time()
         sl_rows = meter.get("sleeper", f"{SLEEPER}/stats/nfl/{season}/{week}?{query}", timeout=20)
-        if sl_rows is not None:
+        if sl_rows is None:
+            errors["sleeper"] += 1
+        else:
             sl_lines = {}
             for row in sl_rows:
                 pid = str(row.get("player_id") or "")
@@ -281,12 +290,12 @@ def run(wait: float, minutes: float, every: float, smoke: bool = False) -> tuple
         time.sleep(max(0.0, every - (time.time() - began)))
 
     # Time every ESPN points change in each source against the play's wallclock.
-    lag = {"espn": [], "ours": [], "sleeper": []}
-    lag_big = {"espn": [], "ours": [], "sleeper": []}
-    missed = {"ours": 0, "sleeper": 0}
-    missed_big = {"ours": 0, "sleeper": 0}
-    ours_vs_espn: list[float] = []
-    sleeper_known = 0
+    sources = [("espn", None)] + [(lane, lane_hist[lane]) for lane, _ in LANES] + [("sleeper", sleeper_h)]
+    lag: dict[str, list[float]] = defaultdict(list)
+    lag_big: dict[str, list[float]] = defaultdict(list)
+    missed: dict[str, int] = defaultdict(int)
+    missed_big: dict[str, int] = defaultdict(int)
+    vs_espn: dict[str, list[float]] = defaultdict(list)
     rows_out = []
     for e in events:
         big = abs(e["new"] - e["old"]) >= BIG
@@ -296,14 +305,12 @@ def run(wait: float, minutes: float, every: float, smoke: bool = False) -> tuple
         lag["espn"].append(d_espn)
         if big:
             lag_big["espn"].append(d_espn)
-        row = {"delta": round(e["new"] - e["old"], 2), "espn": round(d_espn, 1)}
+        row = {"delta": round(e["new"] - e["old"], 2), "espn": round(d_espn, 1), "t": round(e["wall"] - start)}
         since = e["wall"] - 1
-        for name, hist in (("ours", ours_h), ("sleeper", sleeper_h)):
-            if hist.at(e["pid"], since) is None:
+        for name, hist in sources[1:]:
+            if hist.began is None or hist.at(e["pid"], since) is None:
                 continue
             hit = hist.crossed(e["pid"], since, e["old"], e["new"])
-            if name == "sleeper":
-                sleeper_known += 1
             if hit is None:
                 missed[name] += 1
                 if big:
@@ -315,38 +322,63 @@ def run(wait: float, minutes: float, every: float, smoke: bool = False) -> tuple
             if big:
                 lag_big[name].append(d)
             row[name] = round(d, 1)
-            if name == "ours":
-                ours_vs_espn.append(hit - e["espn"])
+            vs_espn[name].append(hit - e["espn"])
         rows_out.append(row)
 
+    # Stalls: the longest stretch a source showed nothing new while ESPN's feed kept changing (feed frozen or late).
+    def stalls(name: str) -> tuple[float, int]:
+        times = sorted({r["t"] for r in rows_out})
+        changed = sorted(start + r["t"] + (r[name] or 0) for r in rows_out if r.get(name) is not None)
+        longest, frozen = 0.0, 0
+        last = start
+        for c in changed + [time.time()]:
+            gap = c - last
+            busy = sum(1 for t in times if last <= start + t < c)
+            if busy >= 3:
+                longest = max(longest, gap)
+                frozen += 1 if gap > 180 else 0
+            last = c
+        return longest, frozen
+
     elapsed_h = max((time.time() - start) / 3600, 1e-9)
+    label = {"espn": "ESPN read directly", "machine": "OURS, machine watcher (live lane)",
+             "free": "OURS, Cloud Run free watcher (test lane)", "sleeper": "Sleeper stat feed as supplier"}
     out.append(f"  ran {elapsed_h * 60:.0f} min, {loops} polls, {len(events)} player points changes in ESPN's feed")
     out.append("All points changes (seconds after the real play):")
-    out.append(summary_line("ESPN feed", lag["espn"], 0))
-    out.append(summary_line("OUR scores (watcher -> saved lines)", lag["ours"], missed["ours"]))
-    out.append(summary_line("Sleeper", lag["sleeper"], missed["sleeper"]))
+    for name, hist in sources:
+        if name != "espn" and hist.began is None:
+            out.append(f"  {label[name]}: no data (lane not running)")
+            continue
+        out.append(summary_line(label[name], lag[name], missed[name]))
     out.append(f"Touchdown-sized changes ({BIG:g}+ pts):")
-    out.append(summary_line("ESPN feed", lag_big["espn"], 0))
-    out.append(summary_line("OUR scores", lag_big["ours"], missed_big["ours"]))
-    out.append(summary_line("Sleeper", lag_big["sleeper"], missed_big["sleeper"]))
-    if ours_vs_espn:
-        out.append(f"  ours vs this test's own ESPN read: median {median(ours_vs_espn):+.0f}s, 90th pct {pct(ours_vs_espn, 0.9):+.0f}s "
-                   f"(our watcher + database step; negative = watcher saw it first)")
-    last_espn = {pid: hist[-1][1] for pid, hist in espn_h.h.items() if hist}
-    last_ours = {pid: hist[-1][1] for pid, hist in ours_h.h.items() if hist}
-    both = [pid for pid in last_espn if pid in last_ours and (last_espn[pid] or last_ours[pid])]
-    same = sum(1 for pid in both if abs(last_espn[pid] - last_ours[pid]) < 0.02)
-    out.append(f"  at the end, our saved points equal ESPN-derived points for {same}/{len(both)} players")
-    if heartbeat_ages:
-        out.append(f"  newest saved row age while live: median {median(heartbeat_ages):.0f}s, worst {max(heartbeat_ages):.0f}s")
-    out.append(f"  watcher saves of the tracked game rows: {save_count} ({save_count / elapsed_h:.0f}/hour)")
+    for name, hist in sources:
+        if name == "espn" or hist.began is not None:
+            out.append(summary_line(label[name], lag_big[name], missed_big[name]))
+    out.append("Reliability:")
+    for name, hist in sources[1:]:
+        if hist.began is None:
+            continue
+        longest, frozen = stalls(name)
+        extra = ""
+        if vs_espn[name]:
+            extra = f"; vs a direct ESPN read: median {median(vs_espn[name]):+.0f}s, 90th pct {pct(vs_espn[name], 0.9):+.0f}s"
+        out.append(f"  {label[name]}: {missed[name]} changes never showed, {errors[name]} failed reads, longest freeze during play "
+                   f"{longest:.0f}s, {frozen} freezes over 3 min{extra}")
+        if name in dict(LANES):
+            last_espn = {pid: h[-1][1] for pid, h in espn_h.h.items() if h}
+            last_ours = {pid: h[-1][1] for pid, h in hist.h.items() if h}
+            both = [pid for pid in last_espn if pid in last_ours and (last_espn[pid] or last_ours[pid])]
+            same = sum(1 for pid in both if abs(last_espn[pid] - last_ours[pid]) < 0.02)
+            ages = row_ages.get(name) or []
+            out.append(f"    final points equal ESPN-derived for {same}/{len(both)} players; saves {save_count[name] / elapsed_h:.0f}/hour"
+                       + (f"; newest row age median {median(ages):.0f}s, worst {max(ages):.0f}s" if ages else ""))
     out.append("Cost of this test's reads (per hour):")
     for name in ("espn", "sleeper", "supabase"):
         out.append(f"  {name}: {meter.bytes[name] / 1e6 / elapsed_h:.0f} MB/hour over {meter.calls[name]} calls")
     cpu = time.process_time() - cpu0
     out.append(f"  CPU {cpu / elapsed_h:.0f} s/hour; peak memory {resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024:.0f} MB")
     data = {"season": season, "week": week, "rules": rules_from, "events": rows_out, "week_rows_kb": round(week_bytes / 1e3),
-            "saves_per_hour": round(save_count / elapsed_h), "hours": round(elapsed_h, 2),
+            "saves_per_hour": {k: round(v / elapsed_h) for k, v in save_count.items()}, "hours": round(elapsed_h, 2),
             "bytes_per_hour": {k: round(v / elapsed_h) for k, v in meter.bytes.items()}}
     return out, data
 

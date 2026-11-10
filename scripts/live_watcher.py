@@ -1,7 +1,9 @@
 """Game-day live stats watcher: one small loop that keeps every league's live scores current, for free.
 
-Every INTERVAL seconds it reads ESPN's free NFL scoreboard (one small call covers every game). Only when a game
-changed (new play, score, clock or state) does it download that game's summary and rebuild its players' stat
+Every INTERVAL seconds it reads ESPN's free NFL scoreboard (one small call covers every game). It downloads a game's
+summary when the game changed (new play, score, clock or state) and, for live games, at least every SUMMARY_EVERY
+seconds anyway (the scoreboard can trail the summary by a few seconds, which made our scores ~15 s slower than ESPN's
+own feed in the 2026-11-09 speed test) and rebuild its players' stat
 lines (scoring/espn_feed.py). It saves only the games that changed (one row per game in live_stat_lines), which
 the server scores with our engine for every league and every owner (api/live_stats.py). Phones never call ESPN.
 
@@ -10,8 +12,9 @@ Runs as the main watcher on a free Google e2-micro (deploy/live-watcher/), with 
 
 Prints counts only (the repo and its Actions logs are public): no player, team or owner names.
 
-Environment: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY; ROLE (main | backup, default main); INTERVAL (seconds,
-default 5); MAX_MINUTES (0 = run forever, the e2-micro default).
+Environment: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY; ROLE (main | backup | cloudrun, default main); INTERVAL (seconds,
+default 5); SUMMARY_EVERY (seconds, default 5; 0 = only on scoreboard changes); MAX_MINUTES (0 = run forever, the
+e2-micro default); SEASON_OFFSET (default 0; a test lane saves under season + offset, which the app never reads).
 """
 from __future__ import annotations
 
@@ -94,6 +97,7 @@ class Watcher:
         self.week: tuple[int, int] | None = None
         self.saved: dict[str, str] = {}  # game id -> digest of what was last saved
         self.beat = 0.0
+        self.fetched: dict[str, float] = {}  # game id -> when its summary was last downloaded
         self.counts = {"saves": 0, "summaries": 0, "standby": 0, "errors": 0, "unmatched": 0}
 
     def ids(self) -> espn_feed.IdMap:
@@ -114,7 +118,7 @@ class Watcher:
         return self.idmap
 
     def main_is_saving(self, season: int, week: int) -> bool:
-        rows = (self.client.table(TABLE).select("source,updated_at").eq("season", season).eq("week", week)
+        rows = (self.client.table(TABLE).select("source,updated_at").eq("season", season + SEASON_OFFSET).eq("week", week)
                 .order("updated_at", desc=True).limit(1).execute().data or [])
         if not rows or rows[0].get("source") != "main":
             return False
@@ -144,8 +148,11 @@ class Watcher:
             return 30
         idmap = self.ids()
         for g in games:
-            if g["state"] == "pre" or self.versions.get(g["id"]) == g["version"]:
+            changed = self.versions.get(g["id"]) != g["version"]
+            due = g["state"] == "in" and SUMMARY_EVERY > 0 and time.time() - self.fetched.get(g["id"], 0) >= SUMMARY_EVERY - 0.5
+            if g["state"] == "pre" or not (changed or due):
                 continue
+            self.fetched[g["id"]] = time.time()
             try:
                 summary = self.feed.get(f"{espn_feed.ESPN}/summary?event={g['id']}")
             except Exception:
@@ -166,20 +173,22 @@ class Watcher:
             if digest == self.saved.get(g["id"]):
                 continue
             self.client.table(TABLE).upsert({
-                "season": season, "week": week, "game_id": g["id"], "lines": self.game_lines[g["id"]], "games": game_state,
+                "season": season + SEASON_OFFSET, "week": week, "game_id": g["id"], "lines": self.game_lines[g["id"]], "games": game_state,
                 "source": self.role, "updated_at": _now().isoformat(),
             }, on_conflict="season,week,game_id").execute()
             self.counts["saves"] += 1
             self.saved[g["id"]] = digest
             self.beat = time.time()
         if self.role == "main" and time.time() - self.beat > HEARTBEAT:
-            self.client.table(TABLE).upsert({"season": season, "week": week, "game_id": "_watcher", "source": "main",
+            self.client.table(TABLE).upsert({"season": season + SEASON_OFFSET, "week": week, "game_id": "_watcher", "source": "main",
                                              "updated_at": _now().isoformat()}, on_conflict="season,week,game_id").execute()
             self.beat = time.time()
         return INTERVAL if live else NAP
 
 
 INTERVAL = float(os.getenv("INTERVAL", "5"))
+SUMMARY_EVERY = float(os.getenv("SUMMARY_EVERY", "5"))
+SEASON_OFFSET = int(os.getenv("SEASON_OFFSET", "0"))
 
 
 def main() -> int:
@@ -202,6 +211,8 @@ def main() -> int:
             print(f"WATCH_ERROR {type(exc).__name__}", flush=True)
             wait = 30
         passes += 1
+        if role == "cloudrun" and wait >= LONG_NAP:
+            break  # started by a timer: nothing on within the hour, so stop now instead of napping on the clock
         if passes % 120 == 0:
             hours = max((time.time() - started_at) / 3600, 1e-9)
             print(f"pass {passes}: {watcher.counts}; {feed.calls} calls, {feed.bytes / hours / 1e6:.0f} MB/hour", flush=True)

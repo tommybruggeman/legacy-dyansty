@@ -1,0 +1,80 @@
+name: Live stats watcher on Cloud Run (free test lane)
+
+# The free alternative to the e2-micro: the same watcher (scripts/live_watcher.py) as a Cloud Run job that Google's
+# own timer (Cloud Scheduler) starts every 5 minutes during game windows. Each run watches for 5.5 minutes, so runs
+# overlap by 30 s and there's no gap while the next one starts. Cloud Run needs no public IP of its own, so nothing
+# is billed beyond the free tier.
+#
+# Test lane: it saves under season + 10000 (SEASON_OFFSET), which the app never reads, so it can run beside the
+# machine watcher and the speed test can compare the two (scoring/speed_test.py).
+on:
+  workflow_dispatch:
+    inputs:
+      schedule:
+        description: Cloud Scheduler cron (UTC) for the timer. Default = Thursday night games (Fri 00:00-04:55 UTC)
+        default: "*/5 0-4 * * 5"
+      offset:
+        description: SEASON_OFFSET (10000 = test lane; 0 = live, the app reads it)
+        default: "10000"
+  push:
+    branches: [claude/speed-test]
+    paths: [.github/workflows/live-watcher-cloudrun.yml]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PROJECT: legacy-dynasty-25024
+      REGION: us-central1
+      JOB: legacy-live-watcher
+      TIMER: legacy-live-watcher-tick
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Build image
+        # Its own image name, so the API image cleanup (keep the 2 newest per image) never removes it.
+        run: |
+          IMG="$REGION-docker.pkg.dev/$PROJECT/legacy/legacy-watcher:${GITHUB_SHA::7}"
+          echo "IMG=$IMG" >> "$GITHUB_ENV"
+          cp api/Dockerfile Dockerfile
+          gcloud builds submit --project "$PROJECT" --tag "$IMG" --suppress-logs
+      - name: Job
+        run: |
+          SA=$(gcloud compute project-info describe --project "$PROJECT" --format 'value(defaultServiceAccount)')
+          echo "SA=$SA" >> "$GITHUB_ENV"
+          # A quarter CPU is plenty (the watcher used under 1 CPU-minute per hour on a 9-game Sunday) and keeps a full
+          # season of game days well inside Cloud Run's free monthly CPU allowance. Falls back if a smaller size is refused.
+          for CPU in 0.25 0.5 1; do
+            if gcloud run jobs deploy "$JOB" --project "$PROJECT" --region "$REGION" --image "$IMG" \
+              --command python --args scripts/live_watcher.py \
+              --set-env-vars "ROLE=cloudrun,MAX_MINUTES=5.5,INTERVAL=5,SUMMARY_EVERY=5,SEASON_OFFSET=${{ inputs.offset || '10000' }}" \
+              --set-secrets "SUPABASE_URL=legacy-supabase-url:latest,SUPABASE_SERVICE_ROLE_KEY=legacy-supabase-service-key:latest" \
+              --service-account "$SA" --cpu "$CPU" --memory 512Mi --task-timeout 7m --max-retries 0 --tasks 1 --quiet; then
+              echo "job deployed with $CPU CPU"; break
+            fi
+          done
+          gcloud run jobs add-iam-policy-binding "$JOB" --project "$PROJECT" --region "$REGION" \
+            --member "serviceAccount:$SA" --role roles/run.invoker >/dev/null
+      - name: Timer
+        run: |
+          gcloud services enable cloudscheduler.googleapis.com --project "$PROJECT" || true
+          URI="https://run.googleapis.com/v2/projects/$PROJECT/locations/$REGION/jobs/$JOB:run"
+          if gcloud scheduler jobs describe "$TIMER" --project "$PROJECT" --location "$REGION" >/dev/null 2>&1; then
+            gcloud scheduler jobs update http "$TIMER" --project "$PROJECT" --location "$REGION" --schedule "${{ inputs.schedule || '*/5 0-4 * * 5' }}" \
+              --time-zone UTC --uri "$URI" --http-method POST --oauth-service-account-email "$SA"
+          else
+            gcloud scheduler jobs create http "$TIMER" --project "$PROJECT" --location "$REGION" --schedule "${{ inputs.schedule || '*/5 0-4 * * 5' }}" \
+              --time-zone UTC --uri "$URI" --http-method POST --oauth-service-account-email "$SA"
+          fi
+          gcloud scheduler jobs list --project "$PROJECT" --location "$REGION" --format 'table(name.basename(),schedule,state)'
+      - name: One run now (checks it starts and exits cleanly)
+        run: |
+          gcloud run jobs update "$JOB" --project "$PROJECT" --region "$REGION" --update-env-vars MAX_MINUTES=0.5 --quiet
+          gcloud run jobs execute "$JOB" --project "$PROJECT" --region "$REGION" --wait && echo "test run ok" || echo "test run FAILED"
+          gcloud run jobs update "$JOB" --project "$PROJECT" --region "$REGION" --update-env-vars MAX_MINUTES=5.5 --quiet
+          gcloud logging read "resource.type=cloud_run_job AND resource.labels.job_name=$JOB" --project "$PROJECT" --limit 10 \
+            --format 'value(textPayload)' --freshness 10m | grep -E "watcher|pass|done|WATCH_ERROR" || true
