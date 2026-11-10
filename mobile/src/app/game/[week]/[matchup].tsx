@@ -148,7 +148,7 @@ function Half({ p, vs, side, onScore, bench, first }: { p?: BoxPlayer; vs?: BoxP
             ? line.map((x, i) => (
                 <Text key={i} style={x.tone === 'good' ? styles.good : x.tone === 'bad' ? styles.bad : undefined}>{i ? ', ' : ''}{x.text}</Text>
               ))
-            : <Text style={styles.statsEmpty}>{p.status === 'bye' ? 'On bye' : scored ? 'No stats yet' : ' '}</Text>}
+            : ' '}
         </Text>
       </View>
       <Pressable onPress={() => onScore(p)} hitSlop={8} style={[styles.pts, right && styles.ptsRight]}>
@@ -295,7 +295,6 @@ const styles = StyleSheet.create({
   game: { color: colors.muted, fontSize: 10.5, marginTop: 2, flexShrink: 1, alignSelf: 'stretch' },
   clock: { color: colors.live, fontWeight: '800' },
   stats: { color: '#D9D0BD', fontSize: 11, fontWeight: '600', marginTop: 2, lineHeight: 15, alignSelf: 'stretch' },
-  statsEmpty: { color: '#8E8676', fontWeight: '500' },
   good: { color: colors.live, fontWeight: '800' },
   bad: { color: '#EF7A7A', fontWeight: '800' },
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', padding: 28 },

@@ -13,7 +13,7 @@
         "ITSAppUsesNonExemptEncryption": false,
         "NSPhotoLibraryUsageDescription": "Pick a picture for your team."
       },
-      "buildNumber": "82"
+      "buildNumber": "83"
     },
     "android": {
       "adaptiveIcon": {
