@@ -137,11 +137,9 @@ def stat_line(stats: dict[str, Any] | None, pos: str) -> list[dict[str, str]]:
 
 
 def short_line(stats: dict[str, Any] | None, pos: str) -> list[dict[str, str]]:
-    """The app's compact matchup stat line, ESPN style, with attempts kept in:
-    WR/TE '5/7 REC, 49 YDS, TD'; RB '20 CAR, 88 YDS, 3/4 REC, 2 TD'; QB '22/37, 279 YDS, 2 TD, INT'.
-
-    Catches and completions show over targets and attempts. TDs (all kinds) are added up, then INTs, then
-    fumbles lost at the end. A count of 1 is just the word ('TD'); zero counts are left out.
+    """The app's matchup stat line, kept as simple as ESPN's: yards and scores only.
+    QB '242 YDS, TD' (passing yards; '3 TOT TD' when he also ran or caught one); RB '74 YDS, TD' (rushing + receiving);
+    WR/TE '7 REC, 51 YDS, TD'. Then INTs and fumbles lost. A count of 1 is just the word ('TD'); zero counts are left out.
     """
     s = stats or {}
     n = lambda key: _int(s.get(key))
@@ -149,32 +147,26 @@ def short_line(stats: dict[str, Any] | None, pos: str) -> list[dict[str, str]]:
     add = lambda text, tone="": out.append({"text": text, "tone": tone})
     count = lambda k, word: word if k == 1 else f"{k} {word}"
     tds = n("pass_td") + n("rush_td") + n("rec_td")
-    catches = lambda: add(f"{n('rec')}/{max(n('rec_tgt'), n('rec'))} REC")
+    td_word = "TD"
     if pos == "QB":
         if not (n("pass_att") or n("rush_att")):
             return []
-        add(f"{n('pass_cmp')}/{n('pass_att')}")
         add(f"{n('pass_yd')} YDS")
-        if n("rush_yd") >= 20:
-            add(f"{n('rush_yd')} RUSH")
+        if n("rush_td") or n("rec_td"):
+            td_word = "TOT TD"
     elif pos == "RB":
         if not (n("rush_att") or n("rec_tgt") or n("rec")):
             return []
-        add(f"{n('rush_att')} CAR")
-        add(f"{n('rush_yd')} YDS")
-        if n("rec_tgt") or n("rec"):
-            catches()
+        add(f"{n('rush_yd') + n('rec_yd')} YDS")
     elif pos in ("WR", "TE"):
-        if not (n("rec_tgt") or n("rec")):
+        if not (n("rec_tgt") or n("rec") or n("rush_att")):
             return []
-        catches()
-        add(f"{n('rec_yd')} YDS")
-        if n("rush_yd") >= 10:
-            add(f"{n('rush_yd')} RUSH")
+        add(f"{n('rec')} REC")
+        add(f"{n('rec_yd') + n('rush_yd')} YDS")
     else:
         return []
     if tds:
-        add(count(tds, "TD"), "good")
+        add(count(tds, "TD") if tds == 1 else f"{tds} {td_word}", "good")
     if n("pass_int"):
         add(count(n("pass_int"), "INT"), "bad")
     if n("fum_lost"):

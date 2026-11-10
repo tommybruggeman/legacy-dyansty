@@ -1073,6 +1073,12 @@ def _box_score_raw(
         raise HTTPException(status_code=404, detail="Game not found.")
     if carry:
         box_score_mod.add_round(result, _parse_carry(carry))
+    try:  # each team's own picture from Settings (our storage, not Sleeper); the app shows initials without one
+        pics = profiles.pictures(profiles.by_roster(client, ctx["league_id"]), {})
+        for team in result["teams"]:
+            team["avatar"] = pics.get(team["roster_id"])
+    except Exception as exc:
+        print(f"APP_BOX_PICTURES_ERROR {type(exc).__name__}", flush=True)
     return result
 
 
