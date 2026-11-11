@@ -259,6 +259,8 @@ export default function FrontOfficeScreen() {
         contentContainerStyle={[styles.content, { paddingTop: insets.top + 8 }]}
         onContentSizeChange={() => messages.length && scroll.current?.scrollToEnd({ animated: true })}
         keyboardShouldPersistTaps="handled"
+        // Dragging the chat (a swipe down) puts the keyboard away, like Messages.
+        keyboardDismissMode="on-drag"
         {...pull.scrollProps}
       >
         {pull.spacer}
