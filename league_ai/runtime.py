@@ -39,6 +39,7 @@ TOOL_STATUS = {
     "get_player_stats": "Checking the stats",
     "compare_players": "Comparing players",
     "get_injury_report": "Checking the injury report",
+    "get_lineups": "Checking the lineups that are set",
     "get_prospects": "Scouting the prospects",
     "get_market_values": "Checking market values",
     "search_players": "Searching the player pool",
@@ -248,7 +249,8 @@ def power_rows(client: Any, league_id: str, season: int, *, state: Mapping[str, 
              "on_bye": [bye_label(p) for p in tp.on_bye], "on_bye_names": [p.name for p in tp.on_bye], "bye_next": [bye_label(p) for p in tp.bye_next],
              "week_lineup": [player_row(p, slot) for slot, p in zip(tp.week_slots, tp.week_starters)],
              "week_bench_detail": [player_row(p) for p in tp.week_bench],
-             "on_bye_ids": [p.sleeper_id for p in tp.on_bye]} for tp in rankings]
+             "on_bye_ids": [p.sleeper_id for p in tp.on_bye],
+             "cant_play": [f"{p.position} {p.name} ({'taxi' if p.designation == 'taxi' else 'IR'})" for p in tp.inactive]} for tp in rankings]
 
 
 @dataclass
