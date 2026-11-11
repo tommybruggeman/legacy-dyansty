@@ -176,6 +176,27 @@ class NflData:
         rows.sort(key=lambda r: (str(r.get("sleeper_id")) not in rostered, not r.get("team"), r.get("search_rank") or 999999))
         return rows[:limit]
 
+    def nfl_moves(self, days: int = 45) -> list[dict[str, Any]]:
+        """NFL team moves (trades, signings, releases) logged by the hourly roster check, newest first. Shared, cached 10 minutes."""
+        from datetime import datetime, timedelta, timezone
+
+        def load() -> list[dict[str, Any]]:
+            since = (datetime.now(timezone.utc) - timedelta(days=45)).isoformat()
+            try:
+                return (self.client.table("nfl_player_moves").select("sleeper_id, full_name, position, from_team, to_team, source, seen_at")
+                        .gte("seen_at", since).order("seen_at", desc=True).limit(1000).execute().data or [])
+            except Exception:  # table not created yet
+                return []
+        rows = _cached(("nfl_moves",), load, ttl=600) or []
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        return [r for r in rows if str(r.get("seen_at") or "") >= cutoff[:19]]
+
+    def player_move(self, sleeper_id: Any, days: int = 45) -> dict[str, Any] | None:
+        for m in self.nfl_moves(days):
+            if str(m.get("sleeper_id")) == str(sleeper_id):
+                return _move_dict(m)
+        return None
+
     def player(self, sleeper_id: str) -> dict[str, Any] | None:
         rows = self.client.table("nfl_players").select("*").eq("sleeper_id", str(sleeper_id)).limit(1).execute().data or []
         return rows[0] if rows else None
@@ -657,6 +678,29 @@ class NflData:
 
 # ---- tool functions ---------------------------------------------------------
 
+def _move_dict(m: Mapping[str, Any]) -> dict[str, Any]:
+    frm, to = m.get("from_team"), m.get("to_team")
+    kind = "signed" if frm == "FA" else "released" if to == "FA" else "traded or signed"
+    return {"name": m.get("full_name"), "position": m.get("position"), "from_team": None if frm == "FA" else frm,
+            "to_team": None if to == "FA" else to, "move": kind, "seen": str(m.get("seen_at") or "")[:10]}
+
+
+def tool_get_nfl_moves(data: NflData, days: int = 14, nfl_team: str | None = None, position: str | None = None, limit: int = 40) -> dict[str, Any]:
+    team = team_code(nfl_team) if nfl_team else None
+    pos = (position or "").upper() or None
+    rows = [m for m in data.nfl_moves(int(days or 14))
+            if (not team or team in (m.get("from_team"), m.get("to_team"))) and (not pos or m.get("position") == pos)]
+    out = []
+    for m in rows[: int(limit or 40)]:
+        d = _move_dict(m)
+        contract = data.league_contract(m.get("sleeper_id"), m.get("full_name"))
+        if contract:
+            d["league_contract"] = contract
+        out.append(d)
+    return {"moves": out, "days": int(days or 14),
+            "note": "NFL team changes seen on the hourly ESPN roster check and Sleeper's daily player file; 'seen' is the date we first saw the move." if out
+            else "No NFL team moves logged in that window."}
+
 def _profile_dict(data: NflData, p: dict[str, Any], include_market: bool = True) -> dict[str, Any]:
     out = {
         "sleeper_id": p.get("sleeper_id"),
@@ -678,6 +722,11 @@ def _profile_dict(data: NflData, p: dict[str, Any], include_market: bool = True)
         "weight_lb": p.get("weight"),
         "data_as_of": str(p.get("refreshed_at") or "")[:16],
     }
+    move = data.player_move(p.get("sleeper_id"))
+    if move:
+        out["recent_team_move"] = {k: move[k] for k in ("from_team", "to_team", "move", "seen")}
+        if not p.get("depth_chart_order"):
+            out["depth_chart"] = f"not set yet on his new team ({move['to_team']})" if move.get("to_team") else None
     injury = data.injury(p.get("sleeper_id"), p.get("full_name"))
     if injury:
         out["injury_report"] = injury
@@ -1068,6 +1117,12 @@ def build_registry(client: Any, *, league_state: Mapping[str, Any], salary_cap: 
         "NFL profile for one player: age, team, depth chart, injury status, draft capital, college, plus his contract in this league (if rostered) and current dynasty market value. Use before evaluating any player.",
         {"type": "object", "properties": {"name": {"type": "string"}, "position": {"type": "string", "description": "QB/RB/WR/TE/K, to disambiguate"}}, "required": ["name"]},
         lambda name, position=None: tool_get_player_profile(data, name, position),
+    ))
+    reg.register(ToolSpec(
+        "get_nfl_moves",
+        "Recent real NFL team moves (trades, signings, releases) from the hourly roster check, newest first, with each player's contract in this league if rostered. Filter by nfl_team or position. Use for 'who got traded', deadline deals, or when a player's team looks different from what the owner says.",
+        {"type": "object", "properties": {"days": {"type": "integer", "description": "look-back window (default 14)"}, "nfl_team": {"type": "string"}, "position": {"type": "string"}, "limit": {"type": "integer"}}},
+        lambda days=14, nfl_team=None, position=None, limit=40: tool_get_nfl_moves(data, days, nfl_team, position, limit),
     ))
     reg.register(ToolSpec(
         "get_injury_report",

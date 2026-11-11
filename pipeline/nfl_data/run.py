@@ -6,6 +6,7 @@
     python -m pipeline.nfl_data.run --only stats,games  # several loaders
     python -m pipeline.nfl_data.run --game-night    # stats + scores, current season only (game-night refresh)
     python -m pipeline.nfl_data.run --practice      # this week's practice reports (injuries + practice days, current season)
+    python -m pipeline.nfl_data.run --only rosters  # hourly: NFL team moves (trades, signings) from ESPN's rosters
 """
 from __future__ import annotations
 
@@ -17,6 +18,7 @@ from typing import Any
 
 from pipeline.nfl_data.common import fetch_json, fetch_text, fetch_text_meta, log_run, now_iso, service_client, upsert_rows
 from pipeline.nfl_data.crosswalk import CROSSWALK_URL, Crosswalk
+from pipeline.nfl_data import espn_rosters
 from pipeline.nfl_data.games import GAMES_URL, read_csv as read_games_csv, transform_games
 from pipeline.nfl_data.injury_history import build_episodes, build_play_rates
 from pipeline.nfl_data.injuries import ESPN_INJURIES_URLS, NFLVERSE_INJURIES_URL, read_csv as read_injuries_csv, transform_espn, transform_nflverse
@@ -65,13 +67,42 @@ def load_crosswalk() -> Crosswalk:
 def sync_players(client: Any, crosswalk: Crosswalk) -> int:
     players = fetch_json(SLEEPER_PLAYERS_URL, timeout=180)
     rows = transform_players(players, crosswalk)
+    moves: list[dict[str, Any]] = []
     try:
-        return upsert_rows(client, "nfl_players", rows, on_conflict="sleeper_id")
+        recent = espn_rosters.recent_moves(client)
+        if recent is not None:  # moves table exists: log Sleeper's moves, don't undo newer ESPN ones
+            moves = espn_rosters.sleeper_changes(espn_rosters.current_players(client), rows, recent)
+    except Exception as exc:  # move logging must never block the player load
+        print(f"[nfl_data] players: move check skipped ({type(exc).__name__}: {exc})", flush=True)
+    try:
+        written = upsert_rows(client, "nfl_players", rows, on_conflict="sleeper_id")
+        if moves:
+            espn_rosters.save_moves(client, moves)
+            print(f"[nfl_data] players: {len(moves)} team moves from Sleeper", flush=True)
+        return written
     except Exception as exc:
         if not any(c in str(exc) for c in INJURY_DETAIL_COLUMNS):
             raise
         print("[nfl_data] players: injury detail columns missing (run migration 20261128); loading without them", flush=True)
         return upsert_rows(client, "nfl_players", [{k: v for k, v in r.items() if k not in INJURY_DETAIL_COLUMNS} for r in rows], on_conflict="sleeper_id")
+
+
+def sync_rosters(client: Any, crosswalk: Crosswalk) -> int:
+    """NFL team moves from ESPN's 32 rosters (hourly). Updates nfl_players.team and logs each move."""
+    players, teams = espn_rosters.fetch_espn_players(fetch_json)
+    if teams < 28:
+        raise RuntimeError(f"only {teams} ESPN rosters loaded; not applying team changes")
+    current = espn_rosters.current_players(client)
+    espn_team = espn_rosters.espn_teams_by_sleeper(players, current, crosswalk)
+    updates, moves = espn_rosters.espn_changes(current, espn_team)
+    if len(updates) > 150:  # a mass change means a feed problem, not a trade wave
+        raise RuntimeError(f"{len(updates)} team changes at once looks wrong; not applying")
+    espn_rosters.apply_updates(client, updates)
+    espn_rosters.save_moves(client, moves)
+    print(f"[nfl_data] rosters: {teams} teams, {len(espn_team)} players matched, {len(updates)} team changes", flush=True)
+    for m in moves[:40]:
+        print(f"[nfl_data] rosters: {m['position']} {m['from_team']} -> {m['to_team']}", flush=True)  # no names: public logs
+    return len(updates)
 
 
 def sync_stats(client: Any, crosswalk: Crosswalk, seasons: list[int]) -> int:
@@ -292,7 +323,7 @@ def sync_prospects(client: Any, crosswalk: Crosswalk, seasons: list[int]) -> int
     return written
 
 
-LOADERS = ("players", "stats", "games", "values", "injuries", "practice", "injury_history", "prospects", "situational")
+LOADERS = ("players", "rosters", "stats", "games", "values", "injuries", "practice", "injury_history", "prospects", "situational")
 
 
 def _loaders(value: str) -> set[str]:
@@ -329,6 +360,8 @@ def main(argv: list[str] | None = None) -> int:
     ok = True
     if picked("players"):
         ok &= _run(client, "sleeper_players", lambda: sync_players(client, crosswalk))
+    if picked("rosters"):  # after players, so ESPN's same-day moves win over Sleeper's daily file
+        ok &= _run(client, "espn_rosters", lambda: sync_rosters(client, crosswalk))
     if picked("stats"):
         ok &= _run(client, "nflverse_stats", lambda: sync_stats(client, crosswalk, seasons))
     if picked("games"):

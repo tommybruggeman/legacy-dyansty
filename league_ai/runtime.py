@@ -59,6 +59,7 @@ TOOL_STATUS = {
     "get_schedule_outlook": "Grading the rest of the schedule",
     "get_return_outlook": "Comparing his return with past players who had the same injury",
     "get_position_room": "Checking how his team splits the work",
+    "get_nfl_moves": "Checking the latest NFL trades and signings",
     "get_playoff_odds": "Simulating the rest of the season",
     "get_pickup_odds": "Simulating the season with him on your roster",
     "get_matchup_odds": "Working out your odds to win this week",
