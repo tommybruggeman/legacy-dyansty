@@ -334,7 +334,7 @@ def set_lineups(session: Session, fo: dict[str, Any], state: dict[str, Any]) -> 
         try:
             from api.projections import week_projections
             proj = week_projections(client, str(sid), int(o.season), week, ids_all, {p: str(i.get("position") or "") for p, i in info.items()},
-                                    {p: str(i.get("team") or "") for p, i in info.items()}) if sid and week else {}
+                                    {p: str(i.get("team") or "") for p, i in info.items()}, active=True) if sid and week else {}
         except Exception as exc:
             print(f"GM_LINEUPS_PROJ_ERROR {type(exc).__name__}", flush=True)
             proj = {}
@@ -364,7 +364,7 @@ def lineups_tool(session: Session, fo: dict[str, Any], state: dict[str, Any]) ->
             "teams": [{"owner": t["owner"], "opponent": t["opponent"],
                        **team_lineups.team_lineup(slots=data["slots"], starters=t["starters"], roster=t["roster"], bench_size=8 if single else 4, **common)}
                       for t in teams],
-            "how_to_use": "These are the lineups each owner has actually SET right now (proj = this week's projection in league scoring). "
+            "how_to_use": "These are the lineups each owner has actually SET right now (proj = this week's projection in league scoring if he plays; injury tags are in flags). "
                           "Players on taxi or IR can't be started, so never suggest them. 'game started' players are locked for the week. "
                           "better_bench_options compares projections only; weigh matchup and injury news before calling a swap.",
         }

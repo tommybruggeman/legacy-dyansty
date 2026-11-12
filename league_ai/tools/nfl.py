@@ -891,7 +891,9 @@ def tool_get_player_stats(data: NflData, name: str, seasons: list[int] | None = 
     return summary
 
 
-PROJECTION_NOTE = ("this_week_projection is Sleeper's projection in this league's scoring with the app's matchup tilt. Graded on every saved "
+PROJECTION_NOTE = ("this_week_projection is what the player scores IF HE PLAYS: Sleeper's projection in this league's scoring with the app's "
+                   "matchup tilt, calibrated on players who played. A player in doubt shows chance_to_play_this_week beside it; never "
+                   "fold that chance into the projection you quote, give both. Graded on every saved "
                    "lineup here (2024-26, 7,100 calls), starting the higher projection was right 70% of the time vs 69% for owners' own "
                    "choices, and 57% vs 54% on close calls; season averages (67%) and the last two games (64%) did worse. Start from it and "
                    "overrule it only for news it can't see: a late injury or inactive, a role change, a weather update.")
@@ -918,7 +920,9 @@ def _play_probability(prof: Mapping[str, Any]) -> float | None:
 def tool_compare_players(data: NflData, names: list[str], seasons: list[int] | None = None) -> dict[str, Any]:
     out: dict[str, Any] = {}
     found = [m[0] for m in (data.find_players(n, limit=1) for n in names[:5]) if m]
-    proj = _projections(data, found)
+    # Projections are what each player scores IF HE PLAYS (Tommy, 2026-11-12); his chance to play is given beside it.
+    proj = _projections(data, found, active=True) or _projections(data, found)
+    doubt: dict[str, str] = {}
     for name in names[:5]:
         matches = data.find_players(name, limit=1)
         if not matches:
@@ -937,13 +941,8 @@ def tool_compare_players(data: NflData, names: list[str], seasons: list[int] | N
         if str(p.get("sleeper_id")) in proj:
             prof["this_week_projection"] = proj[str(p.get("sleeper_id"))]
         chance = _play_probability(prof)
-        if chance is not None and 0 < chance < 0.9 and str(p.get("sleeper_id")) in proj:
-            # A player in doubt: what he projects if he is active, so the call can weigh that against his chance to play.
-            active = _projections(data, [p], active=True).get(str(p.get("sleeper_id")))
-            if active is not None:
-                prof["if_he_plays"] = {"projection": active, "chance_to_play": f"{round(100 * chance)}%",
-                                       "note": "Projection if he is active. Weigh it against his chance to play and when his game kicks off "
-                                               "(a late game with no later pivot means starting him risks a zero)."}
+        if chance is not None and chance < 0.9 and str(p.get("sleeper_id")) in proj:
+            doubt[p.get("full_name") or ""] = f"{round(100 * chance)}%"
         out[p.get("full_name") or name] = prof
     if proj:
         by_pos: dict[str, list[tuple[str, float]]] = {}
@@ -955,7 +954,16 @@ def tool_compare_players(data: NflData, names: list[str], seasons: list[int] | N
         for pos, rows in by_pos.items():
             if len(rows) >= 2:
                 (a, pa), (b, pb) = sorted(rows, key=lambda r: -r[1])[:2]
-                picks[pos] = f"start {a} over {b}: {pa:g} vs {pb:g}" + (" (close: within 10%, matchup and news can decide it)" if pb >= 0.9 * pa else "")
+                risk = "; ".join(f"{n} is {c} to play" for n, c in doubt.items() if n in (a, b))
+                picks[pos] = (f"start {a} over {b}: {pa:g} vs {pb:g} if both play" + (" (close: within 10%, matchup and news can decide it)" if pb >= 0.9 * pa else "")
+                              + (f"; {risk}, so weigh that and who kicks off later (the pivot)" if risk else ""))
+        flex = [r for pos in ("RB", "WR", "TE") for r in by_pos.get(pos, [])]
+        if not picks and len({pos for pos in ("RB", "WR", "TE") if by_pos.get(pos)}) >= 2:
+            # A flex call across positions (say a WR against an RB): same rule, highest projection first.
+            (a, pa), (b, pb) = sorted(flex, key=lambda r: -r[1])[:2]
+            risk = "; ".join(f"{n} is {c} to play" for n, c in doubt.items() if n in (a, b))
+            picks["FLEX"] = (f"start {a} over {b}: {pa:g} vs {pb:g} if both play" + (" (close: within 10%, matchup and news can decide it)" if pb >= 0.9 * pa else "")
+                             + (f"; {risk}, so weigh that and who kicks off later (the pivot)" if risk else ""))
         if picks:
             out["engine_pick"] = picks
         out["how_to_read_projections"] = PROJECTION_NOTE
