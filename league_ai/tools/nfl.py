@@ -85,7 +85,7 @@ class NflData:
     """Thin query layer; every method returns plain dicts. Never writes."""
 
     # set by the runtime: (player rows) -> sleeper id -> this week's projected league points, matchup-adjusted
-    week_projection: Callable[[list[Mapping[str, Any]]], dict[str, float]] | None = None
+    week_projection: Callable[..., dict[str, float]] | None = None  # (players, active=False)
 
     def __init__(self, client: Any, *, league_state: Mapping[str, Any] | None = None, salary_cap: Any = 225, dead_cap_pct: float = 50.0):
         self.client = client
@@ -897,13 +897,22 @@ PROJECTION_NOTE = ("this_week_projection is Sleeper's projection in this league'
                    "overrule it only for news it can't see: a late injury or inactive, a role change, a weather update.")
 
 
-def _projections(data: NflData, players: list[dict[str, Any]]) -> dict[str, float]:
+def _projections(data: NflData, players: list[dict[str, Any]], active: bool = False) -> dict[str, float]:
     if data.week_projection is None or not players:
         return {}
     try:
-        return data.week_projection(players) or {}
+        return (data.week_projection(players, active=True) if active else data.week_projection(players)) or {}
     except Exception:
         return {}
+
+
+def _play_probability(prof: Mapping[str, Any]) -> float | None:
+    """0-1 chance to play from a profile's chance_to_play_this_week ('54%'), None when he isn't in doubt."""
+    text = str((prof.get("chance_to_play_this_week") or {}).get("chance_to_play") or "").rstrip("%")
+    try:
+        return float(text) / 100
+    except ValueError:
+        return None
 
 
 def tool_compare_players(data: NflData, names: list[str], seasons: list[int] | None = None) -> dict[str, Any]:
@@ -927,6 +936,14 @@ def tool_compare_players(data: NflData, names: list[str], seasons: list[int] | N
             prof["rest_of_season_schedule"] = {k: rest.get(k) for k in ("avg_matchup_effect", "soft", "tough", "games", "fantasy_playoffs") if rest.get(k) is not None}
         if str(p.get("sleeper_id")) in proj:
             prof["this_week_projection"] = proj[str(p.get("sleeper_id"))]
+        chance = _play_probability(prof)
+        if chance is not None and 0 < chance < 0.9 and str(p.get("sleeper_id")) in proj:
+            # A player in doubt: what he projects if he is active, so the call can weigh that against his chance to play.
+            active = _projections(data, [p], active=True).get(str(p.get("sleeper_id")))
+            if active is not None:
+                prof["if_he_plays"] = {"projection": active, "chance_to_play": f"{round(100 * chance)}%",
+                                       "note": "Projection if he is active. Weigh it against his chance to play and when his game kicks off "
+                                               "(a late game with no later pivot means starting him risks a zero)."}
         out[p.get("full_name") or name] = prof
     if proj:
         by_pos: dict[str, list[tuple[str, float]]] = {}
