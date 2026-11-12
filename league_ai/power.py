@@ -60,6 +60,7 @@ class PlayerStrength:
     matchup: str | None = None
     spread: float | None = None  # week-to-week standard deviation of fantasy points; None = too few games
     week_sd: float | None = None  # this week's spread from the projection (set with week_now when a projection exists)
+    designation: str | None = None  # "taxi" or "ir": on the roster but can't be started this season / while there
 
     def score(self, key: str) -> float:
         value = getattr(self, key)
@@ -82,6 +83,7 @@ class TeamPower:
     week_starters: list[PlayerStrength] = field(default_factory=list)  # best lineup this week: byes benched, ordered by matchup-adjusted score
     week_bench: list[PlayerStrength] = field(default_factory=list)
     week_slots: list[str] = field(default_factory=list)  # the lineup slot each week_starters player fills, in the same order
+    inactive: list[PlayerStrength] = field(default_factory=list)  # on taxi or IR: can't be started
     on_bye: list[PlayerStrength] = field(default_factory=list)
     bye_next: list[PlayerStrength] = field(default_factory=list)
 
@@ -98,7 +100,10 @@ def player_strength(row: Mapping[str, Any], *, recent_ppg: float | None, season_
         parts.append(tier); weights.append(0.2 if parts[:-1] else 1.0)
     now = sum(p * w for p, w in zip(parts, weights)) / sum(weights) if weights else 0.0
     status = (injury_status or "").lower()
-    available = status not in {"out", "ir", "injured reserve", "pup", "suspended", "doubtful"} and row.get("roster_designation") != "ir"
+    designation = str(row.get("roster_designation") or "").lower() or None
+    designation = designation if designation in {"taxi", "ir"} else None
+    # Taxi players can't play the season they sit there, and the IR slot can't start anyone: neither is a lineup option.
+    available = status not in {"out", "ir", "injured reserve", "pup", "suspended", "doubtful"} and designation is None
     if status == "questionable":
         now *= 0.93
     years = int(row.get("contract_years_left") or 1)
@@ -115,7 +120,7 @@ def player_strength(row: Mapping[str, Any], *, recent_ppg: float | None, season_
         sleeper_id=str(row.get("sleeper_player_id") or row.get("player_id") or ""), name=str(row.get("player_name") or ""), position=pos,
         team_id=str(row.get("league_team_id") or ""), owner=str(row.get("owner_name") or ""), now=round(now, 2), dynasty=round(dynasty, 2),
         available=available, recent_ppg=recent_ppg, season_ppg=season_ppg, pos_rank=pos_rank, age=age, years_left=years, injury=injury_status,
-        nfl_team=nfl_team or None,
+        nfl_team=nfl_team or None, designation=designation,
     )
 
 
@@ -176,7 +181,8 @@ def compute_power(players: list[PlayerStrength], teams: list[Mapping[str, Any]],
         bye_ids = {p.sleeper_id for p in on_bye}
         week_lineup, week_bench = fill_lineup([p for p in roster if p.sleeper_id not in bye_ids], slots, "week_now")
         out.append(TeamPower(team_id=tid, owner=str(t.get("owner_name") or ""), now_score=round(now_score, 1), dynasty_score=round(dynasty_score, 1),
-                             starters=[p for _, p in lineup], slot_scores=avg_slots, week_starters=[p for _, p in week_lineup], week_slots=[s for s, _ in week_lineup], week_bench=[p for p in week_bench if p.position in FIXED][:6], on_bye=on_bye, bye_next=bye_next))
+                             starters=[p for _, p in lineup], slot_scores=avg_slots, week_starters=[p for _, p in week_lineup], week_slots=[s for s, _ in week_lineup], week_bench=[p for p in week_bench if p.position in FIXED][:6], on_bye=on_bye, bye_next=bye_next,
+                             inactive=[p for p in roster if p.designation]))
     # ranks
     for i, tp in enumerate(sorted(out, key=lambda x: -x.now_score), start=1):
         tp.now_rank = i
