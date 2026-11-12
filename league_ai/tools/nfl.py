@@ -85,7 +85,7 @@ class NflData:
     """Thin query layer; every method returns plain dicts. Never writes."""
 
     # set by the runtime: (player rows) -> sleeper id -> this week's projected league points, matchup-adjusted
-    week_projection: Callable[[list[Mapping[str, Any]]], dict[str, float]] | None = None
+    week_projection: Callable[..., dict[str, float]] | None = None  # (players, active=False)
 
     def __init__(self, client: Any, *, league_state: Mapping[str, Any] | None = None, salary_cap: Any = 225, dead_cap_pct: float = 50.0):
         self.client = client
@@ -891,25 +891,38 @@ def tool_get_player_stats(data: NflData, name: str, seasons: list[int] | None = 
     return summary
 
 
-PROJECTION_NOTE = ("this_week_projection is Sleeper's projection in this league's scoring with the app's matchup tilt. Graded on every saved "
+PROJECTION_NOTE = ("this_week_projection is what the player scores IF HE PLAYS: Sleeper's projection in this league's scoring with the app's "
+                   "matchup tilt, calibrated on players who played. A player in doubt shows chance_to_play_this_week beside it; never "
+                   "fold that chance into the projection you quote, give both. Graded on every saved "
                    "lineup here (2024-26, 7,100 calls), starting the higher projection was right 70% of the time vs 69% for owners' own "
                    "choices, and 57% vs 54% on close calls; season averages (67%) and the last two games (64%) did worse. Start from it and "
                    "overrule it only for news it can't see: a late injury or inactive, a role change, a weather update.")
 
 
-def _projections(data: NflData, players: list[dict[str, Any]]) -> dict[str, float]:
+def _projections(data: NflData, players: list[dict[str, Any]], active: bool = False) -> dict[str, float]:
     if data.week_projection is None or not players:
         return {}
     try:
-        return data.week_projection(players) or {}
+        return (data.week_projection(players, active=True) if active else data.week_projection(players)) or {}
     except Exception:
         return {}
+
+
+def _play_probability(prof: Mapping[str, Any]) -> float | None:
+    """0-1 chance to play from a profile's chance_to_play_this_week ('54%'), None when he isn't in doubt."""
+    text = str((prof.get("chance_to_play_this_week") or {}).get("chance_to_play") or "").rstrip("%")
+    try:
+        return float(text) / 100
+    except ValueError:
+        return None
 
 
 def tool_compare_players(data: NflData, names: list[str], seasons: list[int] | None = None) -> dict[str, Any]:
     out: dict[str, Any] = {}
     found = [m[0] for m in (data.find_players(n, limit=1) for n in names[:5]) if m]
-    proj = _projections(data, found)
+    # Projections are what each player scores IF HE PLAYS (Tommy, 2026-11-12); his chance to play is given beside it.
+    proj = _projections(data, found, active=True) or _projections(data, found)
+    doubt: dict[str, str] = {}
     for name in names[:5]:
         matches = data.find_players(name, limit=1)
         if not matches:
@@ -927,6 +940,9 @@ def tool_compare_players(data: NflData, names: list[str], seasons: list[int] | N
             prof["rest_of_season_schedule"] = {k: rest.get(k) for k in ("avg_matchup_effect", "soft", "tough", "games", "fantasy_playoffs") if rest.get(k) is not None}
         if str(p.get("sleeper_id")) in proj:
             prof["this_week_projection"] = proj[str(p.get("sleeper_id"))]
+        chance = _play_probability(prof)
+        if chance is not None and chance < 0.9 and str(p.get("sleeper_id")) in proj:
+            doubt[p.get("full_name") or ""] = f"{round(100 * chance)}%"
         out[p.get("full_name") or name] = prof
     if proj:
         by_pos: dict[str, list[tuple[str, float]]] = {}
@@ -938,7 +954,16 @@ def tool_compare_players(data: NflData, names: list[str], seasons: list[int] | N
         for pos, rows in by_pos.items():
             if len(rows) >= 2:
                 (a, pa), (b, pb) = sorted(rows, key=lambda r: -r[1])[:2]
-                picks[pos] = f"start {a} over {b}: {pa:g} vs {pb:g}" + (" (close: within 10%, matchup and news can decide it)" if pb >= 0.9 * pa else "")
+                risk = "; ".join(f"{n} is {c} to play" for n, c in doubt.items() if n in (a, b))
+                picks[pos] = (f"start {a} over {b}: {pa:g} vs {pb:g} if both play" + (" (close: within 10%, matchup and news can decide it)" if pb >= 0.9 * pa else "")
+                              + (f"; {risk}, so weigh that and who kicks off later (the pivot)" if risk else ""))
+        flex = [r for pos in ("RB", "WR", "TE") for r in by_pos.get(pos, [])]
+        if not picks and len({pos for pos in ("RB", "WR", "TE") if by_pos.get(pos)}) >= 2:
+            # A flex call across positions (say a WR against an RB): same rule, highest projection first.
+            (a, pa), (b, pb) = sorted(flex, key=lambda r: -r[1])[:2]
+            risk = "; ".join(f"{n} is {c} to play" for n, c in doubt.items() if n in (a, b))
+            picks["FLEX"] = (f"start {a} over {b}: {pa:g} vs {pb:g} if both play" + (" (close: within 10%, matchup and news can decide it)" if pb >= 0.9 * pa else "")
+                             + (f"; {risk}, so weigh that and who kicks off later (the pivot)" if risk else ""))
         if picks:
             out["engine_pick"] = picks
         out["how_to_read_projections"] = PROJECTION_NOTE
