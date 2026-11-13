@@ -11,8 +11,8 @@ on:
   workflow_dispatch:
     inputs:
       schedule:
-        description: Cloud Scheduler cron (UTC) for the timer. Default = Thursday night games (Fri 00:00-04:55 UTC)
-        default: "*/5 0-4 * * 5"
+        description: Cloud Scheduler cron (UTC) for the two timers, with M where the minutes go (each timer fills in its own)
+        default: "M 0-4,17-23 * * 0,1,2,5"
       offset:
         description: SEASON_OFFSET (10000 = test lane; 0 = live, the app reads it)
         default: "10000"
@@ -64,15 +64,21 @@ jobs:
           curl -sS -m 400 -X POST -H "Authorization: Bearer $TOKEN" "$URL/" && echo " <- test stretch answered" || echo "test stretch FAILED"
           gcloud logging read "resource.type=cloud_run_revision AND resource.labels.service_name=$JOB" --project "$PROJECT" --limit 20 \
             --format 'value(textPayload)' --freshness 15m | grep -E "watcher|pass|done|WATCH_ERROR" || true
-      - name: Timer
-        # Needs roles/cloudscheduler.admin on the deploy account (one-time grant by the project owner).
+      - name: Timers
+        # Two timers, each every 10 minutes, offset by 5: Cloud Scheduler never starts a job again while its previous
+        # call is still running, so one 5-minute timer with 5.5-minute stretches only ran every 10 minutes (Thursday
+        # 11-12: 4-5 minute gaps). Two offset timers give a fresh stretch every 5 minutes with a 30 s overlap.
+        # Windows (UTC): Thu/Sun/Mon night games 00-04 on Fri/Mon/Tue, Sunday afternoon 17-23. Off-window runs exit
+        # within seconds. With the app's keep-warm timer that's 3 timers, Cloud Scheduler's free allowance.
+        # Needs roles/cloudscheduler.admin on the deploy account (granted 2026-11-10).
         run: |
-          if gcloud scheduler jobs describe "$TIMER" --project "$PROJECT" --location "$REGION" >/dev/null 2>&1; then
-            VERB=update
-          else
-            VERB=create
-          fi
-          gcloud scheduler jobs $VERB http "$TIMER" --project "$PROJECT" --location "$REGION" --schedule "${{ inputs.schedule || '*/5 0-4 * * 5' }}" \
-            --time-zone UTC --uri "$URL/" --http-method POST --attempt-deadline 600s \
-            --oidc-service-account-email "$SA" --oidc-token-audience "$URL"
+          SCHED="${{ inputs.schedule || 'M 0-4,17-23 * * 0,1,2,5' }}"
+          gcloud scheduler jobs delete "$TIMER" --project "$PROJECT" --location "$REGION" --quiet 2>/dev/null || true  # the old single timer
+          for pair in "a:0-59/10" "b:5-59/10"; do
+            NAME="$TIMER-${pair%%:*}"; MIN="${pair#*:}"; CRON="${SCHED/M/$MIN}"
+            if gcloud scheduler jobs describe "$NAME" --project "$PROJECT" --location "$REGION" >/dev/null 2>&1; then VERB=update; else VERB=create; fi
+            gcloud scheduler jobs $VERB http "$NAME" --project "$PROJECT" --location "$REGION" --schedule "$CRON" \
+              --time-zone UTC --uri "$URL/" --http-method POST --attempt-deadline 600s \
+              --oidc-service-account-email "$SA" --oidc-token-audience "$URL"
+          done
           gcloud scheduler jobs list --project "$PROJECT" --location "$REGION" --format 'table(name.basename(),schedule,state)'
