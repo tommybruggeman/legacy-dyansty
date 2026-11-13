@@ -69,7 +69,7 @@ def alt_plays(feed: str, data: Any) -> list[tuple[str, float | None]]:
     return out
 
 
-LANES = (("machine", 0), ("free", 10000))  # live_stat_lines season offset per watcher lane (scripts/live_watcher.SEASON_OFFSET)  # a points change this big is a touchdown-sized play
+LANES = (("machine", 0), ("free", 10000), ("gamecast", 20000))  # live_stat_lines season offset per watcher lane (scripts/live_watcher.SEASON_OFFSET)  # a points change this big is a touchdown-sized play
 
 
 class Meter:
@@ -204,6 +204,17 @@ def run(wait: float, minutes: float, every: float, smoke: bool = False) -> tuple
         out.append("  no live game started inside the wait window; nothing to time")
         return out, {}
 
+    # Does the gamecast feed carry the same box score as the summary? (one live game, once)
+    try:
+        gid0 = live[0]["id"]
+        a = espn_feed.week_lines([meter.get("espn", espn_feed.game_url("summary", gid0)) or {}], idmap)[0]
+        b = espn_feed.week_lines([espn_feed.game_data("gamecast", meter.get("espn_alt", espn_feed.game_url("gamecast", gid0)))], idmap)[0]
+        pa, pb = scored(slim(a), scoring), scored(slim(b), scoring)
+        out.append(f"  gamecast vs summary box score at start: {sum(1 for p in pa if p in pb and abs(pa[p] - pb[p]) < 0.02)}/{len(pa)} players equal, "
+                   f"{len(pb)} players in gamecast")
+    except Exception as exc:
+        out.append(f"  gamecast vs summary box score check failed: {type(exc).__name__}")
+
     # What every server instance reads every 10 s during games: the whole week's saved rows (Sunday's are biggest).
     week_rows = client.table("live_stat_lines").select("game_id,lines,games,source,updated_at").eq("season", season).eq("week", week).execute().data or []
     week_bytes = len(json.dumps(week_rows))
@@ -273,7 +284,7 @@ def run(wait: float, minutes: float, every: float, smoke: bool = False) -> tuple
         for feed, gid, fut in jobs:
             data, t_alt = fut.result(), time.time()
             if not data:
-                errors[feed] += 1
+                errors["feed:" + feed] += 1
                 continue
             first = gid not in feed_base[feed]
             feed_base[feed].add(gid)
@@ -393,8 +404,9 @@ def run(wait: float, minutes: float, every: float, smoke: bool = False) -> tuple
         return longest, frozen
 
     elapsed_h = max((time.time() - start) / 3600, 1e-9)
-    label = {"espn": "ESPN read directly", "machine": "OURS, machine watcher (live lane)",
-             "free": "OURS, Cloud Run free watcher (test lane)", "sleeper": "Sleeper stat feed as supplier"}
+    label = {"espn": "ESPN read directly", "machine": "OURS, paid machine watcher",
+             "free": "OURS, free watcher, summary feed",
+             "gamecast": "OURS, free watcher, gamecast feed", "sleeper": "Sleeper stat feed as supplier"}
     out.append(f"  ran {elapsed_h * 60:.0f} min, {loops} polls, {len(events)} player points changes in ESPN's feed")
     out.append("All points changes (seconds after the real play):")
     for name, hist in sources:
@@ -422,6 +434,14 @@ def run(wait: float, minutes: float, every: float, smoke: bool = False) -> tuple
             both = [pid for pid in last_espn if pid in last_ours and (last_espn[pid] or last_ours[pid])]
             same = sum(1 for pid in both if abs(last_espn[pid] - last_ours[pid]) < 0.02)
             ages = row_ages.get(name) or []
+            last_sl = {pid: h[-1][1] for pid, h in sleeper_h.h.items() if h}
+            vs_sl = [pid for pid in last_ours if pid in last_sl and (last_ours[pid] or last_sl[pid])]
+            same_sl = sum(1 for pid in vs_sl if abs(last_sl[pid] - last_ours[pid]) < 0.02)
+            espn_vals = {pid: {round(v, 2) for _, v in h} for pid, h in espn_h.h.items()}
+            states = [(pid, round(v, 2)) for pid, h in hist.h.items() for _, v in h if v]
+            odd = sum(1 for pid, v in states if v not in espn_vals.get(pid, set()))
+            out.append(f"    accuracy: final points equal Sleeper's for {same_sl}/{len(vs_sl)} players; {odd} of {len(states)} "
+                       f"in-game numbers shown never appeared in ESPN's summary")
             out.append(f"    final points equal ESPN-derived for {same}/{len(both)} players; saves {save_count[name] / elapsed_h:.0f}/hour"
                        + (f"; newest row age median {median(ages):.0f}s, worst {max(ages):.0f}s" if ages else ""))
     out.append("Which ESPN feed shows a play first (seconds after the play; plays new during the test):")
@@ -432,7 +452,7 @@ def run(wait: float, minutes: float, every: float, smoke: bool = False) -> tuple
         if vs:
             line += f"; vs summary median {median(vs):+.0f}s, 90th pct {pct(vs, 0.9):+.0f}s over {len(vs)} plays"
         if feed != "summary":
-            line += f"; {errors[feed]} failed reads, {len(seen)} plays read"
+            line += f"; {errors['feed:' + feed]} failed reads, {len(seen)} plays read"
         out.append(line)
     out.append("Cost of this test's reads (per hour):")
     for name in ("espn", "espn_alt", "sleeper", "supabase"):

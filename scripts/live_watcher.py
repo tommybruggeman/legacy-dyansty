@@ -13,7 +13,7 @@ Runs as the main watcher on a free Google e2-micro (deploy/live-watcher/), with 
 Prints counts only (the repo and its Actions logs are public): no player, team or owner names.
 
 Environment: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY; ROLE (main | backup | cloudrun, default main); INTERVAL (seconds,
-default 5); SUMMARY_EVERY (seconds, default 5; 0 = only on scoreboard changes); MAX_MINUTES (0 = run forever, the
+default 2); SUMMARY_EVERY (seconds, default 2; 0 = only on scoreboard changes); FEED (summary | gamecast); MAX_MINUTES (0 = run forever, the
 e2-micro default); SEASON_OFFSET (default 0; a test lane saves under season + offset, which the app never reads).
 """
 from __future__ import annotations
@@ -154,7 +154,7 @@ class Watcher:
                 continue
             self.fetched[g["id"]] = time.time()
             try:
-                summary = self.feed.get(f"{espn_feed.ESPN}/summary?event={g['id']}")
+                summary = espn_feed.game_data(FEED, self.feed.get(espn_feed.game_url(FEED, g["id"])))
             except Exception:
                 self.counts["errors"] += 1
                 continue
@@ -186,8 +186,9 @@ class Watcher:
         return INTERVAL if live else NAP
 
 
-INTERVAL = float(os.getenv("INTERVAL", "5"))
-SUMMARY_EVERY = float(os.getenv("SUMMARY_EVERY", "5"))
+INTERVAL = float(os.getenv("INTERVAL", "2"))
+SUMMARY_EVERY = float(os.getenv("SUMMARY_EVERY", "2"))
+FEED = os.getenv("FEED", "summary")  # summary | gamecast (ESPN's live game tracker; same box score + plays)
 SEASON_OFFSET = int(os.getenv("SEASON_OFFSET", "0"))
 
 

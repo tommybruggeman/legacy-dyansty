@@ -5,11 +5,13 @@ stretches overlap by 30 s and nothing is missed while the next one starts. Cloud
 running and needs no public IP of its own, which is what keeps this inside the free tier (a quarter CPU, one request
 per instance). Off game windows the watcher sees nothing on and answers within seconds.
 
-GET answers 200 (health check). Prints counts only, like the watcher.
+LANES (optional, e.g. "summary:10000,gamecast:20000") runs one watcher per ESPN feed side by side, for the speed
+race in scoring/speed_test.py. GET answers 200 (health check). Prints counts only, like the watcher.
 """
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -32,7 +34,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         try:
-            code = live_watcher.main()
+            lanes = [x.split(":") for x in os.getenv("LANES", "").split(",") if ":" in x]
+            if lanes:  # race mode: one watcher process per feed, each saving under its own season offset
+                script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "live_watcher.py")
+                procs = [subprocess.Popen([sys.executable, script], env={**os.environ, "FEED": feed, "SEASON_OFFSET": offset})
+                         for feed, offset in lanes]
+                code = max(p.wait() for p in procs)
+            else:
+                code = live_watcher.main()
             self._answer(200, f"done {code}")
         except Exception as exc:
             print(f"WATCH_ERROR {type(exc).__name__}", flush=True)
