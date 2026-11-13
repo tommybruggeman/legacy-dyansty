@@ -297,6 +297,7 @@ class ClaudeClient:
                     best_text = text_out
         except Exception as exc:  # map SDK errors to safe codes
             trace.error_code = _classify(exc)
+            _log_rejection(trace.error_code, exc)
             trace.latency_ms = int((time.perf_counter() - start) * 1000)
             return ClientResult(False, "", trace, trace.error_code)
         trace.latency_ms = int((time.perf_counter() - start) * 1000)
@@ -352,7 +353,7 @@ def _classify(exc: BaseException) -> str:
         if isinstance(exc, getattr(anthropic, "APIConnectionError", ())):
             return "connection_error"
         if isinstance(exc, getattr(anthropic, "BadRequestError", ())):
-            return "bad_request"
+            return "out_of_credits" if _no_credit(exc) else "bad_request"
     lowered = name.lower()
     if "timeout" in lowered:
         return "timeout"
@@ -361,8 +362,20 @@ def _classify(exc: BaseException) -> str:
     if "auth" in lowered:
         return "auth_error"
     if "badrequest" in lowered:
-        return "bad_request"
+        return "out_of_credits" if _no_credit(exc) else "bad_request"
     return "provider_error"
+
+
+def _no_credit(exc: BaseException) -> bool:
+    """Anthropic answers an empty prepaid balance with a 400, the same status as a malformed request."""
+    return "credit balance" in str(getattr(exc, "message", "") or exc).lower()
+
+
+def _log_rejection(code: str, exc: BaseException) -> None:
+    """Put Anthropic's own reason for a rejected request in the server log, so the next one is diagnosable.
+    The reason names a field or a billing state, never the question; secrets are redacted."""
+    if code in ("bad_request", "out_of_credits"):
+        print(f"LEAGUE_AI_REJECTED {code}: {_redact(str(getattr(exc, 'message', '') or exc))[:300]}", flush=True)
 
 
 HUMAN_MESSAGES = {
@@ -372,6 +385,7 @@ HUMAN_MESSAGES = {
     "rate_limited": "League AI is rate-limited right now. Try again in a moment.",
     "timeout": "League AI took too long to answer. Try again or ask a narrower question.",
     "connection_error": "League AI couldn't reach Anthropic. Check the network and try again.",
+    "out_of_credits": "The league's AI credits have run out, so the GM can't answer right now. Let the commissioner know so they can top up.",
     "bad_request": "League AI sent a request Anthropic rejected. This is a bug worth reporting.",
     "empty_response": "League AI returned nothing. Try rephrasing the question.",
     "output_budget_exhausted": "That one was too big to finish in a single answer. Try asking about one part of it at a time.",
