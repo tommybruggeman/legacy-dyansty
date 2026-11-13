@@ -58,7 +58,7 @@ export default function InjuredReserve() {
   };
 
   return (
-    <Screen loading={loading} onRefresh={reload}>
+    <Screen loading={loading}>
       <Back label="My Team" />
       <Title>IR &amp; Taxi</Title>
       {message ? <Text style={styles.message}>{message}</Text> : null}

@@ -4,13 +4,16 @@ Sleeper publishes a projected stat line and a real stat line for every NFL
 player each week. Both are scored here with this league's own scoring rules
 (league/{id} scoring_settings), so the numbers match how Legacy scores.
 Projections are then tilted by the same matchup context the Front Office
-uses (defense vs position, Vegas total, weather), capped at +/-20%.
+uses (defense vs position, Vegas total), capped at +/-20%, and by the fitted weather and game situation effects
+(league_ai.game_conditions).
 """
 from __future__ import annotations
 
 from typing import Any, Iterable
 
 from api import cache, sleeper
+from league_ai.first_downs import adjust_with_card as adjust_first_downs
+from league_ai.game_conditions import multiplier as condition_multiplier, week_conditions
 from league_ai.projection_calibration import calibrate as calibrate_points, calibration as projection_calibration
 from league_ai.nfl_data import add_weather, defense_vs_position, season_games, team_code, total_multiplier, week_matchups
 
@@ -90,7 +93,25 @@ def week_lines(kind: str, season: int, week: int, ttl: int) -> dict[str, dict[st
         return {}
 
 
+# Sleeper league id -> (client, our league id), filled by every page that resolves the owner's league, so code that
+# only knows the Sleeper id still scores with the rules saved in our Settings.
+_LEAGUES: dict[str, tuple[Any, str]] = {}
+
+
+def remember_league(client: Any, league_id: str, sleeper_id: str) -> None:
+    _LEAGUES[str(sleeper_id)] = (client, str(league_id))
+
+
 def league_scoring(sleeper_id: str) -> dict[str, Any]:
+    """This league's points per stat: the rules saved in our Settings (Commissioner > Rules and scoring), which the
+    scoring engine, projections, ranks and the GM all share. Sleeper's copy only if none are saved."""
+    known = _LEAGUES.get(str(sleeper_id))
+    if known:
+        from league_ai.league_points import league_scoring as saved_scoring
+        client, league_id = known
+        saved = cache.cached(("saved_scoring", league_id), 300, lambda: saved_scoring(client, league_id))
+        if saved:
+            return saved
     try:
         return (sleeper.get(f"league/{sleeper_id}", ttl=3600) or {}).get("scoring_settings") or {}
     except Exception:
@@ -124,10 +145,14 @@ def week_ranks(sleeper_id: str, season: int, week: int, final: bool, positions: 
 
 
 def week_projections(client: Any, sleeper_id: str, season: int, week: int, ids: Iterable[str], positions: dict[str, str], teams: dict[str, str],
-                     calibrate: bool = True) -> dict[str, float]:
+                     calibrate: bool = True, active: bool = False) -> dict[str, float]:
     """player_id -> projected league points this week, matchup-adjusted and calibrated by position
-    (league_ai.projection_calibration; calibrate=False gives the uncalibrated number the calibration learns from)."""
-    lines = week_lines("projections", season, week, 1800)
+    (league_ai.projection_calibration; calibrate=False gives the uncalibrated number the calibration learns from).
+
+    active=True: the number for a player who is already in his game. The pregame line also prices in the chance he
+    doesn't play (a scratch scores 0); once he's on the field that's gone, so this uses the line fitted only on
+    players who played."""
+    proj_lines = week_lines("projections", season, week, 1800)
     scoring = league_scoring(sleeper_id)
     try:
         games = add_weather(week_matchups(season_games(client, season), week), season, week)
@@ -137,26 +162,32 @@ def week_projections(client: Any, sleeper_id: str, season: int, week: int, ids: 
         dvp = defense_vs_position(client, season)
     except Exception:
         dvp = {}
+    try:   # weather and game situations, fitted on 2021-2025 (league_ai.game_conditions); forecast for games not played yet
+        cond = week_conditions(season_games(client, season), week, games) if games else {}
+    except Exception:
+        cond = {}
     cal = projection_calibration(client, sleeper_id, season) if calibrate else {}
     adj = cal.get("adjust") or {}
     adjust = adj.get("players") or {} if int(adj.get("season") or 0) == int(season) and int(adj.get("week") or 0) == int(week) else {}
     out: dict[str, float] = {}
     for pid in ids:
-        line = lines.get(pid)
+        line = proj_lines.get(pid)
         if not line:
             continue
         pos = positions.get(pid) or line.get("pos") or ""
-        base = score(line["stats"], scoring, pos)
+        base = score(adjust_first_downs(cal.get("first_downs"), pid, pos, line["stats"]), scoring, pos)   # our own first downs
         team = team_code(teams.get(pid) or line.get("team"))
         game = games.get(team)
         if game is None and games:
             out[pid] = 0.0  # on bye
             continue
-        factor = total_multiplier(pos, game, dvp.get((game["opponent"], pos)) if game else None) if pos in ("QB", "RB", "WR", "TE") else 1.0
+        factor = total_multiplier(pos, game, dvp.get((game["opponent"], pos)) if game else None, conditions=True) if pos in ("QB", "RB", "WR", "TE") else 1.0
+        factor *= condition_multiplier(pos, cond.get(team) or {})
         # learned from every finished week: how far projections at this position have run over or under real scores
         # plus this week's nudges from the signals that have proven they help (league_ai.projection_learning)
         nudge = float(adjust.get(pid, 1.0)) if adjust else 1.0
-        out[pid] = round(calibrate_points(base * factor, pos, cal.get("factors") or {}, cal.get("lines")) * nudge, 1)
+        cal_lines = (cal.get("lines_played") or cal.get("lines")) if active else cal.get("lines")
+        out[pid] = round(calibrate_points(base * factor, pos, cal.get("factors") or {}, cal_lines) * nudge, 1)
     return out
 
 

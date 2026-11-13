@@ -596,6 +596,8 @@ def week_context(fo: Mapping[str, Any] | None, owner: str, today: date | None = 
                 lines.append(f"- {owner}'s players ON BYE this week (cannot score; never recommend starting them): " + ", ".join(mine["on_bye"]) + ".")
             elif bye_teams:
                 lines.append(f"- None of {owner}'s players are on bye this week.")
+            if mine.get("cant_play"):
+                lines.append(f"- {owner}'s players on TAXI or IR (cannot be started this week; never list them as starters or bench options): " + ", ".join(mine["cant_play"]) + ".")
             if mine.get("bye_next"):
                 lines.append(f"- {owner}'s players on bye NEXT week (week {int(fo.get('week') or 0) + 1}): " + ", ".join(mine["bye_next"]) + ".")
         opp_name = (fo.get("opponent") or {}).get("owner_name")
@@ -604,6 +606,8 @@ def week_context(fo: Mapping[str, Any] | None, owner: str, today: date | None = 
             lines.append(f"- Opponent {opp_name}'s best lineup this week by the model: " + "; ".join(opp.get("week_starters") or opp["starters"]) + ".")
         if opp and opp.get("on_bye"):
             lines.append(f"- Opponent {opp_name}'s players on bye this week: " + ", ".join(opp["on_bye"]) + ".")
+    lines.append("- The lineups above are the model's BEST lineups. To see the lineup any owner has actually SET this week (starters by slot, "
+                 "bench, who can't play), call get_lineups; use it whenever a question is about what someone started or should change.")
     return "\n".join(lines)
 
 

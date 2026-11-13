@@ -17,8 +17,7 @@ from pydantic import BaseModel
 from supabase import Client, create_client
 
 from api import box_score as box_score_mod
-from api import activity, alerts, cache, front_office, home, league, lineups, live_activity, market, nfl_live, own_league, player, playoffs, projections, teams, trade_feed, trade_offers, waivers
-from league_ai import nfl_data
+from api import activity, alerts, cache, commissioner, owner_settings, profiles, front_office, home, league, lineups, live_activity, market, market_week, nfl_live, own_league, player, playoffs, projections, teams, trade_feed, trade_offers, waivers
 from season_engine import SeasonResolver
 from services.season_rollover_owner_ui import OwnerRolloverDecisionError, OwnerRolloverDecisionService
 
@@ -105,6 +104,16 @@ def _resolve_team(client: Client, user: Any) -> dict[str, Any]:
     }
 
 
+def _with_team_names(owner: tuple[Client, Any], result: Any) -> Any:
+    """Standings, Matchups, a game and Home name teams by their team name (or short name where space is tight)."""
+    client, user = owner
+    try:
+        profiles.label_teams(result, profiles.team_labels(client, resolve_team(client, user)["league_id"]))
+    except Exception as exc:
+        print(f"APP_TEAM_NAMES_ERROR {type(exc).__name__}", flush=True)
+    return result
+
+
 @app.get("/me")
 def me(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
     client, user = owner
@@ -117,7 +126,19 @@ def _league_context(client: Client, user: Any) -> tuple[str, dict[int, str], int
         sleeper_id = league.sleeper_league_id(client, team["league_id"])
     except LookupError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
+    _sync_own_league(client, team["league_id"], sleeper_id)
     return sleeper_id, _roster_names(client, team["league_id"], sleeper_id), team["sleeper_roster_id"]
+
+
+def _sync_own_league(client: Client, league_id: str, sleeper_id: str) -> None:
+    """Refresh the app's own scores (live watcher overlay, or the weeks the app runs itself) before any page reads
+    matchups. Shared and cached 15 s in api.own_league, so pages like Matchups and Standings never show a frozen copy."""
+    projections.remember_league(client, league_id, sleeper_id)  # projections and ranks score with our saved rules
+    try:
+        season = cache.cached(("season", league_id), 600, lambda: SeasonResolver(client).get_active_season(league_id))
+        own_league.sync(client, league_id, sleeper_id, int(season.season))
+    except Exception:
+        pass
 
 
 def _team_ids(client: Client, user: Any) -> dict[int, str]:
@@ -167,6 +188,109 @@ def _alert_pref(client: Client, user: Any) -> tuple[str, dict[str, Any] | None]:
     rows = (client.table("push_prefs").select("off,tz").eq("user_id", user.id).eq("league_id", league_id).limit(1)
             .execute().data or [])
     return league_id, (rows[0] if rows else None)
+
+
+class ProfileBody(BaseModel):
+    display_name: str | None = None
+    team_name: str | None = None
+    team_abbr: str | None = None
+    picture_url: str | None = None
+    keep_picture: bool = True
+
+
+class GmPrefsBody(BaseModel):
+    answer_length: str | None = None
+    team_plan: str | None = None
+
+
+class InviteBody(BaseModel):
+    email: str
+
+
+def _settings_team(client: Client, user: Any) -> dict[str, Any]:
+    team = resolve_team(client, user)
+    if not team.get("team_id"):
+        raise HTTPException(status_code=404, detail="This account isn't linked to a team yet.")
+    return team
+
+
+@app.get("/me/settings")
+def my_settings(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """Everything on the Settings page: my profile, Front Office preferences, co-owner and who I am."""
+    client, user = owner
+    team = _settings_team(client, user)
+    jobs = {
+        "profile": cache.pool.submit(owner_settings.profile_view, client, team),
+        "gm": cache.pool.submit(owner_settings.gm_prefs, client, user.id),
+        "people": cache.pool.submit(owner_settings.people, client, team),
+    }
+    role = str(team.get("role") or "owner").lower()
+    return {
+        "email": getattr(user, "email", None), "role": role, "is_commissioner": role == "commissioner", "team_id": team["team_id"],
+        "is_co_owner": role in ("co_owner", "co-owner"),
+        "profile": jobs["profile"].result(), "gm": jobs["gm"].result(), "people": jobs["people"].result(),
+    }
+
+
+@app.post("/me/profile")
+def save_my_profile(body: ProfileBody, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    team = _settings_team(client, user)
+    data = body.model_dump()
+    if data.pop("keep_picture"):
+        data.pop("picture_url", None)
+    try:
+        return owner_settings.save_profile(client, team, data)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/me/gm-prefs")
+def save_my_gm_prefs(body: GmPrefsBody, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    try:
+        return owner_settings.save_gm_prefs(client, user.id, body.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/me/co-owner")
+def invite_my_co_owner(body: InviteBody, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    try:
+        return owner_settings.invite_co_owner(client, user.id, _settings_team(client, user), body.email)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.delete("/me/co-owner/invite/{invite_id}")
+def cancel_my_co_owner_invite(invite_id: str, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    try:
+        owner_settings.cancel_invite(client, _settings_team(client, user), invite_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"ok": True}
+
+
+@app.delete("/me/co-owner/{member_user_id}")
+def remove_my_co_owner(member_user_id: str, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, _ = owner
+    try:
+        owner_settings.remove_co_owner(client, member_user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"ok": True}
+
+
+@app.get("/league/rules")
+def league_rules(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    try:
+        return owner_settings.rules_view(client, resolve_team(client, user)["league_id"])
+    except Exception as exc:
+        print(f"APP_RULES_ERROR {type(exc).__name__}", flush=True)
+        raise HTTPException(status_code=502, detail="Couldn't load the league rules. Try again.")
 
 
 @app.get("/me/alerts")
@@ -282,6 +406,10 @@ def end_live_activity(activity_id: str, owner: tuple[Client, Any] = Depends(owne
 
 @app.get("/standings")
 def standings(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    return _with_team_names(owner, _standings_raw(owner))
+
+
+def _standings_raw(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
     sleeper_id, names, my_roster_id = _league_context(*owner)
     result = league.standings(sleeper_id, names, my_roster_id)
     ids = _team_ids(*owner)
@@ -291,7 +419,11 @@ def standings(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, An
 
 
 @app.get("/matchups")
-def matchups(
+def matchups(week: int | None = Query(default=None, ge=1, le=25), owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    return _with_team_names(owner, _matchups_raw(week, owner))
+
+
+def _matchups_raw(
     week: int | None = Query(default=None, ge=1, le=25),
     owner: tuple[Client, Any] = Depends(owner_client),
 ) -> dict[str, Any]:
@@ -307,7 +439,7 @@ def matchups(
     result["current_week"] = min(league.current_week(), last_week)
     result["last_week"] = last_week
     try:  # playoff weeks: our bracket, never Sleeper's made-up regular-season pairings
-        pics = home.avatars(league.sleeper.get(f"league/{sleeper_id}/users") or [], league.sleeper.get(f"league/{sleeper_id}/rosters") or [])
+        pics = _pictures(owner[0], league_id, sleeper_id)
         view = league.playoff_view(sleeper_id, names, shown, my_roster_id, rules, pics)
     except Exception as exc:
         print(f"APP_PLAYOFFS_ERROR {type(exc).__name__}", flush=True)
@@ -318,7 +450,7 @@ def matchups(
         result["summary"] = None
         return result
     try:
-        _add_card_owners(sleeper_id, names, my_roster_id, result)
+        _add_card_owners(owner[0], league_id, sleeper_id, names, my_roster_id, result)
     except Exception as exc:
         print(f"APP_MATCHUP_OWNERS_ERROR {type(exc).__name__}", flush=True)
     if not result["is_final"]:
@@ -329,9 +461,16 @@ def matchups(
     return result
 
 
-def _add_card_owners(sleeper_id: str, names: dict[int, str], my_roster_id: int | None, result: dict[str, Any]) -> None:
+def _pictures(client: Client, league_id: str, sleeper_id: str) -> dict[int, str | None]:
+    """roster id -> owner picture: the owner's own from Settings, else their Sleeper one."""
+    sleeper_pics = home.avatars(league.sleeper.get(f"league/{sleeper_id}/users") or [], league.sleeper.get(f"league/{sleeper_id}/rosters") or [])
+    return profiles.pictures(profiles.by_roster(client, league_id), sleeper_pics)
+
+
+def _add_card_owners(client: Client, league_id: str, sleeper_id: str, names: dict[int, str], my_roster_id: int | None,
+                     result: dict[str, Any]) -> None:
     """Each card row's owner picture and season record."""
-    pics = home.avatars(league.sleeper.get(f"league/{sleeper_id}/users") or [], league.sleeper.get(f"league/{sleeper_id}/rosters") or [])
+    pics = _pictures(client, league_id, sleeper_id)
     rows = cache.cached(("standings", sleeper_id), 300, lambda: league.standings(sleeper_id, names, my_roster_id))["rows"]
     records = {r["roster_id"]: r for r in rows}
     for game in result["games"]:
@@ -386,10 +525,7 @@ def _season_context(client: Client, user: Any) -> dict[str, Any]:
     if not season.sleeper_league_id:
         raise HTTPException(status_code=409, detail="The active season isn't linked to a Sleeper league yet.")
     sleeper_id = season.sleeper_league_id
-    try:  # weeks the app runs itself (playoffs on) replace Sleeper's matchups for every page below
-        own_league.sync(client, team["league_id"], sleeper_id, int(season.season))
-    except Exception:
-        pass
+    _sync_own_league(client, team["league_id"], sleeper_id)  # our scores replace Sleeper's for every page below
     _process_due_waivers(client, team["league_id"])
     return {
         **team,
@@ -438,6 +574,8 @@ def team_list(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, An
     client, user = owner
     ctx = _season_context(client, user)
     rows, _, _, cap = _league_teams(client, ctx)
+    mine = profiles.by_team(client, ctx["league_id"])
+    rows = [profiles.overlay_team(dict(r), mine.get(r["team_id"])) for r in rows]
     return {"season": ctx["season"], "salary_cap": cap, "my_team_id": ctx["team_id"], "teams": rows}
 
 
@@ -467,6 +605,7 @@ def _team_page(client: Client, ctx: dict[str, Any], team_id: str) -> dict[str, A
     summary = next((t for t in rows if t["team_id"] == team_id), None)
     if summary is None:
         raise HTTPException(status_code=404, detail="Team not found in your league.")
+    summary = profiles.overlay_team(dict(summary), profiles.by_team(client, ctx["league_id"]).get(team_id))
 
     state = states[0]
     weeks = league.last_scored_week(ctx["sleeper_id"])
@@ -570,8 +709,12 @@ def _app_lineup(client: Client, ctx: dict[str, Any], team_id: str):
         starts, now = _week_kickoffs(client, ctx["season"], week), datetime.now(timezone.utc)
         info = teams.player_info(client, active)
         locked = {pid for pid in active if lineups.is_locked(pid, info.get(pid, {}).get("team"), starts, now)}
-        editable = team_id == ctx["team_id"] and bool(slots)
-        return [(lineups.label(s), ids[i]) for i, s in enumerate(slots)], lineups.view(slots, ids, week, locked, editable)
+        mine = team_id == ctx["team_id"]
+        commish = str(ctx.get("role") or "").lower() == "commissioner"  # sets an away owner's lineup, same locks
+        view = lineups.view(slots, ids, week, locked, bool(slots) and (mine or commish))
+        if not mine and commish:
+            view["commissioner_team_id"] = team_id
+        return [(lineups.label(s), ids[i]) for i, s in enumerate(slots)], view
     return build
 
 
@@ -597,6 +740,190 @@ def set_lineup(body: LineupRequest, owner: tuple[Client, Any] = Depends(owner_cl
         }}).execute()
     except Exception as exc:
         raise HTTPException(status_code=400, detail=lineups.friendly(exc))
+    return {"ok": True}
+
+
+class CommishLineupRequest(BaseModel):
+    team_id: str
+    week: int
+    slots: list[str | None]
+
+
+def _commissioner_ctx(client: Client, user: Any) -> dict[str, Any]:
+    ctx = _season_context(client, user)
+    if str(ctx.get("role") or "").lower() != "commissioner":
+        raise HTTPException(status_code=403, detail="Only the commissioner can do that.")
+    return ctx
+
+
+@app.post("/commissioner/lineup")
+def commissioner_lineup(body: CommishLineupRequest, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """The commissioner sets an away owner's lineup, under the same slot rules and kickoff locks."""
+    client, user = owner
+    ctx = _commissioner_ctx(client, user)
+    slots = _lineup_slots(client, ctx["league_id"])
+    if len(body.slots) != len(slots):
+        raise HTTPException(status_code=400, detail=lineups.ERRORS["lineup_shape_invalid"])
+    try:
+        commissioner.set_lineup(client, league_id=ctx["league_id"], team_id=body.team_id, season=ctx["season"], week=body.week,
+                                slots=slots, player_ids=body.slots)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"ok": True}
+
+
+class CommishAdd(BaseModel):
+    team_id: str
+    player_id: str
+    salary: float = 1.0
+    years: int = 1
+    notes: str = ""
+
+
+class CommishDrop(BaseModel):
+    player_id: str
+    notes: str = ""
+
+
+class CommishContract(BaseModel):
+    contract_id: str
+    salary: float | None = None
+    end_season: int | None = None
+    notes: str = ""
+
+
+class CommishInvite(BaseModel):
+    team_id: str
+    email: str
+    role: str = "owner"
+
+
+class CommishSwitch(BaseModel):
+    enabled: bool
+    own_from_week: int | None = None
+
+
+class CommishRules(BaseModel):
+    values: dict[str, Any] = {}
+    scoring: list[dict[str, Any]] | None = None
+
+
+def _commish_call(fn: Any, *args: Any, **kwargs: Any) -> Any:
+    try:
+        return fn(*args, **kwargs)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+def _after_commish_change(league_id: str) -> None:
+    """Rosters, contracts and names show the change on the next load."""
+    for kind in ("state", "cap", "league_teams", "names", "profiles", "team_labels", "rules_view", "playoff_rules"):
+        cache.forget(kind, league_id)
+
+
+@app.get("/commissioner")
+def commissioner_home(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    ctx = _commissioner_ctx(client, user)
+    return {"season": ctx["season"], **_commish_call(commissioner.overview, client, ctx["league_id"])}
+
+
+@app.post("/commissioner/add")
+def commissioner_add(body: CommishAdd, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    ctx = _commissioner_ctx(client, user)
+    if body.salary < 0 or not 1 <= body.years <= 10:
+        raise HTTPException(status_code=400, detail="Check the salary and years.")
+    _commish_call(commissioner.add_player, client, league_id=ctx["league_id"], season=ctx["season"], team_id=body.team_id,
+                  player_id=body.player_id, salary=body.salary, years=body.years, notes=body.notes)
+    _after_commish_change(ctx["league_id"])
+    return {"ok": True}
+
+
+@app.get("/commissioner/drop/{player_id}")
+def commissioner_drop_preview(player_id: str, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    ctx = _commissioner_ctx(client, user)
+    return _commish_call(commissioner.drop_preview, client, ctx["league_id"], player_id)
+
+
+@app.post("/commissioner/drop")
+def commissioner_drop(body: CommishDrop, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    ctx = _commissioner_ctx(client, user)
+    _commish_call(commissioner.drop_player, client, ctx["league_id"], body.player_id, body.notes)
+    _after_commish_change(ctx["league_id"])
+    return {"ok": True}
+
+
+@app.get("/commissioner/contract/{player_id}")
+def commissioner_contract(player_id: str, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    ctx = _commissioner_ctx(client, user)
+    return _commish_call(commissioner.contract_for, client, ctx["league_id"], player_id)
+
+
+@app.post("/commissioner/contract")
+def commissioner_fix_contract(body: CommishContract, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    ctx = _commissioner_ctx(client, user)
+    _commish_call(commissioner.fix_contract, client, body.contract_id, body.salary, body.end_season, body.notes)
+    _after_commish_change(ctx["league_id"])
+    return {"ok": True}
+
+
+@app.post("/commissioner/invite")
+def commissioner_invite(body: CommishInvite, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    ctx = _commissioner_ctx(client, user)
+    if body.role not in ("owner", "co_owner"):
+        raise HTTPException(status_code=400, detail="Pick owner or co-owner.")
+    return _commish_call(owner_settings.create_invite, client, user_id=user.id, league_id=ctx["league_id"], team_id=body.team_id,
+                         email=body.email, role=body.role)
+
+
+@app.delete("/commissioner/invite/{invite_id}")
+def commissioner_cancel_invite(invite_id: str, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    ctx = _commissioner_ctx(client, user)
+    try:
+        client.table("league_invites").update({"status": "revoked"}).eq("id", invite_id).eq("league_id", ctx["league_id"]).execute()
+    except Exception:
+        raise HTTPException(status_code=400, detail="That didn't save. Try again.")
+    return {"ok": True}
+
+
+@app.delete("/commissioner/member/{member_user_id}")
+def commissioner_remove_member(member_user_id: str, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    ctx = _commissioner_ctx(client, user)
+    _commish_call(commissioner.remove_member, client, ctx["league_id"], member_user_id)
+    cache.clear()  # the removed person's team lookup is cached by user
+    return {"ok": True}
+
+
+@app.post("/commissioner/switch")
+def commissioner_switch(body: CommishSwitch, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    ctx = _commissioner_ctx(client, user)
+    result = _commish_call(commissioner.set_switch, client, ctx["league_id"], body.enabled, body.own_from_week)
+    cache.clear()
+    return {"ok": True, "switch": result}
+
+
+@app.get("/commissioner/rules")
+def commissioner_rules(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    ctx = _commissioner_ctx(client, user)
+    return commissioner.rules_form(client, ctx["league_id"])
+
+
+@app.post("/commissioner/rules")
+def commissioner_save_rules(body: CommishRules, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    ctx = _commissioner_ctx(client, user)
+    _commish_call(commissioner.save_rules, client, ctx["league_id"], body.values, body.scoring)
+    _after_commish_change(ctx["league_id"])
     return {"ok": True}
 
 
@@ -726,9 +1053,15 @@ def remove_from_ir(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[st
 
 
 @app.get("/matchups/{week}/{matchup_id}")
-def box_score(
+def box_score(week: int, matchup_id: int, carry: str | None = Query(default=None, max_length=64),
+              owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    return _with_team_names(owner, _box_score_raw(week, matchup_id, carry, owner))
+
+
+def _box_score_raw(
     week: int,
     matchup_id: int,
+    carry: str | None = Query(default=None, max_length=64),
     owner: tuple[Client, Any] = Depends(owner_client),
 ) -> dict[str, Any]:
     client, user = owner
@@ -738,7 +1071,27 @@ def box_score(
     result = box_score_mod.game(client, ctx, week, matchup_id, _league_team_rows(client, ctx["league_id"]))
     if result is None:
         raise HTTPException(status_code=404, detail="Game not found.")
+    if carry:
+        box_score_mod.add_round(result, _parse_carry(carry))
+    try:  # each team's own picture from Settings (our storage, not Sleeper); the app shows initials without one
+        pics = profiles.pictures(profiles.by_roster(client, ctx["league_id"]), {})
+        for team in result["teams"]:
+            team["avatar"] = pics.get(team["roster_id"])
+    except Exception as exc:
+        print(f"APP_BOX_PICTURES_ERROR {type(exc).__name__}", flush=True)
     return result
+
+
+def _parse_carry(raw: str) -> dict[int, float]:
+    """'roster:points,roster:points' -> {roster: points} (points banked in earlier weeks of a playoff round)."""
+    out: dict[int, float] = {}
+    for part in raw.split(","):
+        rid, _, pts = part.partition(":")
+        try:
+            out[int(rid)] = float(pts)
+        except ValueError:
+            continue
+    return out
 
 
 def _season_state(client: Client, ctx: dict[str, Any]) -> dict[str, Any]:
@@ -756,7 +1109,8 @@ def _market_ppg(client: Client, ctx: dict[str, Any]) -> tuple[list[dict[str, Any
 
 
 @app.get("/market/free-agents")
-def free_agents(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+def free_agents(limit: int = Query(default=market.LIST_SIZE, ge=1, le=3000),
+                owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
     client, user = owner
     ctx = _season_context(client, user)
     state = _season_state(client, ctx)
@@ -765,7 +1119,7 @@ def free_agents(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, 
         rostered = league.sleeper_owners(ctx["sleeper_id"])
     except Exception:
         rostered = {}
-    return market.free_agents(pool, state, ppg, rostered=rostered)
+    return market.free_agents(pool, state, ppg, limit=limit, rostered=rostered)
 
 
 @app.get("/market/players")
@@ -788,56 +1142,9 @@ def all_players(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, 
     return result
 
 
-def _kickoff_utc(game: dict[str, Any]) -> str | None:
-    try:
-        clock = str(game.get("gametime") or "") or "13:00"
-        return datetime.fromisoformat(f"{game['gameday']}T{clock}").replace(tzinfo=home.EASTERN).astimezone(timezone.utc).isoformat()
-    except (KeyError, TypeError, ValueError):
-        return None
-
-
 def _add_this_week(client: Client, ctx: dict[str, Any], rows: list[dict[str, Any]]) -> None:
-    """Market rows get this week's projection (league scoring, matchup-adjusted, same as Home), the season
-    average and last-3 trend in league scoring, and the next game with the defense's rank vs the position.
-    One pass for the whole league, cached half an hour; any piece that fails is just left off."""
-    sid, season, week = ctx["sleeper_id"], ctx["season"], league.current_week()
-
-    def load() -> dict[str, Any]:
-        ids = [r["player_id"] for r in rows if r.get("pos") in ("QB", "RB", "WR", "TE", "K")]
-        pos = {r["player_id"]: r["pos"] for r in rows}
-        team = {r["player_id"]: r["nfl_team"] for r in rows}
-        out: dict[str, Any] = {"proj": {}, "avg": {}, "form": {}, "games": {}, "dvp": {}}
-        try:
-            out["proj"] = projections.week_projections(client, sid, season, week, ids, pos, team)
-        except Exception as exc:
-            print(f"MARKET_PROJ_ERROR {type(exc).__name__}", flush=True)
-        try:
-            avg, _games = projections.season_averages(sid, season, week - 1) if week > 1 else ({}, {})
-            scoring = projections.league_scoring(sid)
-            weekly = []
-            for w in range(week - 1, max(0, week - 1 - market.TREND_WEEKS), -1):
-                lines = projections.week_lines("stats", season, w, 86400)
-                weekly.append({p: projections.score(l["stats"], scoring, l.get("pos")) for p, l in lines.items() if projections.played(l.get("stats"))})
-            out["avg"], out["form"] = avg, market.recent_form(weekly, avg)
-        except Exception as exc:
-            print(f"MARKET_FORM_ERROR {type(exc).__name__}", flush=True)
-        try:
-            out["games"] = nfl_data.week_matchups(nfl_data.season_games(client, season), week)
-            out["dvp"] = nfl_data.defense_vs_position(client, season)
-        except Exception as exc:
-            print(f"MARKET_GAMES_ERROR {type(exc).__name__}", flush=True)
-        return out
-
-    data = cache.cached(("market_week", sid, season, week), 1800, load)
-    find = market.next_games(data["games"], data["dvp"], week, _kickoff_utc)
-    for r in rows:
-        pid = r["player_id"]
-        r["proj"] = data["proj"].get(pid)
-        a = data["avg"].get(pid)
-        r["avg"] = round(a, 1) if a is not None else None
-        form = data["form"].get(pid) or {}
-        r["last3"], r["trend"] = form.get("last3"), form.get("trend")
-        r["next"] = find(nfl_data.team_code(r.get("nfl_team")) or "", r.get("pos") or "")
+    """Market rows get this week's numbers (api.market_week, shared with the website's League Players tab)."""
+    market_week.add_this_week(client, ctx["sleeper_id"], ctx["season"], rows)
 
 
 @app.get("/my-team/calls")
@@ -1352,7 +1659,13 @@ def _league_live(client: Client, ctx: dict[str, Any], week: int, starts: dict[st
     proj = cache.cached(("starter_proj", sid, ctx["season"], week), 1800, lambda: projections.week_projections(
         client, sid, ctx["season"], week, ids, {p: _text(info.get(p, {}).get("position")) for p in ids},
         {p: _text(info.get(p, {}).get("team")) for p in ids}))
-    return home.team_live(raw, info, starts, now, proj)
+    try:
+        active = cache.cached(("starter_proj_active", sid, ctx["season"], week), 1800, lambda: projections.week_projections(
+            client, sid, ctx["season"], week, ids, {p: _text(info.get(p, {}).get("position")) for p in ids},
+            {p: _text(info.get(p, {}).get("team")) for p in ids}, active=True))
+    except Exception:
+        active = {}
+    return home.team_live(raw, info, starts, now, proj, active)
 
 
 def _game_day_bottom(client: Client, ctx: dict[str, Any], user: Any, week: int, current: dict[str, Any],
@@ -1400,13 +1713,22 @@ def _home_week(client: Client, season: int, today: date) -> int:
 
 @app.get("/home")
 def home_page(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    return _with_team_names(owner, _home_raw(owner))
+
+
+def _home_raw(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
     client, user = owner
     ctx = _season_context(client, user)
     if not ctx.get("team_id"):
         raise HTTPException(status_code=404, detail="This account isn't linked to a team yet.")
     sid, names, my_roster = ctx["sleeper_id"], ctx["names"], ctx["sleeper_roster_id"]
     sleeper_league = league.sleeper.get(f"league/{sid}") or {}
-    playoff_start = int((sleeper_league.get("settings") or {}).get("playoff_week_start") or 15)
+    try:  # our playoff format from Settings, not Sleeper's
+        rules = cache.cached(("playoff_rules", ctx["league_id"]), 300, lambda: league.playoff_rules(client, ctx["league_id"]))
+        playoff_start = int(rules["playoff_week_start"])
+    except Exception:
+        rules = None
+        playoff_start = int((sleeper_league.get("settings") or {}).get("playoff_week_start") or 15)
     today = datetime.now(home.HOME_TZ).date()
     week = _home_week(client, ctx["season"], today)
     phase = home.phase(today, sleeper_league.get("status"), week, playoff_start)
@@ -1431,7 +1753,7 @@ def home_page(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, An
     pics: dict[int, str | None] = {}
     if phase in ("game_day", "recap", "playoffs"):
         try:
-            pics = home.avatars(league.sleeper.get(f"league/{sid}/users") or [], league.sleeper.get(f"league/{sid}/rosters") or [])
+            pics = _pictures(client, ctx["league_id"], sid)
         except Exception:
             pics = {}
         by_roster = {r["roster_id"]: r for r in standings_rows}
@@ -1497,22 +1819,14 @@ def home_page(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, An
             out["series"] = teams.head_to_head(sid, weeks, my_roster, them["roster_id"])
         out["weeks_left"] = max(0, playoff_start - week)
     if phase == "playoffs":
+        # Our own bracket (seeds from our standings, format from Settings); Sleeper is only the score feed.
         try:
-            matches = league.sleeper.get(f"league/{sid}/winners_bracket", ttl=300) or []
-        except Exception:
-            matches = []
-        points: dict[tuple[int, int], float] = {}
-        for rnd in {int(m.get("r") or 0) for m in matches if m.get("r")}:
-            for game in league.matchups(sid, names, playoff_start + rnd - 1, my_roster)["games"]:
-                for side in game["teams"]:
-                    points[(rnd, side["roster_id"])] = side["score"]
-        out["bracket"] = home.bracket(matches, names, points, playoff_start)
-        for rnd in out["bracket"]:
-            for g in rnd["games"]:
-                for key in ("a", "b"):
-                    if g[key]:
-                        g[key]["avatar"] = pics.get(g[key]["roster_id"])
-                        g[key]["seed"] = by_roster.get(g[key]["roster_id"], {}).get("rank")
+            view = league.playoff_view(sid, names, week, my_roster, rules, pics) if rules else None
+        except Exception as exc:
+            print(f"APP_HOME_PLAYOFFS_ERROR {type(exc).__name__}", flush=True)
+            view = None
+        out["bracket"] = home.bracket_from_view(view)
+        out["playoff_game"] = home.playoff_game(view)
     if phase == "decisions":
         ppg = teams.player_ppg(sid, weeks)
         try:

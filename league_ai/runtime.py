@@ -23,7 +23,7 @@ from league_ai.learning import Ledger, learning_pack_lines
 from league_ai.memory import Memory
 from league_ai.nfl_data import add_weather, bye_weeks, current_week_from_games, data_freshness, defense_vs_position, season_games, week_matchups
 from league_ai.roster_moves import rules_from
-from league_ai.routing import effort_for, topic as question_topic
+from league_ai.routing import effort_for, is_trade_question, topic as question_topic
 from league_ai.service import AnswerResult, LeagueDataSources, answer, build_pack
 from league_ai.settings_store import apply_sleeper_scoring, fetch_sleeper_scoring, load_settings
 from league_ai.team_context import team_context
@@ -39,6 +39,7 @@ TOOL_STATUS = {
     "get_player_stats": "Checking the stats",
     "compare_players": "Comparing players",
     "get_injury_report": "Checking the injury report",
+    "get_lineups": "Checking the lineups that are set",
     "get_prospects": "Scouting the prospects",
     "get_market_values": "Checking market values",
     "search_players": "Searching the player pool",
@@ -59,6 +60,7 @@ TOOL_STATUS = {
     "get_schedule_outlook": "Grading the rest of the schedule",
     "get_return_outlook": "Comparing his return with past players who had the same injury",
     "get_position_room": "Checking how his team splits the work",
+    "get_nfl_moves": "Checking the latest NFL trades and signings",
     "get_playoff_odds": "Simulating the rest of the season",
     "get_pickup_odds": "Simulating the season with him on your roster",
     "get_matchup_odds": "Working out your odds to win this week",
@@ -248,7 +250,8 @@ def power_rows(client: Any, league_id: str, season: int, *, state: Mapping[str, 
              "on_bye": [bye_label(p) for p in tp.on_bye], "on_bye_names": [p.name for p in tp.on_bye], "bye_next": [bye_label(p) for p in tp.bye_next],
              "week_lineup": [player_row(p, slot) for slot, p in zip(tp.week_slots, tp.week_starters)],
              "week_bench_detail": [player_row(p) for p in tp.week_bench],
-             "on_bye_ids": [p.sleeper_id for p in tp.on_bye]} for tp in rankings]
+             "on_bye_ids": [p.sleeper_id for p in tp.on_bye],
+             "cant_play": [f"{p.position} {p.name} ({'taxi' if p.designation == 'taxi' else 'IR'})" for p in tp.inactive]} for tp in rankings]
 
 
 @dataclass
@@ -331,7 +334,7 @@ def chat_tools(client: Any, owner: Owner, *, state: Mapping[str, Any], rules: Ma
             "question": question(), "out": out}).start(),
     )
 
-    def week_projection(players: list[Mapping[str, Any]]) -> dict[str, float]:
+    def week_projection(players: list[Mapping[str, Any]], active: bool = False) -> dict[str, float]:
         from api.projections import week_projections
 
         sid = league.get("sleeper_league_id")
@@ -340,7 +343,7 @@ def chat_tools(client: Any, owner: Owner, *, state: Mapping[str, Any], rules: Ma
         ids = [str(p.get("sleeper_id")) for p in players if p.get("sleeper_id")]
         return week_projections(client, str(sid), int(owner.season), int(week), ids,
                                 {str(p.get("sleeper_id")): str(p.get("position") or "") for p in players},
-                                {str(p.get("sleeper_id")): str(p.get("team") or "") for p in players})
+                                {str(p.get("sleeper_id")): str(p.get("team") or "") for p in players}, active=active)
 
     return build_registry(client, league_state=state, salary_cap=rules.get("salary_cap", 225), dead_cap_pct=float(rules.get("default_dead_cap_pct", 50) or 50),
                           week_projection=week_projection,
@@ -366,6 +369,9 @@ def chat_turn(client: Any, owner: Owner, *, question: str, history: list[dict[st
         return got
 
     memory = owner.memory(client)
+    from league_ai import owner_prefs  # answer length and contend/rebuild from the owner's Settings
+    week_context = owner_prefs.with_prefs(week_context, owner_prefs.load(client, owner.user_id))
+    week_context = with_question_focus(week_context, question)
     topic = question_topic(question)
     sources = LeagueDataSources(client=client, league_id=owner.league_id, season=owner.season)
     model = pick_model(topic, conversation_id or question)
@@ -392,6 +398,19 @@ def chat_turn(client: Any, owner: Owner, *, question: str, history: list[dict[st
                                         topic=topic, conversation_id=conversation_id))
     notes_changed = any(name in ("remember", "forget") for name in result.trace.tool_calls)
     return ChatTurn(result, conversation_id, notes_changed)
+
+
+NOT_A_TRADE_NOTE = ("This question: the owner did not ask about a trade. Answer exactly what they asked, on its own terms, "
+                    "and end there. No hold/sell/buy call, trade value or trade-deadline talk, and no contract, cut or dead "
+                    "cap math unless the question asks for it or this conversation is already about a trade.")
+
+
+def with_question_focus(week_context: str | None, question: str) -> str | None:
+    """A one-line per-turn reminder (after the cache breakpoint, so it costs a few tokens and no cache) that keeps
+    a non-trade question from ending in trade advice. Trade questions get nothing extra."""
+    if is_trade_question(question):
+        return week_context
+    return f"{week_context.strip()}\n\n{NOT_A_TRADE_NOTE}" if week_context and week_context.strip() else NOT_A_TRADE_NOTE
 
 
 HARD_TOPICS = ("trade", "strategy")

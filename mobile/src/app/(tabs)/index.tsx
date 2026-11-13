@@ -5,8 +5,8 @@ import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-nativ
 import { GameDayBottom, Scoreboard } from '../../components/home/GameDayBottom';
 import { Avatar, Headshot, type Ring } from '../../components/Pictures';
 import { ErrorState, Loading } from '../../components/ScreenState';
-import { Bar, Card, Pill, Screen, firstName, money, ordinal, record, ui } from '../../components/ui';
-import { type BoxScore, type HomeData, type HomeSide, type LivePlayer, type RaceRow, type RookieDeal, type TableRow, apiSend, prefetch, useApi } from '../../lib/api';
+import { Bar, Card, Pill, Screen, firstName, money, teamLabel, ordinal, record, ui } from '../../components/ui';
+import { type BoxScore, type HomeData, type HomeSide, type LivePlayer, type HomePlayoffGame, type PlayoffSide, type RaceRow, type RookieDeal, type TableRow, apiSend, LIVE_POLL_MS, prefetch, useApi } from '../../lib/api';
 import { syncLiveActivity } from '../../lib/liveActivity';
 import { colors } from '../../lib/theme';
 
@@ -25,8 +25,8 @@ const pts = (n: number) => n.toFixed(1);
 
 export default function Home() {
   const [live, setLive] = useState(false);
-  // Game days refresh every minute while Home is open.
-  const { data, error, loading, reload, refresh } = useApi<HomeData>('/home', live ? 60_000 : 0);
+  // Game days refresh every 10 seconds while Home is open.
+  const { data, error, loading, reload, refresh } = useApi<HomeData>('/home', live ? LIVE_POLL_MS : 0);
   const isLive = data?.phase === 'game_day' || data?.phase === 'playoffs';
   useEffect(() => setLive(isLive), [isLive]);
   // Game days: start or refresh the lock screen Live Activity for my matchup (iPhone only).
@@ -57,7 +57,7 @@ export default function Home() {
     : data.phase === 'playoffs' ? `Playoffs · Week ${data.week}` : `Week ${data.week}`;
 
   return (
-    <Screen loading={loading} onRefresh={reload}>
+    <Screen loading={loading}>
       <View style={styles.top}>
         <View style={ui.flex}>
           <Text style={styles.hey}>{heading}</Text>
@@ -151,7 +151,7 @@ function Hero({ title, pill, me, them, week, matchupId, meLabel, themLabel, badg
             <Text style={styles.vsText}>VS</Text>
             {odds ? <SplitOdds odds={odds} /> : null}
           </View>
-          <Side s={them} label={themLabel ?? (them ? firstName(them.name) : 'Bye')} lead={!total || !ahead} projected={them ? proj?.[1] : undefined} />
+          <Side s={them} label={themLabel ?? (them ? teamLabel(them, true) : 'Bye')} lead={!total || !ahead} projected={them ? proj?.[1] : undefined} />
         </View>
         <View style={styles.bar}><Bar fraction={total ? me.score / total : 0.5} /></View>
         {badges.length ? <Badges items={badges} /> : null}
@@ -167,7 +167,7 @@ function Hero({ title, pill, me, them, week, matchupId, meLabel, themLabel, badg
 function useMatchupProj(data: HomeData) {
   const g = data.game!;
   const final = !!g.is_final;
-  const { data: box } = useApi<BoxScore>(`/matchups/${data.week}/${g.matchup_id}`, final ? 0 : 60_000);
+  const { data: box } = useApi<BoxScore>(`/matchups/${data.week}/${g.matchup_id}`, final ? 0 : LIVE_POLL_MS);
   const sides = box?.teams ?? [];
   const mine = box ? sides.findIndex((t) => t.roster_id === g.me!.roster_id) : -1;
   const proj: [number, number] | null = !final && mine >= 0 && sides.length === 2
@@ -177,16 +177,20 @@ function useMatchupProj(data: HomeData) {
   return { proj, odds };
 }
 
-function LiveHero({ data, title }: { data: HomeData; title: string }) {
+// Monday passes its own MNF pill and done flag (every starter on both sides has played) so the card
+// looks the same as the weekend one.
+function LiveHero({ data, title, pill, done }: { data: HomeData; title: string; pill?: ReactNode; done?: boolean }) {
   const g = data.game!;
   const me = g.me!;
-  const final = !!g.is_final;
-  const { proj, odds } = useMatchupProj(data);
+  const final = done ?? !!g.is_final;
+  const { proj: rawProj, odds: rawOdds } = useMatchupProj(data);
+  const proj = final ? null : rawProj;
+  const odds = final ? null : rawOdds;
   const line = data.top5_line;
   return (
     <Hero
       title={title}
-      pill={<LivePill data={data} />}
+      pill={pill ?? <LivePill data={data} />}
       me={me}
       them={g.them}
       week={data.week}
@@ -274,7 +278,7 @@ function Table({ title, right, onRight, onPress, head, rows, cutAfter }: {
           <Text style={[styles.tRank, r.me && ui.gold]}>{r.rank}</Text>
           <View style={[styles.tOwner, styles.tOwnerCell]}>
             <Avatar uri={r.avatar} name={r.name} size={24} me={r.me} />
-            <Text style={[styles.tName, r.me && ui.gold]} numberOfLines={1}>{r.me ? 'You' : firstName(r.name)}</Text>
+            <Text style={[styles.tName, r.me && ui.gold]} numberOfLines={1}>{r.me ? 'You' : teamLabel(r, true)}</Text>
           </View>
           <Text style={[styles.td, r.me && ui.gold]}>{r.a}</Text>
           <Text style={[styles.td, r.me && ui.gold]}>{r.b}</Text>
@@ -335,7 +339,7 @@ function UpNext({ them, week, series }: { them: HomeSide; week: number; series?:
         <View style={styles.upNext}>
           <Avatar uri={them.avatar} name={them.name} size={40} />
           <View style={ui.flex}>
-            <Text style={ui.name}>{them.name}</Text>
+            <Text style={ui.name}>{teamLabel(them)}</Text>
             <Text style={ui.sub}>
               {record(them.wins ?? 0, them.losses ?? 0, them.ties ?? 0)} · {ordinal(them.season_rank)}{them.ppg != null ? ` · ${them.ppg.toFixed(1)} PPG` : ''}
             </Text>
@@ -370,7 +374,7 @@ function Recap({ data }: { data: HomeData }) {
     <>
       {game?.me ? (
         <Hero
-          title={`WEEK ${r!.week} FINAL${game.them ? ` · VS ${firstName(game.them.name).toUpperCase()}` : ''}`}
+          title={`WEEK ${r!.week} FINAL${game.them ? ` · VS ${teamLabel(game.them, true).toUpperCase()}` : ''}`}
           pill={<Pill label={won ? 'WIN' : game.me.score === game.them?.score ? 'TIE' : 'LOSS'} tone={won ? 'live' : 'out'} />}
           me={game.me}
           them={game.them}
@@ -402,7 +406,7 @@ function GameDay({ data }: { data: HomeData }) {
   const mine = data.players?.me ?? [];
   const theirs = data.players?.them ?? [];
   const started = g.me.score > 0 || (g.them?.score ?? 0) > 0 || mine.some((p) => p.status !== 'waiting' && p.status !== 'empty' && p.status !== 'bye');
-  const title = `WEEK ${data.week}${g.them ? ` · VS ${firstName(g.them.name).toUpperCase()}` : ''}`;
+  const title = `WEEK ${data.week}${g.them ? ` · VS ${teamLabel(g.them, true).toUpperCase()}` : ''}`;
 
   if (!started) {
     const first = mine.filter((p) => p.kickoff).sort((a, b) => (a.kickoff! < b.kickoff! ? -1 : 1));
@@ -418,40 +422,17 @@ function GameDay({ data }: { data: HomeData }) {
     );
   }
 
-  const ahead = g.me.score >= (g.them?.score ?? 0);
   if (data.weekday === 0 && !g.is_final) {
-    const still = [...mine.filter((p) => p.status !== 'final' && p.player_id && p.status !== 'bye').map((p) => ({ ...p, side: 'You' })),
-      ...theirs.filter((p) => p.status !== 'final' && p.player_id && p.status !== 'bye').map((p) => ({ ...p, side: firstName(g.them?.name ?? '') }))];
-    const gap = Math.abs(g.me.score - (g.them?.score ?? 0));
     // Every starter on both sides has played (the week itself may still have MNF games left in other matchups).
     const done = mine.length > 0 && left(mine) === 0 && left(theirs) === 0;
     return (
       <>
-        <Hero
+        <LiveHero
+          data={data}
           title={title}
           pill={done ? <Pill label="FINAL" tone="gold" /> : <LivePill data={data} label="MNF" waiting="MNF TONIGHT" />}
-          me={g.me}
-          them={g.them}
-          week={data.week}
-          matchupId={g.matchup_id}
-          final={done}
-          badges={done ? [] : [[String(left(mine)), 'LEFT: YOU'], [String(left(theirs)), `LEFT: ${firstName(g.them?.name ?? 'THEM').toUpperCase()}`], [ordinal(g.me.rank), 'HIGH SCORE']]}
+          done={done}
         />
-        {still.length ? (
-          <Card>
-            <Eyebrow>STILL TO PLAY</Eyebrow>
-            <View style={styles.heads}>
-              {still.slice(0, 4).map((p, i) => (
-                <View key={`${p.player_id}-${i}`} style={styles.head}>
-                  <Headshot playerId={p.player_id} pos={p.pos} team={p.team} ring={p.side === 'You' ? 'gold' : 'them'} size={56} />
-                  <Text style={styles.headName} numberOfLines={1}>{shortName(p.name)}</Text>
-                  <Text style={styles.headSub} numberOfLines={1}>{p.side} · {p.status === 'playing' ? pts(p.points) : KICK(p.kickoff)}</Text>
-                </View>
-              ))}
-            </View>
-            {g.them ? <Text style={styles.needs}>{ahead ? `${firstName(g.them.name)} needs ${pts(gap)} to pass you` : `You need ${pts(gap)} to win`}</Text> : null}
-          </Card>
-        ) : null}
         {data.bottom?.mode === 'shotgun' && data.bottom.scoreboard?.length ? <Scoreboard games={data.bottom.scoreboard} week={data.week} /> : null}
         {data.bottom ? <GameDayBottom bottom={data.bottom} week={data.week} /> : <Race rows={data.race ?? []} title="TOP 5 RACE" window="bubble" />}
         <AskBar placeholder="What do I need tonight?" />
@@ -478,7 +459,7 @@ function GameDay({ data }: { data: HomeData }) {
 function PreGameHero({ data, title }: { data: HomeData; title: string }) {
   const g = data.game!;
   const { proj } = useMatchupProj(data);
-  const them = g.them ? firstName(g.them.name).toUpperCase() : 'BYE';
+  const them = g.them ? teamLabel(g.them, true).toUpperCase() : 'BYE';
   return (
     <Hero
       title={title}
@@ -525,60 +506,121 @@ function LineupCheck({ issues }: { issues: LivePlayer[] }) {
 }
 
 function Playoffs({ data }: { data: HomeData }) {
-  const g = data.game;
   const mine = data.players?.me ?? [];
-  const seed = (s?: HomeSide | null) => {
-    const found = data.bracket?.flatMap((r) => r.games.flatMap((x) => [x.a, x.b])).find((b) => b && s && b.roster_id === s.roster_id);
-    return found?.seed ? ` · ${ordinal(found.seed).replace(/(st|nd|rd|th)$/, '')} seed` : '';
-  };
-  const round = data.bracket?.find((r) => r.week === data.week);
+  const pg = data.playoff_game;
   return (
     <>
-      {g?.me ? (
-        <Hero
-          title={`${(round?.label ?? 'Playoffs').toUpperCase()}${g.them ? ` · VS ${firstName(g.them.name).toUpperCase()}` : ''}`}
-          pill={<LivePill data={data} />}
-          me={g.me}
-          them={g.them}
-          week={data.week}
-          matchupId={g.matchup_id}
-          meLabel={`You${seed(g.me)}`}
-          themLabel={g.them ? `${firstName(g.them.name)}${seed(g.them)}` : undefined}
-          final={!!g.is_final}
-          badges={g.is_final ? [] : [[String(left(mine)), 'LEFT: YOU'], [String(left(data.players?.them ?? [])), 'LEFT: THEM'], [ordinal(g.me.rank), 'HIGH SCORE']]}
-        />
-      ) : null}
-      {data.bracket?.length ? (
-        <Card>
-          <Eyebrow right={`Top ${data.playoff_teams}`}>BRACKET</Eyebrow>
-          <View style={styles.bracket}>
-            {data.bracket.map((rnd) => (
-              <View key={rnd.round} style={styles.roundCol}>
-                <Text style={styles.roundLabel}>{rnd.label.toUpperCase()} · WK {rnd.week}</Text>
-                {rnd.games.map((game, i) => (
-                  <View key={i} style={styles.match}>
-                    {[game.a, game.b].map((s, j) => {
-                      const other = j === 0 ? game.b : game.a;
-                      const leads = game.winner ? game.winner === s?.roster_id : (s?.score ?? 0) > (other?.score ?? 0);
-                      return (
-                        <View key={j} style={styles.matchRow}>
-                          <Avatar uri={s?.avatar} name={s?.name ?? '?'} size={20} />
-                          <Text style={[styles.matchName, leads && ui.gold]} numberOfLines={1}>{s ? firstName(s.name) : 'TBD'}</Text>
-                          <Text style={[styles.matchScore, leads && ui.gold]}>{s?.score ? pts(s.score) : ''}</Text>
-                        </View>
-                      );
-                    })}
-                  </View>
-                ))}
-              </View>
-            ))}
-          </View>
-        </Card>
-      ) : null}
+      {pg ? <PlayoffHero data={data} pg={pg} /> : null}
+      {data.bracket?.length ? <BracketCard rounds={data.bracket} playoffTeams={data.playoff_teams} /> : null}
       <PlayerHeads title="YOUR PLAYERS RIGHT NOW" players={mine.filter((p) => p.player_id).sort((a, b) => order(a) - order(b) || b.points - a.points).slice(0, 3)} sub={statusLine} />
       <AskBar placeholder="Who should I start this week?" />
-      {!g?.me && data.standings?.length ? <Standings rows={data.standings} playoffTeams={data.playoff_teams} /> : null}
+      {!pg && data.standings?.length ? <Standings rows={data.standings} playoffTeams={data.playoff_teams} /> : null}
     </>
+  );
+}
+
+const seedLabel = (base: string, s?: { seed?: number | null } | null) => (s?.seed ? `${base} · ${s.seed}` : base);
+const asSide = (s: PlayoffSide, score?: number): HomeSide => ({ roster_id: s.roster_id, name: s.name, score: score ?? s.score, avatar: s.avatar });
+
+// The playoff matchup: the weekend card with seeds and no bottom box (only the score matters now).
+// Scores are round totals; in week 2 of a two-week round the projections and win odds count week 1 too.
+function PlayoffHero({ data, pg }: { data: HomeData; pg: HomePlayoffGame }) {
+  const title = `${pg.label.toUpperCase()}${pg.them ? ` · VS ${teamLabel(pg.them, true).toUpperCase()}` : ''}`;
+  const props = { data, pg, title };
+  return pg.matchup_id != null && pg.state !== 'pre' ? <PlayoffHeroLive {...props} mid={pg.matchup_id} /> : (
+    <Hero title={title} pill={<LivePill data={data} />} me={asSide(pg.me)} them={pg.them ? asSide(pg.them) : null} week={data.week}
+      meLabel={seedLabel('You', pg.me)} themLabel={pg.them ? seedLabel(teamLabel(pg.them, true), pg.them) : undefined}
+      showScores={pg.state !== 'pre'} final={pg.state === 'final'} badges={[]} />
+  );
+}
+
+function PlayoffHeroLive({ data, pg, title, mid }: { data: HomeData; pg: HomePlayoffGame; title: string; mid: number }) {
+  const final = pg.state === 'final';
+  const carry = pg.leg > 1 && pg.them ? `?carry=${pg.me.roster_id}:${pg.me.carry},${pg.them.roster_id}:${pg.them.carry}` : '';
+  const { data: box } = useApi<BoxScore>(`/matchups/${data.week}/${mid}${carry}`, final ? 0 : LIVE_POLL_MS);
+  const sides = box?.teams ?? [];
+  const i = box && sides.length === 2 ? sides.findIndex((t) => t.roster_id === pg.me.roster_id) : -1;
+  const pick = <T,>(pair?: [T, T] | null): [T, T] | null => (pair && i >= 0 ? [pair[i], pair[1 - i]] : null);
+  const round = carry ? box?.round : null;
+  const score = round ? pick(round.score) : null;
+  const proj = final ? null : round ? pick(round.projected)
+    : i >= 0 ? [sides[i].projected ?? sides[i].score, sides[1 - i].projected ?? sides[1 - i].score] as [number, number] : null;
+  const odds = final || !pg.them ? null : pick(round ? round.win_chance : box?.win_chance);
+  return (
+    <Hero title={title} pill={<LivePill data={data} />} me={asSide(pg.me, score?.[0])} them={pg.them ? asSide(pg.them, score?.[1]) : null}
+      week={data.week} matchupId={mid} meLabel={seedLabel('You', pg.me)} themLabel={pg.them ? seedLabel(teamLabel(pg.them, true), pg.them) : undefined}
+      proj={proj} odds={odds} final={final} badges={[]} />
+  );
+}
+
+type BracketRound = NonNullable<HomeData['bracket']>[number];
+const weeksLabel = (r: BracketRound) => {
+  const w = r.weeks?.length ? r.weeks : [r.week];
+  return `WK ${w[0]}${w.length > 1 ? `-${w[w.length - 1]}` : ''}`;
+};
+
+function MatchBox({ game, gold }: { game: BracketRound['games'][number]; gold?: boolean }) {
+  return (
+    <View style={[styles.match, gold && styles.matchGold]}>
+      {[game.a, game.b].map((s, j) => {
+        const other = j === 0 ? game.b : game.a;
+        const leads = !!s && (game.winner ? game.winner === s.roster_id : (s.score ?? 0) > (other?.score ?? 0));
+        const out = !!s && !!game.winner && game.winner !== s.roster_id;
+        if (!s) return <Text key={j} style={styles.matchTbd} numberOfLines={1} adjustsFontSizeToFit>{game.placeholders?.[j] ?? 'TBD'}</Text>;
+        return (
+          <View key={j} style={[styles.matchRow, out && styles.matchOut]}>
+            <Avatar uri={s.avatar} name={s.name} size={18} />
+            <Text style={[styles.matchName, leads && ui.gold]} numberOfLines={1}>{teamLabel(s, true)}</Text>
+            <Text style={[styles.matchScore, leads && ui.gold]}>{s.score ? pts(s.score) : ''}</Text>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+function SemiCol({ round, k }: { round: BracketRound; k: number }) {
+  return (
+    <View style={styles.bkSide}>
+      <Text style={styles.roundLabel}>{round.label.toUpperCase()}</Text>
+      <MatchBox game={round.games[k]} />
+      <Text style={styles.bkWeeks}>{weeksLabel(round)}</Text>
+    </View>
+  );
+}
+
+// A real bracket: semifinal on each side, the final in the middle with lines running in from both semis.
+// Other shapes (6+ teams with a quarterfinal round) keep the column-per-round layout.
+function BracketCard({ rounds, playoffTeams }: { rounds: BracketRound[]; playoffTeams?: number }) {
+  const last = rounds[rounds.length - 1];
+  const semis = rounds[rounds.length - 2];
+  const classic = rounds.length === 2 && semis.games.length === 2 && last.games.length === 1;
+  return (
+    <Card>
+      <Eyebrow right={playoffTeams ? `Top ${playoffTeams}` : undefined}>BRACKET</Eyebrow>
+      {classic ? (
+        <View style={styles.bk}>
+          <SemiCol round={semis} k={0} />
+          <View style={styles.bkLine} />
+          <View style={styles.bkMid}>
+            <Text style={[styles.roundLabel, ui.gold]}>{last.label.toUpperCase()}</Text>
+            <MatchBox game={last.games[0]} gold />
+            <Text style={styles.bkWeeks}>{weeksLabel(last)}</Text>
+          </View>
+          <View style={styles.bkLine} />
+          <SemiCol round={semis} k={1} />
+        </View>
+      ) : (
+        <View style={styles.bracket}>
+          {rounds.map((rnd) => (
+            <View key={rnd.round} style={styles.roundCol}>
+              <Text style={styles.roundLabel}>{rnd.label.toUpperCase()} · {weeksLabel(rnd)}</Text>
+              {rnd.games.map((game, i) => <MatchBox key={i} game={game} gold={rnd === last} />)}
+            </View>
+          ))}
+        </View>
+      )}
+    </Card>
   );
 }
 
@@ -784,9 +826,17 @@ const styles = StyleSheet.create({
   roundCol: { flex: 1, gap: 8, justifyContent: 'center' },
   roundLabel: { color: colors.muted, fontSize: 9, fontWeight: '800', letterSpacing: 0.8, textAlign: 'center' },
   match: { backgroundColor: colors.row, borderRadius: 10, padding: 8, gap: 4 },
-  matchRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  matchName: { color: colors.text, fontSize: 12, fontWeight: '700', flex: 1 },
-  matchScore: { color: colors.text, fontSize: 12, fontWeight: '700' },
+  matchGold: { borderWidth: 1, borderColor: colors.gold },
+  matchRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  matchOut: { opacity: 0.45 },
+  matchTbd: { color: colors.muted, fontSize: 10, fontWeight: '700', paddingVertical: 2 },
+  bk: { flexDirection: 'row', alignItems: 'center', marginTop: 22 },
+  bkSide: { flex: 1, gap: 4 },
+  bkMid: { flex: 1, gap: 4, transform: [{ translateY: -12 }] }, // the final sits a little above the semis
+  bkLine: { width: 8, height: 1.5, backgroundColor: colors.gold, opacity: 0.6 },
+  bkWeeks: { color: colors.muted, fontSize: 9, fontWeight: '700', textAlign: 'center', opacity: 0.8 },
+  matchName: { color: colors.text, fontSize: 11, fontWeight: '700', flex: 1 },
+  matchScore: { color: colors.text, fontSize: 11, fontWeight: '700' },
   deal: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 10 },
   dealLine: { borderTopWidth: 1, borderTopColor: colors.row },
   choice: { borderWidth: 1, borderColor: colors.line, borderRadius: 10, paddingVertical: 6, paddingHorizontal: 10 },

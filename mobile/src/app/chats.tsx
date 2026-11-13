@@ -22,7 +22,7 @@ export default function Chats() {
   const open = (c: string) => router.navigate({ pathname: '/front-office', params: { c } });
 
   return (
-    <Screen loading={loading} onRefresh={reload}>
+    <Screen loading={loading}>
       <Back label="Front Office" />
       <Title right={<Pressable onPress={() => open('new')} hitSlop={8}><Text style={ui.link}>+ New</Text></Pressable>}>Conversations</Title>
       <Card>

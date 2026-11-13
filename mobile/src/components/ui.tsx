@@ -1,17 +1,18 @@
-import * as Haptics from 'expo-haptics';
 import { router, useNavigation } from 'expo-router';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { ActivityIndicator, Animated, Dimensions, Easing, PanResponder, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, type ScrollViewInstance, type StyleProp, type ViewStyle } from 'react-native';
+import { ActivityIndicator, Animated, Dimensions, Easing, PanResponder, Pressable, ScrollView, StyleSheet, Text, View, type ScrollViewInstance, type StyleProp, type ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { colors } from '../lib/theme';
+import { usePullDown } from './PullDown';
 import { useSlow } from './ScreenState';
 
 // Shared pieces from the page designs: cards, tiles, the gold segmented
 // switcher, position badges and status pills.
 
+// Every page refreshes on a gentle pull (the gold football), and opens search only on a much longer pull (PullDown).
 // scrollTo: a y offset inside the page (its children) to glide to once, e.g. a card the page was opened for.
-export function Screen({ children, loading, onRefresh, scrollTo }: { children: ReactNode; loading?: boolean; onRefresh?: () => void; scrollTo?: number | null }) {
+export function Screen({ children, loading, scrollTo }: { children: ReactNode; loading?: boolean; scrollTo?: number | null }) {
   const insets = useSafeAreaInsets();
   const scroll = useRef<ScrollViewInstance>(null);
   useScrollTopOnTab(scroll);
@@ -21,60 +22,23 @@ export function Screen({ children, loading, onRefresh, scrollTo }: { children: R
     scrolled.current = true;
     scroll.current?.scrollTo({ y: Math.max(0, scrollTo - 8), animated: true });
   }, [scrollTo]);
-  const pull = usePullToSearch();
-  const slow = useSlow(!!loading);
+  const pull = usePullDown({ top: insets.top + 8 });
+  const slow = useSlow(!!loading || pull.refreshing);
   return (
-    <ScrollView
-      ref={scroll}
-      style={styles.screen}
-      contentContainerStyle={[styles.content, { paddingTop: insets.top + 8 }]}
-      refreshControl={onRefresh ? <RefreshControl refreshing={!!loading} onRefresh={onRefresh} tintColor={colors.gold} /> : undefined}
-      scrollEventThrottle={16}
-      {...pull.handlers}
-    >
-      {pull.hint ? <Text style={[styles.pullHint, { top: insets.top - 12 }]}>{pull.hint === 'ready' ? 'Let go to search' : 'Keep pulling to search'}</Text> : null}
-      <View style={slow && styles.faded} pointerEvents={slow ? 'none' : 'auto'}>{children}</View>
-      {slow ? <ActivityIndicator size="large" color={colors.gold} style={[styles.wheel, { top: insets.top + 140 }]} /> : null}
-    </ScrollView>
+    <View style={styles.screen}>
+      <ScrollView
+        ref={scroll}
+        style={styles.screen}
+        contentContainerStyle={[styles.content, { paddingTop: insets.top + 8 }]}
+        {...pull.scrollProps}
+      >
+        {pull.spacer}
+        <View style={slow && styles.faded} pointerEvents={slow ? 'none' : 'auto'}>{children}</View>
+        {slow ? <ActivityIndicator size="large" color={colors.gold} style={[styles.wheel, { top: insets.top + 140 }]} /> : null}
+      </ScrollView>
+      {pull.overlay}
+    </View>
   );
-}
-
-// Pull-down search, only on purpose: the page must already be resting at the top when the finger lands
-// (a flick that bounces off the top doesn't count), and the pull has to go about twice as far as a refresh.
-// A tap says it's far enough; letting go there opens search, sliding back up cancels it.
-const PULL_TO_SEARCH = 150;
-const PULL_HINT = 80;
-const STILL_MS = 150;
-type ScrollEvent = { nativeEvent: { contentOffset: { y: number } } };
-
-function usePullToSearch() {
-  const state = useRef({ armed: false, ready: false, lastMove: 0 });
-  const [hint, setHint] = useState<null | 'pull' | 'ready'>(null);
-  const handlers = useMemo(() => ({
-    onScrollBeginDrag: (e: ScrollEvent) => {
-      const s = state.current;
-      s.armed = e.nativeEvent.contentOffset.y <= 1 && Date.now() - s.lastMove > STILL_MS;
-      s.ready = false;
-    },
-    onScroll: (e: ScrollEvent) => {
-      const s = state.current;
-      s.lastMove = Date.now();
-      if (!s.armed) return;
-      const y = e.nativeEvent.contentOffset.y;
-      const ready = y <= -PULL_TO_SEARCH;
-      if (ready && !s.ready) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
-      s.ready = ready;
-      setHint(ready ? 'ready' : y <= -PULL_HINT ? 'pull' : null);
-    },
-    onScrollEndDrag: () => {
-      const s = state.current;
-      if (s.armed && s.ready) router.push('/search');
-      s.armed = false;
-      s.ready = false;
-      setHint(null);
-    },
-  }), []);
-  return { handlers, hint };
 }
 
 // Tapping a tab in the tab bar always opens that tab at the top. Pages outside the tabs never get tabPress, so they keep their place.
@@ -91,13 +55,13 @@ export function Back({ label }: { label: string }) {
   );
 }
 
-export function Title({ children, eyebrow, right, badge }: { children: ReactNode; eyebrow?: string; right?: ReactNode; badge?: ReactNode }) {
+export function Title({ children, eyebrow, right, badge }: { children?: ReactNode; eyebrow?: string; right?: ReactNode; badge?: ReactNode }) {
   return (
     <View style={styles.titleRow}>
       <View style={styles.flex}>
         {eyebrow ? <Text style={styles.eyebrow}>{eyebrow}</Text> : null}
         <View style={styles.titleLine}>
-          <Text style={[styles.title, styles.titleShrink]} numberOfLines={1}>{children}</Text>
+          {children != null ? <Text style={[styles.title, styles.titleShrink]} numberOfLines={1}>{children}</Text> : null}
           {badge}
         </View>
       </View>
@@ -262,6 +226,14 @@ export function Note({ children }: { children: ReactNode }) {
 
 export const money = (n: number | null | undefined) => `${(n ?? 0) < 0 ? '-' : ''}$${Math.abs(n ?? 0).toFixed(1)}`;
 export const firstName = (name: string) => name.split(' ')[0];
+// Teams on Standings, Teams, Matchups and Home go by their team name; tight spots use the short name when the full
+// one is long. Other pages keep owner names.
+export const teamLabel = (t: { name?: string; team_name?: string | null; team_abbr?: string | null }, tight = false) => {
+  if (!t.team_name) return tight ? (t.name ?? '').split(' ')[0] : t.name ?? ''; // no team name yet: the owner
+  if (!tight || t.team_name.length <= 12) return t.team_name;
+  return t.team_abbr || t.team_name.split(' ')[0];
+};
+
 export const record = (w: number, l: number, t = 0) => `${w}-${l}${t ? `-${t}` : ''}`;
 export const ordinal = (n: number | null | undefined) => {
   if (!n) return '—';
@@ -316,5 +288,4 @@ const styles = StyleSheet.create({
   note: { color: colors.muted, fontSize: 12, textAlign: 'center', marginTop: 4 },
   faded: { opacity: 0.35 },
   wheel: { position: 'absolute', left: 0, right: 0 },
-  pullHint: { position: 'absolute', left: 0, right: 0, textAlign: 'center', color: colors.gold, fontSize: 12, fontWeight: '800', letterSpacing: 0.5 },
 });

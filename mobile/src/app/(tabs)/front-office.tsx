@@ -7,9 +7,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Markdown } from '../../components/frontoffice/Markdown';
 import { ErrorState, Loading } from '../../components/ScreenState';
+import { usePullDown } from '../../components/PullDown';
 import { Pill, useScrollTopOnTab } from '../../components/ui';
 import { type ChatEvent, type ChatMessage, type Conversation, type FoHeader, type FoMove, type FrontOffice, apiGet, apiSend, apiStream, useApi } from '../../lib/api';
 import { clearLastChat, saveLastChat } from '../../lib/lastChat';
+import { isTradeQuestion } from '../../lib/tradeQuestion';
 import { colors } from '../../lib/theme';
 
 // Resolves right away when the app is on screen, otherwise the next time it comes back.
@@ -43,6 +45,8 @@ export default function FrontOfficeScreen() {
   convoRef.current = conversationId;
   const scroll = useRef<ScrollViewInstance>(null);
   const insets = useSafeAreaInsets();
+  // Front Office is a chat, so a pull only refreshes here (no pull to search).
+  const pull = usePullDown({ search: false, top: insets.top + 8 });
   const navigation = useNavigation();
   // Bumped when a chat is closed, so an answer still streaming for it is dropped.
   const chat = useRef(0);
@@ -256,7 +260,11 @@ export default function FrontOfficeScreen() {
         contentContainerStyle={[styles.content, { paddingTop: insets.top + 8 }]}
         onContentSizeChange={() => messages.length && scroll.current?.scrollToEnd({ animated: true })}
         keyboardShouldPersistTaps="handled"
+        // Dragging the chat (a swipe down) puts the keyboard away, like Messages.
+        keyboardDismissMode="on-drag"
+        {...pull.scrollProps}
       >
+        {pull.spacer}
         <View style={styles.header}>
           <Text style={styles.title}>Front Office</Text>
           <Pill label="GM" tone="gold" />
@@ -292,7 +300,7 @@ export default function FrontOfficeScreen() {
               <>
                 <Text style={styles.gm}>GM</Text>
                 <Markdown text={m.content} />
-                {sleeper && /trade/i.test(messages[i - 1]?.content ?? '') ? (
+                {sleeper && isTradeQuestion(messages[i - 1]?.content) ? (
                   <Pressable style={styles.sleeper} onPress={() => Linking.openURL(sleeper)}>
                     <Text style={styles.sleeperText}>Open in Sleeper ↗</Text>
                   </Pressable>
@@ -314,6 +322,7 @@ export default function FrontOfficeScreen() {
         ) : null}
         {problem ? <Text style={styles.problem}>{problem}</Text> : null}
       </ScrollView>
+      {pull.overlay}
 
       {!focused ? (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipsBar} contentContainerStyle={styles.chips} keyboardShouldPersistTaps="handled">

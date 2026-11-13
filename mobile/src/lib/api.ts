@@ -1,6 +1,6 @@
 import { fetch as streamingFetch } from 'expo/fetch';
 import { useFocusEffect } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppState } from 'react-native';
 
@@ -73,7 +73,7 @@ export async function apiStream<E>(path: string, body: unknown, onEvent: (event:
 // phone), then refresh quietly in the background. Cleared on sign out.
 // Bump CACHE_VERSION when a response changes shape, so an app update never
 // draws an old saved copy with the new screen.
-const CACHE_VERSION = 'v7';
+const CACHE_VERSION = 'v8';
 const CACHE_PREFIX = 'api:';
 const memory = new Map<string, unknown>();
 
@@ -115,6 +115,16 @@ export function prefetch(paths: string[]) {
   }
 }
 
+// Pull to refresh: every useApi on the page you're looking at (including the cards inside it) signs up
+// while that page is in view, so one pull reloads everything on it, not just the page's main call.
+const onPage = new Set<() => Promise<void>>();
+export async function refreshPage() {
+  await Promise.all([...onPage].map((reload) => reload()));
+}
+
+// How often a page with live games re-fetches while it's open (one number for every live page).
+export const LIVE_POLL_MS = 10_000;
+
 // refreshEvery (ms) quietly re-fetches while the screen is open and the app
 // is in front, e.g. live scores. Pass 0 to stop.
 export function useApi<T>(path: string, refreshEvery = 0) {
@@ -153,12 +163,31 @@ export function useApi<T>(path: string, refreshEvery = 0) {
 
   useFocusEffect(
     useCallback(() => {
+      const reload = () => load(true);
+      onPage.add(reload);
+      return () => { onPage.delete(reload); };
+    }, [load]),
+  );
+
+  // Live pages also catch up the moment you come back to them (another tab, or the app returning to the
+  // front), instead of showing old scores until the next tick. The first focus on a path skips it: the load above runs.
+  const seen = useRef<string | null>(null);
+  useFocusEffect(
+    useCallback(() => {
       if (!refreshEvery) return undefined;
+      if (seen.current === path) load(true);
+      seen.current = path;
       const timer = setInterval(() => {
         if (AppState.currentState === 'active') load(true);
       }, refreshEvery);
-      return () => clearInterval(timer);
-    }, [load, refreshEvery]),
+      const wake = AppState.addEventListener('change', (state) => {
+        if (state === 'active') load(true);
+      });
+      return () => {
+        clearInterval(timer);
+        wake.remove();
+      };
+    }, [load, path, refreshEvery]),
   );
 
   // Stable across renders, so screens can list it in effect dependencies.
@@ -230,6 +259,8 @@ export type TeamSummary = {
   team_id: string;
   owner_name: string;
   team_name: string;
+  team_abbr?: string;
+  avatar?: string | null;
   roster_id: number | null;
   rank: number | null;
   wins: number;
@@ -267,6 +298,7 @@ export type Lineup = {
   slots: { index: number; slot: string; label: string; player_id: string | null; locked: boolean }[];
   locked: string[];
   fits: Record<string, string[]>;
+  commissioner_team_id?: string; // set when the commissioner is editing another team's lineup
 };
 // A contract on the value board: PPG per cap dollar, graded against the whole league.
 export type ValuedContract = Player & { through: number; per_dollar: number | null; grade: 'bargain' | 'fair' | 'overpaid' | 'stash' | null };
@@ -323,6 +355,7 @@ export type BoxPlayer = {
   breakdown?: { label: string; value: number; points: number }[];
   game?: NflGame | null;
   line?: { text: string; tone: '' | 'good' | 'bad' }[];
+  short_line?: { text: string; tone: '' | 'good' | 'bad' }[];
   kickoff?: string | null;
 };
 // A player's NFL game from his team's side (ESPN scoreboard): pre, in or post.
@@ -344,8 +377,10 @@ export type BoxScore = {
   is_final: boolean;
   matchup_id: number;
   my_roster_id: number | null;
-  teams: { roster_id: number; team_id: string | null; name: string; score: number; projected?: number; players: BoxPlayer[]; bench?: BoxPlayer[] }[];
+  teams: { roster_id: number; team_id: string | null; name: string; avatar?: string | null; team_name?: string | null; team_abbr?: string | null; score: number; projected?: number; players: BoxPlayer[]; bench?: BoxPlayer[] }[];
   win_chance?: [number, number] | null;
+  // Two-week playoff rounds (asked with ?carry=): round totals and round win odds, in teams order.
+  round?: { projected: [number, number]; score: [number, number]; win_chance: [number, number] | null } | null;
 };
 
 export type PlayerPage = {
@@ -374,6 +409,13 @@ export type PlayerPage = {
   sleeper_league_id?: string;
   rostered_by?: { roster_id: number; owner_name: string; team_id: string | null } | null;
   bye_week: number | null;
+  writeups?: { week: number; text: string; chips: string[]; date: string | null }[];
+  nfl_ranked?: {
+    games: number;
+    pool: number | null;
+    min_games: number;
+    stats: { key: string; label: string; lower_better: boolean; total: number; per_game: number; rank_total: number | null; rank_per_game: number | null }[];
+  } | null;
   nfl_season: {
     games: number;
     tiles: { value: string; label: string }[];
@@ -409,9 +451,18 @@ export type PlayerPage = {
     detail: string | null;
     update: string | null;
     return: string | null;
-    this_week: { week: number; practice: string | null; game_status: string | null; injury: string | null } | null;
+    this_week: { week: number; practice: string | null; game_status: string | null; injury: string | null; days?: { day: string; practice: string | null }[] } | null;
     missed: { injury: string; season: number; games: number; back: boolean }[];
     estimate?: { injury: string; median_games: number; range: string; absences: number; scope: string; text: string } | null;
+    report?: {
+      hurt: { week: number; opp: string | null } | null;
+      missed_weeks: number[];
+      on_ir: boolean;
+      eligible_week: number | null;
+      estimate: { weeks?: [number, number | null]; past_usual?: boolean } | null;
+      detail: string | null;
+      news: { text: string; date: string | null } | null;
+    } | null;
   };
   history: {
     kind: string;
@@ -435,7 +486,7 @@ export type GameLogRow = {
   live?: boolean; // game still going: points and line update every refresh
   line: {
     carries: number; rush_yds: number; rush_td: number;
-    targets: number; rec: number; rec_yds: number; rec_td: number;
+    targets: number; rec: number; rec_yds: number; rec_td: number; fum?: number;
     snap_pct: number | null;
     comp?: number; att?: number; pass_yds?: number; pass_td?: number; ints?: number;
   } | null;
@@ -488,9 +539,12 @@ export type LeaguePlayer = {
   salary: number | null; years_left: number | null; rookie_deal: boolean; designation: 'taxi' | 'ir' | null;
   // This week, in league scoring (missing on older servers): projection, season average, last-3 form, next game.
   proj?: number | null; avg?: number | null; last3?: number | null; trend?: number | null; next?: NextGame | null;
+  games?: number | null; pos_rank?: string | null; week_pts?: number | null; // games played, "WR41", points this week once his game starts
 };
 export type NextGame = {
   week: number; bye: boolean; opp?: string; home?: boolean; kickoff?: string | null; opp_rank?: number | null; teams?: number | null; final?: boolean;
+  // live game state (pre / in / post) with the score from his team's side once it starts (from build 66's server)
+  state?: 'pre' | 'in' | 'post'; score?: number | null; opp_score?: number | null; detail?: string | null;
 };
 export type LeagueOwner = { team_id: string; owner_name: string; team_name: string; is_mine: boolean };
 export type LeaguePlayers = {
@@ -607,6 +661,12 @@ export type TableRow = {
 export type RaceRow = { rank: number; roster_id: number; name: string; score: number; top5: boolean; is_me: boolean; avatar: string | null };
 export type HomeGame = { matchup_id?: number; me?: HomeSide; them?: HomeSide | null };
 export type BracketSide = { roster_id: number; name: string; score: number | null; avatar?: string | null; seed?: number | null } | null;
+export type PlayoffSide = { roster_id: number; name: string; score: number; avatar?: string | null; seed?: number | null; carry: number };
+// My game this playoff round from our own bracket: round totals, and points banked in earlier weeks of the round (carry).
+export type HomePlayoffGame = {
+  label: string; bracket: 'winners' | 'losers'; leg: number; legs: number; matchup_id: number | null;
+  state: 'pre' | 'live' | 'final'; me: PlayoffSide; them: PlayoffSide | null;
+};
 export type RookieDeal = {
   decision_id: string | null; player_id: string; name: string; pos: string; salary: number; ppg: number | null;
   choice: 'keep' | 'walk' | 'review' | null; open: boolean; status: string;
@@ -649,7 +709,11 @@ export type HomeData = {
   top5_line?: { line: number; final: boolean } | null;
   series?: { wins: number; losses: number; ties: number } | null;
   weeks_left?: number;
-  bracket?: { round: number; week: number; label: string; games: { a: BracketSide; b: BracketSide; winner: number | null }[] }[];
+  bracket?: {
+    round: number; week: number; weeks?: number[]; label: string;
+    games: { a: BracketSide; b: BracketSide; winner: number | null; state?: string; placeholders?: (string | null)[] }[];
+  }[];
+  playoff_game?: HomePlayoffGame | null;
   decisions?: { window_open: boolean; deadline: string; players: RookieDeal[] };
   picks?: { year: number | null; picks: Pick[] };
   who_has_money?: { name: string; space: number; is_me: boolean; team_id: string | null; open_spots: number | null }[];
@@ -688,3 +752,30 @@ export type WaiverSheet = {
   players: (BidPlayer & { salary: number; dead_cap_text: string; designation: 'taxi' | 'ir' | null; locked: boolean;
     dead_cap: { this_season: number; total: number; through: number | null } })[];
 };
+
+// Settings (behind the initials circle on Home).
+export type OwnerProfile = { display_name: string; team_name: string; team_abbr: string; picture_url: string | null };
+export type GmPrefs = { answer_length: 'short' | 'detailed'; team_plan: 'auto' | 'contend' | 'rebuild' };
+export type TeamPeople = {
+  co_owners: { user_id: string; email: string | null; is_me: boolean }[];
+  invites: { id: string; email: string; expires_at: string | null }[];
+  can_invite: boolean;
+};
+export type MySettings = {
+  email: string | null; role: string; is_commissioner: boolean; is_co_owner: boolean; team_id: string;
+  profile: OwnerProfile; gm: GmPrefs; people: TeamPeople;
+};
+export type RulesView = { groups: { title: string; rows: [string, string][] }[]; house_rules: string | null };
+
+// Settings > Commissioner.
+export type CommishTeam = {
+  team_id: string; owner_name: string; team_name: string; team_abbr?: string; avatar?: string | null;
+  people: { user_id: string; email: string | null; role: string }[];
+  invites: { id: string; email: string; role: string }[];
+};
+export type CommishHome = { season: number; teams: CommishTeam[]; switch: { enabled: boolean; own_from_week: number | null } };
+export type CommishField = { key: string; label: string; kind: 'money' | 'int' | 'pct' | 'bool' | 'text'; value: number | string | boolean | null };
+export type ScoringRow = { group: string; rule: string; key: string; points: number };
+export type CommishRules = { fields: CommishField[]; scoring: ScoringRow[] };
+export type DropPreview = { player_id: string; team_name: string; salary: number; years_left: number; dead_cap: number; dead_cap_pct: number };
+export type ContractFix = { contract_id: string; team_id: string; end_season: number; seasons: { season: number; salary: number }[] };

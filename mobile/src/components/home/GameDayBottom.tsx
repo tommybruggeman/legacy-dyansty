@@ -1,12 +1,13 @@
 import { router } from 'expo-router';
 import { useState } from 'react';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { type HomeBottom, type Riser, type ShotgunRow } from '../../lib/api';
 import { colors } from '../../lib/theme';
 import { Avatar } from '../Pictures';
 import { PlayerFace } from '../PlayerFace';
-import { Card, firstName, ui } from '../ui';
+import { Card, firstName, teamLabel, ui } from '../ui';
 
 // The bottom of game-day Home, picked by the server from the clock:
 // Highest projected Thu-Sat, the week's scoreboard on Sunday, then Shotgun watch
@@ -15,6 +16,7 @@ import { Card, firstName, ui } from '../ui';
 const pts = (n: number) => n.toFixed(1);
 const POSITIONS = ['Total', 'QB', 'RB', 'WR', 'TE'] as const;
 const RED = '#E08A8A';
+const SIREN = '#E05555';
 
 export function GameDayBottom({ bottom, week }: { bottom: HomeBottom; week: number }) {
   if (bottom.mode === 'risers') return bottom.risers.length ? <Risers rows={bottom.risers} week={week} /> : null;
@@ -88,7 +90,7 @@ export function Scoreboard({ games, week }: { games: Extract<HomeBottom, { mode:
                 return (
                   <View key={t.roster_id} style={[styles.gameRow, i > 0 && styles.gap4]}>
                     <Avatar uri={t.avatar} name={t.name} size={18} me={t.is_me} />
-                    <Text style={[styles.gameName, !lead && styles.dim, t.is_me && ui.gold]} numberOfLines={1}>{t.is_me ? 'You' : firstName(t.name)}</Text>
+                    <Text style={[styles.gameName, !lead && styles.dim, t.is_me && ui.gold]} numberOfLines={1}>{t.is_me ? 'You' : teamLabel(t, true)}</Text>
                     <Text style={[styles.gameScore, !lead && styles.dim]}>{pts(t.score)}</Text>
                   </View>
                 );
@@ -114,24 +116,8 @@ type Shot = NonNullable<Extract<HomeBottom, { mode: 'shotgun' }>['shotgun']>;
 
 const who = (r: ShotgunRow) => (r.is_me ? 'You' : firstName(r.name));
 
-// A cracked-open silver beer can (blue band, red stripe), tipped over with a few drops spilling (assets/beer-can.png, drawn for this card).
-const BEER_CAN = require('../../../assets/beer-can.png');
-
-function BeerCan({ size = 30 }: { size?: number }) {
-  return <Image source={BEER_CAN} style={{ width: size, height: size }} />;
-}
-
-function ShotTitle({ title, right }: { title: string; right?: React.ReactNode }) {
-  return (
-    <View style={styles.shotHead}>
-      <View style={styles.shotTitleRow}>
-        <BeerCan />
-        <Text style={styles.shotTitle}>{title}</Text>
-      </View>
-      {right ? <View style={styles.shotRight}>{right}</View> : null}
-    </View>
-  );
-}
+// A frothy beer mug drawn for this card (assets/beer-mug.png).
+const BEER_MUG = require('../../../assets/beer-mug.png');
 
 function Shotgun({ data }: { data: Shot }) {
   const { last, locked } = data;
@@ -139,35 +125,39 @@ function Shotgun({ data }: { data: Shot }) {
     return (
       <Card style={styles.shotCard}>
         <View style={styles.lock}>
-          <Avatar uri={last.avatar} name={last.name} size={64} me={last.is_me} />
+          <Avatar uri={last.avatar} name={last.name} size={72} me={last.is_me} />
           <Text style={styles.lockName}>{last.is_me ? "You're shotgunning" : `${firstName(last.name)} is shotgunning`}</Text>
-          <Text style={styles.sub}>{pts(last.score)} pts{data.danger[0] ? ` · ${pts(data.danger[0].score - last.score)} behind ${who(data.danger[0])}` : ''}</Text>
-          <Text style={styles.stamp}>LOCKED IN</Text>
+          <View style={styles.lockStampRow}>
+            <Text style={styles.stamp}>LOCKED IN</Text>
+            <Image source={BEER_MUG} style={styles.lockMug} />
+          </View>
         </View>
-        {data.danger.length ? <Zone title="CLOSEST ESCAPES" rows={data.danger} muted /> : null}
       </Card>
     );
   }
   return (
-    <Card style={styles.shotCard}>
-      <ShotTitle title="SHOTGUN WATCH" />
-      <View style={styles.victim}>
-        <Avatar uri={last.avatar} name={last.name} size={46} me={last.is_me} />
+    <Card style={[styles.shotCard, styles.siren]}>
+      <LinearGradient colors={['rgba(150,30,34,0.55)', 'rgba(150,30,34,0)']} style={StyleSheet.absoluteFill} end={{ x: 0.5, y: 0.6 }} pointerEvents="none" />
+      <Text style={styles.sirenTitle}>SHOTGUN WATCH</Text>
+      <View style={styles.sirenHero}>
+        <View style={styles.sirenRing}><Avatar uri={last.avatar} name={last.name} size={66} me={last.is_me} /></View>
         <View style={ui.flex}>
-          <Text style={styles.victimName}>{who(last)}</Text>
+          <Text style={styles.sirenKicker}>PROJECTED LAST</Text>
+          <Text style={styles.sirenName} numberOfLines={1}>{who(last)}</Text>
+          <View style={styles.sirenStats}>
+            <Text style={styles.sirenScore}>{pts(last.score)}</Text>
+            {last.frozen ? (
+              <Text style={styles.sirenFinal}>FINAL</Text>
+            ) : (
+              <>
+                <Text style={styles.sirenSub}>proj {pts(last.projected)}</Text>
+                <Text style={styles.sirenLeft}>{last.left} left</Text>
+              </>
+            )}
+          </View>
         </View>
-        <View style={styles.vStat}><Text style={styles.vLabel}>PROJ</Text><Text style={styles.vNum}>{pts(last.projected)}</Text></View>
-        <View style={styles.vStat}><Text style={styles.vLabel}>NOW</Text><Text style={[styles.vNum, styles.dim]}>{pts(last.score)}</Text></View>
-        <View style={styles.vStat}>
-          <Text style={styles.vLabel}>LEFT</Text>
-          {last.frozen ? <Text style={styles.frozen}>FROZEN</Text> : <Text style={styles.leftText}>{last.playing ? '● ' : ''}{last.left} left</Text>}
-        </View>
+        <Image source={BEER_MUG} style={styles.sirenMug} />
       </View>
-      {data.needs ? (
-        <Text style={styles.shotNeeds}>
-          {data.needs.who_is_me ? 'You need' : `${firstName(data.needs.who)} needs`} {pts(data.needs.points)} to pass {data.needs.to_pass_is_me ? 'you' : firstName(data.needs.to_pass)}
-        </Text>
-      ) : null}
       <Zone rows={data.danger} safe={data.safe} />
     </Card>
   );
@@ -241,18 +231,21 @@ const styles = StyleSheet.create({
   liveDot: { color: colors.live, opacity: 1 },
   // shotgun
   shotCard: { borderWidth: 1, borderColor: RED },
-  shotHead: { alignItems: 'center', justifyContent: 'center' },
-  shotRight: { position: 'absolute', right: 0 },
-  shotTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1 },
-  shotTitle: { color: colors.text, fontSize: 16, fontWeight: '900', letterSpacing: 1.4, flexShrink: 1 },
-  victim: {
-    flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 12, padding: 12, borderRadius: 14,
-    backgroundColor: 'rgba(169,74,74,0.16)', borderWidth: 1, borderColor: 'rgba(224,138,138,0.4)',
+  siren: { borderColor: SIREN, overflow: 'hidden' },
+  sirenTitle: { color: '#FF8A80', fontSize: 11, fontWeight: '900', letterSpacing: 2.5 },
+  sirenHero: { flexDirection: 'row', alignItems: 'center', gap: 14, marginTop: 12 },
+  sirenRing: { borderWidth: 3, borderColor: SIREN, borderRadius: 40, padding: 1 },
+  sirenKicker: { color: '#FF8A80', fontSize: 10, fontWeight: '900', letterSpacing: 2.5 },
+  sirenMug: { width: 52, height: 57, transform: [{ rotate: '-8deg' }] },
+  sirenName: { color: colors.text, fontSize: 28, fontWeight: '900', marginTop: 2 },
+  sirenStats: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 4 },
+  sirenScore: { color: colors.text, fontSize: 15, fontWeight: '800' },
+  sirenSub: { color: colors.muted, fontSize: 12, fontWeight: '600' },
+  sirenLeft: { color: colors.live, fontSize: 12, fontWeight: '700' },
+  sirenFinal: {
+    color: colors.text, backgroundColor: 'rgba(245,235,215,0.12)', fontSize: 9, fontWeight: '900', letterSpacing: 1,
+    borderRadius: 7, overflow: 'hidden', paddingHorizontal: 7, paddingVertical: 3,
   },
-  victimName: { color: colors.text, fontSize: 20, fontWeight: '800' },
-  vStat: { alignItems: 'flex-end', gap: 3, minWidth: 40 },
-  vLabel: { color: colors.muted, fontSize: 9, fontWeight: '800', letterSpacing: 0.8 },
-  vNum: { color: colors.text, fontSize: 15, fontWeight: '800' },
   zone: { color: '#E0A95A', fontSize: 11, fontWeight: '800', letterSpacing: 0.6, marginTop: 14, marginBottom: 2 },
   zHead: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 30, marginTop: 4 },
   zHeadTop: { marginTop: 14 },
@@ -262,13 +255,14 @@ const styles = StyleSheet.create({
   zNum: { width: 46, textAlign: 'right', color: colors.text, fontSize: 13, fontWeight: '700' },
   zLeft: { width: 58, alignItems: 'flex-end' },
   leftText: { color: colors.live, fontSize: 11, fontWeight: '700', textAlign: 'right' },
-  shotNeeds: { color: colors.text, fontSize: 12, fontWeight: '700', textAlign: 'center', marginTop: 10 },
   frozen: { color: '#7FB2E0', backgroundColor: 'rgba(127,178,224,0.15)', fontSize: 9, fontWeight: '800', borderRadius: 6, overflow: 'hidden', paddingHorizontal: 5, paddingVertical: 2 },
   cut: { borderTopWidth: 1, borderTopColor: RED, borderStyle: 'dashed', marginVertical: 4 },
-  lock: { alignItems: 'center', paddingTop: 14, paddingBottom: 4, gap: 6 },
+  lock: { alignItems: 'center', paddingTop: 10, paddingBottom: 8, gap: 6 },
   lockName: { color: colors.text, fontSize: 24, fontWeight: '900', marginTop: 4 },
+  lockStampRow: { flexDirection: 'row', alignItems: 'center', gap: 14, marginTop: 10 },
+  lockMug: { width: 46, height: 51, transform: [{ rotate: '10deg' }] },
   stamp: {
-    color: RED, borderWidth: 2, borderColor: RED, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4, fontWeight: '900',
-    letterSpacing: 2, fontSize: 13, marginTop: 6, transform: [{ rotate: '-4deg' }],
+    color: RED, borderWidth: 3, borderColor: RED, borderRadius: 10, paddingHorizontal: 18, paddingVertical: 7, fontWeight: '900',
+    letterSpacing: 3, fontSize: 24, transform: [{ rotate: '-5deg' }],
   },
 });

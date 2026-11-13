@@ -106,7 +106,7 @@ def test_gm_tools_gives_the_website_the_same_odds_and_matchup_tools(monkeypatch)
     tools, watched = front_office.gm_tools(session, {"week": 8}, question=lambda: "q", conversation_id=lambda: None, state={"roster": ["from website"]})
     assert watched == "watched"
     assert seen["state"] == {"roster": ["from website"]}
-    assert callable(seen["odds"]) and len(seen["extra"]) == 1
+    assert callable(seen["odds"]) and [t.name for t in seen["extra"]] == ["get_matchup_odds", "get_lineups"]
     front_office.gm_tools(session, None, question=lambda: "q", conversation_id=lambda: None)
     assert seen["odds"] is None and seen["extra"] is None and seen["state"] == {"roster": ["from session"]}
 
@@ -165,3 +165,36 @@ def test_typing_more_mid_answer_goes_into_that_answer(monkeypatch):
     assert {"e": "added", "text": "His ankle is hurt"} in events and events[-1]["e"] == "done"
     assert seen == {"added": ["His ankle is hurt"], "after": []}
     assert front_office.tell(session, "Too late") is False  # finished: the app sends it as a new question
+
+
+def test_get_lineups_tool_shows_every_set_lineup(monkeypatch):
+    from api import projections, sleeper
+    front_office.clear()
+    teams = [{"id": "t1", "owner_name": "Tommy", "sleeper_roster_id": 1}, {"id": "t2", "owner_name": "Grady", "sleeper_roster_id": 2}]
+    players = [{"sleeper_id": "qb1", "full_name": "Josh Allen", "position": "QB", "team": "BUF"},
+               {"sleeper_id": "qb2", "full_name": "Fernando Mendoza", "position": "QB", "team": "TEN"},
+               {"sleeper_id": "qb3", "full_name": "Other QB", "position": "QB", "team": "KC"}]
+    roster = [{"league_team_id": "t1", "sleeper_player_id": "qb1", "player_name": "Josh Allen"},
+              {"league_team_id": "t1", "sleeper_player_id": "qb2", "player_name": "Fernando Mendoza", "roster_designation": "taxi"},
+              {"league_team_id": "t2", "sleeper_player_id": "qb3", "player_name": "Other QB"}]
+    tables = {"league_teams": teams, "nfl_players": players, "league_app_transactions": [{"enabled": False}]}
+    session = SimpleNamespace(owner=SimpleNamespace(league_id="L", season=2026), client=FakeClient(tables), sleeper_id="S", positions=lambda: ["QB", "BN", "TAXI"])
+    monkeypatch.setattr(sleeper, "get", lambda path, ttl=0: [{"roster_id": 1, "matchup_id": 4, "starters": ["qb2"]},
+                                                              {"roster_id": 2, "matchup_id": 4, "starters": ["qb3"]}])
+    monkeypatch.setattr(projections, "week_projections", lambda *a, **k: {"qb1": 22.0, "qb2": 11.3, "qb3": 15.0})
+    tool = front_office.lineups_tool(session, {"week": 10, "bye_teams": []}, {"roster": roster})
+    out = tool.fn()
+    assert [t["owner"] for t in out["teams"]] == ["Tommy", "Grady"] and out["teams"][0]["opponent"] == "Grady"
+    mine = tool.fn(owner="tom")["teams"]
+    assert len(mine) == 1
+    starter = mine[0]["starters"][0]
+    assert starter["player"] == "Fernando Mendoza" and "taxi" in starter["flags"]
+    assert mine[0]["better_bench_options"][0]["start"] == "Josh Allen"
+    assert mine[0]["cant_play_taxi_ir"] == ["Fernando Mendoza (taxi)"]
+
+    # Once the league runs its own weeks the app's saved lineup wins over Sleeper's.
+    front_office.clear()
+    tables["league_app_transactions"] = [{"enabled": True, "own_from_week": 10}]
+    tables["league_lineups"] = [{"league_team_id": "t1", "week": 10, "slots": [{"slot": "QB", "player_id": "qb1"}]}]
+    out = front_office.lineups_tool(session, {"week": 10, "bye_teams": []}, {"roster": roster}).fn(owner="Tommy")
+    assert out["teams"][0]["starters"][0]["player"] == "Josh Allen" and out["teams"][0]["better_bench_options"] == []

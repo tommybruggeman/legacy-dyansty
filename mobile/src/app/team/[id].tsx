@@ -11,7 +11,7 @@ export { ScreenError as ErrorBoundary } from '../../components/ScreenState';
 export default function Team() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const [live, setLive] = useState(false);
-  const { data, error, loading, reload } = useApi<TeamPage>(`/teams/${id}`, live ? LIVE_REFRESH_MS : 0);
+  const { data, error, loading, reload, refresh } = useApi<TeamPage>(`/teams/${id}`, live ? LIVE_REFRESH_MS : 0);
   useEffect(() => setLive(isLive(data)), [data]);
 
   if (loading && !data) return <Loading />;
@@ -19,9 +19,9 @@ export default function Team() {
   if (!data) return null;
 
   return (
-    <Screen loading={loading} onRefresh={reload}>
+    <Screen loading={loading}>
       <Back label="League" />
-      <TeamView team={data} />
+      <TeamView team={data} onChange={refresh} />
     </Screen>
   );
 }

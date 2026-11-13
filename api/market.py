@@ -8,6 +8,7 @@ Owners can save players as transfer targets (table market_targets).
 from __future__ import annotations
 
 import time
+from datetime import datetime, timedelta
 from typing import Any, Iterable, Callable
 
 from services.free_agents import load_ranking_ppg
@@ -413,3 +414,63 @@ def next_games(matchups: dict[str, dict[str, Any]], dvp: dict[tuple[str, str], d
         return {"week": week, "bye": False, "opp": game["opponent"], "home": bool(game.get("home")), "kickoff": kickoff(game),
                 "opp_rank": rating.get("rank"), "teams": rating.get("teams"), "final": bool(game.get("final_score"))}
     return find
+
+
+def position_ranks(totals: dict[str, float], positions: dict[str, str]) -> dict[str, str]:
+    """player_id -> "WR41": rank at his position by season points (league scoring), among everyone who scored."""
+    by_pos: dict[str, list[tuple[str, float]]] = {}
+    for pid, pts in totals.items():
+        pos = positions.get(pid) or ""
+        if pos in POSITIONS:
+            by_pos.setdefault(pos, []).append((pid, pts))
+    out: dict[str, str] = {}
+    for pos, rows in by_pos.items():
+        rows.sort(key=lambda r: r[1], reverse=True)
+        for rank, (pid, _pts) in enumerate(rows, start=1):
+            out[pid] = f"{pos}{rank}"
+    return out
+
+
+DVP_POSITIONS = ("QB", "RB", "WR", "TE")
+
+
+def defense_ranks(games: list[tuple[int, str, str, float]], opponent: Callable[[str, int], str | None]) -> dict[tuple[str, str], dict[str, Any]]:
+    """(defense, pos) -> {"rank", "teams"} from league-scoring points allowed per game: rank 1 = toughest.
+
+    `games` is one row per player game: (week, pos, nfl team, league points); `opponent(team, week)` names
+    the defense he faced that week."""
+    allowed: dict[tuple[str, str], float] = {}
+    weeks: dict[str, set[int]] = {}
+    for week, pos, team, pts in games:
+        defense = opponent(team, week) if pos in DVP_POSITIONS and team else None
+        if not defense:
+            continue
+        allowed[(defense, pos)] = allowed.get((defense, pos), 0.0) + pts
+        weeks.setdefault(defense, set()).add(week)
+    out: dict[tuple[str, str], dict[str, Any]] = {}
+    for pos in DVP_POSITIONS:
+        per_game = {d: allowed.get((d, pos), 0.0) / len(w) for d, w in weeks.items() if w}
+        for rank, d in enumerate(sorted(per_game, key=lambda d: (per_game[d], d)), start=1):
+            out[(d, pos)] = {"rank": rank, "teams": len(per_game)}
+    return out
+
+
+def game_state(next_game: dict[str, Any] | None, live: dict[str, Any] | None, now_utc: Any, game_hours: float) -> str | None:
+    """pre / in / post for the row's game: the live scoreboard (ESPN) when it has the game, else the nflverse
+    final score, else a guess from the kickoff time (kickoff + game_hours = over)."""
+    if not next_game or next_game.get("bye"):
+        return None
+    if live and live.get("state") in ("pre", "in", "post"):
+        return live["state"]
+    if next_game.get("final"):
+        return "post"
+    kick = next_game.get("kickoff")
+    if not kick:
+        return "pre"
+    try:
+        start = datetime.fromisoformat(kick)
+    except ValueError:
+        return "pre"
+    if now_utc < start:
+        return "pre"
+    return "in" if now_utc < start + timedelta(hours=game_hours) else "post"

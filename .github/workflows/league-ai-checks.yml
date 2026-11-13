@@ -11,20 +11,23 @@ on:
       check:
         description: Which check to run
         type: choice
-        options: [odds_backtest, odds_trial, odds_grade, start_sit_grade, practice_test, weekly_cards, shadow_scoring, live_projection_study, espn_feed_check, final_scores_check, projection_accuracy, projection_calibration, win_odds_study, trade_backtest, answer_eval, gm_repro]
+        options: [odds_backtest, odds_trial, odds_grade, start_sit_grade, practice_test, weekly_cards, shadow_scoring, live_projection_study, espn_feed_check, final_scores_check, projection_accuracy, projection_calibration, win_odds_study, trade_backtest, answer_eval, fd_check, own_scores_check, projection_by_stat, weather_study, projection_trace, seed_owner_profiles, save_scoring, speed_test, speed_test_smoke, gm_repro]
         default: odds_backtest
+      minutes:
+        description: speed_test only - how long to watch after kickoff (max 330)
+        default: "230"
 
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: ${{ inputs.check == 'speed_test' && 355 || 45 }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
       - run: pip install supabase requests pandas
-      - if: inputs.check == 'start_sit_grade' || inputs.check == 'practice_test' || inputs.check == 'weekly_cards' || inputs.check == 'projection_accuracy' || inputs.check == 'projection_calibration' || inputs.check == 'win_odds_study' || inputs.check == 'trade_backtest' || inputs.check == 'answer_eval' || inputs.check == 'gm_repro'
+      - if: inputs.check == 'start_sit_grade' || inputs.check == 'practice_test' || inputs.check == 'weekly_cards' || inputs.check == 'projection_accuracy' || inputs.check == 'projection_calibration' || inputs.check == 'win_odds_study' || inputs.check == 'trade_backtest' || inputs.check == 'answer_eval' || inputs.check == 'own_scores_check' || inputs.check == 'projection_by_stat' || inputs.check == 'weather_study' || inputs.check == 'projection_trace' || inputs.check == 'seed_owner_profiles' || inputs.check == 'save_scoring' || inputs.check == 'gm_repro'
         run: pip install -r api/requirements.txt
       - if: inputs.check == 'live_projection_study'
         run: pip install pyarrow numpy
@@ -38,7 +41,13 @@ jobs:
           ANTHROPIC_API_KEY: ${{ (inputs.check == 'answer_eval' || inputs.check == 'gm_repro') && secrets.ANTHROPIC_API_KEY || '' }}
         run: |
           case "${{ inputs.check }}" in
+            # live scoring speed test: our saved live lines vs ESPN vs Sleeper, timed against each play (numbers only)
+            speed_test) python -m scoring.speed_test --wait 90 --minutes "${{ inputs.minutes || '230' }}" --every 3 ;;
+            speed_test_smoke) python -m scoring.speed_test --wait 0 --minutes 1 --every 3 --smoke ;;
             odds_trial) python -m league_ai.odds_trial ;;
+            # one time: today's team names and Sleeper pictures become each owner's default profile, stored by us
+            seed_owner_profiles) python -m scripts.seed_owner_profiles ;;
+            save_scoring) python -m scripts.save_scoring ;;
             odds_grade) python -m league_ai.matchup_odds ;;
             start_sit_grade) python -m league_ai.start_sit_grade ;;
             practice_test) python -m league_ai.practice_test ;;
@@ -50,17 +59,33 @@ jobs:
             espn_feed_check) python -m scoring.espn_check --weeks 3 ;;
             # official finals from nflverse scored by our engine vs Sleeper, every finished week (saves nothing)
             final_scores_check) python -m scripts.final_scores --dry ;;
+            # our own scores (every week, our stat lines) vs Sleeper's: totals that differ, winner flips (saves nothing)
+            own_scores_check) python -m scripts.own_scores_check ;;
+            # one player's projection step by step (Sleeper line, matchup factor, calibration); NFL names only
+            projection_trace) python -m scripts.projection_trace "E. Wilson" "D. Vele" "R. Flournoy" ;;
             # weekly projections vs real scores, and whether learned corrections would help (saves nothing)
             projection_accuracy) python -m scoring.projection_accuracy ;;
             # the daily projection calibration (factors + accuracy card) without saving anything
+            # where the projection runs high, stat by stat (saves nothing)
+            projection_by_stat) python -m scoring.projection_by_stat ;;
             projection_calibration) python -m league_ai.projection_calibration --dry-run ;;
+            # how weather (wind, rain, snow, heat/cold by team climate) moves scoring against the projection
+            weather_study) python -m scoring.weather_study ;;
             # which pregame team projection gives the best weekly win odds (saves nothing)
             win_odds_study) python -m scoring.win_odds_study ;;
             # the trade engine on every completed trade: valuation variants, cap dollar and extra-body share (saves nothing)
             trade_backtest) python -m league_ai.trade_backtest ;;
             # PAID (about $4): 20 real questions answered and graded (facts, rubric), trade/contract ones also by Opus with a blind judge
             answer_eval) EVAL_BUDGET=4 EVAL_COMPARE=claude-opus-5-5 python -m league_ai.answer_eval ;;
+            # first downs read from ESPN's play by play vs Sleeper's, game by game, for last week (prints the plays behind each gap)
+            fd_check) python -m scoring.fd_debug ;;
             # PAID (a few cents): one GM chat replayed with messages typed mid-answer; prints the API's reason for any rejection
             gm_repro) python -m league_ai.gm_repro ;;
             *) python -m league_ai.playoff_odds ;;
           esac
+      - if: always() && (inputs.check == 'speed_test' || inputs.check == 'speed_test_smoke')
+        uses: actions/upload-artifact@v4
+        with:
+          name: speed-test
+          path: speed-test.json
+          if-no-files-found: ignore

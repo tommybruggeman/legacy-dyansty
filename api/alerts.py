@@ -125,6 +125,11 @@ SLOT_WORDS = {"FLEX": "FLEX", "SUPER_FLEX": "Superflex", "REC_FLEX": "WR/TE flex
 LINEUP_URL = "/my-team"
 
 
+def health_url(player_id: str | None) -> str:
+    """An alert about a hurt starter opens his player page scrolled to the Health section."""
+    return f"/player/{player_id}?section=health" if player_id else LINEUP_URL
+
+
 def slot_word(slot: str) -> str:
     return SLOT_WORDS.get(slot, slot)
 
@@ -146,18 +151,19 @@ def lineup_problem(*, week: int, day: str, slot: str, problem: str, name: str | 
         first = f"{name} is on bye and still in {where}."
     else:
         first = f"{name} is {problem} and still in {where}."
-    return Alert("lineup", f"lineup:{week}:{player_id or 'empty-' + slot}", f"Lineup problem for {day}", first + _sub(sub), LINEUP_URL)
+    return Alert("lineup", f"lineup:{week}:{player_id or 'empty-' + slot}", f"Lineup problem for {day}", first + _sub(sub),
+                 LINEUP_URL if problem in ("bye", "empty") else health_url(player_id))
 
 
 def ruled_out(*, week: int, day: str, name: str, player_id: str, body_part: str | None, sub: Mapping[str, Any] | None) -> Alert:
     part = (body_part or "").strip()
     first = f"{part.capitalize()}, out for {day}." if part else f"Out for {day}."
-    return Alert("injury", f"out:{week}:{player_id}", f"{name} ruled out", first + _sub(sub), LINEUP_URL)
+    return Alert("injury", f"out:{week}:{player_id}", f"{name} ruled out", first + _sub(sub), health_url(player_id))
 
 
 def inactive(*, week: int, name: str, player_id: str, sub: Mapping[str, Any] | None) -> Alert:
     return Alert("injury", f"out:{week}:{player_id}", f"{name} is inactive",
-                 "Kickoff in 30 minutes and he's in your lineup." + _sub(sub), LINEUP_URL, urgent=True)
+                 "Kickoff in 30 minutes and he's in your lineup." + _sub(sub), health_url(player_id), urgent=True)
 
 
 TRASH_TALK = (
@@ -459,7 +465,8 @@ def deliver(client: Any, push: Any, now: datetime | None = None) -> dict[str, in
         pref = prefs.get((uid, row["league_id"])) or {}
         phones = tokens.get(uid, [])
         tz = pref.get("tz") or next((t.get("tz") for t in phones if t.get("tz")), None)
-        verdict = gate(row, now=now, off=set(pref.get("off") or []), tz=tz, sent_this_week=sent_count.get(uid, 0))
+        # Everyone gets every alert (Tommy, 2026-11-09): saved per-owner switches no longer turn any off.
+        verdict = gate(row, now=now, off=set(), tz=tz, sent_this_week=sent_count.get(uid, 0))
         if not verdict.send:
             if verdict.status:
                 _mark(client, row, verdict.status, now)

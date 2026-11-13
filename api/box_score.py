@@ -9,6 +9,7 @@ from typing import Any, Iterable
 
 from api import cache, home, league, live_stats, nfl_live, projections, teams
 from api.front_office import LEAGUE_TZ
+from league_ai import projection_calibration
 
 PROJ_TTL = 900
 BENCH_ORDER = {"QB": 0, "RB": 1, "WR": 2, "TE": 3, "K": 4, "DEF": 5}
@@ -31,6 +32,16 @@ def game(client: Any, ctx: dict[str, Any], week: int, matchup_id: int, team_rows
     add_projections(client, ctx, week, final, result, info)
     result["win_chance"] = nfl_live.win_chance(result["teams"], final)
     return result
+
+
+def add_round(result: dict[str, Any], carry: dict[int, float]) -> None:
+    """Two-week playoff rounds: add each side's points from earlier weeks of the round, giving the projected
+    round total and round win odds (only this week's unplayed points are still uncertain)."""
+    sides = [{**t, "score": (t.get("score") or 0) + carry.get(t["roster_id"], 0.0),
+              "projected": (t.get("projected") if t.get("projected") is not None else t.get("score") or 0) + carry.get(t["roster_id"], 0.0)}
+             for t in result["teams"]]
+    result["round"] = {"projected": [round(t["projected"], 2) for t in sides], "score": [round(t["score"], 2) for t in sides],
+                       "win_chance": nfl_live.win_chance(sides, bool(result.get("is_final")))}
 
 
 def week_kickoffs(client: Any, season: int, week: int) -> dict[str, datetime]:
@@ -73,6 +84,21 @@ def add_projections(client: Any, ctx: dict[str, Any], week: int, final: bool, re
             cache.store(proj_key, PROJ_TTL, proj)
         except Exception:
             pass
+    # in-game numbers for players already in their game (no "might not play" discount), and projected usage
+    active: dict[str, float] = {}
+    proj_opps: dict[str, float] = {}
+    if not final:
+        try:
+            akey = ("proj_active", sid, season, week, tuple(sorted(ids)))
+            active = cache.cached(akey, PROJ_TTL, lambda: projections.week_projections(client, sid, season, week, ids, positions, nfl_teams, active=True))
+            plines = projections.week_lines("projections", season, week, 1800)
+            proj_opps = {pid: nfl_live.opportunities((plines.get(pid) or {}).get("stats"), positions.get(pid) or "") for pid in ids}
+        except Exception:
+            active, proj_opps = {}, {}
+    try:
+        frozen = projection_calibration.pregame(client, sid, season, week)
+    except Exception:
+        frozen = {}
     try:
         ranks = rank_job.result()
     except Exception:
@@ -103,10 +129,14 @@ def add_projections(client: Any, ctx: dict[str, Any], week: int, final: bool, re
             kick = starts.get(home.NFLVERSE_TEAMS.get(p["team"] or "", p["team"] or ""))
             p["kickoff"] = kick.isoformat() if kick else None
             p["line"] = nfl_live.stat_line((lines.get(pid) or {}).get("stats"), p["pos"]) if p["status"] in ("playing", "final") else []
-            p["proj"] = proj.get(pid)
+            p["short_line"] = nfl_live.short_line((lines.get(pid) or {}).get("stats"), p["pos"]) if p["status"] in ("playing", "final") else []
+            # once his game starts, show the projection frozen before kickoff (so "projected vs scored" is fair)
+            p["proj"] = frozen.get(pid, proj.get(pid)) if p["status"] in ("playing", "final") else proj.get(pid)
             p["rank"] = (ranks.get(pid) or {}).get("label") if p["status"] in ("playing", "final") and p["points"] else None
             p["breakdown"] = projections.breakdown((lines.get(pid) or {}).get("stats"), scoring) if p["status"] in ("playing", "final") else []
-            p["live_proj"] = nfl_live.live_projection(p["points"], p["proj"], p["status"], p.get("game"))
+            base = active.get(pid, p["proj"]) if p["status"] == "playing" else p["proj"]
+            p["live_proj"] = nfl_live.live_projection(p["points"], base, p["status"], p.get("game"), p["pos"],
+                                                      (lines.get(pid) or {}).get("stats"), proj_opps.get(pid))
         for p in side["players"]:
             total += p["live_proj"] if p["live_proj"] is not None else p["points"]
         side["projected"] = round(total, 1)

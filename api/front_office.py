@@ -272,6 +272,108 @@ def matchup_tool(session: Session, fo: dict[str, Any]) -> Any:
                     "boom-or-bust as the underdog). Use for start/sit and 'will I win this week' questions.", {"type": "object", "properties": {}}, run)
 
 
+def set_lineups(session: Session, fo: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    """Every team's lineup as set this week (raw parts, cached 2 minutes): what get_lineups formats."""
+    from api import lineups as lineup_rules
+    from api import sleeper
+    from api.teams import player_info
+    from league_ai.nfl_data import season_games
+    from services.team_roster_state import state_roster
+
+    o, client, sid = session.owner, session.client, session.sleeper_id
+    week = int(fo.get("week") or 0)
+
+    def build() -> dict[str, Any]:
+        slots = lineup_rules.starter_slots(session.positions())
+        teams = client.table("league_teams").select("id,owner_name,sleeper_roster_id").eq("league_id", o.league_id).execute().data or []
+        roster: dict[str, list[str]] = {}
+        names: dict[str, str] = {}
+        designation: dict[str, str] = {}
+        for r in state_roster(state):
+            pid = str(r.get("sleeper_id") or r.get("sleeper_player_id") or "")
+            if not pid:
+                continue
+            roster.setdefault(str(r.get("league_team_id")), []).append(pid)
+            names[pid] = str(r.get("player") or r.get("player_name") or "")
+            if r.get("roster_designation") in ("taxi", "ir"):
+                designation[pid] = str(r["roster_designation"])
+        # Starters: the app's saved lineups once the league runs its own weeks; Sleeper's matchup rows before that.
+        switch = (client.table("league_app_transactions").select("enabled,own_from_week").eq("league_id", o.league_id)
+                  .limit(1).execute().data or [{}])[0]
+        own = bool(switch.get("enabled")) and week >= int(switch.get("own_from_week") or fo.get("playoff_start_week") or 15)
+        try:
+            rows = (sleeper.get(f"league/{sid}/matchups/{week}", ttl=120) or []) if sid and week else []
+        except Exception:
+            rows = []
+        by_rid = {int(r["roster_id"]): r for r in rows if r.get("roster_id") is not None}
+        saved = []
+        if own:
+            saved = (client.table("league_lineups").select("league_team_id,week,slots").eq("league_id", o.league_id)
+                     .eq("season", o.season).lte("week", week).execute().data or [])
+        out_teams = []
+        for t in teams:
+            tid, rid = str(t["id"]), t.get("sleeper_roster_id")
+            row = by_rid.get(int(rid)) if rid is not None else None
+            sleeper_starters = [str(p) for p in (row or {}).get("starters") or []]
+            if own:
+                mine = sorted((r for r in saved if str(r.get("league_team_id")) == tid), key=lambda r: -int(r.get("week") or 0))
+                eligible = {p for p in roster.get(tid, []) if p not in designation}
+                ids = lineup_rules.effective(slots, mine, sleeper_starters, eligible)
+            else:
+                ids = [p if p and p != "0" else None for p in sleeper_starters[:len(slots)]]
+                ids += [None] * (len(slots) - len(ids))
+            opp = next((x for x in rows if row and x.get("matchup_id") is not None and x.get("matchup_id") == row.get("matchup_id")
+                        and x.get("roster_id") != row.get("roster_id")), None)
+            opp_owner = next((str(u["owner_name"]) for u in teams if opp and u.get("sleeper_roster_id") is not None
+                              and int(u["sleeper_roster_id"]) == int(opp["roster_id"])), None)
+            out_teams.append({"team_id": tid, "owner": str(t.get("owner_name") or ""), "opponent": opp_owner, "starters": ids,
+                              "roster": roster.get(tid, [])})
+        ids_all = sorted({p for t in out_teams for p in t["roster"] + [x for x in t["starters"] if x]})
+        info = player_info(client, ids_all)
+        names.update({p: str(i.get("full_name") or "") for p, i in info.items() if p not in names or not names[p]})
+        try:
+            from api.projections import week_projections
+            proj = week_projections(client, str(sid), int(o.season), week, ids_all, {p: str(i.get("position") or "") for p, i in info.items()},
+                                    {p: str(i.get("team") or "") for p, i in info.items()}, active=True) if sid and week else {}
+        except Exception as exc:
+            print(f"GM_LINEUPS_PROJ_ERROR {type(exc).__name__}", flush=True)
+            proj = {}
+        games = [g for g in season_games(client, int(o.season)) if int(g.get("week") or 0) == week]
+        starts, now = lineup_rules.kickoffs(games), datetime.now(ZoneInfo("UTC"))
+        locked = {p for p in ids_all if lineup_rules.is_locked(p, (info.get(p) or {}).get("team"), starts, now)}
+        return {"week": week, "slots": slots, "teams": out_teams, "names": names, "info": info, "proj": proj, "locked": sorted(locked),
+                "designation": designation, "bye_teams": list(fo.get("bye_teams") or []), "source": "app" if own else "sleeper"}
+    return _cached(("set_lineups", o.league_id, o.season, week), 120, build)
+
+
+def lineups_tool(session: Session, fo: dict[str, Any], state: dict[str, Any]) -> Any:
+    from league_ai import team_lineups
+    from league_ai.tools import ToolSpec
+
+    def run(owner: str | None = None) -> dict[str, Any]:
+        data = set_lineups(session, fo, state)
+        teams = data["teams"]
+        if owner:
+            want = owner.strip().casefold()
+            teams = [t for t in teams if want in t["owner"].casefold()] or teams
+        single = len(teams) == 1
+        common = {"names": data["names"], "info": data["info"], "proj": data["proj"], "bye_teams": set(data["bye_teams"]),
+                  "locked": set(data["locked"]), "designation": data["designation"]}
+        return {
+            "week": data["week"],
+            "teams": [{"owner": t["owner"], "opponent": t["opponent"],
+                       **team_lineups.team_lineup(slots=data["slots"], starters=t["starters"], roster=t["roster"], bench_size=8 if single else 4, **common)}
+                      for t in teams],
+            "how_to_use": "These are the lineups each owner has actually SET right now (proj = this week's projection in league scoring if he plays; injury tags are in flags). "
+                          "Players on taxi or IR can't be started, so never suggest them. 'game started' players are locked for the week. "
+                          "better_bench_options compares projections only; weigh matchup and injury news before calling a swap.",
+        }
+    return ToolSpec("get_lineups", "The lineup each team has actually SET this week: starters by slot with projections, injury/bye flags and "
+                    "locks, top bench options, taxi/IR players who can't play, empty slots and clear bench upgrades. Pass owner for one team "
+                    "(the asking owner included); leave it out for every team in the league.",
+                    {"type": "object", "properties": {"owner": {"type": "string", "description": "Owner name (or part of it). Omit for all teams."}}}, run)
+
+
 def _pct_word(note: str | None) -> str:
     """'-35% vs league median' -> '-35%'; anything without a percentage -> ''."""
     first = (note or "").split(" ")[0]
@@ -335,7 +437,8 @@ def gm_tools(session: Session, fo: dict[str, Any] | None, *, question: Callable[
     tools = runtime.chat_tools(client, o, state=state, rules=session.rules(), league=session.league, week=session.week(),
                                positions=session.positions, playoff_week=session.playoff_start,
                                question=question, conversation_id=conversation_id,
-                               odds=(lambda: _gm_odds(session, fo)) if fo else None, extra=[matchup_tool(session, fo)] if fo else None)
+                               odds=(lambda: _gm_odds(session, fo)) if fo else None,
+                               extra=[matchup_tool(session, fo), lineups_tool(session, fo, state)] if fo else None)
     return tools, odds_trial.watch(tools)
 
 

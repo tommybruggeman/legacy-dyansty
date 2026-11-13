@@ -12,6 +12,7 @@
     "expo-haptics": "~58.0.7",
     "expo-linear-gradient": "~58.0.3",
     "expo-linking": "~58.0.14",
+    "expo-local-authentication": "~58.0.2",
     "expo-notifications": "~58.1.6",
     "expo-router": "~58.0.27",
     "expo-splash-screen": "~58.0.11",
@@ -20,6 +21,7 @@
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "react-native": "0.88.0",
+    "react-native-image-crop-picker": "^0.52.0",
     "react-native-safe-area-context": "~5.10.1",
     "react-native-screens": "~4.30.0",
     "react-native-url-polyfill": "^4.0.0"

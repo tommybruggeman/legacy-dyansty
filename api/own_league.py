@@ -107,12 +107,17 @@ def week_pairs(bracket: Iterable[Mapping[str, Any]], week: int, weeks: Mapping[i
 
 
 def team_row(roster: Mapping[str, Any], slots: list[str], saved: list[Mapping[str, Any]], sleeper_row: Mapping[str, Any] | None,
-             lines: Mapping[str, Mapping[str, Any]], scoring: Mapping[str, Any], matchup_id: int | None) -> dict[str, Any]:
-    """One team's Sleeper-shaped matchup row for an app week."""
+             lines: Mapping[str, Mapping[str, Any]], scoring: Mapping[str, Any], matchup_id: int | None,
+             past: bool = False) -> dict[str, Any]:
+    """One team's Sleeper-shaped matchup row for an app week. past=True for a finished week: its lineup stands as it
+    was played, even for a player dropped or moved to taxi/IR since, so later roster moves never change its score."""
     players = [str(p) for p in roster.get("players") or []]
     benched = {str(p) for p in (roster.get("taxi") or []) + (roster.get("reserve") or [])}
     eligible = {p for p in players if p not in benched}
     sleeper_starters = [str(p) for p in (sleeper_row or {}).get("starters") or []]
+    if past:
+        eligible |= {str(x.get("player_id")) for r in saved[:1] for x in r.get("slots") or [] if x.get("player_id")}
+        eligible |= {p for p in sleeper_starters if p not in ("", "0")}
     ids = lineups.effective(slots, list(saved), sleeper_starters, eligible)
     starters = [pid or "0" for pid in ids]
     starters_points = [engine.lineup_points([pid], lines, scoring) for pid in starters]
@@ -177,7 +182,7 @@ def build(*, season: int, own_from: int, current_week: int, league: Mapping[str,
         for roster in rosters:
             rid = int(roster["roster_id"])
             team_saved = [r for r in saved_by_team.get(team_of_roster.get(rid, ""), []) if int(r.get("week") or 0) <= week]
-            rows.append(team_row(roster, slots, team_saved, raw.get(rid), lines, scoring, pairs.get(rid)))
+            rows.append(team_row(roster, slots, team_saved, raw.get(rid), lines, scoring, pairs.get(rid), past=week < current_week))
             points[(week, rid)] = rows[-1]["points"]
         out[week] = rows
     if seeds is None and current_week >= playoff_start and own_from <= playoff_start:
@@ -210,12 +215,29 @@ def week_lines(client: Any, season: int, week: int, current: int) -> Mapping[str
     """The stat lines an app week is scored from: our official copy for finished weeks (nflverse, saved daily and
     locked), our live watcher's lines for the week being played, and Sleeper's public lines only as a fallback."""
     from api import league, sleeper
-    if week < current:
-        official = live_stats.final_lines(client, season, week)
-        if official:
-            return official
+    official = live_stats.final_lines(client, season, week)  # saved the morning after a week's last game
+    if official:
+        return official
     fallback = stat_lines(season, week, get_json=lambda url: sleeper.get_url(url, ttl=league.LIVE_TTL if week == current else 3600))
     return {**fallback, **(live_stats.fresh_lines(client, season, week) if week == current else {})}
+
+
+def own_scores(season: int, current: int, scoring: Mapping[str, Any], *,
+               rows_for: Callable[[int], list[dict[str, Any]]],
+               lines_for: Callable[[int], Mapping[str, Mapping[str, Any]]]) -> dict[str, Any]:
+    """{"matchups/<week>": rows} for weeks 1..current, each Sleeper row rescored by our engine from our own lines.
+    A week we can't score (no rows, no lines, or a read error) is left out, so it falls back to Sleeper's rows."""
+    out: dict[str, Any] = {}
+    if not scoring:
+        return out
+    for week in range(1, max(1, current) + 1):
+        try:
+            rows, lines = rows_for(week), lines_for(week)
+        except Exception:
+            continue
+        if rows and lines:
+            out[f"matchups/{week}"] = live_stats.rescore(rows, lines, scoring)
+    return out
 
 
 def sync(client: Any, league_id: str, sleeper_id: str, season: int) -> None:
@@ -236,14 +258,14 @@ def sync(client: Any, league_id: str, sleeper_id: str, season: int) -> None:
         own_from = int(switch.get("own_from_week") or start)
         current = league.current_week()
         if not switch.get("enabled") or current < own_from:
-            sleeper.drop(f"league/{sleeper_id}/")
-            # Still on Sleeper: while the week is being played, live points come from our own watcher's stat lines
-            # (scored by our engine) when it's running, which runs well ahead of Sleeper's live numbers.
-            ours = live_stats.fresh_lines(client, season, current)
-            if ours and current > league.last_scored_week(sleeper_id):
-                scoring = settings.scoring_settings or ((sleeper.raw(f"league/{sleeper_id}") or {}).get("scoring_settings") or {})
-                rows = sleeper.raw(f"league/{sleeper_id}/matchups/{current}", ttl=league.LIVE_TTL) or []
-                sleeper.put(f"league/{sleeper_id}/matchups/{current}", live_stats.rescore(rows, ours, scoring))
+            # Still on Sleeper for rosters and lineups, but every point is ours: each week's starters (Sleeper's rows)
+            # scored by our engine from our own stat lines (week_lines: official finals, the live watcher, and
+            # Sleeper's public stats only as a backup feed).
+            scoring = settings.scoring_settings or ((sleeper.raw(f"league/{sleeper_id}") or {}).get("scoring_settings") or {})
+            sleeper.put_many(f"league/{sleeper_id}/", own_scores(
+                season, current, scoring,
+                rows_for=lambda w: sleeper.raw(f"league/{sleeper_id}/matchups/{w}", ttl=league.LIVE_TTL if w == current else 3600) or [],
+                lines_for=lambda w: week_lines(client, season, w, current)))
             return {"weeks": []}
         teams = client.table("league_teams").select("id,sleeper_roster_id").eq("league_id", league_id).execute().data or []
         roster_of_team = {str(t["id"]): int(t["sleeper_roster_id"]) for t in teams if t.get("sleeper_roster_id") is not None}
@@ -259,7 +281,7 @@ def sync(client: Any, league_id: str, sleeper_id: str, season: int) -> None:
             season=season, own_from=own_from, current_week=current, league=info,
             rosters=app_rosters(client, league_id, season, roster_of_team),
             team_of_roster={rid: tid for tid, rid in roster_of_team.items()},
-            saved=saved, scoring=settings.scoring_settings or {}, slots=lineups.starter_slots(settings.roster_positions),
+            saved=saved, scoring=settings.scoring_settings or ((sleeper.raw(f"league/{sleeper_id}") or {}).get("scoring_settings") or {}), slots=lineups.starter_slots(settings.roster_positions),
             sleeper_rows=lambda w: sleeper.raw(f"league/{sleeper_id}/matchups/{w}", ttl=league.LIVE_TTL if w == current else 3600) or [],
             lines_for=lambda w: week_lines(client, season, w, current),
             standings_for=standings_for,

@@ -17,8 +17,8 @@ function go(path: Parameters<typeof router.push>[0]) {
   router.push(path);
 }
 
-// While any of this team's players is on the field, the page refreshes this often (the server scores at most every 15 s).
-export const LIVE_REFRESH_MS = 15_000;
+// While any of this team's players is on the field, the page refreshes this often (10 s, same as every live page).
+export { LIVE_POLL_MS as LIVE_REFRESH_MS } from '../../lib/api';
 export const isLive = (team: TeamPage | null) => !!team?.week && !team.week.is_final && Object.values(team.week.players).some((p) => p.status === 'playing');
 
 // One owner's team with the same three tabs as My Team (league activity lives on League > Teams). Other owners' teams
@@ -48,7 +48,8 @@ export function TeamView({ team, eyebrow, badge, top, onChange }: { team: TeamPa
   }
   return (
     <>
-      <Title eyebrow={eyebrow} badge={badge}>{team.team_name}</Title>
+      {/* My Team: no team name on top, just the portal label (and the pending trades badge). */}
+      <Title eyebrow={eyebrow} badge={badge} />
       {top}
       <TopTiles team={team} tab={tab} />
       <UnderlineTabs value={tab} onChange={setTab} />
@@ -168,7 +169,8 @@ function PlayerRow({ p, first, showSlot, chip, onEmpty, w, season }: { p: Player
   const label = showSlot && p.slot ? p.slot : p.pos;
   const live = w?.status === 'playing';
   return (
-    <Pressable onPress={() => go(`/player/${p.player_id}`)}>
+    // A hurt player opens straight to the Health section of his page.
+    <Pressable onPress={() => go(injury ? `/player/${p.player_id}?section=health` : `/player/${p.player_id}`)}>
       <View style={[styles.prow, first && styles.prowFirst, live && styles.prowLive]}>
         <View style={styles.pmain}>
           {chip}

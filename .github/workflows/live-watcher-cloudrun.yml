@@ -1,0 +1,84 @@
+name: Live stats watcher on Cloud Run (free test lane)
+
+# The free alternative to the e2-micro: the same watcher (scripts/live_watcher.py) as a Cloud Run job that Google's
+# own timer (Cloud Scheduler) starts every 5 minutes during game windows. Each run watches for 5.5 minutes, so runs
+# overlap by 30 s and there's no gap while the next one starts. Cloud Run needs no public IP of its own, so nothing
+# is billed beyond the free tier.
+#
+# Test lane: it saves under season + 10000 (SEASON_OFFSET), which the app never reads, so it can run beside the
+# machine watcher and the speed test can compare the two (scoring/speed_test.py).
+on:
+  workflow_dispatch:
+    inputs:
+      schedule:
+        description: Cloud Scheduler cron (UTC) for the two timers, with M where the minutes go (each timer fills in its own)
+        default: "M 0-4,17-23 * * 0,1,2,5"
+      offset:
+        description: SEASON_OFFSET (10000 = test lane; 0 = live, the app reads it)
+        default: "10000"
+  push:
+    branches: [claude/speed-test]
+    paths: [.github/workflows/live-watcher-cloudrun.yml]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PROJECT: legacy-dynasty-25024
+      REGION: us-central1
+      JOB: legacy-live-watcher
+      TIMER: legacy-live-watcher-tick
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Build image
+        # Its own image name, so the API image cleanup (keep the 2 newest per image) never removes it.
+        run: |
+          IMG="$REGION-docker.pkg.dev/$PROJECT/legacy/legacy-watcher:${GITHUB_SHA::7}"
+          echo "IMG=$IMG" >> "$GITHUB_ENV"
+          cp api/Dockerfile Dockerfile
+          gcloud builds submit --project "$PROJECT" --tag "$IMG" --suppress-logs
+      - name: Service
+        # A quarter CPU, one request per instance, CPU billed only while a request runs (Cloud Run's free tier). A full
+        # season of game days (~80 h/month) is ~72k of the 180k free CPU-seconds a month. Private: only the timer may call it.
+        run: |
+          SA=$(gcloud compute project-info describe --project "$PROJECT" --format 'value(defaultServiceAccount)')
+          echo "SA=$SA" >> "$GITHUB_ENV"
+          gcloud run jobs delete "$JOB" --project "$PROJECT" --region "$REGION" --quiet 2>/dev/null || true  # earlier try
+          gcloud run deploy "$JOB" --project "$PROJECT" --region "$REGION" --image "$IMG" \
+            --command python --args scripts/watcher_service.py \
+            --set-env-vars "ROLE=cloudrun,MAX_MINUTES=5.5,INTERVAL=5,SUMMARY_EVERY=5,SEASON_OFFSET=${{ inputs.offset || '10000' }}" \
+            --set-secrets "SUPABASE_URL=legacy-supabase-url:latest,SUPABASE_SERVICE_ROLE_KEY=legacy-supabase-service-key:latest" \
+            --service-account "$SA" --cpu 0.25 --memory 512Mi --concurrency 1 --max-instances 3 --timeout 420 \
+            --no-allow-unauthenticated --quiet
+          gcloud run services add-iam-policy-binding "$JOB" --project "$PROJECT" --region "$REGION" \
+            --member "serviceAccount:$SA" --role roles/run.invoker >/dev/null
+          echo "URL=$(gcloud run services describe "$JOB" --project "$PROJECT" --region "$REGION" --format 'value(status.url)')" >> "$GITHUB_ENV"
+      - name: One stretch now (checks it starts and answers)
+        run: |
+          TOKEN=$(gcloud auth print-identity-token --audiences "$URL" 2>/dev/null || gcloud auth print-identity-token)
+          curl -sS -m 400 -X POST -H "Authorization: Bearer $TOKEN" "$URL/" && echo " <- test stretch answered" || echo "test stretch FAILED"
+          gcloud logging read "resource.type=cloud_run_revision AND resource.labels.service_name=$JOB" --project "$PROJECT" --limit 20 \
+            --format 'value(textPayload)' --freshness 15m | grep -E "watcher|pass|done|WATCH_ERROR" || true
+      - name: Timers
+        # Two timers, each every 10 minutes, offset by 5: Cloud Scheduler never starts a job again while its previous
+        # call is still running, so one 5-minute timer with 5.5-minute stretches only ran every 10 minutes (Thursday
+        # 11-12: 4-5 minute gaps). Two offset timers give a fresh stretch every 5 minutes with a 30 s overlap.
+        # Windows (UTC): Thu/Sun/Mon night games 00-04 on Fri/Mon/Tue, Sunday afternoon 17-23. Off-window runs exit
+        # within seconds. With the app's keep-warm timer that's 3 timers, Cloud Scheduler's free allowance.
+        # Needs roles/cloudscheduler.admin on the deploy account (granted 2026-11-10).
+        run: |
+          SCHED="${{ inputs.schedule || 'M 0-4,17-23 * * 0,1,2,5' }}"
+          gcloud scheduler jobs delete "$TIMER" --project "$PROJECT" --location "$REGION" --quiet 2>/dev/null || true  # the old single timer
+          for pair in "a:0-59/10" "b:5-59/10"; do
+            NAME="$TIMER-${pair%%:*}"; MIN="${pair#*:}"; CRON="${SCHED/M/$MIN}"
+            if gcloud scheduler jobs describe "$NAME" --project "$PROJECT" --location "$REGION" >/dev/null 2>&1; then VERB=update; else VERB=create; fi
+            gcloud scheduler jobs $VERB http "$NAME" --project "$PROJECT" --location "$REGION" --schedule "$CRON" \
+              --time-zone UTC --uri "$URL/" --http-method POST --attempt-deadline 600s \
+              --oidc-service-account-email "$SA" --oidc-token-audience "$URL"
+          done
+          gcloud scheduler jobs list --project "$PROJECT" --location "$REGION" --format 'table(name.basename(),schedule,state)'

@@ -213,7 +213,7 @@ def main() -> int:
         t0 = time.monotonic()
         wc = week_context(fo, o.owner_name)
         res = answer(question=q, history=[], asker=o.asker(), sources=LeagueDataSources(client=client, league_id=lid, season=season), tools=tools,
-                     client=runtime.ClaudeClient(cfg), pack=s.pack(), week_context=wc, turn_effort=effort_for(q))
+                     client=runtime.ClaudeClient(cfg), pack=s.pack(), week_context=runtime.with_question_focus(wc, q), turn_effort=effort_for(q))
         tr = res.trace.as_dict()
         cost = cost_usd(tr.get("model") or cfg.model, input_tokens=tr["input_tokens"], output_tokens=tr["output_tokens"],
                         cache_read_tokens=tr["cache_read_tokens"], cache_write_tokens=tr["cache_creation_tokens"]) or 0.0

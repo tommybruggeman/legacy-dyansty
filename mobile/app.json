@@ -10,9 +10,10 @@
       "supportsTablet": false,
       "bundleIdentifier": "com.tommybruggeman.legacydynasty",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSPhotoLibraryUsageDescription": "Pick a picture for your team."
       },
-      "buildNumber": "65"
+      "buildNumber": "85"
     },
     "android": {
       "adaptiveIcon": {
@@ -42,6 +43,12 @@
         {
           "enablePushNotifications": true,
           "frequentUpdates": true
+        }
+      ],
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Use Face ID to open Legacy Dynasty."
         }
       ]
     ],

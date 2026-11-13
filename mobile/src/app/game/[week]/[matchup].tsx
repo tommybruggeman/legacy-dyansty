@@ -5,23 +5,27 @@ import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Avatar } from '../../../components/Pictures';
 import { ErrorState, Loading } from '../../../components/ScreenState';
-import { Back, Screen, firstName } from '../../../components/ui';
-import { type BoxPlayer, type BoxScore, useApi } from '../../../lib/api';
-import { teamColors } from '../../../lib/nflColors';
+import { Back, Screen, firstName, teamLabel } from '../../../components/ui';
+import { type BoxPlayer, type BoxScore, LIVE_POLL_MS, useApi } from '../../../lib/api';
 import { colors } from '../../../lib/theme';
 
 export { ScreenError as ErrorBoundary } from '../../../components/ScreenState';
 
 // Live games refresh every 15 seconds while this screen is open (the server reads the NFL scoreboard at most that often).
-const LIVE_REFRESH_MS = 15_000;
+const LIVE_REFRESH_MS = LIVE_POLL_MS;
 const THEM = '#D08B6A';
-const RED = '#E05555';
+// Live row colors: game on, his team has the ball, his team is in the red zone.
+const LIVE_LOOK = {
+  live: { edge: colors.gold, tint: ['#3A3018', '#1D2A1D'] },
+  offense: { edge: colors.live, tint: ['#1C4A33', '#173326'] },
+  redZone: { edge: '#E05555', tint: ['#4A1E1E', '#2A1F1C'] },
+} as const;
 
 type Side = BoxScore['teams'][number];
 
 // One game, slot by slot: your side on the left when you're playing.
-// "Spotlight": players whose NFL game is on get a gold edge and a warm tint, brighter when
-// their team has the ball and red in the red zone, with the game clock, score and stat line.
+// "Spotlight": players whose NFL game is on get a colored edge and tint: gold while his game is on,
+// green when his team has the ball, red in the red zone. No extra text; the colors say it.
 export default function Game() {
   const { week, matchup } = useLocalSearchParams<{ week: string; matchup: string }>();
   const [live, setLive] = useState(true);
@@ -39,9 +43,8 @@ export default function Game() {
   const open = (teamId: string | null) => (teamId ? () => router.push(`/team/${teamId}`) : undefined);
 
   return (
-    <Screen loading={loading} onRefresh={reload}>
+    <Screen loading={loading}>
       <Back label="Matchups" />
-      <Text style={styles.eyebrow}>WEEK {data.week} · {firstName(a.name).toUpperCase()} VS {firstName(b.name).toUpperCase()}</Text>
       <View style={styles.header}>
         <ScoreSide side={a} other={b} final={data.is_final} onPress={open(a.team_id)} me />
         <ScoreSide side={b} other={a} final={data.is_final} onPress={open(b.team_id)} right />
@@ -70,9 +73,9 @@ function Lineup({ left, right, onScore, bench }: { left: BoxPlayer[]; right: Box
         const pb = right[i];
         return (
           <View key={i} style={styles.row}>
-            <Half p={pa} side="l" onScore={onScore} bench={bench} />
-            <View style={styles.slot}><Text style={styles.slotText}>{bench ? 'BN' : pa?.slot || pb?.slot || ''}</Text></View>
-            <Half p={pb} side="r" onScore={onScore} bench={bench} />
+            <Half p={pa} vs={pb} side="l" onScore={onScore} bench={bench} first={i === 0} />
+            <View style={[styles.slot, i > 0 && styles.divider]}><Text style={styles.slotText}>{bench ? 'BN' : pa?.slot || pb?.slot || ''}</Text></View>
+            <Half p={pb} vs={pa} side="r" onScore={onScore} bench={bench} first={i === 0} />
           </View>
         );
       })}
@@ -82,10 +85,10 @@ function Lineup({ left, right, onScore, bench }: { left: BoxPlayer[]; right: Box
 
 function ScoreSide({ side, other, final, onPress, me, right }: { side: Side; other: Side; final: boolean; onPress?: () => void; me?: boolean; right?: boolean }) {
   const won = side.score > other.score;
-  const sub = final ? `${firstName(side.name)} · ${won ? 'W' : side.score < other.score ? 'L' : 'T'}` : side.projected != null ? `proj ${side.projected.toFixed(1)}` : firstName(side.name);
+  const sub = final ? `${teamLabel(side, true)} · ${won ? 'W' : side.score < other.score ? 'L' : 'T'}` : side.projected != null ? `proj ${side.projected.toFixed(1)}` : teamLabel(side, true);
   return (
     <Pressable onPress={onPress} style={[styles.scoreSide, right && styles.scoreSideRight]}>
-      <Avatar name={side.name} size={36} me={me} />
+      <Avatar uri={side.avatar} name={teamLabel(side)} size={36} me={me} />
       <View style={right && styles.alignRight}>
         <Text style={[styles.score, me && styles.gold]}>{side.score.toFixed(1)}</Text>
         <Text style={[styles.sub, final && won && styles.win]}>{sub}</Text>
@@ -109,70 +112,78 @@ function WinOdds({ odds }: { odds: number[] }) {
 function FinalBanner({ a, b }: { a: Side; b: Side }) {
   const top = [...a.players, ...b.players].reduce<BoxPlayer | null>((best, p) => (!best || p.points > best.points ? p : best), null);
   const margin = Math.abs(a.score - b.score).toFixed(1);
-  const lead = a.score === b.score ? 'Tied' : `${firstName(a.score > b.score ? a.name : b.name)} wins by ${margin}`;
+  const lead = a.score === b.score ? 'Tied' : `${teamLabel(a.score > b.score ? a : b, true)} wins by ${margin}`;
   return <Text style={styles.banner}>{lead}{top && top.points > 0 ? ` · ${shortName(top.name)} top scorer (${top.points.toFixed(1)})` : ''}</Text>;
 }
 
-// One player's half of a row. Live = gold edge on the outside + warm tint; has the ball = brighter; red zone = red edge.
-function Half({ p, side, onScore, bench }: { p?: BoxPlayer; side: 'l' | 'r'; onScore: (p: BoxPlayer) => void; bench?: boolean }) {
-  if (!p || !p.player_id || p.player_id === '0') return <View style={[styles.half, bench && styles.halfBench]}><Text style={styles.empty}>{p ? 'Empty' : ''}</Text></View>;
+// One player's half of a row, ESPN style: name + team, game ("@BAL 33-10 Final"), one short stat line
+// ("7 REC, 51 YDS, TD"), with big points and the projection on the inside edge next to the slot. The right side is mirrored.
+// Live = gold edge + warm tint; has the ball = green; red zone = red.
+// The slot winner's points are gold once both players have played.
+function Half({ p, vs, side, onScore, bench, first }: { p?: BoxPlayer; vs?: BoxPlayer; side: 'l' | 'r'; onScore: (p: BoxPlayer) => void; bench?: boolean; first?: boolean }) {
+  if (!p || !p.player_id || p.player_id === '0') return <View style={[styles.half, bench && styles.halfBench, !first && styles.divider]}><Text style={styles.empty}>{p ? 'Empty' : ''}</Text></View>;
   const g = p.game;
   const on = p.status === 'playing';
   const right = side === 'r';
-  const edge = on ? (g?.red_zone ? RED : colors.gold) : null;
-  const tint = on ? (g?.possession ? ['#4A3C1A', '#2A2D18'] : ['#3A3018', '#1D2A1D']) : null;
+  const look = on ? (g?.red_zone ? LIVE_LOOK.redZone : g?.possession ? LIVE_LOOK.offense : LIVE_LOOK.live) : null;
+  const edge = look?.edge ?? null;
+  const tint = look?.tint ?? null;
   const scored = p.status === 'playing' || p.status === 'final';
+  const vsScored = !!vs && (vs.status === 'playing' || vs.status === 'final');
+  const lead = !bench && scored && vsScored && vs ? (p.points > vs.points ? 'win' : p.points < vs.points ? 'lose' : null) : null;
+  const line = p.short_line ?? p.line ?? [];
+  const align = right ? styles.textRight : null;
   return (
-    <View style={[styles.half, bench && styles.halfBench, right ? { borderRightWidth: 4, borderRightColor: edge ?? 'transparent' } : { borderLeftWidth: 4, borderLeftColor: edge ?? 'transparent' }]}>
+    <View style={[styles.half, right && styles.halfRight, bench && styles.halfBench, !first && styles.divider, right ? { borderRightWidth: 4, borderRightColor: edge ?? 'transparent' } : { borderLeftWidth: 4, borderLeftColor: edge ?? 'transparent' }]}>
       {tint ? <LinearGradient colors={tint as [string, string]} start={{ x: right ? 1 : 0, y: 0 }} end={{ x: right ? 0.2 : 0.8, y: 0 }} style={StyleSheet.absoluteFill} /> : null}
-      <View style={styles.line}>
-        <Pressable onPress={() => router.push(`/player/${p.player_id}`)} hitSlop={4} style={styles.nameWrap}>
+      <View style={[styles.info, right && styles.infoRight]}>
+        <Pressable onPress={() => router.push(`/player/${p.player_id}`)} hitSlop={4} style={[styles.nameWrap, right && styles.nameWrapRight]}>
           <Text style={styles.name} numberOfLines={1}>{shortName(p.name)}</Text>
           {bench && p.pos ? <Text style={styles.benchPos}>{p.pos}</Text> : null}
-          {p.team ? <Text style={[styles.chip, { backgroundColor: teamColors(p.team)[0] }]}>{p.team}</Text> : null}
-          {on && g?.possession ? <View style={styles.ball}><View style={styles.lace} /></View> : null}
+          {p.team ? <Text style={styles.team}>{p.team}</Text> : null}
         </Pressable>
-        <Pressable onPress={() => onScore(p)} hitSlop={8}>
-          <Text style={[styles.points, side === 'l' && !bench && styles.gold, bench && styles.pointsBench]}>{scored || p.points ? p.points.toFixed(1) : '–'}</Text>
-        </Pressable>
-      </View>
-      <View style={styles.line}>
-        <GameText p={p} />
-        <Text style={[styles.proj, on && p.live_proj != null && styles.projLive]}>{shownProj(p)}</Text>
-      </View>
-      {p.line?.length ? (
-        <Text style={styles.stats}>
-          {p.line.map((x, i) => (
-            <Text key={i} style={x.tone === 'good' ? styles.good : x.tone === 'bad' ? styles.bad : undefined}>{i ? ', ' : ''}{x.text}</Text>
-          ))}
+        <GameText p={p} right={right} />
+        <Text style={[styles.stats, align]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
+          {line.length
+            ? line.map((x, i) => (
+                <Text key={i} style={x.tone === 'good' ? styles.good : x.tone === 'bad' ? styles.bad : undefined}>{i ? ', ' : ''}{x.text}</Text>
+              ))
+            : ' '}
         </Text>
-      ) : null}
-      {on && g?.possession ? (
-        <Text style={[styles.offense, g.red_zone && styles.redZone]}>{g.red_zone ? 'RED ZONE' : 'ON OFFENSE'}{g.down ? ` · ${g.down}` : ''}</Text>
-      ) : null}
+      </View>
+      <Pressable onPress={() => onScore(p)} hitSlop={8} style={[styles.pts, right && styles.ptsRight]}>
+        <Text style={[styles.points, lead === 'win' && styles.gold, lead === 'lose' && styles.pointsLose, bench && styles.pointsBench]}>{scored || p.points ? p.points.toFixed(1) : '–'}</Text>
+        <Text style={[styles.proj, on && p.live_proj != null && styles.projLive]}>{shownProj(p)}</Text>
+      </Pressable>
     </View>
   );
 }
 
-// "Q3 8:42 24-13 vs MIA" live, "Final W 34-20 vs MIA" after, "Sun 11:00 AM vs MIA" before, or BYE.
-function GameText({ p }: { p: BoxPlayer }) {
+// ESPN style: "@MIN 13-6 10:19 4th" live, "@BAL 33-10 Final" after, "@BAL Sun 11:00 AM" before, or BYE.
+// "@" is an away game; a home game is just the opponent.
+function GameText({ p, right }: { p: BoxPlayer; right?: boolean }) {
   const g = p.game;
-  if (p.status === 'bye') return <Text style={styles.game}>BYE</Text>;
-  const vs = g ? `${g.home ? 'vs' : '@'} ${g.opp}` : '';
+  const al = right ? styles.textRight : null;
+  if (p.status === 'bye') return <Text style={[styles.game, al]}>BYE</Text>;
+  const opp = g ? `${g.home ? '' : '@'}${g.opp}` : '';
   if (g && (p.status === 'playing' || g.state === 'in')) {
     return (
-      <View style={styles.gameRow}>
-        <View style={styles.dot} />
-        <Text style={styles.game} numberOfLines={1}><Text style={styles.clock}>{g.quarter > 4 ? 'OT' : `Q${g.quarter}`} {g.clock}</Text> {g.score}-{g.opp_score} {vs}</Text>
-      </View>
+      <Text style={[styles.game, al]} numberOfLines={1}>{opp} {g.score}-{g.opp_score} <Text style={styles.clock}>{liveClock(g)}</Text></Text>
     );
   }
   if (g && (p.status === 'final' || g.state === 'post')) {
-    const res = g.score > g.opp_score ? 'W' : g.score < g.opp_score ? 'L' : 'T';
-    return <Text style={styles.game} numberOfLines={1}><Text style={styles.finalWord}>Final</Text> {res} {g.score}-{g.opp_score} {vs}</Text>;
+    return <Text style={[styles.game, al]} numberOfLines={1}>{opp} {g.score}-{g.opp_score} Final</Text>;
   }
-  if (p.status === 'final') return <Text style={styles.game}>{p.rank ?? 'Final'}</Text>;
-  return <Text style={styles.game} numberOfLines={1}>{[p.kickoff ? kickoffText(p.kickoff) : null, vs].filter(Boolean).join(' ')}</Text>;
+  if (p.status === 'final') return <Text style={[styles.game, al]}>{p.rank ?? 'Final'}</Text>;
+  return <Text style={[styles.game, al]} numberOfLines={1}>{[opp, p.kickoff ? kickoffText(p.kickoff) : null].filter(Boolean).join(' ')}</Text>;
+}
+
+const ORDINAL = ['', '1st', '2nd', '3rd', '4th'];
+// "10:19 4th", "Halftime" or "OT 3:12".
+function liveClock(g: NonNullable<BoxPlayer['game']>) {
+  if (/half/i.test(g.detail ?? '')) return 'Half';
+  if (g.quarter > 4) return `OT ${g.clock}`;
+  return `${g.clock} ${ORDINAL[g.quarter] ?? ''}`.trim();
 }
 
 // Mid-game the projection follows the game: points so far plus his projection for the time left.
@@ -240,7 +251,6 @@ function Breakdown({ player, onClose }: { player: BoxPlayer | null; onClose: () 
 }
 
 const styles = StyleSheet.create({
-  eyebrow: { color: colors.gold, fontSize: 11, fontWeight: '800', letterSpacing: 1.2, marginBottom: 6 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
   scoreSide: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
   scoreSideRight: { flexDirection: 'row-reverse' },
@@ -249,7 +259,6 @@ const styles = StyleSheet.create({
   sub: { color: colors.muted, fontSize: 11, marginTop: -1 },
   win: { color: colors.live, fontWeight: '800' },
   gold: { color: colors.gold },
-  dot: { width: 7, height: 7, borderRadius: 4, backgroundColor: colors.live, marginRight: 5 },
   odds: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 },
   oddsPct: { color: colors.text, fontSize: 11, fontWeight: '800', fontVariant: ['tabular-nums'] },
   oddsBar: { flex: 1, height: 6, borderRadius: 3, backgroundColor: '#24372D', overflow: 'hidden' },
@@ -257,35 +266,37 @@ const styles = StyleSheet.create({
   oddsFill: { height: 6, backgroundColor: colors.live },
   oddsLabel: { color: colors.muted, fontSize: 10, fontWeight: '800' },
   banner: { color: colors.gold, fontSize: 12, fontWeight: '700', backgroundColor: '#122B20', borderRadius: 10, overflow: 'hidden', paddingHorizontal: 10, paddingVertical: 8, marginBottom: 10 },
-  table: { borderRadius: 14, overflow: 'hidden', backgroundColor: colors.bg },
+  table: { borderRadius: 14, overflow: 'hidden', backgroundColor: colors.card, marginHorizontal: -10 },
   section: { color: colors.gold, fontSize: 11, fontWeight: '800', letterSpacing: 1.2, marginBottom: 6 },
   sectionBench: { color: colors.muted, marginTop: 16 },
-  row: { flexDirection: 'row', alignItems: 'stretch', marginBottom: 3 },
-  half: { flex: 1, minWidth: 0, backgroundColor: '#11271D', paddingHorizontal: 8, paddingVertical: 9, overflow: 'hidden' },
+  row: { flexDirection: 'row', alignItems: 'stretch' },
+  half: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: colors.card, paddingLeft: 10, paddingRight: 6, paddingVertical: 9, overflow: 'hidden' },
+  halfRight: { flexDirection: 'row-reverse', paddingLeft: 6, paddingRight: 10 },
+  info: { flex: 1, minWidth: 0 },
+  infoRight: { alignItems: 'flex-end' },
+  nameWrapRight: { flexDirection: 'row-reverse' },
+  textRight: { textAlign: 'right' },
+  pts: { alignItems: 'flex-end', minWidth: 38 },
+  ptsRight: { alignItems: 'flex-start' },
+  divider: { borderTopWidth: 1, borderTopColor: '#1F3F31' },
   halfBench: { backgroundColor: '#0E2119' },
   empty: { color: colors.muted, fontSize: 13 },
-  slot: { width: 32, alignItems: 'center', justifyContent: 'center', backgroundColor: '#08140F' },
-  slotText: { color: colors.muted, fontSize: 11, fontWeight: '800' },
-  line: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 4 },
+  slot: { width: 28, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.card },
+  slotText: { color: '#8E8676', fontSize: 10, fontWeight: '800' },
   nameWrap: { flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 1 },
   name: { color: colors.text, fontSize: 14, fontWeight: '800', flexShrink: 1 },
-  chip: { flexShrink: 0, color: '#FFFFFF', fontSize: 8.5, fontWeight: '800', paddingHorizontal: 3, paddingVertical: 1, borderRadius: 3, overflow: 'hidden' },
-  points: { color: colors.text, fontSize: 16, fontWeight: '800', fontVariant: ['tabular-nums'] },
+  team: { flexShrink: 0, color: '#8E8676', fontSize: 10, fontWeight: '700' },
+  points: { color: colors.text, fontSize: 17, fontWeight: '800', fontVariant: ['tabular-nums'] },
   pointsBench: { color: '#C9C2B2' },
+  pointsLose: { color: colors.muted },
   benchPos: { flexShrink: 0, color: colors.muted, fontSize: 10, fontWeight: '800' },
-  proj: { color: colors.muted, fontSize: 10.5 },
+  proj: { color: colors.muted, fontSize: 10.5, marginTop: 1 },
   projLive: { color: colors.text, fontWeight: '700' },
-  gameRow: { flexDirection: 'row', alignItems: 'center', flexShrink: 1 },
-  game: { color: colors.muted, fontSize: 10.5, marginTop: 2, flexShrink: 1 },
+  game: { color: colors.muted, fontSize: 10.5, marginTop: 2, flexShrink: 1, alignSelf: 'stretch' },
   clock: { color: colors.live, fontWeight: '800' },
-  finalWord: { fontWeight: '800' },
-  ball: { flexShrink: 0, width: 14, height: 9, borderRadius: 5, backgroundColor: '#9A5A2B', justifyContent: 'center', alignItems: 'center' },
-  lace: { width: 5, height: 1, backgroundColor: '#FFFFFF' },
-  stats: { color: '#D9D0BD', fontSize: 11, fontWeight: '600', marginTop: 3, lineHeight: 15 },
+  stats: { color: '#D9D0BD', fontSize: 11, fontWeight: '600', marginTop: 2, lineHeight: 15, alignSelf: 'stretch' },
   good: { color: colors.live, fontWeight: '800' },
   bad: { color: '#EF7A7A', fontWeight: '800' },
-  offense: { color: colors.gold, fontSize: 9.5, fontWeight: '800', letterSpacing: 0.4, marginTop: 4 },
-  redZone: { color: '#FF7D7D' },
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', padding: 28 },
   sheet: { backgroundColor: colors.card, borderRadius: 18, padding: 18, gap: 4 },
   sheetEyebrow: { color: colors.gold, fontSize: 11, fontWeight: '800', letterSpacing: 1 },

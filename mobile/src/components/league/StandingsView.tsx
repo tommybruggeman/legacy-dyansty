@@ -2,6 +2,7 @@ import { router } from 'expo-router';
 import { Fragment } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { teamLabel } from '../ui';
 import { ErrorState, Loading } from '../ScreenState';
 import { type Standings, type StandingsRow, useApi } from '../../lib/api';
 import { colors } from '../../lib/theme';
@@ -23,7 +24,7 @@ export function StandingsView() {
         <View style={styles.table}>
           <View style={[styles.row, styles.header]}>
             <Text style={[styles.rankCol, styles.headText]}>#</Text>
-            <Text style={[styles.nameCol, styles.headText]}>OWNER</Text>
+            <Text style={[styles.nameCol, styles.headText]}>TEAM</Text>
             <Text style={[styles.num, styles.headText, styles.gold]}>SP</Text>
             <Text style={[styles.numWide, styles.headText]}>PF</Text>
             <Text style={[styles.num, styles.headText]}>W</Text>
@@ -51,7 +52,10 @@ function Row({ row, onPress }: { row: StandingsRow; onPress?: () => void }) {
           <RankBadge rank={row.rank} />
         </View>
         <View style={[styles.nameCol, styles.nameLine]}>
-          <Text style={[styles.name, row.rank === 1 && styles.gold]} numberOfLines={1}>{row.name}</Text>
+          <View style={styles.nameStack}>
+            <Text style={[styles.name, row.rank === 1 && styles.gold]} numberOfLines={1}>{teamLabel(row)}</Text>
+            {teamLabel(row) !== row.name ? <Text style={styles.owner} numberOfLines={1}>{row.name}</Text> : null}
+          </View>
           {move !== 0 ? (
             <Text style={[styles.move, { color: move > 0 ? colors.live : colors.danger }]}>
               {move > 0 ? '▲' : '▼'}{Math.abs(move)}
@@ -95,6 +99,8 @@ const styles = StyleSheet.create({
   rankCol: { width: 32, alignItems: 'center' },
   nameCol: { flex: 1, paddingLeft: 8 },
   nameLine: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  nameStack: { flexShrink: 1 },
+  owner: { color: colors.muted, fontSize: 11, marginTop: 1 },
   name: { color: colors.text, fontSize: 15, fontWeight: '700', flexShrink: 1 },
   move: { fontSize: 11, fontWeight: '700' },
   num: { width: 28, textAlign: 'center' },

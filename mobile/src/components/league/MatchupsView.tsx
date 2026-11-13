@@ -3,15 +3,16 @@ import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Avatar } from '../Pictures';
+import { teamLabel } from '../ui';
 import { ErrorState, Loading } from '../ScreenState';
-import { type Game, type Matchups as MatchupsData, type MatchupTeam, prefetch, useApi } from '../../lib/api';
+import { type Game, type Matchups as MatchupsData, type MatchupTeam, LIVE_POLL_MS, prefetch, useApi } from '../../lib/api';
 import { colors } from '../../lib/theme';
 import { PlayoffsView } from './PlayoffsView';
 
 const first = (name: string) => name.split(' ')[0];
 
 // Live games refresh every 30 seconds while this screen is open.
-const LIVE_REFRESH_MS = 30_000;
+const LIVE_REFRESH_MS = LIVE_POLL_MS;
 
 
 // Built from the phone Weekly Matchups design: week picker, your game pinned first (Scorebug cards), gold rank = a Top 5 score this week.
@@ -107,9 +108,9 @@ function TeamRow({ team, state, isMe, winner, showRanks }: {
           </View>
         ) : <View style={styles.rankBlank} />
       ) : null}
-      <Avatar uri={team.avatar} name={team.name} size={30} me={isMe} />
+      <Avatar uri={team.avatar} name={teamLabel(team)} size={30} me={isMe} />
       <View style={styles.nameBox}>
-        <Text style={styles.teamName} numberOfLines={1}>{first(team.name)}</Text>
+        <Text style={styles.teamName} numberOfLines={2} adjustsFontSizeToFit minimumFontScale={0.85}>{teamLabel(team)}</Text>
         {isMe ? <Text style={styles.you}>YOU</Text> : null}
         {team.record ? <Text style={styles.record}>{team.record}</Text> : null}
       </View>
