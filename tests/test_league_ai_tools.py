@@ -157,7 +157,7 @@ class TradeSimTests(unittest.TestCase):
 class RegistryTests(unittest.TestCase):
     def test_registry_runs_tools_through_json(self):
         reg = build_registry(FakeClient(), league_state=fixture_state())
-        self.assertEqual(len(reg), 11)
+        self.assertEqual(len(reg), 12)
         out = json.loads(reg.call("get_player_profile", {"name": "Josh Allen"}))
         self.assertEqual(out["nfl_team"], "BUF")
         self.assertIn("error", json.loads(reg.call("get_player_stats", {})))  # bad args reported, not raised
@@ -211,7 +211,7 @@ class InjuryToolTests(unittest.TestCase):
     def test_registry_has_injury_tool(self):
         reg = build_registry(FakeClient(), league_state=fixture_state())
         self.assertIn("get_injury_report", reg.tools)
-        self.assertEqual(len(reg), 11)
+        self.assertEqual(len(reg), 12)
 
 
 PROSPECTS = [
@@ -239,3 +239,33 @@ class ProspectToolTests(unittest.TestCase):
         from league_ai.tools.nfl import tool_get_prospects
         out = tool_get_prospects(_data(), name="star back")
         self.assertEqual(out["matches"][0]["class"], "Jr")
+
+
+class NflMovesTests(unittest.TestCase):
+    def setUp(self):
+        from datetime import datetime, timezone
+        from league_ai import nfl_data
+        nfl_data._CACHE.pop(("nfl_moves",), None)
+        now = datetime.now(timezone.utc).isoformat()
+        FakeClient.TABLES["nfl_player_moves"] = [
+            {"sleeper_id": "p1", "full_name": "Josh Allen", "position": "QB", "from_team": "BUF", "to_team": "MIN", "source": "espn_roster", "seen_at": now}]
+
+    def tearDown(self):
+        from league_ai import nfl_data
+        nfl_data._CACHE.pop(("nfl_moves",), None)
+        FakeClient.TABLES.pop("nfl_player_moves", None)
+
+    def test_profile_shows_recent_move_and_moves_tool_lists_it(self):
+        from league_ai.tools.nfl import tool_get_nfl_moves
+        data = _data()
+        out = tool_get_player_profile(data, "Josh Allen")
+        self.assertEqual(out["recent_team_move"]["from_team"], "BUF")
+        self.assertEqual(out["recent_team_move"]["to_team"], "MIN")
+        moves = tool_get_nfl_moves(data, nfl_team="MIN")
+        self.assertEqual(moves["moves"][0]["name"], "Josh Allen")
+        self.assertEqual(tool_get_nfl_moves(data, nfl_team="KC")["moves"], [])
+
+    def test_no_moves_table_is_harmless(self):
+        FakeClient.TABLES.pop("nfl_player_moves", None)
+        out = tool_get_player_profile(_data(), "Josh Allen")
+        self.assertNotIn("recent_team_move", out)

@@ -18,10 +18,13 @@ on:
     - cron: "47 22 * 9-12,1 *"  # ~5:45pm ET
     - cron: "17 1 * 9-12,1 *"   # ~8:15pm ET
     - cron: "23 16 * 9-12,1 *"  # ~11:20am ET, after nflverse's morning rebuild
+    # Hourly: NFL team moves (trades, signings) from ESPN's 32 public rosters, about 20 seconds.
+    # Sleeper's player file is once a day, so without this a deadline trade stays stale until tomorrow.
+    - cron: "29 * * * *"
   workflow_dispatch:
     inputs:
       only:
-        description: "Loader or comma list (players, stats, games, values, injuries, practice, injury_history, prospects, situational); blank for all"
+        description: "Loader or comma list (players, rosters, stats, games, values, injuries, practice, injury_history, prospects, situational); blank for all"
         required: false
         default: ""
       seasons:
@@ -58,6 +61,7 @@ jobs:
           if [ "${{ github.event_name }}" = "schedule" ]; then
             case "$SCHEDULE" in
               "0 9 * * *") ;;
+              "29 * * * *") ARGS="--only rosters" ;;
               *" 9-12,1 *") ARGS="--practice" ;;
               *) ARGS="--game-night" ;;
             esac
