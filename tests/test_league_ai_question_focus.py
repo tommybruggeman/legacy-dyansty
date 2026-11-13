@@ -48,6 +48,10 @@ class QuestionFocusTests(unittest.TestCase):
         self.assertIn("Outlook and what-if questions", SYSTEM_PROMPT)
         self.assertIn("hold/sell/buy call", SYSTEM_PROMPT)
 
+    def test_prompt_uses_tables_for_comparisons(self):
+        self.assertIn("compact Markdown table", SYSTEM_PROMPT)
+        self.assertNotIn("and no table", SYSTEM_PROMPT)
+
 
 if __name__ == "__main__":
     unittest.main()
