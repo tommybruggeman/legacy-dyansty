@@ -23,7 +23,7 @@ from league_ai.learning import Ledger, learning_pack_lines
 from league_ai.memory import Memory
 from league_ai.nfl_data import add_weather, bye_weeks, current_week_from_games, data_freshness, defense_vs_position, season_games, week_matchups
 from league_ai.roster_moves import rules_from
-from league_ai.routing import effort_for, topic as question_topic
+from league_ai.routing import effort_for, is_trade_question, topic as question_topic
 from league_ai.service import AnswerResult, LeagueDataSources, answer, build_pack
 from league_ai.settings_store import apply_sleeper_scoring, fetch_sleeper_scoring, load_settings
 from league_ai.team_context import team_context
@@ -370,6 +370,7 @@ def chat_turn(client: Any, owner: Owner, *, question: str, history: list[dict[st
     memory = owner.memory(client)
     from league_ai import owner_prefs  # answer length and contend/rebuild from the owner's Settings
     week_context = owner_prefs.with_prefs(week_context, owner_prefs.load(client, owner.user_id))
+    week_context = with_question_focus(week_context, question)
     topic = question_topic(question)
     sources = LeagueDataSources(client=client, league_id=owner.league_id, season=owner.season)
     model = pick_model(topic, conversation_id or question)
@@ -396,6 +397,19 @@ def chat_turn(client: Any, owner: Owner, *, question: str, history: list[dict[st
                                         topic=topic, conversation_id=conversation_id))
     notes_changed = any(name in ("remember", "forget") for name in result.trace.tool_calls)
     return ChatTurn(result, conversation_id, notes_changed)
+
+
+NOT_A_TRADE_NOTE = ("This question: the owner did not ask about a trade. Answer exactly what they asked, on its own terms, "
+                    "and end there. No hold/sell/buy call, trade value or trade-deadline talk, and no contract, cut or dead "
+                    "cap math unless the question asks for it or this conversation is already about a trade.")
+
+
+def with_question_focus(week_context: str | None, question: str) -> str | None:
+    """A one-line per-turn reminder (after the cache breakpoint, so it costs a few tokens and no cache) that keeps
+    a non-trade question from ending in trade advice. Trade questions get nothing extra."""
+    if is_trade_question(question):
+        return week_context
+    return f"{week_context.strip()}\n\n{NOT_A_TRADE_NOTE}" if week_context and week_context.strip() else NOT_A_TRADE_NOTE
 
 
 HARD_TOPICS = ("trade", "strategy")
