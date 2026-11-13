@@ -11,6 +11,7 @@ import { usePullDown } from '../../components/PullDown';
 import { Pill, useScrollTopOnTab } from '../../components/ui';
 import { type ChatEvent, type ChatMessage, type Conversation, type FoHeader, type FoMove, type FrontOffice, apiGet, apiSend, apiStream, useApi } from '../../lib/api';
 import { clearLastChat, saveLastChat } from '../../lib/lastChat';
+import { isTradeQuestion } from '../../lib/tradeQuestion';
 import { colors } from '../../lib/theme';
 
 // Resolves right away when the app is on screen, otherwise the next time it comes back.
@@ -299,7 +300,7 @@ export default function FrontOfficeScreen() {
               <>
                 <Text style={styles.gm}>GM</Text>
                 <Markdown text={m.content} />
-                {sleeper && /trade/i.test(messages[i - 1]?.content ?? '') ? (
+                {sleeper && isTradeQuestion(messages[i - 1]?.content) ? (
                   <Pressable style={styles.sleeper} onPress={() => Linking.openURL(sleeper)}>
                     <Text style={styles.sleeperText}>Open in Sleeper ↗</Text>
                   </Pressable>
