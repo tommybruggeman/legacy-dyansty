@@ -11,10 +11,10 @@ on:
       check:
         description: Which check to run
         type: choice
-        options: [odds_backtest, odds_trial, odds_grade, start_sit_grade, practice_test, weekly_cards, shadow_scoring, live_projection_study, espn_feed_check, final_scores_check, projection_accuracy, projection_calibration, win_odds_study, trade_backtest, answer_eval, fd_check, own_scores_check, projection_by_stat, weather_study, projection_trace, seed_owner_profiles, save_scoring, speed_test, speed_test_smoke, gm_repro]
+        options: [odds_backtest, odds_trial, odds_grade, start_sit_grade, practice_test, weekly_cards, shadow_scoring, live_projection_study, espn_feed_check, final_scores_check, projection_accuracy, projection_calibration, win_odds_study, trade_backtest, answer_eval, fd_check, own_scores_check, projection_by_stat, weather_study, projection_trace, seed_owner_profiles, save_scoring, speed_test, speed_test_smoke, gm_repro, app_usage]
         default: odds_backtest
       minutes:
-        description: speed_test only - how long to watch after kickoff (max 330)
+        description: speed_test - minutes to watch after kickoff (max 330); app_usage - days to look back (default 7)
         default: "230"
 
 jobs:
@@ -44,6 +44,8 @@ jobs:
             # live scoring speed test: our saved live lines vs ESPN vs Sleeper, timed against each play (numbers only)
             speed_test) python -m scoring.speed_test --wait 90 --minutes "${{ inputs.minutes || '230' }}" --every 3 ;;
             speed_test_smoke) python -m scoring.speed_test --wait 0 --minutes 1 --every 3 --smoke ;;
+            # where owners spend time in the app and website (numbers only, owners unnamed)
+            app_usage) python -m scripts.app_usage_report --days "${{ inputs.minutes == '230' && '7' || inputs.minutes }}" ;;
             odds_trial) python -m league_ai.odds_trial ;;
             # one time: today's team names and Sleeper pictures become each owner's default profile, stored by us
             seed_owner_profiles) python -m scripts.seed_owner_profiles ;;

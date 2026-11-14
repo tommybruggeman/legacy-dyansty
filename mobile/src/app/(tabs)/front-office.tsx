@@ -1,7 +1,7 @@
 import { router, useLocalSearchParams, useNavigation } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator, AppState, Keyboard, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, type ScrollViewInstance, StyleSheet, Text, TextInput, View,
+  ActivityIndicator, Alert, AppState, Keyboard, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, type ScrollViewInstance, StyleSheet, Text, TextInput, View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -305,6 +305,9 @@ export default function FrontOfficeScreen() {
                     <Text style={styles.sleeperText}>Open in Sleeper ↗</Text>
                   </Pressable>
                 ) : null}
+                <Pressable onPress={() => reportAnswer(messages[i - 1]?.content, m.content, conversationId)} hitSlop={8} style={styles.report}>
+                  <Text style={styles.reportText}>⚑ Report</Text>
+                </Pressable>
               </>
             )}
           </View>
@@ -358,6 +361,20 @@ export default function FrontOfficeScreen() {
 }
 
 // Change on top, the number in the middle, what it is underneath.
+// Apple asks AI apps for a way to flag a bad answer. Flags go to the weekly AI report so the GM can learn from them.
+function reportAnswer(question: string | undefined, answer: string, conversationId: string | null) {
+  const send = (reason: string) =>
+    apiSend('POST', '/front-office/report', { reason, question: question ?? null, answer, conversation_id: conversationId })
+      .then(() => Alert.alert('Thanks', 'We’ll look at this answer.'))
+      .catch((e: any) => Alert.alert('Couldn’t send that', e?.message ?? 'Please try again.'));
+  Alert.alert('Report this answer', 'What’s wrong with it?', [
+    { text: 'It’s wrong', onPress: () => send('wrong') },
+    { text: 'It’s out of date', onPress: () => send('outdated') },
+    { text: 'Offensive or harmful', onPress: () => send('harmful') },
+    { text: 'Cancel', style: 'cancel' },
+  ]);
+}
+
 function Tile({ top, topTone, value, valueTone, label }: { top: string; topTone?: 'up' | 'down'; value: string; valueTone?: 'warn'; label: string }) {
   return (
     <View style={styles.tile}>
@@ -477,6 +494,8 @@ const styles = StyleSheet.create({
   problem: { color: '#E39A9A', fontSize: 13, textAlign: 'center', marginTop: 4 },
   sleeper: { marginTop: 10, backgroundColor: colors.gold, borderRadius: 12, paddingVertical: 10, alignItems: 'center' },
   sleeperText: { color: colors.bg, fontWeight: '800', fontSize: 14 },
+  report: { alignSelf: 'flex-end', marginTop: 6 },
+  reportText: { color: colors.muted, fontSize: 12, fontWeight: '600' },
   chipsBar: { flexGrow: 0 },
   chips: { gap: 8, paddingHorizontal: 16, paddingBottom: 8 },
   chip: { borderWidth: 1, borderColor: colors.line, borderRadius: 16, paddingHorizontal: 12, paddingVertical: 7 },

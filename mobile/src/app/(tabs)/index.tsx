@@ -2,6 +2,7 @@ import { router, useFocusEffect } from 'expo-router';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
+import { AlertsCard } from '../../components/home/AlertsCard';
 import { GameDayBottom, Scoreboard } from '../../components/home/GameDayBottom';
 import { Avatar, Headshot, type Ring } from '../../components/Pictures';
 import { ErrorState, Loading } from '../../components/ScreenState';
@@ -67,6 +68,7 @@ export default function Home() {
         </Pressable>
       </View>
 
+      <AlertsCard />
       {data.phase === 'recap' ? <Recap data={data} /> : null}
       {data.phase === 'game_day' ? <GameDay data={data} /> : null}
       {data.phase === 'playoffs' ? <Playoffs data={data} /> : null}

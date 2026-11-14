@@ -56,13 +56,28 @@ def owner_from(ctx: dict[str, Any], user: Any) -> runtime.Owner:
                          owner_name=owner_name, team_name=ctx.get("team_name") or owner_name, role=ctx.get("role") or "owner")
 
 
-def take_question(user_id: str, today: date | None = None) -> bool:
+def asked_today(client: Any, user_id: str, today: date) -> int:
+    """Answers this owner already got today, from the usage log, so the limit survives server restarts
+    and holds across server copies. 0 if the log can't be read (the in-memory count still applies)."""
+    start = datetime.combine(today, datetime.min.time(), LEAGUE_TZ).isoformat()
+    try:
+        result = (client.table("league_ai_usage").select("id", count="exact", head=True)
+                  .eq("user_id", user_id).eq("feature", "chat").gte("created_at", start).execute())
+        return int(result.count or 0)
+    except Exception:
+        return 0
+
+
+def take_question(user_id: str, today: date | None = None, client: Any = None) -> bool:
     """Count one question against today's limit; False once it's used up."""
-    day = (today or datetime.now(LEAGUE_TZ).date()).isoformat()
-    key = (user_id, day)
-    if _asked.get(key, 0) >= DAILY_QUESTIONS:
+    day = today or datetime.now(LEAGUE_TZ).date()
+    key = (user_id, day.isoformat())
+    used = _asked.get(key, 0)
+    if client is not None:
+        used = max(used, asked_today(client, user_id, day))
+    if used >= DAILY_QUESTIONS:
         return False
-    _asked[key] = _asked.get(key, 0) + 1
+    _asked[key] = used + 1
     return True
 
 

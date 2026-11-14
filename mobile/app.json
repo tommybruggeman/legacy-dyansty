@@ -13,7 +13,7 @@
         "ITSAppUsesNonExemptEncryption": false,
         "NSPhotoLibraryUsageDescription": "Pick a picture for your team."
       },
-      "buildNumber": "85"
+      "buildNumber": "86"
     },
     "android": {
       "adaptiveIcon": {
@@ -59,6 +59,14 @@
       "eas": {
         "projectId": "395b8a4c-b2b1-490c-9e64-9e8afcb02ff1"
       }
+    },
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/395b8a4c-b2b1-490c-9e64-9e8afcb02ff1",
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0
     }
   }
 }

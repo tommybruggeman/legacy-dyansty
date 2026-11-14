@@ -11,12 +11,13 @@ import os
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from supabase import Client, create_client
 
 from api import box_score as box_score_mod
+from api import account, demo, usage_log
 from api import activity, alerts, cache, commissioner, owner_settings, profiles, front_office, home, league, lineups, live_activity, market, market_week, nfl_live, own_league, player, playoffs, projections, teams, trade_feed, trade_offers, waivers
 from season_engine import SeasonResolver
 from services.season_rollover_owner_ui import OwnerRolloverDecisionError, OwnerRolloverDecisionService
@@ -31,7 +32,7 @@ def _env(name: str) -> str:
     return value
 
 
-def owner_client(authorization: str = Header(default="")) -> tuple[Client, Any]:
+def owner_client(request: Request, authorization: str = Header(default="")) -> tuple[Client, Any]:
     """Supabase client acting as the signed-in owner, plus their user."""
     scheme, _, token = authorization.partition(" ")
     if scheme.lower() != "bearer" or not token:
@@ -47,6 +48,8 @@ def owner_client(authorization: str = Header(default="")) -> tuple[Client, Any]:
     if user is None:
         raise HTTPException(status_code=401, detail="Session expired. Sign in again.")
 
+    if demo.blocked(user, request.method, request.url.path):
+        raise HTTPException(status_code=403, detail=demo.MESSAGE)
     client.postgrest.auth(token)
     return client, user
 
@@ -156,6 +159,83 @@ class PushToken(BaseModel):
 def _push_token_kind(token: str) -> str | None:
     """'apns' for an Apple device token (hex), None for anything else (Expo tokens are no longer used)."""
     return "apns" if 32 <= len(token) <= 400 and all(c in "0123456789abcdef" for c in token) else None
+
+
+@app.delete("/me")
+def delete_me(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """Delete my account: personal data and sign-in go, league history stays (Apple requires this in the app)."""
+    client, _ = owner
+    try:
+        result = account.delete_account(client)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    return result
+
+
+class AnswerReport(BaseModel):
+    reason: str
+    question: str | None = None
+    answer: str | None = None
+    conversation_id: str | None = None
+    note: str | None = None
+
+
+@app.post("/front-office/report")
+def report_gm_answer(body: AnswerReport, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """An owner flags a GM answer as wrong, outdated or harmful. Read by the weekly AI report."""
+    client, user = owner
+    try:
+        league_id = resolve_team(client, user).get("league_id")
+    except HTTPException:
+        league_id = None
+    try:
+        account.report_answer(client, user_id=str(user.id), league_id=league_id, reason=body.reason, question=body.question,
+                              answer=body.answer, conversation_id=body.conversation_id, note=body.note)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    return {"ok": True}
+
+
+class CrashReport(BaseModel):
+    message: str | None = None
+    stack: str | None = None
+    screen: str | None = None
+    build: str | None = None
+    version: str | None = None
+    os: str | None = None
+
+
+@app.post("/me/crash")
+def crash_report(body: CrashReport, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """A crash or screen error from someone's phone, written to the server log (free, no extra service)."""
+    _, user = owner
+    print(account.crash_line(str(user.id), body.model_dump()), flush=True)
+    return {"ok": True}
+
+
+class ScreenTime(BaseModel):
+    screen: str
+    seconds: int
+    at: str | None = None
+
+
+class ActivityBatch(BaseModel):
+    views: list[ScreenTime]
+    build: str | None = None
+
+
+@app.post("/me/activity")
+def save_activity(body: ActivityBatch, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """Which screens owners open and for how long, stored in our own database (no outside analytics)."""
+    client, user = owner
+    if demo.is_demo(user):
+        return {"ok": True, "saved": 0}
+    try:
+        league_id = resolve_team(client, user).get("league_id")
+    except HTTPException:
+        league_id = None
+    saved = usage_log.save(client, user_id=str(user.id), league_id=league_id, views=[v.model_dump() for v in body.views], build=body.build, source="app")
+    return {"ok": True, "saved": saved}
 
 
 @app.post("/me/push-token")
@@ -1553,7 +1633,7 @@ def _chat_session(body: ChatRequest, client: Client, user: Any) -> tuple[front_o
     if not front_office.ai_ready():
         raise HTTPException(status_code=503, detail="The Assistant GM isn't switched on for the app yet.")
     session = _front_office(client, user)
-    if not front_office.take_question(session.owner.user_id):
+    if not front_office.take_question(session.owner.user_id, client=client):
         raise HTTPException(status_code=429, detail=f"That's {front_office.DAILY_QUESTIONS} questions today. The Assistant GM is back tomorrow.")
     return session, question
 
