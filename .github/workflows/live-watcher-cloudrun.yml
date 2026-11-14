@@ -16,6 +16,15 @@ on:
       offset:
         description: SEASON_OFFSET (10000 = test lane; 0 = live, the app reads it)
         default: "10000"
+      lanes:
+        description: Race mode, one watcher per ESPN feed (e.g. summary:10000,gamecast:20000); empty = one watcher
+        default: ""
+      cpu:
+        description: CPU per instance (0.25 for one watcher; 1 for the race)
+        default: "0.25"
+      memory:
+        description: Memory per instance
+        default: "512Mi"
   push:
     branches: [claude/speed-test]
     paths: [.github/workflows/live-watcher-cloudrun.yml]
@@ -51,9 +60,9 @@ jobs:
           gcloud run jobs delete "$JOB" --project "$PROJECT" --region "$REGION" --quiet 2>/dev/null || true  # earlier try
           gcloud run deploy "$JOB" --project "$PROJECT" --region "$REGION" --image "$IMG" \
             --command python --args scripts/watcher_service.py \
-            --set-env-vars "ROLE=cloudrun,MAX_MINUTES=5.5,INTERVAL=5,SUMMARY_EVERY=5,SEASON_OFFSET=${{ inputs.offset || '10000' }}" \
+            --set-env-vars "^@^ROLE=cloudrun@MAX_MINUTES=5.5@INTERVAL=2@SUMMARY_EVERY=2@SEASON_OFFSET=${{ inputs.offset || '10000' }}@LANES=${{ inputs.lanes }}" \
             --set-secrets "SUPABASE_URL=legacy-supabase-url:latest,SUPABASE_SERVICE_ROLE_KEY=legacy-supabase-service-key:latest" \
-            --service-account "$SA" --cpu 0.25 --memory 512Mi --concurrency 1 --max-instances 3 --timeout 420 \
+            --service-account "$SA" --cpu "${{ inputs.cpu || '0.25' }}" --memory "${{ inputs.memory || '512Mi' }}" --concurrency 1 --max-instances 3 --timeout 420 \
             --no-allow-unauthenticated --quiet
           gcloud run services add-iam-policy-binding "$JOB" --project "$PROJECT" --region "$REGION" \
             --member "serviceAccount:$SA" --role roles/run.invoker >/dev/null

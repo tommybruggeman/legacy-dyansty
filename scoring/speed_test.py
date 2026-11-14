@@ -25,6 +25,7 @@ import os
 import resource
 import time
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from statistics import median
 from typing import Any
@@ -40,7 +41,35 @@ SLEEPER = "https://api.sleeper.app"
 LEGACY_SLEEPER_ID = "1361083066197491712"
 KEEP = {"QB", "RB", "WR", "TE", "K"}
 BIG = 4.0
-LANES = (("machine", 0), ("free", 10000))  # live_stat_lines season offset per watcher lane (scripts/live_watcher.SEASON_OFFSET)  # a points change this big is a touchdown-sized play
+# Other free ESPN feeds that carry the same play ids: is one of them faster than the summary our watcher reads?
+ALT_FEEDS = {
+    "gamecast": "https://cdn.espn.com/core/nfl/playbyplay?xhr=1&gameId={gid}",
+    "core plays": "https://sports.core.api.espn.com/v2/sports/football/leagues/nfl/events/{gid}/competitions/{gid}/plays?limit=1000",
+}
+ALT_GAMES = 4  # at most this many live games sampled per poll for the extra feeds
+
+
+def alt_plays(feed: str, data: Any) -> list[tuple[str, float | None]]:
+    """(play id, wallclock) from one of the extra feeds."""
+    out = []
+    if feed == "gamecast":
+        drives = (((data or {}).get("gamepackageJSON") or {}).get("drives")) or {}
+        groups = list(drives.get("previous") or []) + ([drives["current"]] if drives.get("current") else [])
+        plays = [p for d in groups for p in (d.get("plays") or [])]
+    else:
+        plays = (data or {}).get("items") or []
+    for play in plays:
+        pid = str(play.get("id") or "")
+        try:
+            wall = datetime.fromisoformat(str(play.get("wallclock")).replace("Z", "+00:00")).timestamp()
+        except (TypeError, ValueError):
+            wall = None
+        if pid:
+            out.append((pid, wall))
+    return out
+
+
+LANES = (("machine", 0), ("free", 10000), ("gamecast", 20000))  # live_stat_lines season offset per watcher lane (scripts/live_watcher.SEASON_OFFSET)  # a points change this big is a touchdown-sized play
 
 
 class Meter:
@@ -175,6 +204,17 @@ def run(wait: float, minutes: float, every: float, smoke: bool = False) -> tuple
         out.append("  no live game started inside the wait window; nothing to time")
         return out, {}
 
+    # Does the gamecast feed carry the same box score as the summary? (one live game, once)
+    try:
+        gid0 = live[0]["id"]
+        a = espn_feed.week_lines([meter.get("espn", espn_feed.game_url("summary", gid0)) or {}], idmap)[0]
+        b = espn_feed.week_lines([espn_feed.game_data("gamecast", meter.get("espn_alt", espn_feed.game_url("gamecast", gid0)))], idmap)[0]
+        pa, pb = scored(slim(a), scoring), scored(slim(b), scoring)
+        out.append(f"  gamecast vs summary box score at start: {sum(1 for p in pa if p in pb and abs(pa[p] - pb[p]) < 0.02)}/{len(pa)} players equal, "
+                   f"{len(pb)} players in gamecast")
+    except Exception as exc:
+        out.append(f"  gamecast vs summary box score check failed: {type(exc).__name__}")
+
     # What every server instance reads every 10 s during games: the whole week's saved rows (Sunday's are biggest).
     week_rows = client.table("live_stat_lines").select("game_id,lines,games,source,updated_at").eq("season", season).eq("week", week).execute().data or []
     week_bytes = len(json.dumps(week_rows))
@@ -190,6 +230,10 @@ def run(wait: float, minutes: float, every: float, smoke: bool = False) -> tuple
     errors: dict[str, int] = defaultdict(int)
     events: list[dict[str, Any]] = []
     seen_play: set[str] = set()
+    feed_seen: dict[str, dict[str, float]] = {f: {} for f in ["summary", *ALT_FEEDS]}  # feed -> play id -> first seen
+    feed_base: dict[str, set[str]] = {f: set() for f in ALT_FEEDS}  # games whose first read was a baseline
+    play_wall: dict[str, float] = {}
+    pool = ThreadPoolExecutor(max_workers=8)
     espn_prev: dict[str, float] | None = None
     espn_games: dict[str, dict[str, Any]] = {}
     loops = 0
@@ -230,7 +274,26 @@ def run(wait: float, minutes: float, every: float, smoke: bool = False) -> tuple
                         wall = datetime.fromisoformat(str(play.get("wallclock")).replace("Z", "+00:00")).timestamp()
                     except (TypeError, ValueError):
                         continue
+                    feed_seen["summary"][pid] = t_espn
+                    play_wall[pid] = wall
                     newest_wall = max(newest_wall or 0, wall)
+
+        # 1b) The extra ESPN feeds, read in parallel for up to ALT_GAMES live games.
+        jobs = [(feed, gid, pool.submit(meter.get, "espn_alt", url.format(gid=gid)))
+                for gid in live_ids[:ALT_GAMES] for feed, url in ALT_FEEDS.items()]
+        for feed, gid, fut in jobs:
+            data, t_alt = fut.result(), time.time()
+            if not data:
+                errors["feed:" + feed] += 1
+                continue
+            first = gid not in feed_base[feed]
+            feed_base[feed].add(gid)
+            for pid, wall in alt_plays(feed, data):
+                if pid in feed_seen[feed]:
+                    continue
+                feed_seen[feed][pid] = 0.0 if first else t_alt  # 0 = was already there at the first read
+                if wall and not first:
+                    play_wall.setdefault(pid, wall)
         espn_pts = scored({pid: l for g in espn_games.values() for pid, l in g.items()}, scoring)
         if espn_prev is not None and newest_wall:
             for pid in set(espn_pts) | set(espn_prev):
@@ -341,8 +404,9 @@ def run(wait: float, minutes: float, every: float, smoke: bool = False) -> tuple
         return longest, frozen
 
     elapsed_h = max((time.time() - start) / 3600, 1e-9)
-    label = {"espn": "ESPN read directly", "machine": "OURS, machine watcher (live lane)",
-             "free": "OURS, Cloud Run free watcher (test lane)", "sleeper": "Sleeper stat feed as supplier"}
+    label = {"espn": "ESPN read directly", "machine": "OURS, paid machine watcher",
+             "free": "OURS, free watcher, summary feed",
+             "gamecast": "OURS, free watcher, gamecast feed", "sleeper": "Sleeper stat feed as supplier"}
     out.append(f"  ran {elapsed_h * 60:.0f} min, {loops} polls, {len(events)} player points changes in ESPN's feed")
     out.append("All points changes (seconds after the real play):")
     for name, hist in sources:
@@ -370,10 +434,28 @@ def run(wait: float, minutes: float, every: float, smoke: bool = False) -> tuple
             both = [pid for pid in last_espn if pid in last_ours and (last_espn[pid] or last_ours[pid])]
             same = sum(1 for pid in both if abs(last_espn[pid] - last_ours[pid]) < 0.02)
             ages = row_ages.get(name) or []
+            last_sl = {pid: h[-1][1] for pid, h in sleeper_h.h.items() if h}
+            vs_sl = [pid for pid in last_ours if pid in last_sl and (last_ours[pid] or last_sl[pid])]
+            same_sl = sum(1 for pid in vs_sl if abs(last_sl[pid] - last_ours[pid]) < 0.02)
+            espn_vals = {pid: {round(v, 2) for _, v in h} for pid, h in espn_h.h.items()}
+            states = [(pid, round(v, 2)) for pid, h in hist.h.items() for _, v in h if v]
+            odd = sum(1 for pid, v in states if v not in espn_vals.get(pid, set()))
+            out.append(f"    accuracy: final points equal Sleeper's for {same_sl}/{len(vs_sl)} players; {odd} of {len(states)} "
+                       f"in-game numbers shown never appeared in ESPN's summary")
             out.append(f"    final points equal ESPN-derived for {same}/{len(both)} players; saves {save_count[name] / elapsed_h:.0f}/hour"
                        + (f"; newest row age median {median(ages):.0f}s, worst {max(ages):.0f}s" if ages else ""))
+    out.append("Which ESPN feed shows a play first (seconds after the play; plays new during the test):")
+    for feed, seen in feed_seen.items():
+        lags = [t - play_wall[p] for p, t in seen.items() if t and p in play_wall and 0 <= t - play_wall[p] < 1800]
+        vs = [t - feed_seen["summary"][p] for p, t in seen.items() if t and feed_seen["summary"].get(p)] if feed != "summary" else []
+        line = summary_line(f"ESPN {feed}", lags, 0)
+        if vs:
+            line += f"; vs summary median {median(vs):+.0f}s, 90th pct {pct(vs, 0.9):+.0f}s over {len(vs)} plays"
+        if feed != "summary":
+            line += f"; {errors['feed:' + feed]} failed reads, {len(seen)} plays read"
+        out.append(line)
     out.append("Cost of this test's reads (per hour):")
-    for name in ("espn", "sleeper", "supabase"):
+    for name in ("espn", "espn_alt", "sleeper", "supabase"):
         out.append(f"  {name}: {meter.bytes[name] / 1e6 / elapsed_h:.0f} MB/hour over {meter.calls[name]} calls")
     cpu = time.process_time() - cpu0
     out.append(f"  CPU {cpu / elapsed_h:.0f} s/hour; peak memory {resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024:.0f} MB")

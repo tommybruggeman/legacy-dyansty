@@ -32,7 +32,7 @@ cat > /etc/legacy-watcher.env <<ENV
 SUPABASE_URL=$(secret legacy-supabase-url)
 SUPABASE_SERVICE_ROLE_KEY=$(secret legacy-supabase-service-key)
 ROLE=main
-INTERVAL=5
+INTERVAL=2
 ENV
 
 cat > /etc/systemd/system/legacy-watcher.service <<UNIT

@@ -38,6 +38,19 @@ PASS_2PT = re.compile(r"([A-Z][\w'.-]*\.\s?[\w'.-]+)\s+pass to\s+([A-Z][\w'.-]*\
 RUSH_2PT = re.compile(r"([A-Z][\w'.-]*\.\s?[\w'.-]+)\s+(?:rushes|runs|scrambles|left|right|up)", re.IGNORECASE)
 
 
+GAMECAST = "https://cdn.espn.com/core/nfl/playbyplay?xhr=1&gameId={gid}"  # ESPN's live game tracker feed
+
+
+def game_url(feed: str, gid: str) -> str:
+    """Where one game's box score + play by play comes from: the summary (default) or the gamecast feed."""
+    return GAMECAST.format(gid=gid) if feed == "gamecast" else f"{ESPN}/summary?event={gid}"
+
+
+def game_data(feed: str, raw: Any) -> Any:
+    """The summary-shaped part of a feed's answer (the gamecast feed wraps it in gamepackageJSON)."""
+    return ((raw or {}).get("gamepackageJSON") or {}) if feed == "gamecast" else raw
+
+
 def team_code(team: Mapping[str, Any] | None) -> str:
     code = str((team or {}).get("abbreviation") or "")
     return ESPN_TEAMS.get(code, code)
