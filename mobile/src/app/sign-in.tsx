@@ -2,10 +2,10 @@ import { useState } from 'react';
 import { ActivityIndicator, Image, KeyboardAvoidingView, Linking, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { SUPPORT_URL, WEBSITE } from '../lib/links';
 import { supabase } from '../lib/supabase';
 import { colors } from '../lib/theme';
 
-const WEBSITE = 'https://legacy-dynasty.streamlit.app';
 
 // Same email and password owners use on the website.
 export default function SignIn() {
@@ -63,6 +63,15 @@ export default function SignIn() {
         <Pressable onPress={() => Linking.openURL(WEBSITE)} hitSlop={8} style={styles.help}>
           <Text style={styles.helpText}>Forgot your password? Reset it on the website</Text>
         </Pressable>
+        <View style={styles.newOwner}>
+          <Text style={styles.newTitle}>New to the league?</Text>
+          <Text style={styles.newText}>
+            Your commissioner sends you an invite email. Open its link to make your password, and your team is linked for you. Then sign in here.
+          </Text>
+          <Pressable onPress={() => Linking.openURL(SUPPORT_URL)} hitSlop={8}>
+            <Text style={styles.newLink}>No invite? Get help</Text>
+          </Pressable>
+        </View>
       </View>
     </KeyboardAvoidingView>
   );
@@ -81,4 +90,8 @@ const styles = StyleSheet.create({
   buttonText: { color: colors.bg, fontSize: 16, fontWeight: '800' },
   help: { alignSelf: 'center', marginTop: 8 },
   helpText: { color: colors.muted, fontSize: 13 },
+  newOwner: { marginTop: 22, borderTopWidth: 1, borderTopColor: colors.line, paddingTop: 16, gap: 6 },
+  newTitle: { color: colors.text, fontSize: 14, fontWeight: '800' },
+  newText: { color: colors.muted, fontSize: 13, lineHeight: 19 },
+  newLink: { color: colors.gold, fontSize: 13, fontWeight: '700', marginTop: 2 },
 });

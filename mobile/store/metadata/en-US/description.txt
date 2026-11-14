@@ -1,4 +1,4 @@
-Legacy Dynasty is the companion app for salary-cap dynasty fantasy football leagues run on Legacy and Sleeper.
+Legacy Dynasty is the companion app for a private salary-cap dynasty fantasy football league.
 
 Every owner gets their own front office:
 - My Team: your roster, contracts, cap space by season, draft picks and recent moves.
@@ -7,4 +7,4 @@ Every owner gets their own front office:
 - Player pages: weekly points, NFL stats, injury outlook, the next game's matchup and Vegas yardage lines.
 - Front Office AI: ask your GM who to start, which trades make sense and how to plan your cap, using your league's own rules.
 
-League data syncs from Sleeper automatically. Sign in with the account your league commissioner set up for you.
+Your commissioner invites you by email; sign in with that account. Ask the GM anything, and report any answer that's off.

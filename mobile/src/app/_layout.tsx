@@ -5,21 +5,24 @@ import { StatusBar } from 'expo-status-bar';
 
 import { LaunchIntro } from '../components/LaunchIntro';
 import { AppLockProvider } from '../lib/appLock';
-import { listenForTaps, registerForPush } from '../lib/push';
+import { listenForTaps, registerIfAllowed } from '../lib/push';
 import { SessionProvider, useSession } from '../lib/session';
+import { installCrashReporter, useScreenTime } from '../lib/telemetry';
 import { colors } from '../lib/theme';
 
 export { ScreenError as ErrorBoundary } from '../components/ScreenState';
 
 // The native splash is just the background color; the crest animation takes over from it.
 SplashScreen.preventAutoHideAsync().catch(() => {});
+installCrashReporter();
 
 function RootStack() {
   const { session, loading } = useSession();
   const signedIn = !!session;
+  useScreenTime(signedIn);
   useEffect(() => {
     if (!signedIn) return;
-    registerForPush();
+    registerIfAllowed();
     return listenForTaps();
   }, [signedIn]);
   if (loading) return null;
@@ -38,6 +41,7 @@ function RootStack() {
         <Stack.Screen name="chats" />
         <Stack.Screen name="report-card" />
         <Stack.Screen name="settings" />
+        <Stack.Screen name="delete-account" />
         <Stack.Screen name="profile" />
         <Stack.Screen name="league-rules" />
         <Stack.Screen name="commissioner" />
