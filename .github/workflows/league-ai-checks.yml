@@ -43,7 +43,7 @@ jobs:
           case "${{ inputs.check }}" in
             # live scoring speed test: our saved live lines vs ESPN vs Sleeper, timed against each play (numbers only)
             speed_test) python -m scoring.speed_test --wait 90 --minutes "${{ inputs.minutes || '230' }}" --every 3 ;;
-            live_gaps) python -m scoring.live_gaps ;;
+            live_gaps) python -m scoring.live_gaps && python -m scoring.fd_debug "$(date -u +%Y)" "${{ inputs.minutes || 0 }}" ;;
             speed_test_smoke) python -m scoring.speed_test --wait 0 --minutes 1 --every 3 --smoke ;;
             odds_trial) python -m league_ai.odds_trial ;;
             # one time: today's team names and Sleeper pictures become each owner's default profile, stored by us
