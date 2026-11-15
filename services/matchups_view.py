@@ -402,6 +402,16 @@ def _line_html(p: dict) -> str:
         f'<span class="{tone.get(x.get("tone"), "")}">{html.escape(str(x.get("text") or ""))}</span>' for x in parts) + "</span>"
 
 
+def _proj_tone(p: dict) -> str:
+    """Like Sleeper (and the app): while his game is live, the live projection is green when it is tracking above
+    his pregame projection and red when below. Compared as shown, to one decimal."""
+    live, pre = p.get("live_proj"), p.get("proj")
+    if p.get("status") != "playing" or not isinstance(live, (int, float)) or not isinstance(pre, (int, float)):
+        return ""
+    diff = round(live * 10) - round(pre * 10)
+    return " bx-up" if diff > 0 else " bx-down" if diff < 0 else ""
+
+
 def box_score_html(game: dict) -> str:
     """Both lineups of one game (api.box_score.game): points, projection and weekly position rank per starter,
     plus each side's projected total. Same numbers as the app's game screen."""
@@ -410,6 +420,7 @@ def box_score_html(game: dict) -> str:
         for p in side.get("players") or []:
             proj = p.get("live_proj") if p.get("status") == "playing" and p.get("live_proj") is not None else p.get("proj")
             proj_txt = f"{proj:.1f}" if isinstance(proj, (int, float)) else "–"
+            proj_cls = _proj_tone(p)
             rank = html.escape(str(p.get("rank") or ""))
             status = p.get("status") or ""
             pts = f"{_as_number(p.get('points')):.1f}" if status in ("playing", "final") or p.get("points") else "–"
@@ -420,7 +431,7 @@ def box_score_html(game: dict) -> str:
                 f'<span class="bx-name">{html.escape(str(p.get("name") or ""))}'
                 f'<span class="bx-sub">{html.escape(str(p.get("pos") or ""))}{" · " + html.escape(str(p["team"])) if p.get("team") else ""}{" · " + rank if rank else ""}</span>'
                 f'{_game_html(p)}{_line_html(p)}</span>'
-                f'<span class="bx-num">{pts}<span class="bx-sub">proj {proj_txt}</span></span>'
+                f'<span class="bx-num">{pts}<span class="bx-sub{proj_cls}">proj {proj_txt}</span></span>'
                 '</div>'
             )
         projected = side.get("projected")
@@ -447,6 +458,7 @@ def box_score_html(game: dict) -> str:
         '.bx-row.live{background:linear-gradient(90deg,rgba(200,155,74,.16),transparent 75%);box-shadow:inset 3px 0 0 #C89B4A;padding-left:6px;border-radius:6px}'
         '.bx-game{display:block;font-size:.72rem;opacity:.75}.bx-game b{color:#4CC38A}.bx-game .bx-rz{color:#ff7d7d;font-weight:800}'
         '.bx-line{display:block;font-size:.74rem;font-weight:600;opacity:.9}.bx-good{color:#4CC38A;font-weight:800}.bx-bad{color:#ef7a7a;font-weight:800}'
+        '.bx-sub.bx-up{color:#4CC38A;opacity:1;font-weight:700}.bx-sub.bx-down{color:#ef7a7a;opacity:1;font-weight:700}'
         '</style>'
         f'<div class="bx-wrap">{sides}</div>'
     )
