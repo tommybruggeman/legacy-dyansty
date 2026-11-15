@@ -70,7 +70,7 @@ export function MatchupsView() {
 }
 
 // Scorebug cards (picked by Tommy from the 10 list designs): rank, owner face,
-// record and score per row. Live games get a green edge; finished games fade
+// record and score per row. No live edge (Tommy, 2026-11-15); finished games fade
 // the loser and point at the winner. No footer line (Tommy, build 39).
 function GameCard({ game, week, myId, weekFinal, showRanks, isMine }: {
   game: Game; week: number; myId: number | null; weekFinal: boolean; showRanks: boolean; isMine?: boolean;
@@ -84,7 +84,6 @@ function GameCard({ game, week, myId, weekFinal, showRanks, isMine }: {
   const winner = state === 'final' && a.score !== b.score ? (a.score > b.score ? a.roster_id : b.roster_id) : null;
   return (
     <Pressable onPress={() => router.push(`/game/${week}/${game.matchup_id}`)} style={[styles.card, isMine && styles.myCard]}>
-      {state === 'live' ? <View style={styles.liveEdge} /> : null}
       <TeamRow team={a} state={state} isMe={a.roster_id === myId} winner={winner} showRanks={showRanks} />
       <TeamRow team={b} state={state} isMe={b.roster_id === myId} winner={winner} showRanks={showRanks} />
     </Pressable>
@@ -137,7 +136,6 @@ const styles = StyleSheet.create({
   weekText: { color: colors.text, fontSize: 16 },
   card: { borderRadius: 16, backgroundColor: colors.row, overflow: 'hidden', borderWidth: 1, borderColor: '#1B2E24' },
   myCard: { borderColor: colors.gold, borderWidth: 1.5 },
-  liveEdge: { position: 'absolute', left: 0, top: 0, bottom: 0, width: 4, backgroundColor: colors.live, zIndex: 1 },
   teamRow: { flexDirection: 'row', alignItems: 'center', paddingLeft: 16, paddingRight: 14, paddingTop: 10, paddingBottom: 8, gap: 10 },
   lost: { opacity: 0.5 },
   rank: { width: 26, height: 26, borderRadius: 13, backgroundColor: colors.card, alignItems: 'center', justifyContent: 'center' },

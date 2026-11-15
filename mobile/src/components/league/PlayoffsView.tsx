@@ -81,7 +81,6 @@ function TreeSlot({ slot, game }: { slot: PlayoffSlot; game: PlayoffGame }) {
 function GameCard({ game, big, week }: { game: PlayoffGame; big: boolean; week: number }) {
   const body = (
     <>
-      {game.state === 'live' ? <View style={styles.liveEdge} /> : null}
       {game.teams.map((t, i) => <TeamRow key={i} slot={t} game={game} big={big} />)}
     </>
   );
@@ -194,7 +193,6 @@ const styles = StyleSheet.create({
   trophy: { fontSize: 22 },
   card: { borderRadius: 16, backgroundColor: colors.row, overflow: 'hidden', borderWidth: 1, borderColor: '#1B2E24' },
   myCard: { borderColor: colors.gold, borderWidth: 1.5 },
-  liveEdge: { position: 'absolute', left: 0, top: 0, bottom: 0, width: 4, backgroundColor: colors.live, zIndex: 1 },
   teamRow: { flexDirection: 'row', alignItems: 'center', paddingLeft: 16, paddingRight: 14, paddingTop: 10, paddingBottom: 8, gap: 10 },
   bigRow: { paddingTop: 13, paddingBottom: 11 },
   lost: { opacity: 0.5 },
