@@ -71,6 +71,19 @@ def test_box_score_html_colors_live_projection_vs_pregame():
     assert 'bx-sub">proj 8.0' in out    # after the game the pregame projection stays plain
 
 
+def test_box_score_html_live_row_looks():
+    g = {"state": "in", "quarter": 4, "clock": "7:00", "score": 21, "opp_score": 10, "opp": "LV"}
+    game = {"teams": [
+        {"name": "Tommy", "score": 1.0, "projected": None, "players": [
+            {"name": "Live", "points": 1.0, "proj": 5.0, "live_proj": 4.0, "status": "playing", "game": dict(g)},
+            {"name": "Ball", "points": 1.0, "proj": 5.0, "live_proj": 4.0, "status": "playing", "game": dict(g, possession=True)},
+            {"name": "RZ", "points": 1.0, "proj": 5.0, "live_proj": 4.0, "status": "playing", "game": dict(g, possession=True, red_zone=True)}]},
+        {"name": "Grady", "score": 0.0, "projected": None, "players": []}]}
+    out = box_score_html(game)
+    assert 'bx-row live"' in out and 'bx-row live ball"' in out and 'bx-row live rz"' in out
+    assert out.count('class="bx-tag">LIVE<') == 3
+
+
 def test_mobile_status_includes_playoff_odds_tile():
     tiles = [{"label": "Record · 2nd of 10", "value": "5-2"}, {"label": "Playoff odds · +4 this week", "value": "62%"}]
     assert mobile_status(8, tiles) == "Week 8 · 5-2, 2nd of 10 · 62% playoff odds"

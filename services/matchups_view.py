@@ -390,7 +390,7 @@ def _game_html(p: dict) -> str:
     if g.get("possession"):
         down = html.escape(str(g.get("down") or ""))
         ball = f' · <span class="bx-rz">RED ZONE {down}</span>' if g.get("red_zone") else f" · has the ball{(' ' + down) if down else ''}"
-    return f'<span class="bx-game"><b>Q{g.get("quarter")} {html.escape(str(g.get("clock") or ""))}</b> {score} {vs}{ball}</span>'
+    return f'<span class="bx-game"><span class="bx-tag">LIVE</span> <b>Q{g.get("quarter")} {html.escape(str(g.get("clock") or ""))}</b> {score} {vs}{ball}</span>'
 
 
 def _line_html(p: dict) -> str:
@@ -424,7 +424,9 @@ def box_score_html(game: dict) -> str:
             rank = html.escape(str(p.get("rank") or ""))
             status = p.get("status") or ""
             pts = f"{_as_number(p.get('points')):.1f}" if status in ("playing", "final") or p.get("points") else "–"
-            live_cls = " live" if status == "playing" else ""
+            g = p.get("game") or {}
+            # Same looks as the app: live = lighter row + LIVE tag, has the ball = gold, red zone = red.
+            live_cls = (" live rz" if g.get("red_zone") else " live ball" if g.get("possession") else " live") if status == "playing" else ""
             rows.append(
                 f'<div class="bx-row{live_cls}">'
                 f'<span class="bx-slot">{html.escape(str(p.get("slot") or ""))}</span>'
@@ -455,8 +457,11 @@ def box_score_html(game: dict) -> str:
         '.bx-name{font-size:.9rem;line-height:1.2}'
         '.bx-num{font-weight:700;text-align:right;line-height:1.2}'
         '.bx-sub{display:block;font-size:.72rem;font-weight:400;opacity:.55}'
-        '.bx-row.live{background:linear-gradient(90deg,rgba(200,155,74,.16),transparent 75%);box-shadow:inset 3px 0 0 #C89B4A;padding-left:6px;border-radius:6px}'
-        '.bx-game{display:block;font-size:.72rem;opacity:.75}.bx-game b{color:#4CC38A}.bx-game .bx-rz{color:#ff7d7d;font-weight:800}'
+        '.bx-row.live{background:rgba(255,255,255,.05);padding-left:6px;border-radius:6px}'
+        '.bx-row.live.ball{background:linear-gradient(90deg,rgba(200,155,74,.22),transparent 75%);box-shadow:inset 3px 0 0 #C89B4A}'
+        '.bx-row.live.rz{background:linear-gradient(90deg,rgba(224,85,85,.22),transparent 75%);box-shadow:inset 3px 0 0 #E05555}'
+        '.bx-tag{background:#E05555;color:#fff;font-size:.56rem;font-weight:900;padding:0 3px;border-radius:3px;letter-spacing:.3px;vertical-align:1px}'
+        '.bx-game{display:block;font-size:.72rem;opacity:.75}.bx-game b{color:#F5EBD7}.bx-game .bx-rz{color:#ff7d7d;font-weight:800}'
         '.bx-line{display:block;font-size:.74rem;font-weight:600;opacity:.9}.bx-good{color:#4CC38A;font-weight:800}.bx-bad{color:#ef7a7a;font-weight:800}'
         '.bx-sub.bx-up{color:#4CC38A;opacity:1;font-weight:700}.bx-sub.bx-down{color:#ef7a7a;opacity:1;font-weight:700}'
         '</style>'
