@@ -153,7 +153,7 @@ function Half({ p, vs, side, onScore, bench, first }: { p?: BoxPlayer; vs?: BoxP
       </View>
       <Pressable onPress={() => onScore(p)} hitSlop={8} style={[styles.pts, right && styles.ptsRight]}>
         <Text style={[styles.points, lead === 'win' && styles.gold, lead === 'lose' && styles.pointsLose, bench && styles.pointsBench]}>{scored || p.points ? p.points.toFixed(1) : '–'}</Text>
-        <Text style={[styles.proj, on && p.live_proj != null && styles.projLive]}>{shownProj(p)}</Text>
+        <Text style={[styles.proj, on && p.live_proj != null && styles.projLive, projTone(p) === 'up' && styles.projUp, projTone(p) === 'down' && styles.projDown]}>{shownProj(p)}</Text>
       </Pressable>
     </View>
   );
@@ -190,6 +190,14 @@ function liveClock(g: NonNullable<BoxPlayer['game']>) {
 function shownProj(p: BoxPlayer) {
   const v = p.status === 'playing' && p.live_proj != null ? p.live_proj : p.proj;
   return v != null ? v.toFixed(1) : '';
+}
+
+// Like Sleeper: while his game is live, the live projection is green when it is tracking above his pregame
+// projection and red when below. Before kickoff and after the game it stays plain.
+function projTone(p: BoxPlayer): 'up' | 'down' | null {
+  if (p.status !== 'playing' || p.live_proj == null || p.proj == null) return null;
+  const diff = Math.round(p.live_proj * 10) - Math.round(p.proj * 10); // compare the numbers as shown (one decimal)
+  return diff > 0 ? 'up' : diff < 0 ? 'down' : null;
 }
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -292,6 +300,8 @@ const styles = StyleSheet.create({
   benchPos: { flexShrink: 0, color: colors.muted, fontSize: 10, fontWeight: '800' },
   proj: { color: colors.muted, fontSize: 10.5, marginTop: 1 },
   projLive: { color: colors.text, fontWeight: '700' },
+  projUp: { color: colors.live },
+  projDown: { color: '#EF7A7A' },
   game: { color: colors.muted, fontSize: 10.5, marginTop: 2, flexShrink: 1, alignSelf: 'stretch' },
   clock: { color: colors.live, fontWeight: '800' },
   stats: { color: '#D9D0BD', fontSize: 11, fontWeight: '600', marginTop: 2, lineHeight: 15, alignSelf: 'stretch' },
