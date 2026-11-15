@@ -14,18 +14,19 @@ export { ScreenError as ErrorBoundary } from '../../../components/ScreenState';
 // Live games refresh every 15 seconds while this screen is open (the server reads the NFL scoreboard at most that often).
 const LIVE_REFRESH_MS = LIVE_POLL_MS;
 const THEM = '#D08B6A';
-// Live row colors: game on, his team has the ball, his team is in the red zone.
-const LIVE_LOOK = {
-  live: { edge: colors.gold, tint: ['#3A3018', '#1D2A1D'] },
-  offense: { edge: colors.live, tint: ['#1C4A33', '#173326'] },
+// Live row looks (Tommy, 2026-11-15): game on = the row a shade lighter (plus the LIVE tag by the clock),
+// his team has the ball = gold edge + tint, his team is in the red zone = red edge + tint.
+const LIVE_LOOK: Record<'live' | 'offense' | 'redZone', { edge: string | null; tint: readonly [string, string] | null; lift?: string }> = {
+  live: { edge: null, tint: null, lift: '#1A3A2C' },
+  offense: { edge: colors.gold, tint: ['#4A3A16', '#1D2A1D'] },
   redZone: { edge: '#E05555', tint: ['#4A1E1E', '#2A1F1C'] },
-} as const;
+};
 
 type Side = BoxScore['teams'][number];
 
 // One game, slot by slot: your side on the left when you're playing.
-// "Spotlight": players whose NFL game is on get a colored edge and tint: gold while his game is on,
-// green when his team has the ball, red in the red zone. No extra text; the colors say it.
+// "Spotlight": players whose NFL game is on get a lighter row and a small LIVE tag by the clock;
+// gold edge + tint when his team has the ball, red in the red zone.
 export default function Game() {
   const { week, matchup } = useLocalSearchParams<{ week: string; matchup: string }>();
   const [live, setLive] = useState(true);
@@ -128,13 +129,14 @@ function Half({ p, vs, side, onScore, bench, first }: { p?: BoxPlayer; vs?: BoxP
   const look = on ? (g?.red_zone ? LIVE_LOOK.redZone : g?.possession ? LIVE_LOOK.offense : LIVE_LOOK.live) : null;
   const edge = look?.edge ?? null;
   const tint = look?.tint ?? null;
+  const lift = look?.lift ? { backgroundColor: look.lift } : null;
   const scored = p.status === 'playing' || p.status === 'final';
   const vsScored = !!vs && (vs.status === 'playing' || vs.status === 'final');
   const lead = !bench && scored && vsScored && vs ? (p.points > vs.points ? 'win' : p.points < vs.points ? 'lose' : null) : null;
   const line = p.short_line ?? p.line ?? [];
   const align = right ? styles.textRight : null;
   return (
-    <View style={[styles.half, right && styles.halfRight, bench && styles.halfBench, !first && styles.divider, right ? { borderRightWidth: 4, borderRightColor: edge ?? 'transparent' } : { borderLeftWidth: 4, borderLeftColor: edge ?? 'transparent' }]}>
+    <View style={[styles.half, right && styles.halfRight, bench && styles.halfBench, lift, !first && styles.divider, right ? { borderRightWidth: 4, borderRightColor: edge ?? 'transparent' } : { borderLeftWidth: 4, borderLeftColor: edge ?? 'transparent' }]}>
       {tint ? <LinearGradient colors={tint as [string, string]} start={{ x: right ? 1 : 0, y: 0 }} end={{ x: right ? 0.2 : 0.8, y: 0 }} style={StyleSheet.absoluteFill} /> : null}
       <View style={[styles.info, right && styles.infoRight]}>
         <Pressable onPress={() => router.push(`/player/${p.player_id}`)} hitSlop={4} style={[styles.nameWrap, right && styles.nameWrapRight]}>
@@ -168,7 +170,7 @@ function GameText({ p, right }: { p: BoxPlayer; right?: boolean }) {
   const opp = g ? `${g.home ? '' : '@'}${g.opp}` : '';
   if (g && (p.status === 'playing' || g.state === 'in')) {
     return (
-      <Text style={[styles.game, al]} numberOfLines={1}>{opp} {g.score}-{g.opp_score} <Text style={styles.clock}>{liveClock(g)}</Text></Text>
+      <Text style={[styles.game, al]} numberOfLines={1}>{opp} {g.score}-{g.opp_score} <Text style={styles.liveTag}> LIVE </Text> <Text style={styles.clock}>{liveClock(g)}</Text></Text>
     );
   }
   if (g && (p.status === 'final' || g.state === 'post')) {
@@ -303,7 +305,8 @@ const styles = StyleSheet.create({
   projUp: { color: colors.live },
   projDown: { color: '#EF7A7A' },
   game: { color: colors.muted, fontSize: 10.5, marginTop: 2, flexShrink: 1, alignSelf: 'stretch' },
-  clock: { color: colors.live, fontWeight: '800' },
+  clock: { color: colors.text, fontWeight: '800' },
+  liveTag: { color: '#FFFFFF', backgroundColor: '#E05555', fontSize: 7, fontWeight: '900', letterSpacing: 0.3 },
   stats: { color: '#D9D0BD', fontSize: 11, fontWeight: '600', marginTop: 2, lineHeight: 15, alignSelf: 'stretch' },
   good: { color: colors.live, fontWeight: '800' },
   bad: { color: '#EF7A7A', fontWeight: '800' },
