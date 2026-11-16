@@ -64,7 +64,7 @@ export default function Game() {
   );
 }
 
-// Two lineups side by side, row by row. Bench rows pair by order (QB, RB, WR, TE, then projection) and show each player's position.
+// Two lineups side by side, row by row. Bench rows pair by order (highest pregame projection first) and show each player's position.
 function Lineup({ left, right, onScore, bench }: { left: BoxPlayer[]; right: BoxPlayer[]; onScore: (p: BoxPlayer) => void; bench?: boolean }) {
   const rows = Math.max(left.length, right.length);
   return (
