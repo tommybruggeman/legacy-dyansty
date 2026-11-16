@@ -134,8 +134,7 @@ export default function Player() {
         {history.length ? (
           <View style={styles.card}>
             <View style={styles.cardHead}>
-              <Text style={styles.cardTitle}>Contract history</Text>
-              <Text style={styles.small}>newest first</Text>
+              <Text style={styles.cardTitle}>History in the league</Text>
             </View>
             {history.map((e, i) => (
               <Pressable key={`${e.kind}-${e.date}-${i}`} style={styles.event} onPress={e.team_id ? () => router.push(`/team/${e.team_id}`) : undefined}>
@@ -227,7 +226,12 @@ function NextGame({ game, pos }: { game: NonNullable<PlayerPage['next_game']>; p
           <Text style={styles.gameTitle}>{game.home ? 'vs' : 'at'} {game.opp}</Text>
           {when ? <Text style={styles.small}>{when}{game.home ? ' · at home' : ' · away'}</Text> : null}
         </View>
-        {game.projected != null ? (
+        {game.out ? (
+          <View style={styles.projBox}>
+            <Text style={[styles.projValue, styles.outValue]}>{/^(ir|injured reserve)$/i.test(game.out) ? 'IR' : 'OUT'}</Text>
+            <Text style={styles.factLabel}>{/^(ir|injured reserve)$/i.test(game.out) ? 'ON IR' : 'WON\'T PLAY'}</Text>
+          </View>
+        ) : game.projected != null ? (
           <View style={styles.projBox}>
             <Text style={styles.projValue}>{game.projected.toFixed(1)}</Text>
             <Text style={styles.factLabel}>PROJECTED</Text>
@@ -254,7 +258,7 @@ function Fact({ label, value, style }: { label: string; value: string; style?: o
   );
 }
 
-const DOT: Record<string, string> = { released: '#E8826F', traded: '#7FA6C9', expired: '#6F8F7E' };
+const DOT: Record<string, string> = { released: '#E8826F', traded: '#7FA6C9', expired: '#6F8F7E', draft_pick: '#C89B4A', commissioner: '#8E8676' };
 
 function tagStyle(e: PlayerPage['history'][number]) {
   if (e.live) return styles.tagGold;
@@ -267,7 +271,8 @@ function tagStyle(e: PlayerPage['history'][number]) {
 function eventSub(e: PlayerPage['history'][number]) {
   const money_ = e.salary != null ? `$${e.salary.toFixed(1)}${e.kind === 'released' ? '' : ' a year'}` : null;
   const years = e.years && !e.live && e.kind !== 'released' && e.kind !== 'traded' ? `${e.years} yr${e.years === 1 ? '' : 's'}` : null;
-  return [e.owner, e.date, money_, years].filter(Boolean).join(' · ');
+  const bid = e.faab != null ? `$${e.faab} FAAB` : null;
+  return [e.owner, e.date, money_, years, bid].filter(Boolean).join(' · ');
 }
 
 const styles = StyleSheet.create({
@@ -307,6 +312,7 @@ const styles = StyleSheet.create({
   gameTitle: { color: colors.text, fontSize: 16, fontWeight: '700' },
   projBox: { alignItems: 'flex-end' },
   projValue: { color: colors.gold, fontSize: 24, fontWeight: '800' },
+  outValue: { color: '#E8826F' },
   facts: { flexDirection: 'row', gap: 8 },
   fact: { flex: 1, borderWidth: 1, borderColor: '#2C5140', borderRadius: 10, padding: 8 },
   factLabel: { color: colors.muted, fontSize: 10 },

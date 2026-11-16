@@ -60,12 +60,15 @@ export function InjuryReport({ h }: { h: Health }) {
           <Row label="Injury">
             <Text style={styles.value}>
               <Text style={styles.strong}>{injury || week?.injury || 'Not listed'}</Text>
-              {r?.hurt ? ` · hurt Week ${r.hurt.week}${r.hurt.opp ? ` ${r.hurt.opp}` : ''}` : ''}
+              {r?.hurt ? ` · hurt ${r.hurt.season ? `${r.hurt.season} ` : ''}Week ${r.hurt.week}${r.hurt.opp ? ` ${r.hurt.opp}` : ''}` : ''}
             </Text>
           </Row>
           {r?.missed_weeks.length ? (
             <Row label="Games missed">
-              <Text style={styles.value}>{r.missed_weeks.length} so far ({r.missed_weeks.map((w) => `W${w}`).join(', ')})</Text>
+              <Text style={styles.value}>
+                {r.missed_weeks.length + (r.missed_before ?? 0)} so far
+                {r.missed_before ? ` (${r.missed_before} last season, ${r.missed_weeks.length} this season)` : ` (${weekList(r.missed_weeks)})`}
+              </Text>
             </Row>
           ) : null}
           {days.length ? (
@@ -88,7 +91,12 @@ export function InjuryReport({ h }: { h: Health }) {
           {week?.game_status ? (
             <Row label="Game status"><Text style={styles.value}>{week.game_status} (W{week.week})</Text></Row>
           ) : null}
-          {r?.on_ir && r.eligible_week ? (
+          {r?.on_ir && r.eligible_now ? (
+            <Row label="Eligible back">
+              <Text style={[styles.value, styles.strong]}>Now</Text>
+              <Text style={styles.note}>His 4 IR games are done; he's back once the team activates him</Text>
+            </Row>
+          ) : r?.on_ir && r.eligible_week ? (
             <Row label="Eligible back">
               <Text style={styles.value}><Text style={styles.strong}>Week {r.eligible_week}</Text> at the earliest</Text>
               <Text style={styles.note}>IR is a 4-game minimum</Text>
@@ -121,7 +129,7 @@ export function InjuryReport({ h }: { h: Health }) {
         {missed.length ? missed.map((m, i) => (
           <View key={`${m.injury}-${m.season}-${i}`} style={[styles.hist, i === missed.length - 1 && styles.last]}>
             <Text style={styles.histName}>{m.injury.charAt(0).toUpperCase() + m.injury.slice(1)}</Text>
-            <Text style={styles.histMeta}>{m.season} · {m.games} game{m.games === 1 ? '' : 's'}{m.back ? '' : ', ongoing'}</Text>
+            <Text style={styles.histMeta}>{m.season ? `${m.season} · ` : ''}{m.games} game{m.games === 1 ? '' : 's'}{m.back ? '' : ', ongoing'}</Text>
           </View>
         )) : <Text style={styles.small}>No missed games on file.</Text>}
       </View>
@@ -158,3 +166,16 @@ const styles = StyleSheet.create({
   histName: { color: colors.text, fontSize: 14 },
   histMeta: { color: colors.muted, fontSize: 13 },
 });
+
+// "W1–W7, W9, W10": runs of back-to-back weeks collapse into a range.
+function weekList(weeks: number[]): string {
+  const out: string[] = [];
+  let start = weeks[0];
+  let prev = weeks[0];
+  for (const w of [...weeks.slice(1), Infinity]) {
+    if (w === prev + 1) { prev = w; continue; }
+    out.push(start === prev ? `W${start}` : prev === start + 1 ? `W${start}, W${prev}` : `W${start}–W${prev}`);
+    start = w; prev = w;
+  }
+  return out.join(', ');
+}
