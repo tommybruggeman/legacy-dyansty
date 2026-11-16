@@ -75,10 +75,10 @@ def main() -> None:
     teams_loaded = {r["team"] for r in wk}
     if a.sleeper:
         # Box scores not in yet: who played from Sleeper's stats for the week (live, so today's games count).
-        sl = requests.get(f"https://api.sleeper.app/v1/stats/nfl/regular/{a.season}/{week}", timeout=30).json() or {}
-        if isinstance(sl, list):
-            sl = {str(x.get("player_id")): x.get("stats") or {} for x in sl}
+        from scoring.shadow import stat_lines
+        sl = {pid: v["stats"] for pid, v in stat_lines(a.season, week).items()}
         gp = {pid for pid, st in sl.items() if (st or {}).get("gp") or (st or {}).get("off_snp")}
+        print(f"Sleeper stat lines this week: {len(sl)}, played: {len(gp)}")
         players = rows(c, "nfl_players", "sleeper_id,gsis_id,team")
         gsis_of = {str(p["sleeper_id"]): p.get("gsis_id") for p in players}
         team_of = {str(p["sleeper_id"]): p.get("team") for p in players}
