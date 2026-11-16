@@ -50,6 +50,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--season", type=int, default=2026)
     ap.add_argument("--week", type=int)
+    ap.add_argument("--sleeper", action="store_true", help="who played from Sleeper stats (before nflverse box scores land)")
     a = ap.parse_args()
     c = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_ROLE_KEY"])
 
@@ -72,6 +73,17 @@ def main() -> None:
     wk = [r for r in stats if int(r["week"]) == week]
     played = {r["gsis_id"] for r in wk}
     teams_loaded = {r["team"] for r in wk}
+    if a.sleeper:
+        # Box scores not in yet: who played from Sleeper's stats for the week (live, so today's games count).
+        sl = requests.get(f"https://api.sleeper.app/v1/stats/nfl/regular/{a.season}/{week}", timeout=30).json() or {}
+        if isinstance(sl, list):
+            sl = {str(x.get("player_id")): x.get("stats") or {} for x in sl}
+        gp = {pid for pid, st in sl.items() if (st or {}).get("gp") or (st or {}).get("off_snp")}
+        players = rows(c, "nfl_players", "sleeper_id,gsis_id,team")
+        gsis_of = {str(p["sleeper_id"]): p.get("gsis_id") for p in players}
+        team_of = {str(p["sleeper_id"]): p.get("team") for p in players}
+        played = {gsis_of.get(pid) for pid in gp} - {None}
+        teams_loaded = {team_of.get(pid) for pid in gp if (sl[pid] or {}).get("off_snp")} - {None}
     print(f"\n== Week {week} calls (teams with box scores loaded: {len(teams_loaded)}) ==")
 
     rates = {(r["scope"], r.get("game_status") or "", r.get("practice") or ""): r
@@ -119,7 +131,7 @@ def main() -> None:
 
     # Surprise scratches: no tag this week, played last week, rostered, team played, but no stat line.
     tagged = {r["gsis_id"] for r in report if io.norm_status(r.get("report_status"))}
-    last = {r["gsis_id"]: r for r in stats if int(r["week"]) == week - 1 and r.get("sleeper_id") in rostered and str(r.get("position") or "").upper() in POS}
+    last = {r["gsis_id"]: r for r in stats if int(r["week"]) == week - 1 and r.get("team") in teams_loaded and r.get("sleeper_id") in rostered and str(r.get("position") or "").upper() in POS}
     names = {r["gsis_id"]: r.get("player_name") for r in report}
     scratches = [g for g, r in last.items() if g not in tagged and g not in played and r.get("team") in teams_loaded]
     print(f"\nRostered players with no injury tag who played last week but not this week: {len(scratches)}")

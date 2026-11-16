@@ -46,7 +46,7 @@ jobs:
             speed_test_smoke) python -m scoring.speed_test --wait 0 --minutes 1 --every 3 --smoke ;;
             odds_trial) python -m league_ai.odds_trial ;;
             # injury data freshness + this week's play / won't-play calls vs who actually played (saves nothing)
-            injury_calls) python -m scripts.injury_calls_check ;;
+            injury_calls) python -m scripts.injury_calls_check --week 10 --sleeper ;;
             # one time: today's team names and Sleeper pictures become each owner's default profile, stored by us
             seed_owner_profiles) python -m scripts.seed_owner_profiles ;;
             save_scoring) python -m scripts.save_scoring ;;
