@@ -1432,6 +1432,7 @@ def load_box_score_cached(
         sb,
         {
             "season": int(season),
+            "league_id": app_league_id,
             "sleeper_id": sleeper_league_id,
             "names": names,
             "slots": slots,

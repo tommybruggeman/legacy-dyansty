@@ -137,3 +137,29 @@ def test_taxi_and_ir_players_are_listed_apart_from_the_bench(monkeypatch):
     assert [p["name"] for p in me["bench"]] == ["D"]
     assert [(p["name"], p["slot"], p["designation"], p["points"]) for p in me["reserve"]] == [("Taxi", "TX", "taxi", 7.5), ("Hurt", "IR", "ir", 0.0)]
     assert me["projected"] == 22.0 and them["reserve"] == []
+
+
+def test_taxi_and_ir_come_from_our_database_not_sleeper(monkeypatch):
+    rows = [{"matchup_id": 3, "roster_id": 1, "starters": ["10"], "starters_points": [20.0], "points": 20.0,
+             "players": ["10", "40", "60", "70"], "players_points": {"40": 3.0, "60": 7.5}},
+            {"matchup_id": 3, "roster_id": 2, "starters": ["30"], "starters_points": [12.5], "points": 12.5, "players": ["30"]}]
+    sleeper_rosters = [{"roster_id": 1, "taxi": ["70"], "reserve": []}, {"roster_id": 2}]  # stale: our DB disagrees
+    monkeypatch.setattr(teams.sleeper, "get", lambda path, ttl=60: sleeper_rosters if path.endswith("/rosters") else rows)
+    state = {"roster": [{"league_team_id": "t1", "sleeper_player_id": "40", "roster_designation": "taxi"},
+                        {"league_team_id": "t1", "sleeper_player_id": "60", "roster_designation": None},
+                        {"league_team_id": "t1", "sleeper_player_id": "70", "roster_designation": "ir"},
+                        {"league_team_id": "t2", "sleeper_player_id": "80", "roster_designation": "ir"}]}
+    monkeypatch.setattr(teams, "load_team_state", lambda client, league_id, season: state)
+    monkeypatch.setattr(league, "last_scored_week", lambda sid: 7)
+    monkeypatch.setattr(teams, "player_info", lambda client, ids: {i: {"full_name": f"P{i}", "position": "WR", "team": "KC"} for i in ids})
+    monkeypatch.setattr(projections, "week_projections", lambda *a, **k: {})
+    monkeypatch.setattr(projections, "week_ranks", lambda *a, **k: {})
+    monkeypatch.setattr(projections, "week_lines", lambda *a, **k: {})
+    monkeypatch.setattr(projections, "league_scoring", lambda sid: {})
+    monkeypatch.setattr(nfl_live, "week_games", lambda season, week, final: {})
+    monkeypatch.setattr(home, "player_status", lambda team, starts, now: "upcoming")
+    ctx = {"season": 2026, "league_id": "L-db", "sleeper_id": "S", "names": {1: "Tommy", 2: "Grady"}, "slots": ["QB", "BN"], "sleeper_roster_id": 1}
+    me, them = box_score.game(_C(), ctx, 8, 3, [{"roster_id": 1, "team_id": "t1"}, {"roster_id": 2, "team_id": "t2"}])["teams"]
+    assert [p["player_id"] for p in me["bench"]] == ["60"]
+    assert [(p["player_id"], p["designation"]) for p in me["reserve"]] == [("40", "taxi"), ("70", "ir")]
+    assert [(p["player_id"], p["designation"], p["name"]) for p in them["reserve"]] == [("80", "ir", "P80")]
