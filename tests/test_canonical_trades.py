@@ -201,6 +201,17 @@ class CanonicalTradeTest(unittest.TestCase):
             self.assertIn(fragment, current)
         self.assertNotIn("r.assignment_set_id=aset.id", migration)
 
+class TradeEngineContractGuardTests(unittest.TestCase):
+    def test_private_engine_patch_matches_the_engine_it_patches(self):
+        # 20261205 rewrote the engine without the guard context; 20261223 adds it back by exact text match.
+        engine = (ROOT / "supabase/migrations/20261205_owner_trade_offers.sql").read_text()
+        patch = (ROOT / "supabase/migrations/20261223_trade_engine_contract_guard_restore.sql").read_text()
+        fragment = "\n  update public.contract_agreements set league_team_id=to_id,updated_at=clock_timestamp() where id=agreement.id;"
+        self.assertEqual(engine.count(fragment), 1)
+        self.assertIn(fragment, patch)
+        self.assertIn("execute_canonical_trade_private(jsonb,uuid)", patch)
+        self.assertIn("perform set_config('app.contract_transition_execution','contract-transition-executor-v1',true);", patch)
+
 
 if __name__ == "__main__":
     unittest.main()
