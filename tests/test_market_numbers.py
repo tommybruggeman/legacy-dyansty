@@ -43,3 +43,37 @@ def test_week_and_game_text_follow_the_game_state():
     assert market_week.week_text(done) == "14.2"
     assert market_week.game_text(done) == "Final · W 24-17 vs CLE"
     assert market_week.week_text({"next": {"bye": True}}) == "BYE"
+
+
+def test_player_numbers_last_three_games_and_final_game_counts():
+    games = [(1, 10.0), (2, 20.0), (4, 6.0), (6, 4.0)]   # week 3 bye, week 5 hurt
+    n = market.player_numbers(games, 7, bye_week=3, now_pts=14.0, now_state="post")
+    assert n["games"] == 5 and n["points"] == 54.0 and n["avg"] == 10.8
+    assert n["last3"] == 8.0 and n["last3_games"] == 3   # weeks 4, 6, 7: real games, not calendar weeks
+    assert n["trend"] == -2.8
+    assert [b["week"] for b in n["bars"]] == [2, 3, 4, 5, 6, 7]
+    assert n["bars"][1] == {"week": 3, "pts": None, "bye": True}
+    assert n["bars"][3]["pts"] is None and n["bars"][-1]["pts"] == 14.0
+
+
+def test_player_numbers_live_game_is_a_bar_but_not_in_the_average():
+    n = market.player_numbers([(1, 10.0)], 2, now_pts=5.5, now_state="in")
+    assert n["games"] == 1 and n["avg"] == 10.0
+    assert n["bars"][-1] == {"week": 2, "pts": 5.5, "live": True}
+    assert market.player_numbers([], 2)["points"] is None
+
+
+def test_sorts_use_the_numbers_on_screen():
+    rows = [
+        {"name": "A", "points": 80.0, "rank_ppg": 10.0, "last3": 9.1, "age": 28, "salary": None, "proj": 9.0, "next": {"state": "pre"}},
+        {"name": "B", "points": 81.6, "rank_ppg": 10.2, "last3": 9.5, "age": 27, "salary": 4, "week_pts": 0.0, "next": {"state": "post"}},
+        {"name": "C", "points": 76.5, "rank_ppg": 8.5, "last3": 10.0, "age": 27, "salary": 2, "week_pts": 17.1, "next": {"state": "post"}},
+        {"name": "D", "points": None, "rank_ppg": None, "last3": None, "age": 22, "salary": None, "next": {"bye": True}},
+    ]
+    names = lambda s: [r["name"] for r in market.sort_rows(rows, s)]  # noqa: E731
+    assert names("Points") == ["B", "A", "C", "D"]
+    assert names("PPG") == ["B", "A", "C", "D"]
+    assert names("Last 3 games") == ["C", "B", "A", "D"]
+    assert names("This week") == ["C", "A", "B", "D"]
+    assert names("Value per $") == ["C", "B", "A", "D"]
+    assert names("Youngest")[0] == "D"

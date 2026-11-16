@@ -1,8 +1,10 @@
 """This week's numbers on Market rows, for the app's Market list and the website's League Players tab.
 
-Each row gets this week's number (projection before kickoff, live points during, final points after), the
-season average with games played and position rank, the last-3 average, and the next game with its live
-state and the defense's rank vs the position, all in league scoring.
+Each row gets this week's number (projection before kickoff, live points during, final points after), season
+points, PPG with games played and position rank, the average of his last 3 games, one bar per week for the last
+six weeks, and the next game with its live state and the defense's rank vs the position, all in league scoring.
+Finished weeks come from our own official stat lines (final_stat_lines), so the list's order and every number on
+it use the same points.
 """
 from __future__ import annotations
 
@@ -28,41 +30,46 @@ def add_this_week(client: Any, sid: str, season: int, rows: list[dict[str, Any]]
     whole league cached half an hour; the game states and this week's points are refreshed every minute."""
     week = league.current_week()
 
+    def week_lines(w: int) -> dict[str, dict[str, Any]]:
+        """A finished week's stat lines: our own official copy, else our watcher's saved copy, else the stat feed."""
+        return (live_stats.final_lines(client, season, w) or live_stats.lines(client, season, w)
+                or projections.week_lines("stats", season, w, 86400))
+
     def load() -> dict[str, Any]:
         ids = [r["player_id"] for r in rows if r.get("pos") in ("QB", "RB", "WR", "TE", "K")]
         pos = {r["player_id"]: r["pos"] for r in rows}
         team = {r["player_id"]: r["nfl_team"] for r in rows}
-        out: dict[str, Any] = {"proj": {}, "avg": {}, "gp": {}, "rank": {}, "form": {}, "games": {}, "dvp": {}}
+        out: dict[str, Any] = {"proj": {}, "hist": {}, "rank": {}, "games": {}, "dvp": {}, "byes": {}}
         try:
             out["proj"] = projections.week_projections(client, sid, season, week, ids, pos, team)
         except Exception as exc:
             print(f"MARKET_PROJ_ERROR {type(exc).__name__}", flush=True)
         played: list[tuple[int, str, str, float]] = []   # (week, pos, nfl team, league points) for every game played
+        hist: dict[str, list[tuple[int, float]]] = {}
         try:
-            avg, gp = projections.season_averages(sid, season, week - 1) if week > 1 else ({}, {})
             scoring = projections.league_scoring(sid)
             positions: dict[str, str] = {}
-            by_week: dict[int, dict[str, float]] = {}
             for w in range(1, week):
-                pts: dict[str, float] = {}
-                for p, l in projections.week_lines("stats", season, w, 86400).items():
-                    if not projections.played(l.get("stats")):
+                for p, l in week_lines(w).items():
+                    stats = l.get("stats")
+                    if not market.played_line(stats):
                         continue
-                    pts[p] = projections.score(l["stats"], scoring, l.get("pos"))
+                    pts = round(projections.score(stats, scoring, l.get("pos")), 2)
+                    hist.setdefault(p, []).append((w, pts))
                     positions[p] = positions.get(p) or l.get("pos") or ""
-                    played.append((w, l.get("pos") or "", nfl_data.team_code(l.get("team")) or "", pts[p]))
-                by_week[w] = pts
-            weekly = [by_week[w] for w in range(week - 1, max(0, week - 1 - market.TREND_WEEKS), -1)]
-            out["avg"], out["gp"], out["form"] = avg, gp, market.recent_form(weekly, avg)
-            out["rank"] = market.position_ranks({p: a * gp.get(p, 0) for p, a in avg.items()}, {**positions, **pos})
+                    played.append((w, l.get("pos") or "", nfl_data.team_code(l.get("team") or team.get(p)) or "", pts))
+            out["hist"] = hist
+            out["rank"] = market.position_ranks({p: sum(x for _, x in g) for p, g in hist.items()}, {**positions, **pos})
         except Exception as exc:
             print(f"MARKET_FORM_ERROR {type(exc).__name__}", flush=True)
         try:
             schedule = nfl_data.season_games(client, season)
             out["games"] = nfl_data.week_matchups(schedule, week)
-            opp = {w: nfl_data.week_matchups(schedule, w) for w in range(1, week)}
+            opp = {w: nfl_data.week_matchups(schedule, w) for w in range(1, week + 1)}
             # the defense rank in our own scoring, from the same weekly lines as the averages
             out["dvp"] = market.defense_ranks(played, lambda t, w: (opp.get(w, {}).get(t) or {}).get("opponent"))
+            teams = {t for games in opp.values() for t in games}
+            out["byes"] = {t: w for w, games in opp.items() if games for t in teams if t not in games}
         except Exception as exc:
             print(f"MARKET_GAMES_ERROR {type(exc).__name__}", flush=True)
         return out
@@ -71,28 +78,27 @@ def add_this_week(client: Any, sid: str, season: int, rows: list[dict[str, Any]]
         """This week's game states (ESPN scoreboard) and points so far (our watcher's live lines over the stat feed)."""
         games = nfl_live.week_games(season, week, False)
         points: dict[str, float] = {}
+        played_now: list[str] = []
         if any(g.get("state") in ("in", "post") for g in games.values()) or not games:
             try:
                 scoring = projections.league_scoring(sid)
                 lines = {**projections.week_lines("stats", season, week, 120), **live_stats.fresh_lines(client, season, week)}
                 points = {p: round(projections.score(l.get("stats") or {}, scoring, l.get("pos")), 1) for p, l in lines.items() if l.get("stats")}
+                played_now = [p for p, l in lines.items() if market.played_line(l.get("stats"))]
             except Exception as exc:
                 print(f"MARKET_LIVE_ERROR {type(exc).__name__}", flush=True)
-        return {"games": games, "points": points}
+        return {"games": games, "points": points, "played": played_now}
 
     data = cache.cached(("market_week", sid, season, week), 1800, load)
     live = cache.cached(("market_live", sid, season, week), 60, load_live)
     find = market.next_games(data["games"], data["dvp"], week, kickoff_utc)
     now = datetime.now(timezone.utc)
+    # before any game of the season is in, the list keeps last season's ranking
+    has_season = bool(data["hist"])
     for r in rows:
         pid = r["player_id"]
         r["proj"] = data["proj"].get(pid)
-        a = data["avg"].get(pid)
-        r["avg"] = round(a, 1) if a is not None else None
-        r["games"] = data["gp"].get(pid)
         r["pos_rank"] = data["rank"].get(pid)
-        form = data["form"].get(pid) or {}
-        r["last3"], r["trend"] = form.get("last3"), form.get("trend")
         nxt = find(nfl_data.team_code(r.get("nfl_team")) or "", r.get("pos") or "")
         game = live["games"].get(r.get("nfl_team") or "")
         state = market.game_state(nxt, game, now, home.GAME_LENGTH_HOURS)
@@ -104,6 +110,17 @@ def add_this_week(client: Any, sid: str, season: int, rows: list[dict[str, Any]]
         r["next"] = nxt
         # this week's points once his game has started (0 if he hasn't recorded a stat yet)
         r["week_pts"] = live["points"].get(pid, 0.0) if state in ("in", "post") else None
+        # Every number on the row and every sort comes from the same league-scoring lines: a final game this week
+        # counts right away, and Points/PPG replace the generic-PPR ranking the list arrived with.
+        nums = market.player_numbers(data["hist"].get(pid, []), week, data["byes"].get(nfl_data.team_code(r.get("nfl_team")) or ""),
+                                     r["week_pts"] if pid in live.get("played", ()) else None, state)
+        if has_season:
+            r.update(nums)
+            r["rank_ppg"] = nums["avg"]
+        else:
+            r["bars"] = nums["bars"]
+    if has_season:
+        rows.sort(key=market.rank_key)
 
 
 def week_text(row: dict[str, Any]) -> str:
