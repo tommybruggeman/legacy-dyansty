@@ -441,6 +441,7 @@ export type PlayerPage = {
     kickoff?: string | null;
     team_total?: number | null;
     yards_line?: { label: string; line: number } | null;
+    out?: string | null; // on IR / ruled out: shown instead of a projection
     projected?: number | null;
     weather?: string | null;
     vs_pos?: { label: 'tough' | 'soft' | 'neutral' | null; text: string; allowed: number | null } | null;
@@ -455,10 +456,12 @@ export type PlayerPage = {
     missed: { injury: string; season: number; games: number; back: boolean }[];
     estimate?: { injury: string; median_games: number; range: string; absences: number; scope: string; text: string } | null;
     report?: {
-      hurt: { week: number; opp: string | null } | null;
+      hurt: { week: number; opp: string | null; season?: number } | null;
       missed_weeks: number[];
       on_ir: boolean;
       eligible_week: number | null;
+      eligible_now?: boolean;
+      missed_before?: number;
       estimate: { weeks?: [number, number | null]; past_usual?: boolean } | null;
       detail: string | null;
       news: { text: string; date: string | null } | null;
@@ -468,10 +471,11 @@ export type PlayerPage = {
     kind: string;
     title: string;
     owner: string;
-    team_id: string;
+    team_id: string | null;
     date: string;
     salary: number | null;
     years: number | null;
+    faab?: number | null;
     tag: string | null;
     live: boolean;
   }[];
