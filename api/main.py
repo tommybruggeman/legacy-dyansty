@@ -978,7 +978,7 @@ def player_page(player_id: str, owner: tuple[Client, Any] = Depends(owner_client
         client, league_id=ctx["league_id"], sleeper_id=ctx["sleeper_id"], season=ctx["season"], player_id=player_id,
         meta=meta, pos=result["pos"], league_weeks=league_weeks, last_week=weeks,
         years_left={c["team_id"]: c["years_left"]} if c else {}, salary=c["salary"] if c else None,
-        player_info=teams.player_info, finished=finished,
+        player_info=teams.player_info, finished=finished, playoff_weeks=_playoff_weeks(ctx["sleeper_id"]),
     )
     if c is None:
         # No contract row, but Sleeper may still have him on a roster (a new rookie pick, a pickup not synced yet).
@@ -992,6 +992,19 @@ def player_page(player_id: str, owner: tuple[Client, Any] = Depends(owner_client
             result["is_mine"] = rid == ctx["sleeper_roster_id"]
     return {"season": ctx["season"], **result, **extras, "transactions_enabled": _transactions_on(client, ctx["league_id"]),
             "sleeper_league_id": ctx["sleeper_id"]}
+
+
+def _playoff_weeks(sleeper_id: str) -> list[int]:
+    """The league's playoff weeks from its Sleeper settings (15-17 when unknown)."""
+    try:
+        settings = (league.sleeper.get(f"league/{sleeper_id}") or {}).get("settings") or {}
+        start = int(settings.get("playoff_week_start") or 15)
+        teams_in = int(settings.get("playoff_teams") or 4)
+        rounds = max(1, (teams_in - 1).bit_length())
+        weeks = own_league.round_weeks(start, rounds, int(settings.get("playoff_round_type") or 0))
+        return sorted(w for ws in weeks.values() for w in ws)
+    except Exception:
+        return [15, 16, 17]
 
 
 class IrRequest(BaseModel):

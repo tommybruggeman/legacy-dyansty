@@ -13,7 +13,7 @@ from typing import Any, Iterable
 
 from concurrent.futures import ThreadPoolExecutor
 
-from api import cache, nfl_live, projections, props, sleeper
+from api import cache, nfl_live, player_cards, projections, props, sleeper
 from api.home import EASTERN
 from api.teams import _f, _text
 from league_ai import injury_outlook
@@ -722,8 +722,16 @@ def load_last_season(client: Any, player_id: str, season: int) -> dict[str, Any]
 
 
 def load_espn(client: Any, player_id: str) -> dict[str, Any] | None:
-    rows = _safe(lambda: client.table("nfl_injuries").select("status,injury_type,detail,side,short_comment,return_date,reported_at").eq("sleeper_id", player_id).limit(1).execute().data or [], [])
+    rows = _safe(lambda: client.table("nfl_injuries").select("status,injury_type,detail,side,short_comment,long_comment,return_date,reported_at").eq("sleeper_id", player_id).limit(1).execute().data or [], [])
     return rows[0] if rows else None
+
+
+def load_play_rates(client: Any) -> dict[tuple[str, str, str], dict[str, Any]]:
+    """How often players with a given tag played (nfl_injury_play_rates), shared for 6 hours."""
+    def load() -> dict[tuple[str, str, str], dict[str, Any]]:
+        rows = client.table("nfl_injury_play_rates").select("scope,game_status,practice,listings,rate").limit(2000).execute().data or []
+        return {(r["scope"], r.get("game_status") or "", r.get("practice") or ""): r for r in rows}
+    return cache.cached(("play_rates",), 21600, load)
 
 
 def load_practice(client: Any, player_id: str) -> list[dict[str, Any]]:
@@ -785,6 +793,7 @@ def page_extras(
     salary: float | None,
     player_info: Any,
     finished: dict[int, dict[str, Any]] | None = None,
+    playoff_weeks: Iterable[int] = player_cards.PLAYOFF_WEEKS,
 ) -> dict[str, Any]:
     """Everything beyond the basic contract card, read side by side.
 
@@ -811,6 +820,10 @@ def page_extras(
         "pool": lambda: _safe(lambda: position_pool(client, season, pos), []) if pos in RANK_STATS else [],
         "dvp": lambda: _safe(lambda: defense_vs_position(client, season), {}) if pos in DVP_POSITIONS else {},
         "week_ranks": lambda: weekly_ranks(sleeper_id, season, last_week, player_id, pos, open_weeks),
+        "team_rows": lambda: _safe(lambda: player_cards.load_team_rows(client, season, team), []) if team else [],
+        "team_hurt": lambda: _safe(lambda: player_cards.load_team_hurt(client, team), []) if team else [],
+        "career": lambda: _safe(lambda: player_cards.load_career(client, player_id), []),
+        "rates": lambda: _safe(lambda: load_play_rates(client), {}),
     }
     futures = {k: cache.pool.submit(f) for k, f in jobs.items()}
     got = {k: _safe(f.result, None) for k, f in futures.items()}
@@ -846,6 +859,10 @@ def page_extras(
     if upcoming and not upcoming.get("bye") and is_out:
         upcoming["out"] = h.get("status")  # on IR / ruled out: no projection to show
         upcoming["projected"] = None
+    h["call"] = _safe(lambda: player_cards.play_call(h, pos, got["espn"], got["rates"] or {}, player_cards.game_date((upcoming or {}).get("kickoff"))), None)
+    h["summary"] = player_cards.news_summary(got["espn"]) if not h.get("healthy") else None
+    career = got["career"] or []
+    ranks = _safe(lambda: player_cards.finishes(client, player_id, pos, {int(r["season"]) for r in career}, season), {})
     scored = [w["points"] for w in league_weeks if w.get("points")]
     best = max((g for g in done if g.get("points") is not None and g["status"] in ("started", "bench")), key=lambda g: g["points"], default=None)
     ppg = sum(scored) / len(scored) if scored else None
@@ -871,6 +888,9 @@ def page_extras(
         "health": h,
         "history": lifetime_history(contract_history(got["history"] or [], years_left), got["league_events"] or []),
         "writeups": got["writeups"] or [],
+        "role": _safe(lambda: player_cards.role_on_team(got["team_rows"] or [], player_id, pos, got["team_hurt"] or []), None),
+        "rest_of_season": _safe(lambda: player_cards.rest_of_season(games, team, pos, got["dvp"] or {}, (upcoming or {}).get("week"), playoff_weeks), None),
+        "past_seasons": _safe(lambda: player_cards.past_seasons(career, pos, ranks), None),
     }
 
 

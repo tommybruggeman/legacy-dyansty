@@ -26,6 +26,56 @@ function weeks(range: [number, number | null] | undefined): string | null {
   return hi && hi !== lo ? `Week ${lo}–${hi}` : `Week ${lo}`;
 }
 
+function tone(pct: number): string {
+  return pct >= 65 ? colors.live : pct >= 40 ? AMBER : RED;
+}
+
+function statusColor(status: string): string {
+  const s = status.toLowerCase();
+  return s === 'questionable' ? AMBER : s === 'out' || s === 'doubtful' || s === 'ir' ? RED : colors.text;
+}
+
+function Trio({ label, value, sub, color }: { label: string; value: string; sub: string; color?: string }) {
+  return (
+    <View style={styles.trioBox}>
+      <Text style={styles.trioLabel}>{label}</Text>
+      <Text style={[styles.trioValue, color ? { color } : null]}>{value}</Text>
+      <Text style={styles.trioSub}>{sub}</Text>
+    </View>
+  );
+}
+
+const PRACTICE_SHORT: Record<string, string> = { DNP: 'DNP', Limited: 'LP', Full: 'FP' };
+
+// The week track: one block per practice day, coloured by how much he did, then game day.
+// A healthy player gets full green days; a player ruled out gets a red game-day block.
+function WeekTrack({ h }: { h: Health }) {
+  const week = h.this_week;
+  const days = h.healthy ? [] : week?.days ?? [];
+  const blocks: { key: string; day: string; sub: string; color: string }[] = days.length
+    ? days.map((d, i) => ({ key: `${d.day}-${i}`, day: (d.day ?? '').toUpperCase(), sub: PRACTICE_SHORT[d.practice ?? ''] ?? '—', color: DAY[d.practice ?? '']?.color ?? '#23392F' }))
+    : h.healthy
+      ? ['WED', 'THU', 'FRI'].map((d) => ({ key: d, day: d, sub: 'OK', color: colors.live }))
+      : [];
+  if (!blocks.length) return null;
+  const status = (week?.game_status ?? '').toLowerCase();
+  const game = status === 'out' ? { sub: 'OUT', color: RED } : status === 'doubtful' ? { sub: 'DOUBT', color: RED } : { sub: 'GAME', color: '#23392F' };
+  return (
+    <View>
+      <Text style={styles.section}>THIS WEEK</Text>
+      <View style={styles.track}>
+        {[...blocks, { key: 'game', day: 'GAME', sub: game.sub, color: game.color }].map((b) => (
+          <View key={b.key} style={styles.trackCol}>
+            <View style={[styles.trackBar, { backgroundColor: b.color }]} />
+            <Text style={styles.trackDay}>{b.day}</Text>
+            <Text style={styles.trackSub}>{b.sub}</Text>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <View style={styles.row}>
@@ -38,12 +88,12 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 export function InjuryReport({ h }: { h: Health }) {
   const r = h.report ?? null;
   const week = h.this_week;
-  const days = week?.days ?? [];
   const missed = h.missed ?? [];
   const injury = [h.detail, r?.detail && r.detail.toLowerCase() !== (h.detail ?? '').toLowerCase() ? r.detail : null].filter(Boolean).join(' · ');
   const est = r?.estimate?.past_usual ? 'Past the usual time out' : weeks(r?.estimate?.weeks);
-  const newsDate = shortDate(r?.news?.date);
-  const newsText = r?.news?.text ?? h.update;
+  const call = h.call ?? null;
+  const summaryText = h.summary?.text ?? r?.news?.text ?? h.update;
+  const summaryDate = shortDate(h.summary?.date ?? r?.news?.date);
 
   return (
     <View style={styles.card}>
@@ -51,11 +101,42 @@ export function InjuryReport({ h }: { h: Health }) {
         <Text style={styles.title}>Injury report</Text>
         <Text style={[styles.pill, h.healthy ? styles.pillOk : styles.pillOut]}>{h.healthy ? 'HEALTHY' : h.status.toUpperCase()}</Text>
       </View>
-      {week && !h.healthy ? <Text style={styles.meta}>Week {week.week} report</Text> : null}
+      {week && !h.healthy ? <Text style={styles.meta}>Week {week.week} report{week.game_status ? ` · ${week.game_status}` : ''}</Text> : null}
+
+      <WeekTrack h={h} />
 
       {h.healthy ? (
         <Text style={styles.small}>Not on the injury report.</Text>
-      ) : (
+      ) : null}
+
+      {call ? (
+        <>
+          <View style={[styles.verdict, { borderColor: tone(call.pct) + '66', backgroundColor: tone(call.pct) + '14' }]}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.verdictTitle}>{call.verdict === 'Coin flip' ? 'Coin flip to play' : `${call.verdict} to play`}</Text>
+              {call.why ? <Text style={styles.note}>{call.why}</Text> : null}
+            </View>
+            <Text style={[styles.verdictPct, { color: tone(call.pct) }]}>{call.pct}%</Text>
+          </View>
+          <View style={styles.trio}>
+            <Trio label="OFFICIAL" value={call.official ?? 'No status yet'} sub={call.official ? 'Team report' : 'Comes out Friday'} color={call.official ? statusColor(call.official) : colors.muted} />
+            <Trio label="REPORTED" value={call.reported ?? 'No word yet'} sub={call.reported ? `ESPN${shortDate(call.reported_date) ? ` · ${shortDate(call.reported_date)}` : ''}` : 'Coach and beat writers'} />
+            <Trio label="OUR CALL" value={call.ours} sub="Check again before kickoff" color={call.ours === 'Start him' ? colors.live : call.ours === 'Sit him' ? RED : AMBER} />
+          </View>
+        </>
+      ) : null}
+
+      {!h.healthy && summaryText ? (
+        <View>
+          <Text style={styles.section}>WHERE HE'S AT</Text>
+          <View style={styles.quote}>
+            <Text style={styles.quoteText}>{summaryText}</Text>
+            <Text style={styles.quoteSrc}>{h.summary?.source ?? 'ESPN'}{summaryDate ? ` · ${summaryDate}` : ''}</Text>
+          </View>
+        </View>
+      ) : null}
+
+      {h.healthy ? null : (
         <View style={styles.table}>
           <Row label="Injury">
             <Text style={styles.value}>
@@ -70,26 +151,6 @@ export function InjuryReport({ h }: { h: Health }) {
                 {r.missed_before ? ` (${r.missed_before} last season, ${r.missed_weeks.length} this season)` : ` (${weekList(r.missed_weeks)})`}
               </Text>
             </Row>
-          ) : null}
-          {days.length ? (
-            <Row label={`Practice W${week?.week}`}>
-              <View style={styles.days}>
-                {days.map((d, i) => {
-                  const s = DAY[d.practice ?? ''];
-                  return (
-                    <View key={`${d.day}-${i}`} style={styles.day}>
-                      <Text style={styles.dayName}>{(d.day ?? '').toUpperCase()}</Text>
-                      <Text style={[styles.dayValue, { color: s?.color ?? colors.muted }]}>{s?.label ?? '—'}</Text>
-                    </View>
-                  );
-                })}
-              </View>
-            </Row>
-          ) : week?.practice ? (
-            <Row label={`Practice W${week.week}`}><Text style={styles.value}>{week.practice}</Text></Row>
-          ) : null}
-          {week?.game_status ? (
-            <Row label="Game status"><Text style={styles.value}>{week.game_status} (W{week.week})</Text></Row>
           ) : null}
           {r?.on_ir && r.eligible_now ? (
             <Row label="Eligible back">
@@ -113,16 +174,6 @@ export function InjuryReport({ h }: { h: Health }) {
           ) : null}
         </View>
       )}
-
-      {!h.healthy && newsText ? (
-        <View>
-          <Text style={styles.section}>LATEST NEWS</Text>
-          <View style={styles.quote}>
-            <Text style={styles.quoteText}>{newsText}</Text>
-            <Text style={styles.quoteSrc}>ESPN{newsDate ? ` · ${newsDate}` : ''}</Text>
-          </View>
-        </View>
-      ) : null}
 
       <View>
         <Text style={styles.section}>HISTORY</Text>
@@ -157,6 +208,19 @@ const styles = StyleSheet.create({
   day: { flex: 1, backgroundColor: colors.row, borderRadius: 8, paddingVertical: 5, alignItems: 'center' },
   dayName: { color: '#8E8676', fontSize: 10, fontWeight: '600', letterSpacing: 0.5 },
   dayValue: { fontSize: 12, fontWeight: '800' },
+  track: { flexDirection: 'row', gap: 5 },
+  trackCol: { flex: 1, alignItems: 'center', gap: 4 },
+  trackBar: { alignSelf: 'stretch', height: 12, borderRadius: 6 },
+  trackDay: { color: colors.muted, fontSize: 11, fontWeight: '700' },
+  trackSub: { color: '#8E8676', fontSize: 10, marginTop: -3 },
+  verdict: { flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: 1, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 10 },
+  verdictTitle: { color: colors.text, fontSize: 15, fontWeight: '700' },
+  verdictPct: { fontSize: 24, fontWeight: '800' },
+  trio: { flexDirection: 'row', gap: 6 },
+  trioBox: { flex: 1, backgroundColor: colors.row, borderRadius: 12, padding: 9, gap: 3 },
+  trioLabel: { color: '#8E8676', fontSize: 9, fontWeight: '700', letterSpacing: 0.8 },
+  trioValue: { color: colors.text, fontSize: 13, fontWeight: '800' },
+  trioSub: { color: colors.muted, fontSize: 11 },
   section: { color: '#8E8676', fontSize: 10, fontWeight: '700', letterSpacing: 1.2, marginTop: 6, marginBottom: 6 },
   quote: { borderLeftWidth: 3, borderLeftColor: colors.gold, paddingLeft: 10, gap: 3 },
   quoteText: { color: colors.text, fontSize: 13, lineHeight: 19 },
