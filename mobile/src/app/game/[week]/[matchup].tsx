@@ -137,7 +137,7 @@ function Half({ p, vs, side, onScore, bench, held, first }: { p?: BoxPlayer; vs?
   const g = p.game;
   const on = p.status === 'playing';
   const right = side === 'r';
-  const look = on ? (g?.red_zone ? LIVE_LOOK.redZone : g?.possession ? LIVE_LOOK.offense : LIVE_LOOK.live) : null;
+  const look = on && !held ? (g?.red_zone ? LIVE_LOOK.redZone : g?.possession ? LIVE_LOOK.offense : LIVE_LOOK.live) : null;
   const edge = look?.edge ?? null;
   const tint = look?.tint ?? null;
   const lift = look?.lift ? { backgroundColor: look.lift } : null;

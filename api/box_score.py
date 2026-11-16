@@ -19,9 +19,11 @@ def game(client: Any, ctx: dict[str, Any], week: int, matchup_id: int, team_rows
     """ctx needs season, sleeper_id, names (roster id -> owner), slots and sleeper_roster_id. None when there's no such game."""
     final = week <= league.last_scored_week(ctx["sleeper_id"])
     ttl = 86400 if final else league.LIVE_TTL
-    ids = teams.matchup_player_ids(ctx["sleeper_id"], week, matchup_id, ttl)
+    team_rows = list(team_rows)
+    held = held_players(client, ctx, team_rows)
+    ids = teams.matchup_player_ids(ctx["sleeper_id"], week, matchup_id, ttl, held)
     info = teams.player_info(client, ids)
-    result = teams.box_score(ctx["sleeper_id"], week, matchup_id, ctx["names"], ctx["slots"], info, ttl)
+    result = teams.box_score(ctx["sleeper_id"], week, matchup_id, ctx["names"], ctx["slots"], info, ttl, held)
     if result is None:
         return None
     teams_by_roster = {t["roster_id"]: t["team_id"] for t in team_rows}
@@ -32,6 +34,23 @@ def game(client: Any, ctx: dict[str, Any], week: int, matchup_id: int, team_rows
     add_projections(client, ctx, week, final, result, info)
     result["win_chance"] = nfl_live.win_chance(result["teams"], final)
     return result
+
+
+HELD_TTL = 60
+
+
+def held_players(client: Any, ctx: dict[str, Any], team_rows: list[dict[str, Any]]) -> dict[int, dict[str, list[str]]] | None:
+    """Each roster's taxi and IR players from our own database (the same contracts the team pages read).
+    None (fall back to Sleeper's lists) only when there's no league id or the read fails."""
+    league_id = ctx.get("league_id")
+    if not league_id:
+        return None
+    try:
+        rows = team_rows or cache.cached(("league_teams", league_id), 600, lambda: teams.league_teams(client, league_id))
+        state = cache.cached(("held_state", league_id, ctx["season"]), HELD_TTL, lambda: teams.load_team_state(client, league_id, ctx["season"]))
+        return teams.held_by_roster(state, rows)
+    except Exception:
+        return None
 
 
 def add_round(result: dict[str, Any], carry: dict[int, float]) -> None:
