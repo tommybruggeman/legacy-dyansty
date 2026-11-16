@@ -97,20 +97,12 @@ function TopTiles({ team, tab }: { team: TeamPage; tab: (typeof TABS)[number] })
   const wk = team.week;
   if (wk) {
     const started = Object.values(wk.players).some((p) => p.status === 'playing' || p.status === 'final');
-    const opp = wk.opponent;
-    const won = opp ? wk.score > opp.score : false;
     return (
       <Tiles>
         <Tile label="RECORD" value={record(r.wins, r.losses, r.ties)} sub={`${ordinal(r.rank)} · ${r.standing_points} SP`} />
         <Tile label={`WEEK ${wk.week}`} value={(wk.is_final || started ? wk.score : wk.projected ?? 0).toFixed(1)} tone={!wk.is_final && started ? 'live' : undefined}
           sub={wk.is_final ? 'final' : started && wk.projected != null ? `proj ${wk.projected.toFixed(1)}` : 'projected'} />
-        {opp ? (
-          <Tile label={`VS ${firstName(opp.name).toUpperCase()}`}
-            value={wk.is_final ? (won ? 'Won' : wk.score < opp.score ? 'Lost' : 'Tied') : wk.win_chance != null ? `${wk.win_chance}%` : '—'}
-            sub={wk.is_final ? `by ${Math.abs(wk.score - opp.score).toFixed(1)}` : 'win odds'} />
-        ) : (
-          <Tile label="POWER RANK" value={power ? `#${power.rank}` : '—'} sub={move ?? (power?.of ? `of ${power.of} teams` : 'not ranked yet')} />
-        )}
+        <CapTile team={team} />
       </Tiles>
     );
   }
@@ -120,6 +112,16 @@ function TopTiles({ team, tab }: { team: TeamPage; tab: (typeof TABS)[number] })
       <Tile label="PPG" value={r.pf_per_game != null ? r.pf_per_game.toFixed(1) : '—'} sub="avg / game" />
       <Tile label="POWER RANK" value={power ? `#${power.rank}` : '—'} sub={move ?? (power?.of ? `of ${power.of} teams` : 'not ranked yet')} />
     </Tiles>
+  );
+}
+
+// This season's cap used (big) and what's left under the cap (Tommy, 2026-11-16: replaces the matchup win odds tile).
+function CapTile({ team }: { team: TeamPage }) {
+  const now = team.cap.by_year.find((y) => y.season === team.season) ?? team.cap.by_year[0];
+  if (!now) return <Tile label="CAP USED" value="—" sub={`of ${dollars(team.salary_cap)}`} />;
+  return (
+    <Tile label="CAP USED" value={dollars(now.used)} tone={now.space < 0 ? 'red' : undefined}
+      sub={now.space < 0 ? `${dollars(-now.space)} over` : `${dollars(now.space)} left`} />
   );
 }
 
