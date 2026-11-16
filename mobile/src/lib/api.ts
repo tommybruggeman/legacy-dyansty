@@ -442,6 +442,7 @@ export type PlayerPage = {
     kickoff?: string | null;
     team_total?: number | null;
     yards_line?: { label: string; line: number } | null;
+    out?: string | null; // on IR / ruled out: shown instead of a projection
     projected?: number | null;
     weather?: string | null;
     vs_pos?: { label: 'tough' | 'soft' | 'neutral' | null; text: string; allowed: number | null } | null;
@@ -456,23 +457,39 @@ export type PlayerPage = {
     missed: { injury: string; season: number; games: number; back: boolean }[];
     estimate?: { injury: string; median_games: number; range: string; absences: number; scope: string; text: string } | null;
     report?: {
-      hurt: { week: number; opp: string | null } | null;
+      hurt: { week: number; opp: string | null; season?: number } | null;
       missed_weeks: number[];
       on_ir: boolean;
       eligible_week: number | null;
+      eligible_now?: boolean;
+      missed_before?: number;
       estimate: { weeks?: [number, number | null]; past_usual?: boolean } | null;
       detail: string | null;
       news: { text: string; date: string | null } | null;
     } | null;
+    // This week's call: chance he plays and the Official / Reported / Our call row (not for healthy or IR players).
+    call?: { pct: number; verdict: string; why: string | null; official: string | null; reported: string | null; reported_date: string | null; ours: string } | null;
+    summary?: { text: string; date: string | null; source: string } | null; // "Where he's at"
   };
+  role?: { chips: { slot: string; name: string; share: number; me: boolean }[]; rows: { label: string; value: string }[] } | null;
+  rest_of_season?: {
+    weeks: { week: number; opp: string; home: boolean; tone: 'easy' | 'avg' | 'tough' | null; playoff: boolean }[];
+    playoff_rank: number | null;
+    teams: number | null;
+  } | null;
+  past_seasons?: {
+    columns: { key: string; label: string }[];
+    seasons: ({ season: number; games: number; ppg: number | null; finish: number | null } & Record<string, number | null>)[];
+  } | null;
   history: {
     kind: string;
     title: string;
     owner: string;
-    team_id: string;
+    team_id: string | null;
     date: string;
     salary: number | null;
     years: number | null;
+    faab?: number | null;
     tag: string | null;
     live: boolean;
   }[];
