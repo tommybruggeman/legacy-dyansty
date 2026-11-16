@@ -22,6 +22,9 @@ on:
       alerts:
         description: Also run the owners' push alerts and lock screen Live Activities (1 = live setup replacing the e2-micro)
         default: "0"
+      retire_vm:
+        description: Delete the e2-micro after this deploy (only with alerts=1 and offset=0, once the free watcher is proven)
+        default: "no"
       cpu:
         description: CPU per instance (0.25 for one watcher; 1 for the race)
         default: "0.25"
@@ -94,3 +97,10 @@ jobs:
               --oidc-service-account-email "$SA" --oidc-token-audience "$URL"
           done
           gcloud scheduler jobs list --project "$PROJECT" --location "$REGION" --format 'table(name.basename(),schedule,state)'
+      - name: Retire the e2-micro
+        # The paid machine (its external IP is billed) ran the same watcher, alerts and Live Activities; with alerts=1
+        # this service does all three. Its boot disk is deleted with it.
+        if: ${{ inputs.retire_vm == 'yes' && inputs.alerts == '1' && inputs.offset == '0' }}
+        run: |
+          gcloud compute instances delete legacy-live-watcher --project "$PROJECT" --zone us-central1-a --quiet
+          echo "VMs left: $(gcloud compute instances list --project "$PROJECT" --format 'value(name)' | wc -l)"
