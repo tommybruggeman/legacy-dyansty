@@ -1,6 +1,6 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Avatar } from '../../../components/Pictures';
@@ -59,13 +59,24 @@ export default function Game() {
           <Lineup left={a.bench ?? []} right={b.bench ?? []} onScore={setShown} bench />
         </>
       ) : null}
+      {(['taxi', 'ir'] as const).map((held) => {
+        const l = (a.reserve ?? []).filter((p) => p.designation === held);
+        const r = (b.reserve ?? []).filter((p) => p.designation === held);
+        return l.length || r.length ? (
+          <Fragment key={held}>
+            <Text style={[styles.section, styles.sectionBench]}>{held === 'taxi' ? 'TAXI' : 'IR'}</Text>
+            <Lineup left={l} right={r} onScore={setShown} bench held={held} />
+          </Fragment>
+        ) : null;
+      })}
       <Breakdown player={shown} onClose={() => setShown(null)} />
     </Screen>
   );
 }
 
 // Two lineups side by side, row by row. Bench rows pair by order (highest pregame projection first) and show each player's position.
-function Lineup({ left, right, onScore, bench }: { left: BoxPlayer[]; right: BoxPlayer[]; onScore: (p: BoxPlayer) => void; bench?: boolean }) {
+// Taxi and IR players (Tommy, 2026-11-15) get their own sections: dimmed rows with a T or IR tag, since they can't play.
+function Lineup({ left, right, onScore, bench, held }: { left: BoxPlayer[]; right: BoxPlayer[]; onScore: (p: BoxPlayer) => void; bench?: boolean; held?: 'taxi' | 'ir' }) {
   const rows = Math.max(left.length, right.length);
   return (
     <View style={styles.table}>
@@ -74,9 +85,9 @@ function Lineup({ left, right, onScore, bench }: { left: BoxPlayer[]; right: Box
         const pb = right[i];
         return (
           <View key={i} style={styles.row}>
-            <Half p={pa} vs={pb} side="l" onScore={onScore} bench={bench} first={i === 0} />
-            <View style={[styles.slot, i > 0 && styles.divider]}><Text style={styles.slotText}>{bench ? 'BN' : pa?.slot || pb?.slot || ''}</Text></View>
-            <Half p={pb} vs={pa} side="r" onScore={onScore} bench={bench} first={i === 0} />
+            <Half p={pa} vs={pb} side="l" onScore={onScore} bench={bench} held={held} first={i === 0} />
+            <View style={[styles.slot, i > 0 && styles.divider]}><Text style={[styles.slotText, held === 'taxi' && styles.gold, held === 'ir' && styles.irText]}>{held === 'taxi' ? 'TX' : held === 'ir' ? 'IR' : bench ? 'BN' : pa?.slot || pb?.slot || ''}</Text></View>
+            <Half p={pb} vs={pa} side="r" onScore={onScore} bench={bench} held={held} first={i === 0} />
           </View>
         );
       })}
@@ -121,7 +132,7 @@ function FinalBanner({ a, b }: { a: Side; b: Side }) {
 // ("7 REC, 51 YDS, TD"), with big points and the projection on the inside edge next to the slot. The right side is mirrored.
 // Live = gold edge + warm tint; has the ball = green; red zone = red.
 // The slot winner's points are gold once both players have played.
-function Half({ p, vs, side, onScore, bench, first }: { p?: BoxPlayer; vs?: BoxPlayer; side: 'l' | 'r'; onScore: (p: BoxPlayer) => void; bench?: boolean; first?: boolean }) {
+function Half({ p, vs, side, onScore, bench, held, first }: { p?: BoxPlayer; vs?: BoxPlayer; side: 'l' | 'r'; onScore: (p: BoxPlayer) => void; bench?: boolean; held?: 'taxi' | 'ir'; first?: boolean }) {
   if (!p || !p.player_id || p.player_id === '0') return <View style={[styles.half, bench && styles.halfBench, !first && styles.divider]}><Text style={styles.empty}>{p ? 'Empty' : ''}</Text></View>;
   const g = p.game;
   const on = p.status === 'playing';
@@ -138,9 +149,10 @@ function Half({ p, vs, side, onScore, bench, first }: { p?: BoxPlayer; vs?: BoxP
   return (
     <View style={[styles.half, right && styles.halfRight, bench && styles.halfBench, lift, !first && styles.divider, right ? { borderRightWidth: 4, borderRightColor: edge ?? 'transparent' } : { borderLeftWidth: 4, borderLeftColor: edge ?? 'transparent' }]}>
       {tint ? <LinearGradient colors={tint as [string, string]} start={{ x: right ? 1 : 0, y: 0 }} end={{ x: right ? 0.2 : 0.8, y: 0 }} style={StyleSheet.absoluteFill} /> : null}
-      <View style={[styles.info, right && styles.infoRight]}>
+      <View style={[styles.info, right && styles.infoRight, held && styles.heldDim]}>
         <Pressable onPress={() => router.push(`/player/${p.player_id}`)} hitSlop={4} style={[styles.nameWrap, right && styles.nameWrapRight]}>
           <Text style={styles.name} numberOfLines={1}>{shortName(p.name)}</Text>
+          {held ? <View style={[styles.heldTag, held === 'ir' && styles.heldTagIr]}><Text style={[styles.heldTagText, held === 'ir' && styles.irText]}>{held === 'ir' ? 'IR' : 'T'}</Text></View> : null}
           {bench && p.pos ? <Text style={styles.benchPos}>{p.pos}</Text> : null}
           {p.team ? <Text style={styles.team}>{p.team}</Text> : null}
         </Pressable>
@@ -153,7 +165,7 @@ function Half({ p, vs, side, onScore, bench, first }: { p?: BoxPlayer; vs?: BoxP
             : ' '}
         </Text>
       </View>
-      <Pressable onPress={() => onScore(p)} hitSlop={8} style={[styles.pts, right && styles.ptsRight]}>
+      <Pressable onPress={() => onScore(p)} hitSlop={8} style={[styles.pts, right && styles.ptsRight, held && styles.heldDim]}>
         <Text style={[styles.points, lead === 'win' && styles.gold, lead === 'lose' && styles.pointsLose, bench && styles.pointsBench]}>{scored || p.points ? p.points.toFixed(1) : '–'}</Text>
         <Text style={[styles.proj, on && p.live_proj != null && styles.projLive, projTone(p) === 'up' && styles.projUp, projTone(p) === 'down' && styles.projDown]}>{shownProj(p)}</Text>
       </Pressable>
@@ -299,6 +311,11 @@ const styles = StyleSheet.create({
   points: { color: colors.text, fontSize: 17, fontWeight: '800', fontVariant: ['tabular-nums'] },
   pointsBench: { color: '#C9C2B2' },
   pointsLose: { color: colors.muted },
+  heldDim: { opacity: 0.62 },
+  heldTag: { flexShrink: 0, borderWidth: 1, borderColor: colors.gold, backgroundColor: '#3A3018', borderRadius: 4, paddingHorizontal: 4, paddingVertical: 0.5 },
+  heldTagIr: { borderColor: '#E05555', backgroundColor: '#3A1A1A' },
+  heldTagText: { color: '#E2BC5B', fontSize: 8.5, fontWeight: '900' },
+  irText: { color: '#EF7A7A' },
   benchPos: { flexShrink: 0, color: colors.muted, fontSize: 10, fontWeight: '800' },
   proj: { color: colors.muted, fontSize: 10.5, marginTop: 1 },
   projLive: { color: colors.text, fontWeight: '700' },

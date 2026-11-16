@@ -343,6 +343,7 @@ export type TeamWeek = {
 
 export type BoxPlayer = {
   player_id: string;
+  designation?: 'taxi' | 'ir';
   name: string;
   slot: string;
   points: number;
@@ -377,7 +378,7 @@ export type BoxScore = {
   is_final: boolean;
   matchup_id: number;
   my_roster_id: number | null;
-  teams: { roster_id: number; team_id: string | null; name: string; avatar?: string | null; team_name?: string | null; team_abbr?: string | null; score: number; projected?: number; players: BoxPlayer[]; bench?: BoxPlayer[] }[];
+  teams: { roster_id: number; team_id: string | null; name: string; avatar?: string | null; team_name?: string | null; team_abbr?: string | null; score: number; projected?: number; players: BoxPlayer[]; bench?: BoxPlayer[]; reserve?: BoxPlayer[] }[];
   win_chance?: [number, number] | null;
   // Two-week playoff rounds (asked with ?carry=): round totals and round win odds, in teams order.
   round?: { projected: [number, number]; score: [number, number]; win_chance: [number, number] | null } | null;
