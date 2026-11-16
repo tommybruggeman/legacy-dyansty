@@ -65,6 +65,13 @@ export function TeamView({ team, eyebrow, badge, top, onChange }: { team: TeamPa
   );
 }
 
+// This season's cap used, with what's left underneath.
+function CapTile({ team }: { team: TeamPage }) {
+  const y = team.cap.by_year.find((c) => c.season === team.season) ?? team.cap.by_year[0];
+  const space = y?.space ?? team.cap.space;
+  return <Tile label={`${team.season} CAP`} value={money(y?.used ?? team.salary_cap - space)} sub={`${money(space)} left`} tone={space < 0 ? 'red' : undefined} />;
+}
+
 // The three boxes on top change with the tab: each tab's first two, then one that fits it.
 function TopTiles({ team, tab }: { team: TeamPage; tab: (typeof TABS)[number] }) {
   const r = team.record;
@@ -97,20 +104,12 @@ function TopTiles({ team, tab }: { team: TeamPage; tab: (typeof TABS)[number] })
   const wk = team.week;
   if (wk) {
     const started = Object.values(wk.players).some((p) => p.status === 'playing' || p.status === 'final');
-    const opp = wk.opponent;
-    const won = opp ? wk.score > opp.score : false;
     return (
       <Tiles>
         <Tile label="RECORD" value={record(r.wins, r.losses, r.ties)} sub={`${ordinal(r.rank)} · ${r.standing_points} SP`} />
         <Tile label={`WEEK ${wk.week}`} value={(wk.is_final || started ? wk.score : wk.projected ?? 0).toFixed(1)} tone={!wk.is_final && started ? 'live' : undefined}
           sub={wk.is_final ? 'final' : started && wk.projected != null ? `proj ${wk.projected.toFixed(1)}` : 'projected'} />
-        {opp ? (
-          <Tile label={`VS ${firstName(opp.name).toUpperCase()}`}
-            value={wk.is_final ? (won ? 'Won' : wk.score < opp.score ? 'Lost' : 'Tied') : wk.win_chance != null ? `${wk.win_chance}%` : '—'}
-            sub={wk.is_final ? `by ${Math.abs(wk.score - opp.score).toFixed(1)}` : 'win odds'} />
-        ) : (
-          <Tile label="POWER RANK" value={power ? `#${power.rank}` : '—'} sub={move ?? (power?.of ? `of ${power.of} teams` : 'not ranked yet')} />
-        )}
+        <CapTile team={team} />
       </Tiles>
     );
   }
