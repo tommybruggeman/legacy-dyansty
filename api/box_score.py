@@ -55,12 +55,12 @@ def week_kickoffs(client: Any, season: int, week: int) -> dict[str, datetime]:
 
 def add_projections(client: Any, ctx: dict[str, Any], week: int, final: bool, result: dict[str, Any], info: dict[str, dict[str, Any]]) -> None:
     """Each starter's and bench player's projection, game status and weekly position rank, plus each side's
-    projected total (starters only). The bench is sorted QB, RB, WR, TE, then by projection.
+    projected total (starters only). The bench is sorted by pregame projection, highest first.
 
     A side's projection counts real points for finished games, points so far plus the
     projection for the game time still left for games in progress, and the projection otherwise.
     """
-    ids = [p["player_id"] for side in result["teams"] for p in side["players"] + side.get("bench", []) if p["player_id"] not in ("", "0")]
+    ids = [p["player_id"] for side in result["teams"] for p in side["players"] + side.get("bench", []) + side.get("reserve", []) if p["player_id"] not in ("", "0")]
     positions = {pid: str(info.get(pid, {}).get("position") or "") for pid in ids}
     nfl_teams = {pid: str(info.get(pid, {}).get("team") or "") for pid in ids}
     season, sid = ctx["season"], ctx["sleeper_id"]
@@ -117,7 +117,7 @@ def add_projections(client: Any, ctx: dict[str, Any], week: int, final: bool, re
         games = {}
     for side in result["teams"]:
         total = 0.0
-        for p in side["players"] + side.get("bench", []):
+        for p in side["players"] + side.get("bench", []) + side.get("reserve", []):
             pid = p["player_id"]
             p["pos"] = positions.get(pid) or p.get("slot")
             p["team"] = nfl_teams.get(pid) or None
@@ -141,4 +141,7 @@ def add_projections(client: Any, ctx: dict[str, Any], week: int, final: bool, re
             total += p["live_proj"] if p["live_proj"] is not None else p["points"]
         side["projected"] = round(total, 1)
         if "bench" in side:
-            side["bench"].sort(key=lambda p: (BENCH_ORDER.get(p["pos"] or "", len(BENCH_ORDER)), -(p["live_proj"] if p["live_proj"] is not None else p["points"])))
+            # highest pregame projection first (Tommy, 2026-11-15); proj is frozen at kickoff, so the order holds all game
+            side["bench"].sort(key=lambda p: (-(p["proj"] if p["proj"] is not None else -1.0), BENCH_ORDER.get(p["pos"] or "", len(BENCH_ORDER))))
+        if "reserve" in side:  # taxi first, then IR; each by pregame projection
+            side["reserve"].sort(key=lambda p: (p.get("designation") != "taxi", -(p["proj"] if p["proj"] is not None else -1.0)))
