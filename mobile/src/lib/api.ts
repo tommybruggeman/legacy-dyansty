@@ -343,6 +343,7 @@ export type TeamWeek = {
 
 export type BoxPlayer = {
   player_id: string;
+  designation?: 'taxi' | 'ir';
   name: string;
   slot: string;
   points: number;
@@ -377,7 +378,7 @@ export type BoxScore = {
   is_final: boolean;
   matchup_id: number;
   my_roster_id: number | null;
-  teams: { roster_id: number; team_id: string | null; name: string; avatar?: string | null; team_name?: string | null; team_abbr?: string | null; score: number; projected?: number; players: BoxPlayer[]; bench?: BoxPlayer[] }[];
+  teams: { roster_id: number; team_id: string | null; name: string; avatar?: string | null; team_name?: string | null; team_abbr?: string | null; score: number; projected?: number; players: BoxPlayer[]; bench?: BoxPlayer[]; reserve?: BoxPlayer[] }[];
   win_chance?: [number, number] | null;
   // Two-week playoff rounds (asked with ?carry=): round totals and round win odds, in teams order.
   round?: { projected: [number, number]; score: [number, number]; win_chance: [number, number] | null } | null;
@@ -441,6 +442,7 @@ export type PlayerPage = {
     kickoff?: string | null;
     team_total?: number | null;
     yards_line?: { label: string; line: number } | null;
+    out?: string | null; // on IR / ruled out: shown instead of a projection
     projected?: number | null;
     weather?: string | null;
     vs_pos?: { label: 'tough' | 'soft' | 'neutral' | null; text: string; allowed: number | null } | null;
@@ -455,23 +457,39 @@ export type PlayerPage = {
     missed: { injury: string; season: number; games: number; back: boolean }[];
     estimate?: { injury: string; median_games: number; range: string; absences: number; scope: string; text: string } | null;
     report?: {
-      hurt: { week: number; opp: string | null } | null;
+      hurt: { week: number; opp: string | null; season?: number } | null;
       missed_weeks: number[];
       on_ir: boolean;
       eligible_week: number | null;
+      eligible_now?: boolean;
+      missed_before?: number;
       estimate: { weeks?: [number, number | null]; past_usual?: boolean } | null;
       detail: string | null;
       news: { text: string; date: string | null } | null;
     } | null;
+    // This week's call: chance he plays and the Official / Reported / Our call row (not for healthy or IR players).
+    call?: { pct: number; verdict: string; why: string | null; official: string | null; reported: string | null; reported_date: string | null; ours: string } | null;
+    summary?: { text: string; date: string | null; source: string } | null; // "Where he's at"
   };
+  role?: { chips: { slot: string; name: string; share: number; me: boolean }[]; rows: { label: string; value: string }[] } | null;
+  rest_of_season?: {
+    weeks: { week: number; opp: string; home: boolean; tone: 'easy' | 'avg' | 'tough' | null; playoff: boolean }[];
+    playoff_rank: number | null;
+    teams: number | null;
+  } | null;
+  past_seasons?: {
+    columns: { key: string; label: string }[];
+    seasons: ({ season: number; games: number; ppg: number | null; finish: number | null } & Record<string, number | null>)[];
+  } | null;
   history: {
     kind: string;
     title: string;
     owner: string;
-    team_id: string;
+    team_id: string | null;
     date: string;
     salary: number | null;
     years: number | null;
+    faab?: number | null;
     tag: string | null;
     live: boolean;
   }[];
@@ -540,7 +558,7 @@ export type LeaguePlayer = {
   // This week, in league scoring (missing on older servers): projection, season average, last-3 form, next game.
   proj?: number | null; avg?: number | null; last3?: number | null; trend?: number | null; next?: NextGame | null;
   games?: number | null; pos_rank?: string | null; week_pts?: number | null; // games played, "WR41", points this week once his game starts
-  // Same league-scoring lines as everything above (from build 89's server): games in the last-3 average, and one bar per
+  // Same league-scoring lines as everything above (from build 92's server): games in the last-3 average, and one bar per
   // week for the last 6 weeks (pts null = didn't play; bye on his team's bye; live while this week's game is on).
   last3_games?: number | null; bars?: WeekBar[];
 };

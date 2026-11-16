@@ -7,6 +7,7 @@ import { InjuryReport } from '../../components/player/InjuryReport';
 import { NflStatsCard } from '../../components/player/NflStatsCard';
 import { WriteupCard } from '../../components/player/WriteupCard';
 import { PointsChart } from '../../components/player/PointsChart';
+import { PastSeasonsCard, RestOfSeasonCard, RoleCard } from '../../components/player/PlayerCards';
 import { ErrorState, Loading } from '../../components/ScreenState';
 import { Back, Screen, money } from '../../components/ui';
 import { apiGet, apiSend, type PlayerPage, type WaiverSheet, useApi } from '../../lib/api';
@@ -100,7 +101,19 @@ export default function Player() {
           <Tile label={`${data.pos} RANK`} value={ls.rank ? `#${ls.rank.rank}` : '—'} sub="in this league" />
         </View>
 
+        {!h.healthy ? (
+          <View onLayout={(e) => setHealthY(e.nativeEvent.layout.y)}>
+            <InjuryReport h={h} />
+          </View>
+        ) : null}
+
         {data.writeups?.length ? <WriteupCard writeups={data.writeups} /> : null}
+
+        {data.next_game ? <NextGame game={data.next_game} pos={data.pos} /> : null}
+
+        {log.length ? (
+          <PointsChart weeks={log} avg={ls.ppg} pos={data.pos} onOpenLog={() => router.push(`/player-games/${data.player_id}`)} />
+        ) : null}
 
         {data.nfl_ranked ? (
           <NflStatsCard ranked={data.nfl_ranked} season={nfl ?? null} pos={data.pos} />
@@ -125,17 +138,14 @@ export default function Player() {
           </View>
         ) : null}
 
-        {log.length ? (
-          <PointsChart weeks={log} avg={ls.ppg} onPress={() => router.push(`/player-games/${data.player_id}`)} />
-        ) : null}
-
-        {data.next_game ? <NextGame game={data.next_game} pos={data.pos} /> : null}
+        {data.role ? <RoleCard role={data.role} /> : null}
+        {data.rest_of_season ? <RestOfSeasonCard rest={data.rest_of_season} pos={data.pos} /> : null}
+        {data.past_seasons ? <PastSeasonsCard past={data.past_seasons} pos={data.pos} /> : null}
 
         {history.length ? (
           <View style={styles.card}>
             <View style={styles.cardHead}>
-              <Text style={styles.cardTitle}>Contract history</Text>
-              <Text style={styles.small}>newest first</Text>
+              <Text style={styles.cardTitle}>History in the league</Text>
             </View>
             {history.map((e, i) => (
               <Pressable key={`${e.kind}-${e.date}-${i}`} style={styles.event} onPress={e.team_id ? () => router.push(`/team/${e.team_id}`) : undefined}>
@@ -165,9 +175,11 @@ export default function Player() {
           </View>
         ) : null}
 
-        <View onLayout={(e) => setHealthY(e.nativeEvent.layout.y)}>
-          <InjuryReport h={h} />
-        </View>
+        {h.healthy ? (
+          <View onLayout={(e) => setHealthY(e.nativeEvent.layout.y)}>
+            <InjuryReport h={h} />
+          </View>
+        ) : null}
 
         <Pressable onPress={() => router.navigate({ pathname: '/front-office', params: { q: `${data.is_mine ? 'Should I keep, start or trade' : 'What do you think of'} ${name}?`, at: String(Date.now()) } })} style={styles.ask}>
           <View style={styles.fo}><Text style={styles.foText}>FO</Text></View>
@@ -227,7 +239,12 @@ function NextGame({ game, pos }: { game: NonNullable<PlayerPage['next_game']>; p
           <Text style={styles.gameTitle}>{game.home ? 'vs' : 'at'} {game.opp}</Text>
           {when ? <Text style={styles.small}>{when}{game.home ? ' · at home' : ' · away'}</Text> : null}
         </View>
-        {game.projected != null ? (
+        {game.out ? (
+          <View style={styles.projBox}>
+            <Text style={[styles.projValue, styles.outValue]}>{/^(ir|injured reserve)$/i.test(game.out) ? 'IR' : 'OUT'}</Text>
+            <Text style={styles.factLabel}>{/^(ir|injured reserve)$/i.test(game.out) ? 'ON IR' : 'WON\'T PLAY'}</Text>
+          </View>
+        ) : game.projected != null ? (
           <View style={styles.projBox}>
             <Text style={styles.projValue}>{game.projected.toFixed(1)}</Text>
             <Text style={styles.factLabel}>PROJECTED</Text>
@@ -254,7 +271,7 @@ function Fact({ label, value, style }: { label: string; value: string; style?: o
   );
 }
 
-const DOT: Record<string, string> = { released: '#E8826F', traded: '#7FA6C9', expired: '#6F8F7E' };
+const DOT: Record<string, string> = { released: '#E8826F', traded: '#7FA6C9', expired: '#6F8F7E', draft_pick: '#C89B4A', commissioner: '#8E8676' };
 
 function tagStyle(e: PlayerPage['history'][number]) {
   if (e.live) return styles.tagGold;
@@ -267,7 +284,8 @@ function tagStyle(e: PlayerPage['history'][number]) {
 function eventSub(e: PlayerPage['history'][number]) {
   const money_ = e.salary != null ? `$${e.salary.toFixed(1)}${e.kind === 'released' ? '' : ' a year'}` : null;
   const years = e.years && !e.live && e.kind !== 'released' && e.kind !== 'traded' ? `${e.years} yr${e.years === 1 ? '' : 's'}` : null;
-  return [e.owner, e.date, money_, years].filter(Boolean).join(' · ');
+  const bid = e.faab != null ? `$${e.faab} FAAB` : null;
+  return [e.owner, e.date, money_, years, bid].filter(Boolean).join(' · ');
 }
 
 const styles = StyleSheet.create({
@@ -307,6 +325,7 @@ const styles = StyleSheet.create({
   gameTitle: { color: colors.text, fontSize: 16, fontWeight: '700' },
   projBox: { alignItems: 'flex-end' },
   projValue: { color: colors.gold, fontSize: 24, fontWeight: '800' },
+  outValue: { color: '#E8826F' },
   facts: { flexDirection: 'row', gap: 8 },
   fact: { flex: 1, borderWidth: 1, borderColor: '#2C5140', borderRadius: 10, padding: 8 },
   factLabel: { color: colors.muted, fontSize: 10 },

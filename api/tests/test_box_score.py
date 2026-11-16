@@ -40,7 +40,7 @@ def test_game_adds_projections_and_projected_totals(monkeypatch):
     assert me["players"][0]["proj"] == 22.0 and me["players"][0]["rank"] == "QB2"
     assert me["projected"] == 36.0          # no live clock: max(20 real, 22 proj) while playing + 14 projected
     assert them["projected"] == 15.0
-    assert [(p["name"], p["pos"], p["points"], p["live_proj"]) for p in me["bench"]] == [("E", "RB", 0.0, 6.0), ("D", "TE", 3.0, 9.0)]
+    assert [(p["name"], p["pos"], p["points"], p["live_proj"]) for p in me["bench"]] == [("D", "TE", 3.0, 9.0), ("E", "RB", 0.0, 6.0)]  # highest pregame projection first
     assert box_score.game(_C(), ctx, 8, 99) is None
 
 
@@ -115,3 +115,25 @@ def test_live_projection_reacts_to_pace_usage_and_score():
     ahead = nfl_live.live_projection(8.0, 20.0, "playing", {**q2, "score": 21, "opp_score": 0}, "QB", {"pass_att": 18}, 36.0)
     assert behind > ahead                   # trailing QBs throw more
     assert nfl_live.live_projection(5.0, 16.0, "playing", q2, "K", {}, 0) == 13.0   # no fit: points + proj x left
+
+
+def test_taxi_and_ir_players_are_listed_apart_from_the_bench(monkeypatch):
+    rows = [{"matchup_id": 3, "roster_id": 1, "starters": ["10"], "starters_points": [20.0], "points": 20.0,
+             "players": ["10", "40", "60", "70"], "players_points": {"40": 3.0, "60": 7.5}},
+            {"matchup_id": 3, "roster_id": 2, "starters": ["30"], "starters_points": [12.5], "points": 12.5, "players": ["30"]}]
+    rosters = [{"roster_id": 1, "taxi": ["60"], "reserve": ["70"]}, {"roster_id": 2}]
+    monkeypatch.setattr(teams.sleeper, "get", lambda path, ttl=60: rosters if path.endswith("/rosters") else rows)
+    monkeypatch.setattr(league, "last_scored_week", lambda sid: 7)
+    monkeypatch.setattr(teams, "player_info", lambda client, ids: {i: {"full_name": n, "position": "WR", "team": "KC"} for i, n in
+                                                                    [("10", "A"), ("30", "C"), ("40", "D"), ("60", "Taxi"), ("70", "Hurt")]})
+    monkeypatch.setattr(projections, "week_projections", lambda *a, **k: {"10": 22.0, "40": 9.0, "60": 6.0, "70": 0.0})
+    monkeypatch.setattr(projections, "week_ranks", lambda *a, **k: {})
+    monkeypatch.setattr(projections, "week_lines", lambda *a, **k: {})
+    monkeypatch.setattr(projections, "league_scoring", lambda sid: {})
+    monkeypatch.setattr(nfl_live, "week_games", lambda season, week, final: {})
+    monkeypatch.setattr(home, "player_status", lambda team, starts, now: "upcoming")
+    ctx = {"season": 2026, "sleeper_id": "S", "names": {1: "Tommy", 2: "Grady"}, "slots": ["QB", "BN"], "sleeper_roster_id": 1}
+    me, them = box_score.game(_C(), ctx, 8, 3)["teams"]
+    assert [p["name"] for p in me["bench"]] == ["D"]
+    assert [(p["name"], p["slot"], p["designation"], p["points"]) for p in me["reserve"]] == [("Taxi", "TX", "taxi", 7.5), ("Hurt", "IR", "ir", 0.0)]
+    assert me["projected"] == 22.0 and them["reserve"] == []
