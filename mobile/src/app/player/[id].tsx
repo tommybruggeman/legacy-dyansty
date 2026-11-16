@@ -7,6 +7,7 @@ import { InjuryReport } from '../../components/player/InjuryReport';
 import { NflStatsCard } from '../../components/player/NflStatsCard';
 import { WriteupCard } from '../../components/player/WriteupCard';
 import { PointsChart } from '../../components/player/PointsChart';
+import { PastSeasonsCard, RestOfSeasonCard, RoleCard } from '../../components/player/PlayerCards';
 import { ErrorState, Loading } from '../../components/ScreenState';
 import { Back, Screen, money } from '../../components/ui';
 import { apiGet, apiSend, type PlayerPage, type WaiverSheet, useApi } from '../../lib/api';
@@ -100,7 +101,19 @@ export default function Player() {
           <Tile label={`${data.pos} RANK`} value={ls.rank ? `#${ls.rank.rank}` : '—'} sub="in this league" />
         </View>
 
+        {!h.healthy ? (
+          <View onLayout={(e) => setHealthY(e.nativeEvent.layout.y)}>
+            <InjuryReport h={h} />
+          </View>
+        ) : null}
+
         {data.writeups?.length ? <WriteupCard writeups={data.writeups} /> : null}
+
+        {data.next_game ? <NextGame game={data.next_game} pos={data.pos} /> : null}
+
+        {log.length ? (
+          <PointsChart weeks={log} avg={ls.ppg} pos={data.pos} onOpenLog={() => router.push(`/player-games/${data.player_id}`)} />
+        ) : null}
 
         {data.nfl_ranked ? (
           <NflStatsCard ranked={data.nfl_ranked} season={nfl ?? null} pos={data.pos} />
@@ -125,11 +138,9 @@ export default function Player() {
           </View>
         ) : null}
 
-        {log.length ? (
-          <PointsChart weeks={log} avg={ls.ppg} onPress={() => router.push(`/player-games/${data.player_id}`)} />
-        ) : null}
-
-        {data.next_game ? <NextGame game={data.next_game} pos={data.pos} /> : null}
+        {data.role ? <RoleCard role={data.role} /> : null}
+        {data.rest_of_season ? <RestOfSeasonCard rest={data.rest_of_season} pos={data.pos} /> : null}
+        {data.past_seasons ? <PastSeasonsCard past={data.past_seasons} pos={data.pos} /> : null}
 
         {history.length ? (
           <View style={styles.card}>
@@ -164,9 +175,11 @@ export default function Player() {
           </View>
         ) : null}
 
-        <View onLayout={(e) => setHealthY(e.nativeEvent.layout.y)}>
-          <InjuryReport h={h} />
-        </View>
+        {h.healthy ? (
+          <View onLayout={(e) => setHealthY(e.nativeEvent.layout.y)}>
+            <InjuryReport h={h} />
+          </View>
+        ) : null}
 
         <Pressable onPress={() => router.navigate({ pathname: '/front-office', params: { q: `${data.is_mine ? 'Should I keep, start or trade' : 'What do you think of'} ${name}?`, at: String(Date.now()) } })} style={styles.ask}>
           <View style={styles.fo}><Text style={styles.foText}>FO</Text></View>

@@ -466,7 +466,20 @@ export type PlayerPage = {
       detail: string | null;
       news: { text: string; date: string | null } | null;
     } | null;
+    // This week's call: chance he plays and the Official / Reported / Our call row (not for healthy or IR players).
+    call?: { pct: number; verdict: string; why: string | null; official: string | null; reported: string | null; reported_date: string | null; ours: string } | null;
+    summary?: { text: string; date: string | null; source: string } | null; // "Where he's at"
   };
+  role?: { chips: { slot: string; name: string; share: number; me: boolean }[]; rows: { label: string; value: string }[] } | null;
+  rest_of_season?: {
+    weeks: { week: number; opp: string; home: boolean; tone: 'easy' | 'avg' | 'tough' | null; playoff: boolean }[];
+    playoff_rank: number | null;
+    teams: number | null;
+  } | null;
+  past_seasons?: {
+    columns: { key: string; label: string }[];
+    seasons: ({ season: number; games: number; ppg: number | null; finish: number | null } & Record<string, number | null>)[];
+  } | null;
   history: {
     kind: string;
     title: string;
