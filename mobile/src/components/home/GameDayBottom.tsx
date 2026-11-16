@@ -121,7 +121,8 @@ const BEER_MUG = require('../../../assets/beer-mug.png');
 
 function Shotgun({ data }: { data: Shot }) {
   const { last, locked } = data;
-  if (locked) {
+  // Locked, or nobody else within striking distance: show the final card for last place.
+  if (locked || data.danger.length === 0) {
     return (
       <Card style={styles.shotCard}>
         <View style={styles.lock}>
