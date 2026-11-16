@@ -19,6 +19,9 @@ on:
       lanes:
         description: Race mode, one watcher per ESPN feed (e.g. summary:10000,gamecast:20000); empty = one watcher
         default: ""
+      alerts:
+        description: Also run the owners' push alerts and lock screen Live Activities (1 = live setup replacing the e2-micro)
+        default: "0"
       cpu:
         description: CPU per instance (0.25 for one watcher; 1 for the race)
         default: "0.25"
@@ -60,8 +63,8 @@ jobs:
           gcloud run jobs delete "$JOB" --project "$PROJECT" --region "$REGION" --quiet 2>/dev/null || true  # earlier try
           gcloud run deploy "$JOB" --project "$PROJECT" --region "$REGION" --image "$IMG" \
             --command python --args scripts/watcher_service.py \
-            --set-env-vars "^@^ROLE=cloudrun@MAX_MINUTES=5.5@INTERVAL=2@SUMMARY_EVERY=2@SEASON_OFFSET=${{ inputs.offset || '10000' }}@LANES=${{ inputs.lanes }}" \
-            --set-secrets "SUPABASE_URL=legacy-supabase-url:latest,SUPABASE_SERVICE_ROLE_KEY=legacy-supabase-service-key:latest" \
+            --set-env-vars "^@^ROLE=cloudrun@MAX_MINUTES=5.5@INTERVAL=2@SUMMARY_EVERY=2@SEASON_OFFSET=${{ inputs.offset || '10000' }}@LANES=${{ inputs.lanes }}@ALERTS=${{ inputs.alerts || '0' }}" \
+            --set-secrets "SUPABASE_URL=legacy-supabase-url:latest,SUPABASE_SERVICE_ROLE_KEY=legacy-supabase-service-key:latest,APNS_KEY_P8=legacy-apns-key:latest,APNS_KEY_ID=legacy-apns-key-id:latest" \
             --service-account "$SA" --cpu "${{ inputs.cpu || '0.25' }}" --memory "${{ inputs.memory || '512Mi' }}" --concurrency 1 --max-instances 3 --timeout 420 \
             --no-allow-unauthenticated --quiet
           gcloud run services add-iam-policy-binding "$JOB" --project "$PROJECT" --region "$REGION" \
