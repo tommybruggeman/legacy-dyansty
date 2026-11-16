@@ -34,6 +34,8 @@ jobs:
         run: |
           put() {
             gcloud secrets describe "$1" --project "$PROJECT" >/dev/null 2>&1 || gcloud secrets create "$1" --project "$PROJECT" --replication-policy automatic
+            # Only add a version when the value changed: each enabled version past Google's free 6 is billed.
+            [ "$(gcloud secrets versions access latest --secret "$1" --project "$PROJECT" 2>/dev/null)" = "$2" ] && return 0
             printf '%s' "$2" | gcloud secrets versions add "$1" --project "$PROJECT" --data-file=- >/dev/null
           }
           put legacy-supabase-url "$SUPABASE_URL"
