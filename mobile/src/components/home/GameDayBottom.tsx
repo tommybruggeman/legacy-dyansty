@@ -185,8 +185,8 @@ function Zone({ title, rows, safe = [], muted }: { title?: string; rows: Shotgun
         <Text style={[styles.zLeft, styles.zHeadText]}>LEFT</Text>
       </View>
       {rows.map((r) => <Row key={r.roster_id} r={r} />)}
-      {rows.length === 0 && !muted ? <Text style={[ui.sub, styles.gap]}>Nobody else is close.</Text> : null}
-      {safe.length ? <View style={styles.cut} /> : null}
+      {rows.length === 0 && safe.length === 0 && !muted ? <Text style={[ui.sub, styles.gap]}>Nobody else is close.</Text> : null}
+      {rows.length > 0 && safe.length > 0 ? <View style={styles.cut} /> : null}
       {safe.map((r) => <Row key={r.roster_id} r={r} out />)}
     </>
   );
