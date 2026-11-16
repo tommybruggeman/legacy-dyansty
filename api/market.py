@@ -74,7 +74,7 @@ def season_points(ppg: Any, pid: str) -> float | None:
     return round(rate * games, 1) if rate is not None and games else None
 
 
-def _rank_key(r: dict[str, Any]) -> tuple:
+def rank_key(r: dict[str, Any]) -> tuple:
     return (r["points"] is None, -(r["points"] or 0), r["rank_ppg"] is None, -(r["rank_ppg"] or 0), r["name"])
 
 
@@ -104,7 +104,7 @@ def free_agents(
             "rank_ppg": ppg.ranking_ppg.get(pid),
             "points": season_points(ppg, pid),
         })
-    rows.sort(key=_rank_key)
+    rows.sort(key=rank_key)
     return {
         "season": ppg.active_season,
         "last_season": ppg.last_season,
@@ -187,10 +187,10 @@ def all_players(
     positions = [p for p in POSITIONS if kickers or p != "K"]
     rostered = [r for r in rostered if r["pos"] in positions or not r["pos"]]
     free = [row(pid) for pid in players if pid not in rostered_ids and _text(players[pid].get("position")) in positions]
-    free.sort(key=_rank_key)
+    free.sort(key=rank_key)
     keep = {_text(i) for i in keep_ids}
     rows = rostered + free[:fa_limit] + [r for r in free[fa_limit:] if r["player_id"] in keep]
-    rows.sort(key=_rank_key)
+    rows.sort(key=rank_key)
     owners = sorted(league_teams, key=lambda t: (t["team_id"] != mine, t["owner_name"].lower()))
     return {
         "season": ppg.active_season,
@@ -259,14 +259,7 @@ def filter_players(rows: list[dict[str, Any]], *, search: str = "", status: str 
         }[contract]
 
     out = [p for p in rows if keep(p)]
-    per_dollar = lambda p: p["rank_ppg"] / p["salary"] if p["rank_ppg"] is not None and p["salary"] else -1  # noqa: E731
-    keys = {
-        "PPG": lambda p: -(p["rank_ppg"] if p["rank_ppg"] is not None else -1),
-        "Value per $": lambda p: -per_dollar(p),
-        "Youngest": lambda p: p["age"] if p["age"] is not None else 99,
-        "Salary": lambda p: -(p["salary"] or 0),
-    }
-    return sorted(out, key=keys[sort]) if sort in keys else out
+    return out if sort == "Points" else sort_rows(out, sort)  # rows come ranked by points
 
 
 def nfl_teams(pool: Iterable[dict[str, Any]]) -> dict[str, str]:
@@ -474,3 +467,74 @@ def game_state(next_game: dict[str, Any] | None, live: dict[str, Any] | None, no
     if now_utc < start:
         return "pre"
     return "in" if now_utc < start + timedelta(hours=game_hours) else "post"
+
+
+# ---- One set of numbers for the Market list: every column and every sort -----------------------------------
+
+BAR_WEEKS = 6
+
+
+def played_line(stats: Any) -> bool:
+    """A real game in a stat line: games played or any snaps."""
+    return bool(stats) and bool(stats.get("gp") or stats.get("off_snp") or stats.get("def_snp") or stats.get("st_snp"))
+
+
+def player_numbers(games: list[tuple[int, float]], week: int, bye_week: int | None = None,
+                   now_pts: float | None = None, now_state: str | None = None) -> dict[str, Any]:
+    """Season points, PPG, games, last-3-games average (and how many games it covers), the gap from his PPG, and
+    one bar per week for the last BAR_WEEKS weeks, from his league-scoring points in the games he played.
+
+    `games` is [(week, points)] for finished weeks before `week`; his game this week counts once it is final
+    (now_state "post" with now_pts). Bars: {"week", "pts"} with pts None when he didn't play, "bye" on his team's
+    bye, and "live" while this week's game is on."""
+    played = sorted(games)
+    if now_state == "post" and now_pts is not None:
+        played.append((week, float(now_pts)))
+    total = round(sum(p for _, p in played), 1)
+    count = len(played)
+    avg = round(total / count, 1) if count else None
+    recent = [p for _, p in played[-3:]]
+    last3 = round(sum(recent) / len(recent), 1) if recent else None
+    by_week = dict(played)
+    bars = []
+    for w in range(max(1, week - BAR_WEEKS + 1), week + 1):
+        bar: dict[str, Any] = {"week": w, "pts": by_week.get(w)}
+        if w == bye_week:
+            bar["bye"] = True
+        if w == week and now_state == "in" and now_pts is not None:
+            bar.update(pts=float(now_pts), live=True)
+        bars.append(bar)
+    return {
+        "points": total if count else None,
+        "avg": avg,
+        "games": count or None,
+        "last3": last3,
+        "last3_games": len(recent) or None,
+        "trend": round(last3 - avg, 1) if last3 is not None and avg is not None else None,
+        "bars": bars,
+    }
+
+
+def sort_rows(rows: list[dict[str, Any]], sort: str) -> list[dict[str, Any]]:
+    """The Market sorts, on the same numbers the list shows (shared by the app's menu and the website's select)."""
+    def num(v: Any) -> float:
+        return float(v) if v is not None else float("-inf")
+
+    def week_num(p: dict[str, Any]) -> float:
+        state = (p.get("next") or {}).get("state")
+        if (p.get("next") or {}).get("bye"):
+            return float("-inf")
+        return num(p.get("week_pts")) if state in ("in", "post") else num(p.get("proj"))
+
+    per_dollar = lambda p: p["rank_ppg"] / p["salary"] if p.get("rank_ppg") is not None and p.get("salary") else float("-inf")  # noqa: E731
+    keys: dict[str, Callable[[dict[str, Any]], Any]] = {
+        "Points": lambda p: -num(p.get("points")),
+        "PPG": lambda p: -num(p.get("rank_ppg")),
+        "Last 3 games": lambda p: -num(p.get("last3")),
+        "This week": lambda p: -week_num(p),
+        "Value per $": lambda p: -per_dollar(p),
+        "Salary": lambda p: -(p.get("salary") or 0),
+        "Youngest": lambda p: p["age"] if p.get("age") is not None else 99,
+    }
+    key = keys.get(sort)
+    return sorted(rows, key=lambda p: (key(p), p.get("name") or "")) if key else list(rows)

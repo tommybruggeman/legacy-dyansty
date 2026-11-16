@@ -540,7 +540,11 @@ export type LeaguePlayer = {
   // This week, in league scoring (missing on older servers): projection, season average, last-3 form, next game.
   proj?: number | null; avg?: number | null; last3?: number | null; trend?: number | null; next?: NextGame | null;
   games?: number | null; pos_rank?: string | null; week_pts?: number | null; // games played, "WR41", points this week once his game starts
+  // Same league-scoring lines as everything above (from build 89's server): games in the last-3 average, and one bar per
+  // week for the last 6 weeks (pts null = didn't play; bye on his team's bye; live while this week's game is on).
+  last3_games?: number | null; bars?: WeekBar[];
 };
+export type WeekBar = { week: number; pts: number | null; bye?: boolean; live?: boolean };
 export type NextGame = {
   week: number; bye: boolean; opp?: string; home?: boolean; kickoff?: string | null; opp_rank?: number | null; teams?: number | null; final?: boolean;
   // live game state (pre / in / post) with the score from his team's side once it starts (from build 66's server)
