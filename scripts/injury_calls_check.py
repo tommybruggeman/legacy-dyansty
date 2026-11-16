@@ -83,7 +83,7 @@ def main() -> None:
         gsis_of = {str(p["sleeper_id"]): p.get("gsis_id") for p in players}
         team_of = {str(p["sleeper_id"]): p.get("team") for p in players}
         played = {gsis_of.get(pid) for pid in gp} - {None}
-        teams_loaded = {team_of.get(pid) for pid in gp if (sl[pid] or {}).get("off_snp")} - {None}
+        teams_loaded = {team_of.get(pid) for pid in gp} - {None}
     print(f"\n== Week {week} calls (teams with box scores loaded: {len(teams_loaded)}) ==")
 
     rates = {(r["scope"], r.get("game_status") or "", r.get("practice") or ""): r
