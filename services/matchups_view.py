@@ -492,7 +492,6 @@ PLAYOFF_CSS = """
 .po-lbl{color:#C89B4A;font-size:11px;font-weight:800;letter-spacing:1.3px;margin:0 4px 6px}.po-lbl.big{color:#E2BC5B;font-size:12px}
 .po-card{position:relative;border-radius:16px;background:#0E201A;border:1px solid #1B2E24;overflow:hidden}
 .po-card.big{background:linear-gradient(135deg,#2C2512,#132D20)}.po-card.mine{border:1.5px solid #C89B4A}
-.po-card.live:before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:#4CC38A}
 .po-row{display:flex;align-items:center;gap:10px;padding:11px 14px 9px 16px}
 .po-lost{opacity:.5}
 .po-seed{width:24px;height:24px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;flex:none;
