@@ -264,8 +264,8 @@ CROSSWALK_CACHE = os.path.join(tempfile.gettempdir(), "legacy-player-ids.csv")
 def crosswalk(max_age: float = 86400.0):
     """The public ESPN/Sleeper/gsis id table (DynastyProcess), kept a day in a local file so a 5-minute job doesn't
     download it each time."""
-    from pipeline.nfl_data.crosswalk import CROSSWALK_URL, Crosswalk
     try:
+        from pipeline.nfl_data.crosswalk import CROSSWALK_URL, Crosswalk
         if not os.path.exists(CROSSWALK_CACHE) or time.time() - os.path.getmtime(CROSSWALK_CACHE) > max_age:
             import requests
             resp = requests.get(CROSSWALK_URL, timeout=60)
@@ -342,6 +342,15 @@ def in_use(client: Any) -> bool:
         return bool(client.table("nfl_player_status").select("sleeper_id").limit(1).execute().data)
     except Exception:
         return False
+
+
+GAME_TAGS = {"Questionable", "Doubtful", "Out", "DTD"}
+
+
+def game_tag_expired(change: Mapping[str, Any], team: str, played: set[str]) -> bool:
+    """A game-week tag (Questionable, Doubtful, Out) dropping off after his game is just the report resetting for the
+    next week, not news: no alert (the change is still logged). A player coming off IR or PUP is always news."""
+    return change.get("to_status") == HEALTHY and change.get("from_status") in GAME_TAGS and team in played
 
 
 def tag(status: str | None) -> str:

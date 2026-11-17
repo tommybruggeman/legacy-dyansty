@@ -242,6 +242,16 @@ def held_players(lg: League) -> dict[str, int]:
     return out
 
 
+def played_lately(lg: League) -> set[str]:
+    """NFL teams whose game kicked off in the last 4 days."""
+    teams = set()
+    for week in {max(lg.week - 1, 1), lg.week}:
+        for team, kick in lg.kickoffs(week).items():
+            if timedelta(0) <= lg.now - kick <= timedelta(days=4):
+                teams.add(team)
+    return teams
+
+
 def status_alerts(lg: League) -> None:
     if not CHANGES:
         return
@@ -252,6 +262,8 @@ def status_alerts(lg: League) -> None:
     from api import teams
     info = teams.player_info(lg.client, [c["sleeper_id"] for c in mine])
     names = {pid: _text(m.get("full_name")) or pid for pid, m in info.items()}
+    played = played_lately(lg)
+    mine = [c for c in mine if not player_status.game_tag_expired(c, _text(info.get(str(c["sleeper_id"]), {}).get("team")), played)]
     by_roster: dict[int, list[dict[str, Any]]] = {}
     for c in mine:
         by_roster.setdefault(held[str(c["sleeper_id"])], []).append(c)
