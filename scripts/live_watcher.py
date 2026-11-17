@@ -76,8 +76,12 @@ def _now() -> datetime:
 
 
 def _kickoffs(board: dict[str, Any]) -> list[datetime]:
+    """Kickoff times of games that haven't started yet (a game past its listed time but still "pre" counts too)."""
     out = []
     for event in board.get("events") or []:
+        state = str(((event.get("status") or {}).get("type") or {}).get("state") or "pre")
+        if state != "pre":
+            continue
         try:
             out.append(datetime.fromisoformat(str(event.get("date")).replace("Z", "+00:00")))
         except ValueError:
@@ -141,7 +145,9 @@ class Watcher:
         games = espn_feed.games(board)
         live = [g for g in games if g["state"] == "in"]
         if not live and all(g["id"] in self.versions and self.versions[g["id"]] == g["version"] for g in games if g["state"] == "post"):
-            soon = [k for k in _kickoffs(board) if timedelta(0) <= k - _now() <= timedelta(hours=1)]
+            # Includes games past their listed kickoff that haven't started (TV kickoffs run ~5 min late): Monday
+            # 11-16 the free watcher stopped at 01:16 for a 01:15 game still "pre" and only came back at 01:20.
+            soon = [k for k in _kickoffs(board) if k - _now() <= timedelta(hours=1)]
             return NAP if soon else LONG_NAP
         if self.role == "backup" and self.main_is_saving(season, week):
             self.counts["standby"] += 1
