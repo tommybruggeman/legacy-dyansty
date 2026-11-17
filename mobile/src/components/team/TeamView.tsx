@@ -1,6 +1,6 @@
 import { router, useFocusEffect } from 'expo-router';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
-import { Linking, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Dimensions, Linking, Modal, Pressable, ScrollView, StyleSheet, Text, View, type ScrollViewInstance } from 'react-native';
 
 import type { Pick, Player, TeamPage, TeamWeek, TeamWeekItem, WeekPlayer } from '../../lib/api';
 import { colors } from '../../lib/theme';
@@ -115,13 +115,28 @@ function MatchupBar({ team }: { team: TeamPage }) {
 }
 
 // The quiet week button next to Starters and its menu: past results, this week (gold), later opponents, playoffs.
+// The menu is one fixed size (about six weeks tall) and scrolls inside, with no scroll bar, opening on the week
+// being shown (Tommy, 2026-11-17).
+const MENU_H = 300;
+const ITEM_H = 48;
+const MENU_PAD = 8;
 function WeekButton({ team, onWeek }: { team: TeamPage; onWeek: (week: number | null) => void }) {
   const [open, setOpen] = useState(false);
-  const [at, setAt] = useState({ top: 0, right: 16 });
+  const [at, setAt] = useState({ top: 0, right: 16, height: MENU_H });
   const ref = useRef<any>(null); // RN View instance (measureInWindow)
   const shown = team.week?.week ?? team.current_week ?? 1;
   const items = team.weeks ?? [];
-  const show = () => ref.current?.measureInWindow((_x: number, y: number, _w: number, h: number) => { setAt({ top: y + h + 6, right: 16 }); setOpen(true); });
+  // Never runs past the tab bar on a short screen.
+  const show = () => ref.current?.measureInWindow((_x: number, y: number, _w: number, h: number) => {
+    const top = y + h + 6;
+    setAt({ top, right: 16, height: Math.max(160, Math.min(MENU_H, Dimensions.get('window').height - top - 110)) });
+    setOpen(true);
+  });
+  const index = Math.max(0, items.findIndex((it) => it.week === shown));
+  const full = items.length * ITEM_H + MENU_PAD * 2;
+  // The shown week sits in the middle of the box when it opens.
+  const offset = Math.max(0, Math.min(full - at.height, MENU_PAD + index * ITEM_H - (at.height - ITEM_H) / 2));
+  const list = useRef<ScrollViewInstance>(null);
   return (
     <>
       <Pressable ref={ref} onPress={show} hitSlop={8} style={styles.wk}>
@@ -129,19 +144,28 @@ function WeekButton({ team, onWeek }: { team: TeamPage; onWeek: (week: number | 
       </Pressable>
       <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
         <Pressable style={StyleSheet.absoluteFill} onPress={() => setOpen(false)} />
-        <View style={[styles.menu, { top: at.top, right: at.right }]}>
-          {items.map((it: TeamWeekItem) => {
-            const now = it.week === team.current_week;
-            const sub = it.playoffs ? 'Playoffs'
-              : it.result && it.score ? `${it.result} ${it.score[0].toFixed(1)} – ${it.score[1].toFixed(1)}${it.opponent ? ` vs ${firstName(it.opponent)}` : ''}`
-              : it.opponent ? `vs ${firstName(it.opponent)}` : 'No game';
-            return (
-              <Pressable key={it.week} onPress={() => { setOpen(false); onWeek(now ? null : it.week); }} style={[styles.mi, now && styles.miNow]}>
-                <Text style={[styles.miWeek, now && styles.gold, it.playoffs && !now && styles.miPlayoff]}>Wk {it.week}</Text>
-                <Text style={styles.miSub}>{sub}</Text>
-              </Pressable>
-            );
-          })}
+        <View style={[styles.menu, { top: at.top, right: at.right, height: Math.min(at.height, full) }]}>
+          <ScrollView
+            ref={list}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.menuList}
+            contentOffset={{ x: 0, y: offset }}
+            onLayout={() => list.current?.scrollTo({ y: offset, animated: false })}
+          >
+            {items.map((it: TeamWeekItem) => {
+              const now = it.week === team.current_week;
+              const picked = it.week === shown && !now;
+              const sub = it.playoffs ? 'Playoffs'
+                : it.result && it.score ? `${it.result} ${it.score[0].toFixed(1)} – ${it.score[1].toFixed(1)}${it.opponent ? ` vs ${firstName(it.opponent)}` : ''}`
+                : it.opponent ? `vs ${firstName(it.opponent)}` : 'No game';
+              return (
+                <Pressable key={it.week} onPress={() => { setOpen(false); onWeek(now ? null : it.week); }} style={[styles.mi, now && styles.miNow, picked && styles.miPicked]}>
+                  <Text style={[styles.miWeek, now && styles.gold, it.playoffs && !now && styles.miPlayoff]}>Wk {it.week}</Text>
+                  <Text style={styles.miSub} numberOfLines={1}>{sub}</Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
         </View>
       </Modal>
     </>
@@ -284,6 +308,7 @@ function Points({ p, w }: { p: Player; w?: WeekPlayer }) {
 
 // "$48 · thru 2027" (or "No contract").
 function contractText(p: Player, season: number) {
+  if (p.gone) return 'Not on your team now';
   if (p.no_contract) return 'No contract';
   return `${dollars(p.contract_salary)} · thru ${season + Math.max(p.years_left, 1) - 1}`;
 }
@@ -636,8 +661,10 @@ const styles = StyleSheet.create({
   h2hSub: { color: colors.muted, fontSize: 12 },
   wk: { borderWidth: 1, borderColor: '#2F4136', borderRadius: 8, paddingVertical: 3, paddingHorizontal: 9 },
   wkText: { color: '#A9A493', fontSize: 12, fontWeight: '700' },
-  menu: { position: 'absolute', width: 250, maxHeight: 460, backgroundColor: '#10291F', borderWidth: 1, borderColor: colors.gold, borderRadius: 16, padding: 8, shadowColor: '#000', shadowOpacity: 0.6, shadowRadius: 20, shadowOffset: { width: 0, height: 12 } },
-  mi: { paddingVertical: 7, paddingHorizontal: 8, borderRadius: 10 },
+  menu: { position: 'absolute', width: 250, backgroundColor: '#10291F', borderWidth: 1, borderColor: colors.gold, borderRadius: 16, overflow: 'hidden', shadowColor: '#000', shadowOpacity: 0.6, shadowRadius: 20, shadowOffset: { width: 0, height: 12 } },
+  menuList: { padding: MENU_PAD },
+  mi: { height: ITEM_H, justifyContent: 'center', paddingHorizontal: 8, borderRadius: 10 },
+  miPicked: { borderWidth: 1, borderColor: '#2F4136' },
   miNow: { backgroundColor: 'rgba(200,155,74,0.18)' },
   miWeek: { color: colors.text, fontSize: 13.5, fontWeight: '800' },
   miPlayoff: { color: colors.live },
