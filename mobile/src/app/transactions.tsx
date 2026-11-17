@@ -192,7 +192,7 @@ function Piece({ p }: { p: OfferPiece }) {
     <Pressable disabled={p.kind !== 'player'} onPress={() => p.player_id && router.push(`/player/${p.player_id}`)} style={styles.piece}>
       {p.kind === 'player'
         ? <Headshot playerId={p.player_id} pos={p.pos} team={p.nfl_team} size={48} />
-        : <View style={styles.pick}><Text style={styles.pickText}>PICK</Text></View>}
+        : <View style={styles.pick}><Text style={styles.pickText}>{p.kind === 'cap' ? '$' : 'PICK'}</Text></View>}
       <Text style={styles.pieceName} numberOfLines={2}>{p.name}</Text>
     </Pressable>
   );

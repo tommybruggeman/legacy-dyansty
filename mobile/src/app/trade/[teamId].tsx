@@ -32,6 +32,8 @@ export default function TradePage() {
   const [mine, setMine] = useState<Set<string>>(() => ids(give));
   const [theirs, setTheirs] = useState<Set<string>>(() => new Set([...ids(get), ...(add ? [`p:${add}`] : [])]));
   const [adding, setAdding] = useState<'me' | 'them' | null>(null);
+  // Cap space (this season) each side sends: any amount (Tommy, 2026-11-17: no limit).
+  const [cap, setCap] = useState<{ me: number; them: number }>({ me: 0, them: 0 });
   const [sending, setSending] = useState(false);
 
   const picked = useMemo(() => {
@@ -54,10 +56,12 @@ export default function TradePage() {
   const g = grade(value(picked.give), value(picked.get));
   const me = firstName(data.me.owner_name);
   const them = firstName(data.them.owner_name);
-  const myCapAfter = data.me.cap_space + salary(picked.give) - salary(picked.get);
-  const theirCapAfter = data.them.cap_space + salary(picked.get) - salary(picked.give);
+  const myCapAfter = data.me.cap_space + salary(picked.give) - salary(picked.get) - cap.me + cap.them;
+  const theirCapAfter = data.them.cap_space + salary(picked.get) - salary(picked.give) - cap.them + cap.me;
   const over = myCapAfter < 0 || theirCapAfter < 0;
-  const ready = (picked.give.players.length + picked.give.picks.length) > 0 && (picked.get.players.length + picked.get.picks.length) > 0;
+  const assets = picked.give.players.length + picked.give.picks.length + picked.get.players.length + picked.get.picks.length;
+  const ready = assets > 0 && (picked.give.players.length + picked.give.picks.length + (cap.me > 0 ? 1 : 0)) > 0
+    && (picked.get.players.length + picked.get.picks.length + (cap.them > 0 ? 1 : 0)) > 0;
   const lean = !g ? '' : g.lean === 'fair' ? 'Fair' : g.lean === 'you' ? `${me} +${g.pct}%` : `${them} +${g.pct}%`;
 
   const toggle = (side: 'me' | 'them', key: string, alt?: string) => {
@@ -78,6 +82,8 @@ export default function TradePage() {
         to_team_id: data.them.team_id,
         give: [...picked.give.players.map((p) => ({ contract_id: p.contract_id, player_id: p.player_id, name: p.name })), ...picked.give.picks.map((p) => ({ pick_id: p.pick_id, label: p.label }))],
         get: [...picked.get.players.map((p) => ({ contract_id: p.contract_id, player_id: p.player_id, name: p.name })), ...picked.get.picks.map((p) => ({ pick_id: p.pick_id, label: p.label }))],
+        give_cap: cap.me,
+        get_cap: cap.them,
         parent_offer_id: parent ?? null,
       });
       router.replace('/transactions');
@@ -98,9 +104,11 @@ export default function TradePage() {
         <View style={styles.head}><Avatar uri={data.them.avatar} name={data.them.team_name || data.them.owner_name} size={30} /><Text style={styles.headText} numberOfLines={1}>{`${them} Receives`}</Text></View>
       </View>
       <View style={styles.cols}>
-        <Column players={picked.get.players} picks={picked.get.picks} season={data.season} onRemove={(k, alt) => toggle('them', k, alt)} onAdd={() => setAdding('them')} />
+        <Column players={picked.get.players} picks={picked.get.picks} cap={cap.them} season={data.season} onRemove={(k, alt) => toggle('them', k, alt)}
+          onClearCap={() => setCap({ ...cap, them: 0 })} onAdd={() => setAdding('them')} />
         <View style={styles.swap}><Text style={styles.swapText}>⇄</Text></View>
-        <Column players={picked.give.players} picks={picked.give.picks} season={data.season} onRemove={(k, alt) => toggle('me', k, alt)} onAdd={() => setAdding('me')} />
+        <Column players={picked.give.players} picks={picked.give.picks} cap={cap.me} season={data.season} onRemove={(k, alt) => toggle('me', k, alt)}
+          onClearCap={() => setCap({ ...cap, me: 0 })} onAdd={() => setAdding('me')} />
       </View>
 
       <View style={styles.gm}>
@@ -125,6 +133,8 @@ export default function TradePage() {
         chosen={adding === 'me' ? mine : theirs}
         season={data.season}
         onToggle={(k, alt) => adding && toggle(adding, k, alt)}
+        cap={adding ? cap[adding] : 0}
+        onCap={(n) => adding && setCap({ ...cap, [adding]: n })}
         onClose={() => setAdding(null)}
       />
     </Screen>
@@ -133,8 +143,8 @@ export default function TradePage() {
 
 const thru = (p: TradeAsset, season?: number) => (season ? `thru ${season + Math.max(1, p.years) - 1}` : `${p.years} yr${p.years === 1 ? '' : 's'}`);
 
-function Column({ players, picks, season, onRemove, onAdd }: {
-  players: TradeAsset[]; picks: TradePick[]; season?: number; onRemove: (key: string, alt?: string) => void; onAdd: () => void;
+function Column({ players, picks, cap, season, onRemove, onClearCap, onAdd }: {
+  players: TradeAsset[]; picks: TradePick[]; cap: number; season?: number; onRemove: (key: string, alt?: string) => void; onClearCap: () => void; onAdd: () => void;
 }) {
   return (
     <View style={styles.col}>
@@ -154,16 +164,24 @@ function Column({ players, picks, season, onRemove, onAdd }: {
           <Text style={styles.remove}>×</Text>
         </Pressable>
       ))}
+      {cap > 0 ? (
+        <Pressable onPress={onClearCap} style={styles.piece}>
+          <View style={styles.pickBig}><Text style={styles.pickBigText}>$</Text></View>
+          <Text style={styles.pieceName} numberOfLines={1}>{money(cap)}</Text>
+          <Text style={styles.pieceSub}>cap space</Text>
+          <Text style={styles.remove}>×</Text>
+        </Pressable>
+      ) : null}
       <Pressable onPress={onAdd} style={styles.add}><Text style={styles.addText}>+ Add</Text></Pressable>
     </View>
   );
 }
 
-function AddSheet({ visible, title, side, chosen, season, onToggle, onClose }: {
-  visible: boolean; title: string; side: TradeSideData; chosen: Set<string>; season?: number;
-  onToggle: (key: string, alt?: string) => void; onClose: () => void;
+function AddSheet({ visible, title, side, chosen, season, cap, onToggle, onCap, onClose }: {
+  visible: boolean; title: string; side: TradeSideData; chosen: Set<string>; season?: number; cap: number;
+  onToggle: (key: string, alt?: string) => void; onCap: (amount: number) => void; onClose: () => void;
 }) {
-  const [tab, setTab] = useState<'Players' | 'Picks'>('Players');
+  const [tab, setTab] = useState<'Players' | 'Picks' | 'Cap'>('Players');
   const [pos, setPos] = useState<(typeof POSITIONS)[number]>('All');
   const [query, setQuery] = useState('');
   const q = query.trim().toLowerCase();
@@ -177,7 +195,7 @@ function AddSheet({ visible, title, side, chosen, season, onToggle, onClose }: {
         <View style={styles.grab} />
         <View style={styles.sheetTop}><Text style={styles.sheetTitle}>{title}</Text><Pressable onPress={onClose} hitSlop={8}><Text style={styles.done}>Done</Text></Pressable></View>
         <View style={styles.tabs}>
-          {(['Players', 'Picks'] as const).map((t) => (
+          {(['Players', 'Picks', 'Cap'] as const).map((t) => (
             <Pressable key={t} onPress={() => setTab(t)} style={[styles.tab, tab === t && styles.tabOn]}><Text style={[styles.tabText, tab === t && styles.tabTextOn]}>{t}</Text></Pressable>
           ))}
         </View>
@@ -191,8 +209,9 @@ function AddSheet({ visible, title, side, chosen, season, onToggle, onClose }: {
             </View>
           </>
         ) : null}
+        {tab === 'Cap' ? <CapPicker cap={cap} space={side.cap_space} season={season} onCap={onCap} /> : null}
         <ScrollView style={styles.list} contentContainerStyle={{ paddingBottom: 30 }}>
-          {tab === 'Players' ? players.map((p) => (
+          {tab === 'Cap' ? null : tab === 'Players' ? players.map((p) => (
             <Pressable key={p.contract_id} onPress={() => onToggle(p.contract_id, `p:${p.player_id}`)} style={styles.row}>
               <Headshot playerId={p.player_id} pos={p.pos} team={p.nfl_team} size={40} />
               <View style={ui.flex}>
@@ -221,6 +240,32 @@ function AddSheet({ visible, title, side, chosen, season, onToggle, onClose }: {
   );
 }
 
+// Cap space this side sends in the trade (this season). Any amount; going over the cap is allowed, but a team still
+// over at Sunday's first kickoff takes an automatic loss.
+function CapPicker({ cap, space, season, onCap }: { cap: number; space: number; season?: number; onCap: (amount: number) => void }) {
+  const [text, setText] = useState(cap ? String(cap) : '');
+  const set = (value: string) => {
+    const clean = value.replace(/[^0-9.]/g, '');
+    setText(clean);
+    const n = Math.round(Number(clean) * 100) / 100;
+    onCap(Number.isFinite(n) && n > 0 ? n : 0);
+  };
+  return (
+    <View style={styles.capBox}>
+      <Text style={ui.sub}>{`Cap space to send${season ? ` (${season})` : ''}. They have ${money(space)} of space now.`}</Text>
+      <View style={styles.capRow}>
+        <Text style={styles.capDollar}>$</Text>
+        <TextInput value={text} onChangeText={set} keyboardType="decimal-pad" placeholder="0" placeholderTextColor={colors.muted} style={styles.capInput} />
+      </View>
+      <View style={styles.chips}>
+        {[1, 5, 10, 20].map((n) => (
+          <Pressable key={n} onPress={() => set(String(n))} style={[styles.chip, cap === n && styles.chipOn]}><Text style={[styles.chipText, cap === n && styles.chipTextOn]}>{`$${n}`}</Text></Pressable>
+        ))}
+      </View>
+    </View>
+  );
+}
+
 // After the deadline the Trade button opens only this.
 function Closed({ window, from }: { window: TradeWindow; from?: string }) {
   return (
@@ -242,6 +287,10 @@ function Closed({ window, from }: { window: TradeWindow; from?: string }) {
 }
 
 const styles = StyleSheet.create({
+  capBox: { paddingVertical: 10, gap: 10 },
+  capRow: { flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderColor: '#2F4136', borderRadius: 12, paddingHorizontal: 12 },
+  capDollar: { color: colors.gold, fontSize: 22, fontWeight: '900' },
+  capInput: { flex: 1, color: colors.text, fontSize: 22, fontWeight: '800', paddingVertical: 10 },
   heads: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
   head: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 },
   headText: { color: colors.text, fontSize: 14, fontWeight: '900', flexShrink: 1 },

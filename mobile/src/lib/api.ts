@@ -758,7 +758,7 @@ export type TradeSideData = { team_id: string; owner_name: string; team_name?: s
 export type TradeWindow = { open: boolean; deadline_week: number | null; reopens_after_week: number; message: string | null };
 // Past the deadline the server sends only enabled/window/season (the app shows the closed screen).
 export type TradeBuilder = { enabled: boolean; window?: TradeWindow; season?: number; sleeper_league_id: string; salary_cap: number; me: TradeSideData; them: TradeSideData; add: string | null };
-export type OfferPiece = { kind: 'player' | 'pick'; player_id: string | null; contract_id: string | null; pick_id: string | null; name: string; pos: string; nfl_team: string };
+export type OfferPiece = { kind: 'player' | 'pick' | 'cap'; amount?: number; player_id: string | null; contract_id: string | null; pick_id: string | null; name: string; pos: string; nfl_team: string };
 export type Offer = {
   id: string; partner: string; partner_team_id: string; you_get: OfferPiece[]; you_give: OfferPiece[]; note: string | null;
   created_at: string; status: string; decided_at: string | null; is_counter: boolean; line?: string; sent_by_you?: boolean;
