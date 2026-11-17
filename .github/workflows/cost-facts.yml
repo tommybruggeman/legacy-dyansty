@@ -89,3 +89,10 @@ jobs:
           echo "request results:"; gcloud logging read "$F AND httpRequest.status>0" --project "$PROJECT" --freshness 6h --format 'value(httpRequest.status,httpRequest.latency)' | awk '{print $1}' | sort | uniq -c
           echo "other warnings:"; gcloud logging read "$F AND severity>=WARNING" --project "$PROJECT" --freshness 6h --format 'value(textPayload)' | cut -c1-160 | sort | uniq -c | sort -rn | head -15
           echo "timer attempts:"; gcloud logging read 'resource.type="cloud_scheduler_job" AND resource.labels.job_id="legacy-live-watcher-tick"' --project "$PROJECT" --freshness 6h --format 'value(jsonPayload.status,jsonPayload.debugInfo)' | cut -c1-120 | sort | uniq -c
+      - name: Alerts, Live Activities and Sleeper sync on the free watcher (last 6 hours)
+        run: |
+          F='resource.type="cloud_run_revision" AND resource.labels.service_name="legacy-live-watcher"'
+          gcloud logging read "$F AND (textPayload:\"delivery:\" OR textPayload:\"SYNC_ERROR\" OR textPayload:\"ALERTS_ERROR\" OR textPayload:\"LA_ERROR\" OR textPayload:\"live activities:\" OR textPayload:\"queued only\" OR textPayload:\"skipping\")" \
+            --project "$PROJECT" --freshness 6h --format 'value(timestamp,textPayload)' | sort | cut -c12-19,30-200 | tail -20
+          echo "sync runs (stdout lines from the sync scripts, counts only):"
+          gcloud logging read "$F AND textPayload:\"sync\"" --project "$PROJECT" --freshness 1h --format 'value(textPayload)' | cut -c1-120 | sort | uniq -c | head -15
