@@ -92,6 +92,7 @@ def build(
 
     # Points for every playoff week that has started: (week, roster) -> score.
     points: dict[tuple[int, int], float] = {}
+    forfeits: set[tuple[int, int]] = set()  # (week, roster) that started that Sunday over the cap
     row_mid: dict[tuple[int, int], Any] = {}
     for w in sorted({w for ws in [*weeks.values(), *lweeks.values()] for w in ws}):
         if w > current_week:
@@ -100,6 +101,8 @@ def build(
             if row.get("roster_id") is None:
                 continue
             points[(w, int(row["roster_id"]))] = _team_points(dict(row))
+            if row.get("auto_loss"):
+                forfeits.add((w, int(row["roster_id"])))
             row_mid[(w, int(row["roster_id"]))] = row.get("matchup_id")
 
     def done(r: int) -> bool:
@@ -110,9 +113,9 @@ def build(
 
     playoff_seeds = order[:cfg["teams"]]
     loser_seeds = order[cfg["teams"]:]
-    win_bracket = own_league.build_bracket(playoff_seeds, points, done, weeks) if len(playoff_seeds) == cfg["teams"] else []
+    win_bracket = own_league.build_bracket(playoff_seeds, points, done, weeks, auto_loss=forfeits) if len(playoff_seeds) == cfg["teams"] else []
     loser_bracket = own_league.build_bracket(
-        loser_seeds, points, loser_done, lweeks, own_league.loser_layout(len(loser_seeds))) if cfg["loser_bracket"] else []
+        loser_seeds, points, loser_done, lweeks, own_league.loser_layout(len(loser_seeds)), auto_loss=forfeits) if cfg["loser_bracket"] else []
 
     def team(rid: int | None, r: int, when: Mapping[int, list[int]] = weeks) -> dict[str, Any] | None:
         if not rid:

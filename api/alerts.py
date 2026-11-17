@@ -46,7 +46,7 @@ KIND_NOTES: dict[str, str] = {
     "stat_fix": "A stat correction changed your score.",
     "waivers": "Wednesday and Sunday mornings, after waivers run.",
     "deadlines": "Taxi, team option and trade deadline reminders.",
-    "cap": "Every morning while you're over the cap.",
+    "cap": "Every morning while you're over the cap, after a claim puts you over, and the auto-loss on Sunday.",
     "trade_offers": "Offers sent to you, and answers to yours.",
     "trades": "A trade was completed in the league.",
     "playoffs": "You clinched a spot, and when the bracket is set.",
@@ -271,6 +271,33 @@ def over_cap(*, season: int, day: date, used: float, cap: float, day_number: int
                      "This alert repeats daily until you're under.", "/my-team")
     return Alert("cap", f"cap:{season}:{day.isoformat()}", f"Still {money} over the cap (day {day_number})",
                  f"You're at {used_s} of ${cap:,.0f}.", "/my-team")
+
+
+def _money(n: float) -> str:
+    return f"${n:,.0f}" if float(n).is_integer() else f"${n:,.2f}"
+
+
+# Over-the-cap rule (Tommy, 2026-11-17): a team over the cap at Sunday's first kickoff takes an automatic loss.
+def over_cap_claim(*, run_key: str, team_id: str, player: str, over: float) -> Alert:
+    """Personal, right after the waiver run (wording approved 2026-11-17)."""
+    return Alert("cap", f"cap-claim:{run_key}:{team_id}", f"You're {_money(over)} over the cap",
+                 f"Your claim for {player} puts you over the cap. Get under before Sunday's first kickoff to avoid an auto-loss.",
+                 "/my-team")
+
+
+def over_cap_friday(*, season: int, week: int, over: float, kickoff: datetime | None, tz: str | None) -> Alert:
+    """Friday 9 AM reminder (instead of that day's daily cap alert)."""
+    when = f" ({short_date(kickoff, tz)}, {clock(kickoff, tz)})" if kickoff else ""
+    return Alert("cap", f"cap-fri:{season}:{week}", "Get under the cap by Sunday",
+                 f"You're {_money(over)} over. Get under before Sunday's first kickoff{when} or Week {week} is an automatic loss.",
+                 "/my-team")
+
+
+def auto_loss(*, season: int, week: int, over: float) -> Alert:
+    """Sunday, once the first game kicks off with the team still over."""
+    return Alert("cap", f"auto-loss:{season}:{week}", f"Week {week}: automatic loss",
+                 f"You started Sunday {_money(over)} over the cap, so this week is an automatic loss and you can't earn a top 5 point.",
+                 "/my-team")
 
 
 def trade_offer_received(*, offer_id: str, sender: str) -> Alert:

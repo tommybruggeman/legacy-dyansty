@@ -93,3 +93,18 @@ def test_home_bracket_and_my_game_from_our_view():
     box = {"is_final": False, "teams": [{"roster_id": 2, "score": 10, "projected": 90, "players": []}, {"roster_id": 3, "score": 20, "projected": 95, "players": []}]}
     box_score.add_round(box, {2: 98, 3: 97})
     assert box["round"]["projected"] == [188, 192] and box["round"]["score"] == [108, 117]
+
+
+def test_over_cap_team_loses_its_playoff_round():
+    # Week 15 semis: seed 1 outscores seed 4 over both weeks, but started week 15 over the cap.
+    weeks = {1: [15, 16], 2: [17, 18]}
+    points = {(15, 1): 120, (16, 1): 120, (15, 4): 100, (16, 4): 100, (15, 2): 110, (16, 2): 110, (15, 3): 90, (16, 3): 90}
+    games = own_league.build_bracket([1, 2, 3, 4], points, lambda r: r == 1, weeks, auto_loss={(15, 1)})
+    semi = next(g for g in games if {g["t1"], g["t2"]} == {1, 4})
+    assert semi["w"] == 4 and semi["l"] == 1
+
+
+def test_mark_auto_losses_flags_only_that_team():
+    rows = [{"roster_id": 1, "points": 120, "matchup_id": 1}, {"roster_id": 2, "points": 90, "matchup_id": 1}]
+    out = own_league.mark_auto_losses(rows, {1})
+    assert out[0]["auto_loss"] is True and "auto_loss" not in out[1] and "auto_loss" not in rows[0]

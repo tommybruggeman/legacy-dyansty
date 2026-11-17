@@ -75,9 +75,12 @@ def round_weeks(start: int, rounds: int, round_type: int) -> dict[int, list[int]
 
 def build_bracket(seeds: list[int], points: Mapping[tuple[int, int], float], done: Callable[[int], bool],
                   weeks: Mapping[int, list[int]], layout: list[tuple[int, int, Any, Any, int | None]] | None = None,
+                  auto_loss: Iterable[tuple[int, int]] = (),
                   ) -> list[dict[str, Any]]:
     """Sleeper-shaped bracket (winners by default). seeds: roster ids, best first. points: (week, roster_id) -> score.
-    done(round) says whether that round's weeks are final, so a winner can be named."""
+    done(round) says whether that round's weeks are final, so a winner can be named. auto_loss: (week, roster_id)
+    pairs for teams that started a Sunday over the cap; such a team loses that round unless both teams did."""
+    forfeit = set(auto_loss)
     layout = layout if layout is not None else (LAYOUTS.get(len(seeds)) or LAYOUTS[4])
     seed_of = {rid: i + 1 for i, rid in enumerate(seeds)}
     games: dict[int, dict[str, Any]] = {}
@@ -102,7 +105,12 @@ def build_bracket(seeds: list[int], points: Mapping[tuple[int, int], float], don
         if t1 and t2 and done(rnd):
             s1 = sum(points.get((w, t1), 0.0) for w in weeks[rnd])
             s2 = sum(points.get((w, t2), 0.0) for w in weeks[rnd])
-            win = t1 if s1 > s2 or (s1 == s2 and seed_of[t1] < seed_of[t2]) else t2
+            f1 = any((w, t1) in forfeit for w in weeks[rnd])
+            f2 = any((w, t2) in forfeit for w in weeks[rnd])
+            if f1 != f2:
+                win = t2 if f1 else t1
+            else:
+                win = t1 if s1 > s2 or (s1 == s2 and seed_of[t1] < seed_of[t2]) else t2
             game["w"], game["l"] = win, t2 if win == t1 else t1
         games[m] = game
     return list(games.values())
@@ -145,7 +153,8 @@ def team_row(roster: Mapping[str, Any], slots: list[str], saved: list[Mapping[st
 def build(*, season: int, own_from: int, current_week: int, league: Mapping[str, Any], rosters: list[Mapping[str, Any]],
           team_of_roster: Mapping[int, str], saved: list[Mapping[str, Any]], scoring: Mapping[str, Any], slots: list[str],
           sleeper_rows: Callable[[int], list[Mapping[str, Any]]], lines_for: Callable[[int], Mapping[str, Mapping[str, Any]]],
-          standings_for: Callable[[dict[int, list[dict[str, Any]]]], list[int]]) -> dict[str, Any]:
+          standings_for: Callable[[dict[int, list[dict[str, Any]]]], list[int]],
+          auto_loss: Iterable[tuple[int, int]] = ()) -> dict[str, Any]:
     """Every app-owned week up to the current one: {"weeks": {week: rows}, "bracket": [...] or None}.
 
     standings_for(own_rows_so_far) returns roster ids in standings order through the last regular week.
@@ -170,14 +179,14 @@ def build(*, season: int, own_from: int, current_week: int, league: Mapping[str,
     points: dict[tuple[int, int], float] = {}
 
     def resolved(before: int) -> list[dict[str, Any]]:  # rounds that ended before `before` name their winners
-        return build_bracket(seeds or [], points, lambda r: max(weeks_by_round[r]) < before, weeks_by_round)
+        return build_bracket(seeds or [], points, lambda r: max(weeks_by_round[r]) < before, weeks_by_round, auto_loss=auto_loss)
 
     def losers_resolved(before: int) -> list[dict[str, Any]]:
         layout = loser_layout(len(losers)) if settings.get("loser_bracket", True) else []
         if not layout:
             return []
         lweeks = loser_weeks(playoff_start, len(losers))
-        return build_bracket(losers, points, lambda r: max(lweeks[r]) < before, lweeks, layout)
+        return build_bracket(losers, points, lambda r: max(lweeks[r]) < before, lweeks, layout, auto_loss=auto_loss)
 
     def seed_all(own: dict[int, list[dict[str, Any]]]) -> list[int]:
         nonlocal losers
@@ -256,6 +265,28 @@ def own_scores(season: int, current: int, scoring: Mapping[str, Any], *,
     return out
 
 
+def auto_losses(client: Any, league_id: str, season: int, roster_of_team: Mapping[str, int]) -> dict[int, set[int]]:
+    """week -> roster ids that started that Sunday over the cap (cap_auto_losses, written at the first Sunday
+    kickoff by scripts/push_alerts.py). Empty when the table isn't there yet."""
+    try:
+        rows = (client.table("cap_auto_losses").select("week,league_team_id").eq("league_id", league_id)
+                .eq("season", season).execute().data or [])
+    except Exception:
+        return {}
+    out: dict[int, set[int]] = {}
+    for r in rows:
+        rid = roster_of_team.get(str(r.get("league_team_id")))
+        if rid is not None:
+            out.setdefault(int(r["week"]), set()).add(int(rid))
+    return out
+
+
+def mark_auto_losses(rows: list[dict[str, Any]], roster_ids: set[int]) -> list[dict[str, Any]]:
+    """A copy of one week's matchup rows with auto_loss set on the over-the-cap teams (scores untouched)."""
+    return [{**r, "auto_loss": True} if r.get("roster_id") is not None and int(r["roster_id"]) in roster_ids else dict(r)
+            for r in rows]
+
+
 def sync(client: Any, league_id: str, sleeper_id: str, season: int) -> None:
     """Rebuild the app's weeks for one league and hand them to api.sleeper (shared by every owner for LIVE_TTL)."""
     from api import cache, league, sleeper  # here, not at import time: api.league reads api.sleeper too
@@ -273,24 +304,35 @@ def sync(client: Any, league_id: str, sleeper_id: str, season: int) -> None:
                              "loser_bracket": rules["loser_bracket"]}}
         own_from = int(switch.get("own_from_week") or start)
         current = league.current_week()
+        teams = client.table("league_teams").select("id,sleeper_roster_id").eq("league_id", league_id).execute().data or []
+        roster_of_team = {str(t["id"]): int(t["sleeper_roster_id"]) for t in teams if t.get("sleeper_roster_id") is not None}
+        forfeits = auto_losses(client, league_id, season, roster_of_team)
+
+        def with_forfeits(week: int, rows: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+            rows = rows if rows is not None else (sleeper.raw(f"league/{sleeper_id}/matchups/{week}", ttl=3600) or [])
+            return mark_auto_losses(rows, forfeits[week]) if week in forfeits else rows
         if not switch.get("enabled") or current < own_from:
             # Still on Sleeper for rosters and lineups, but every point is ours: each week's starters (Sleeper's rows)
             # scored by our engine from our own stat lines (week_lines: official finals, the live watcher, and
             # Sleeper's public stats only as a backup feed).
             scoring = settings.scoring_settings or ((sleeper.raw(f"league/{sleeper_id}") or {}).get("scoring_settings") or {})
-            sleeper.put_many(f"league/{sleeper_id}/", own_scores(
+            scored = own_scores(
                 season, current, scoring,
                 rows_for=lambda w: sleeper.raw(f"league/{sleeper_id}/matchups/{w}", ttl=league.LIVE_TTL if w == current else 3600) or [],
-                lines_for=lambda w: week_lines(client, season, w, current)))
+                lines_for=lambda w: week_lines(client, season, w, current))
+            for week in forfeits:
+                scored[f"matchups/{week}"] = with_forfeits(week, scored.get(f"matchups/{week}"))
+            sleeper.put_many(f"league/{sleeper_id}/", scored)
             return {"weeks": []}
-        teams = client.table("league_teams").select("id,sleeper_roster_id").eq("league_id", league_id).execute().data or []
-        roster_of_team = {str(t["id"]): int(t["sleeper_roster_id"]) for t in teams if t.get("sleeper_roster_id") is not None}
+        for week in forfeits:  # regular-season weeks before own_from still come from Sleeper's rows
+            if week < own_from:
+                sleeper.put(f"league/{sleeper_id}/matchups/{week}", with_forfeits(week, None))
         saved = (client.table("league_lineups").select("league_team_id,week,slots")
                  .eq("league_id", league_id).eq("season", season).execute().data or [])
 
         def standings_for(own: dict[int, list[dict[str, Any]]]) -> list[int]:
             for week, rows in own.items():
-                sleeper.put(f"league/{sleeper_id}/matchups/{week}", rows)
+                sleeper.put(f"league/{sleeper_id}/matchups/{week}", with_forfeits(week, rows))
             return [int(r["roster_id"]) for r in league.standings(sleeper_id, {}, None)["rows"]]
 
         result = build(
@@ -301,9 +343,10 @@ def sync(client: Any, league_id: str, sleeper_id: str, season: int) -> None:
             sleeper_rows=lambda w: sleeper.raw(f"league/{sleeper_id}/matchups/{w}", ttl=league.LIVE_TTL if w == current else 3600) or [],
             lines_for=lambda w: week_lines(client, season, w, current),
             standings_for=standings_for,
+            auto_loss={(w, rid) for w, rids in forfeits.items() for rid in rids},
         )
         for week, rows in result["weeks"].items():
-            sleeper.put(f"league/{sleeper_id}/matchups/{week}", rows)
+            sleeper.put(f"league/{sleeper_id}/matchups/{week}", with_forfeits(week, rows))
         if result["bracket"] is not None:
             sleeper.put(f"league/{sleeper_id}/winners_bracket", result["bracket"])
         if result.get("losers_bracket") is not None:
