@@ -6,7 +6,7 @@ import type { Pick, Player, TeamPage, TeamWeek, TeamWeekItem, WeekPlayer } from 
 import { colors } from '../../lib/theme';
 import { PlayerFace } from '../PlayerFace';
 import { LineupSheet, type Picking, SlotChip } from './LineupSheet';
-import { Card, Note, Pill, Pos, Row, SwipeTabs, Tile, Tiles, Title, firstName, money, ordinal, record, ui } from '../ui';
+import { Card, Note, Pill, Row, SwipeTabs, firstName, money, ordinal, record, ui } from '../ui';
 
 const TABS = ['Roster', 'Contracts', 'Picks'] as const;
 
@@ -42,9 +42,10 @@ export function TeamView({ team, eyebrow, badge, top, onChange, onWeek }: { team
   if (!team.is_me) {
     return (
       <>
-        <Title badge={badge}>{team.team_name}</Title>
+        {/* Same header as My Team (Tommy, 2026-11-17); the slim box is your head to head with them. */}
+        <MyHeader team={team} badge={badge} />
+        <HeadToHeadBar team={team} />
         {top}
-        <TopTiles team={team} tab="Roster" />
         <RosterTab team={team} onChange={onChange} after={<><CapCard team={team} /><PicksCard team={team} /></>} />
       </>
     );
@@ -144,66 +145,6 @@ function WeekButton({ team, onWeek }: { team: TeamPage; onWeek: (week: number | 
         </View>
       </Modal>
     </>
-  );
-}
-
-// The three boxes on top change with the tab: each tab's first two, then one that fits it.
-function TopTiles({ team, tab }: { team: TeamPage; tab: (typeof TABS)[number] }) {
-  const r = team.record;
-  if (tab === 'Contracts') {
-    const label = ['THIS SEASON', 'NEXT SEASON'];
-    return (
-      <Tiles>
-        {team.cap.by_year.slice(0, 3).map((y, i) => (
-          <Tile key={y.season} label={label[i] ?? String(y.season)} value={money(y.space)} tone={y.space < 0 ? 'red' : undefined} sub={i < 2 ? `${y.season} space` : "cap space"} />
-        ))}
-      </Tiles>
-    );
-  }
-  if (tab === 'Picks') {
-    const owned = team.picks.owned;
-    const drafts = [...new Set(owned.map((p) => p.year))];
-    const first = owned[0];
-    const firsts = owned.filter((p) => p.round === 1);
-    const firstYears = [...new Set(firsts.map((p) => p.year))];
-    return (
-      <Tiles>
-        <Tile label="PICKS" value={String(owned.length)} sub={`next ${drafts.length || 0} draft${drafts.length === 1 ? '' : 's'}`} />
-        <Tile label="FIRST" value={first ? ROUND[first.round] ?? `R${first.round}` : '—'} sub={first ? `${first.year} draft` : 'no picks'} />
-        <Tile label="1STS" value={String(firsts.length)} sub={firstYears.length ? firstYears.join(' + ') : 'none owned'} />
-      </Tiles>
-    );
-  }
-  const power = team.power;
-  const move = power?.move ? `${power.move > 0 ? '▲' : '▼'}${Math.abs(power.move)} this week` : null;
-  const wk = team.week;
-  if (wk) {
-    const started = Object.values(wk.players).some((p) => p.status === 'playing' || p.status === 'final');
-    return (
-      <Tiles>
-        <Tile label="RECORD" value={record(r.wins, r.losses, r.ties)} sub={`${ordinal(r.rank)} · ${r.standing_points} SP`} />
-        <Tile label={`WEEK ${wk.week}`} value={(wk.is_final || started ? wk.score : wk.projected ?? 0).toFixed(1)} tone={!wk.is_final && started ? 'live' : undefined}
-          sub={wk.is_final ? 'final' : started && wk.projected != null ? `proj ${wk.projected.toFixed(1)}` : 'projected'} />
-        <CapTile team={team} />
-      </Tiles>
-    );
-  }
-  return (
-    <Tiles>
-      <Tile label="RECORD" value={record(r.wins, r.losses, r.ties)} sub={`${ordinal(r.rank)} · ${r.standing_points} SP`} />
-      <Tile label="PPG" value={r.pf_per_game != null ? r.pf_per_game.toFixed(1) : '—'} sub="avg / game" />
-      <Tile label="POWER RANK" value={power ? `#${power.rank}` : '—'} sub={move ?? (power?.of ? `of ${power.of} teams` : 'not ranked yet')} />
-    </Tiles>
-  );
-}
-
-// This season's cap used (big) and what's left under the cap (Tommy, 2026-11-16: replaces the matchup win odds tile).
-function CapTile({ team }: { team: TeamPage }) {
-  const now = team.cap.by_year.find((y) => y.season === team.season) ?? team.cap.by_year[0];
-  if (!now) return <Tile label="CAP USED" value="—" sub={`of ${dollars(team.salary_cap)}`} />;
-  return (
-    <Tile label="CAP USED" value={dollars(now.used)} tone={now.space < 0 ? 'red' : undefined}
-      sub={now.space < 0 ? `${dollars(-now.space)} over` : `${dollars(now.space)} left`} />
   );
 }
 
@@ -436,7 +377,6 @@ function RosterTab({ team, onChange, after, onWeek }: { team: TeamPage; onChange
         <Note>{team.roster.count} players under contract</Note>
         </>
       ) : null}
-      <HeadToHead team={team} />
       {!team.is_me ? (
         <Pressable style={styles.button} onPress={() => Linking.openURL(`https://sleeper.com/leagues/${team.sleeper_league_id}`)}>
           <Text style={styles.buttonText}>Trade in Sleeper ↗</Text>
@@ -650,19 +590,23 @@ function PicksCard({ team }: { team: TeamPage }) {
   );
 }
 
-// Your record against this owner, under their roster (other teams only).
-function HeadToHead({ team }: { team: TeamPage }) {
+// Your record against this owner and your last meeting, in the slim box under their header (other teams only).
+function HeadToHeadBar({ team }: { team: TeamPage }) {
   const h2h = team.head_to_head;
   if (!h2h) return null;
+  const lead = h2h.wins > h2h.losses ? 'You lead' : h2h.wins < h2h.losses ? 'They lead' : 'Even';
+  const won = h2h.last.me >= h2h.last.them;
   return (
-    <Card
-      title="Head to head with you"
-      right={<Text style={[ui.value, ui.gold]}>{h2h.wins > h2h.losses ? 'You lead' : h2h.wins < h2h.losses ? 'They lead' : 'Even'} {record(h2h.wins, h2h.losses, h2h.ties)}</Text>}
-    >
-      <Text style={ui.sub}>
-        Last meeting: Week {h2h.last.week}, you {h2h.last.me >= h2h.last.them ? 'won' : 'lost'} {h2h.last.me.toFixed(1)} to {h2h.last.them.toFixed(1)}
-      </Text>
-    </Card>
+    <View style={[styles.mbar, styles.h2h]}>
+      <View style={styles.h2hLine}>
+        <Text style={styles.mbarLeft}>Head to head with you</Text>
+        <Text style={styles.mbarName}>{lead} {record(h2h.wins, h2h.losses, h2h.ties)}</Text>
+      </View>
+      <View style={[styles.h2hLine, styles.h2hLast]}>
+        <Text style={styles.h2hSub}>Last: Wk {h2h.last.week}, you {won ? 'won' : 'lost'}</Text>
+        <Text style={styles.h2hSub}><Text style={styles.mbarName}>{h2h.last.me.toFixed(1)}</Text> – {h2h.last.them.toFixed(1)}</Text>
+      </View>
+    </View>
   );
 }
 
@@ -681,6 +625,10 @@ const styles = StyleSheet.create({
   mbarRight: { color: colors.muted, fontSize: 13.5 },
   mbarPct: { color: colors.live, fontWeight: '800' },
   mbarFinal: { color: colors.gold, fontWeight: '900' },
+  h2h: { flexDirection: 'column', alignItems: 'stretch', gap: 0 },
+  h2hLine: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  h2hLast: { borderTopWidth: 1, borderTopColor: '#22352B', marginTop: 6, paddingTop: 6 },
+  h2hSub: { color: colors.muted, fontSize: 12 },
   wk: { borderWidth: 1, borderColor: '#2F4136', borderRadius: 8, paddingVertical: 3, paddingHorizontal: 9 },
   wkText: { color: '#A9A493', fontSize: 12, fontWeight: '700' },
   menu: { position: 'absolute', width: 250, maxHeight: 460, backgroundColor: '#10291F', borderWidth: 1, borderColor: colors.gold, borderRadius: 16, padding: 8, shadowColor: '#000', shadowOpacity: 0.6, shadowRadius: 20, shadowOffset: { width: 0, height: 12 } },
