@@ -60,7 +60,7 @@ def main() -> None:
     from supabase import create_client
 
     client = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_ROLE_KEY"])
-    for n, lg in enumerate(client.table("leagues").select("id").execute().data or [], start=1):
+    for n, lg in enumerate(client.table("leagues").select("id").eq("is_test", False).execute().data or [], start=1):
         print(f"league {n}: {check(_rows(client, lg['id']))}")
 
 

@@ -379,7 +379,7 @@ def owner_years(salary: float) -> list[float]:
 def load_owner_market(client: Any, d: Data, sleeper_to_gsis: dict[str, str]) -> dict[str, Any]:
     """Fit what this league's owners really pay (non-rookie contracts, by preseason position rank) and how long they sign.
     Returns aggregate stats only: the repo and its logs are public."""
-    leagues = client.table("leagues").select("id").execute().data or []
+    leagues = client.table("leagues").select("id").eq("is_test", False).execute().data or []
     teams = client.table("league_teams").select("id, owner_name, team_name").execute().data or []
     owners = {str(t["id"]): str(t.get("owner_name") or t.get("team_name") or "?") for t in teams}   # same owner across seasons
     rows = []

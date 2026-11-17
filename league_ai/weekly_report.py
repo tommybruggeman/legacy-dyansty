@@ -347,7 +347,7 @@ def main(argv: list[str] | None = None) -> int:
     end = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     start = end - timedelta(days=args.days)
     detail = "full" if os.environ.get("REPORT_DETAIL", "").strip().lower() == "full" else "summary"
-    leagues = _rows(client.table("leagues").select("id, name"))
+    leagues = _rows(client.table("leagues").select("id, name").eq("is_test", False))
     sent = 0
     for lg in leagues:
         rep = build_report(client, str(lg["id"]), start, end, detail=detail)

@@ -534,7 +534,7 @@ def main() -> None:
     from supabase import create_client
 
     client = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_ROLE_KEY"])
-    for n, lg in enumerate(client.table("leagues").select("id").execute().data or [], start=1):
+    for n, lg in enumerate(client.table("leagues").select("id").eq("is_test", False).execute().data or [], start=1):
         trades = load_trades(client, lg["id"])
         print(f"league {n}: {len(trades)} completed trades")
         if trades:

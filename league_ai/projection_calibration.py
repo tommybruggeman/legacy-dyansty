@@ -476,7 +476,7 @@ def pregame_snapshots(client: Any, now: datetime | None = None) -> dict[str, int
     if not any(now < k <= now + timedelta(minutes=PREGAME_WINDOW_MIN) for k in starts):
         return {}
     out = {}
-    for n, lg in enumerate(client.table("leagues").select("id, sleeper_league_id").execute().data or [], start=1):
+    for n, lg in enumerate(client.table("leagues").select("id, sleeper_league_id").eq("is_test", False).execute().data or [], start=1):
         if lg.get("sleeper_league_id"):
             try:
                 out[f"league {n}"] = snapshot(client, str(lg["id"]), str(lg["sleeper_league_id"]), now)
@@ -506,7 +506,7 @@ def run(client: Any, *, now: datetime | None = None, dry_run: bool = False) -> d
     """Every league: snapshot this week's projections, replay every finished week, save factors + card. Counts only."""
     now = now or datetime.now(timezone.utc)
     out: dict[str, Any] = {}
-    for lg in client.table("leagues").select("id, sleeper_league_id").execute().data or []:
+    for lg in client.table("leagues").select("id, sleeper_league_id").eq("is_test", False).execute().data or []:
         sid = str(lg.get("sleeper_league_id") or "")
         if not sid:
             continue
