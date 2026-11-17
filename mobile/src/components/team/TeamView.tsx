@@ -43,7 +43,7 @@ export function TeamView({ team, eyebrow, badge, top, onChange, onWeek }: { team
     return (
       <>
         {/* Same header as My Team (Tommy, 2026-11-17); the slim box is your head to head with them. */}
-        <MyHeader team={team} badge={badge} />
+        <MyHeader team={team} badge={badge} badgeOnCap />
         <HeadToHeadBar team={team} />
         {top}
         <RosterTab team={team} onChange={onChange} after={<><CapCard team={team} /><PicksCard team={team} /></>} />
@@ -70,7 +70,8 @@ export function TeamView({ team, eyebrow, badge, top, onChange, onWeek }: { team
   );
 }
 
-function MyHeader({ team, badge }: { team: TeamPage; badge?: ReactNode }) {
+// Other teams' Trade pill sits beside the cap left line, like Healthy on the player page (Tommy, 2026-11-17).
+function MyHeader({ team, badge, badgeOnCap }: { team: TeamPage; badge?: ReactNode; badgeOnCap?: boolean }) {
   const r = team.record;
   const now = team.cap.by_year.find((y) => y.season === team.season) ?? team.cap.by_year[0];
   const space = now?.space ?? team.cap.space;
@@ -79,10 +80,13 @@ function MyHeader({ team, badge }: { team: TeamPage; badge?: ReactNode }) {
       <View style={ui.flex}>
         <View style={styles.nameLine}>
           <Text style={styles.teamName} numberOfLines={1}>{team.team_name}</Text>
-          {badge}
+          {badgeOnCap ? null : badge}
         </View>
         <Text style={styles.hdrSub}>{record(r.wins, r.losses, r.ties)} · {r.standing_points} SP</Text>
-        <Text style={[styles.hdrSub, space < 0 ? styles.over : styles.capLeft]}>{space < 0 ? `${dollars(-space)} over the cap` : `${dollars(space)} cap left`}</Text>
+        <View style={styles.capLine}>
+          <Text style={[styles.hdrSub, space < 0 ? styles.over : styles.capLeft]}>{space < 0 ? `${dollars(-space)} over the cap` : `${dollars(space)} cap left`}</Text>
+          {badgeOnCap ? badge : null}
+        </View>
       </View>
       {r.rank ? (
         <View style={styles.rank}>
@@ -647,6 +651,7 @@ const styles = StyleSheet.create({
   teamName: { color: colors.text, fontSize: 26, fontWeight: '900', flexShrink: 1 },
   hdrSub: { color: colors.muted, fontSize: 13, marginTop: 2 },
   capLeft: { color: colors.gold, fontWeight: '600' },
+  capLine: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   over: { color: '#EF7A7A', fontWeight: '700' },
   rank: { width: 52, height: 52, borderRadius: 26, borderWidth: 2, borderColor: colors.gold, alignItems: 'center', justifyContent: 'center' },
   rankNum: { color: colors.gold, fontSize: 17, fontWeight: '900' },
