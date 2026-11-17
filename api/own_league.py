@@ -236,6 +236,23 @@ def app_rosters(client: Any, league_id: str, season: int, roster_of_team: Mappin
     return list(out.values())
 
 
+def merge_rosters(sleeper_rows: list[Mapping[str, Any]], app: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Sleeper's roster rows with players, taxi and reserve swapped for the app's; a starter no longer held becomes an empty slot ("0")."""
+    mine = {int(r["roster_id"]): r for r in app}
+    out = []
+    for row in sleeper_rows:
+        try:
+            ours = mine.pop(int(row.get("roster_id")))
+        except (TypeError, ValueError, KeyError):
+            out.append(dict(row))
+            continue
+        held = set(ours["players"])
+        out.append({**row, "players": list(ours["players"]), "taxi": list(ours["taxi"]), "reserve": list(ours["reserve"]),
+                    "starters": [p if p in held else "0" for p in row.get("starters") or []]})
+    out += [dict(r) for r in mine.values()]
+    return out
+
+
 def week_lines(client: Any, season: int, week: int, current: int) -> Mapping[str, Mapping[str, Any]]:
     """The stat lines an app week is scored from: our official copy for finished weeks (nflverse, saved daily and
     locked), our live watcher's lines for the week being played, and Sleeper's public lines only as a fallback."""
@@ -335,9 +352,13 @@ def sync(client: Any, league_id: str, sleeper_id: str, season: int) -> None:
                 sleeper.put(f"league/{sleeper_id}/matchups/{week}", with_forfeits(week, rows))
             return [int(r["roster_id"]) for r in league.standings(sleeper_id, {}, None)["rows"]]
 
+        rosters = app_rosters(client, league_id, season, roster_of_team)
+        # Who holds whom is the app's from here on (trades, waivers, drops): every page that reads the league's rosters
+        # gets the app's players, taxi and IR on top of Sleeper's row (owner and season totals).
+        sleeper.put(f"league/{sleeper_id}/rosters", merge_rosters(sleeper.raw(f"league/{sleeper_id}/rosters", ttl=600) or [], rosters))
         result = build(
             season=season, own_from=own_from, current_week=current, league=info,
-            rosters=app_rosters(client, league_id, season, roster_of_team),
+            rosters=rosters,
             team_of_roster={rid: tid for tid, rid in roster_of_team.items()},
             saved=saved, scoring=settings.scoring_settings or ((sleeper.raw(f"league/{sleeper_id}") or {}).get("scoring_settings") or {}), slots=lineups.starter_slots(settings.roster_positions),
             sleeper_rows=lambda w: sleeper.raw(f"league/{sleeper_id}/matchups/{w}", ttl=league.LIVE_TTL if w == current else 3600) or [],

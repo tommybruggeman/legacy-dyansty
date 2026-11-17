@@ -795,6 +795,12 @@ export type TeamPeople = {
 export type MySettings = {
   email: string | null; role: string; is_commissioner: boolean; is_co_owner: boolean; team_id: string;
   profile: OwnerProfile; gm: GmPrefs; people: TeamPeople;
+  // Only when I'm in more than one league (the test copy). teams: in an open test league I run, every team I can play as.
+  leagues?: LeagueChoice[];
+};
+export type LeagueChoice = {
+  league_id: string; name: string; is_test: boolean; active: boolean;
+  teams: { team_id: string; name: string; mine: boolean }[];
 };
 export type RulesView = { groups: { title: string; rows: [string, string][] }[]; house_rules: string | null };
 

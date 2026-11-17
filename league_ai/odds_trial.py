@@ -152,7 +152,7 @@ def main() -> int:
 
     client = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_ROLE_KEY"])
     full = (os.environ.get("REPORT_DETAIL") or "").lower() == "full"
-    for league in client.table("leagues").select("id, name").execute().data or []:
+    for league in client.table("leagues").select("id, name").eq("is_test", False).execute().data or []:
         rows = load(client, str(league["id"]))
         if not rows:
             continue

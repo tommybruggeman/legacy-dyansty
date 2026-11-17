@@ -96,7 +96,7 @@ def run(client: Any, *, now: datetime, dry_run: bool = False) -> dict[str, Any]:
     from league_ai.start_sit_grade import run_league
 
     out = {}
-    for lg in client.table("leagues").select("id, sleeper_league_id").execute().data or []:
+    for lg in client.table("leagues").select("id, sleeper_league_id").eq("is_test", False).execute().data or []:
         if not lg.get("sleeper_league_id"):
             continue
         card = build(run_league(client, str(lg["id"]), str(lg["sleeper_league_id"]), variants=False))

@@ -24,6 +24,7 @@ still queues, and sends on the next run that has it.
 """
 from __future__ import annotations
 
+import dataclasses
 import os
 import sys
 from datetime import datetime, timedelta, timezone
@@ -89,6 +90,8 @@ class League:
         return self.team_users(self.team_of_roster.get(roster_id)) if roster_id is not None else []
 
     def send(self, alert: alerts.Alert, users: Iterable[str], *, not_before: datetime | None = None, expires_at: datetime | None = None) -> None:
+        if league.sleeper.is_mirror(self.sid):  # the test copy: its own keys (never blocks a real alert) and a [Test] label
+            alert = dataclasses.replace(alert, key=f"test:{str(self.id)[:8]}:{alert.key}", title=f"[Test] {alert.title}".strip())
         self.queued += alerts.enqueue(self.client, alert, league_id=self.id, user_ids=users, not_before=not_before,
                                       expires_at=expires_at, seed=self.seed)
 

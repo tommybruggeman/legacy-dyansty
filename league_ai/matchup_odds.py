@@ -192,7 +192,7 @@ def main() -> int:
     from supabase import create_client
 
     client = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_ROLE_KEY"])
-    for league in client.table("leagues").select("id, name").execute().data or []:
+    for league in client.table("leagues").select("id, name").eq("is_test", False).execute().data or []:
         print(f"{league.get('name')}: {league_grade(client, str(league['id']))}")
     return 0
 

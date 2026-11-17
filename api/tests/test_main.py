@@ -20,8 +20,14 @@ class FakeQuery:
         self.filters[key] = value
         return self
 
+    def in_(self, key, values):
+        self.filters[key] = ("in", tuple(values))
+        return self
+
     def execute(self):
-        rows = [r for r in self.rows if all(r.get(k) == v for k, v in self.filters.items())]
+        def ok(r, k, v):
+            return r.get(k) in v[1] if isinstance(v, tuple) and v[:1] == ("in",) else r.get(k) == v
+        rows = [r for r in self.rows if all(ok(r, k, v) for k, v in self.filters.items())]
         return SimpleNamespace(data=rows)
 
 
@@ -139,3 +145,18 @@ def test_owner_pictures_from_settings_win_over_sleeper(monkeypatch):
     monkeypatch.setattr(main.profiles, "by_roster", lambda client, league_id: {1: {"picture_url": "https://x.supabase.co/mine.jpg"}})
     pics = main._pictures(None, "L", "S")
     assert pics == {1: "https://x.supabase.co/mine.jpg", 2: None}
+
+
+def test_me_skips_the_test_league_unless_picked():
+    tables = {
+        "league_memberships": [
+            {"user_id": "u1", "league_id": "T", "league_team_id": "x1", "role": "commissioner"},
+            {"user_id": "u1", "league_id": "L", "league_team_id": "t1", "role": "commissioner"},
+        ],
+        "leagues": [{"id": "T", "is_test": True}, {"id": "L", "is_test": False}],
+        "league_teams": [{"id": "t1", "league_id": "L", "owner_name": "Tommy"}, {"id": "x1", "league_id": "T", "owner_name": "Owner 1"}],
+    }
+    assert _app_with(tables).get("/me").json()["league_id"] == "L"
+    cache.clear()
+    tables["user_active_league"] = [{"user_id": "u1", "league_id": "T"}]
+    assert _app_with(tables).get("/me").json()["team_id"] == "x1"

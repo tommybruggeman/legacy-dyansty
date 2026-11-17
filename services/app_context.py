@@ -187,7 +187,6 @@ def ensure_active_league_from_user(user_id: str | None) -> Optional[str]:
         sb.table("league_memberships")
         .select("league_id, role")
         .eq("user_id", user_id)
-        .limit(1)
         .execute()
         .data
         or []
@@ -195,6 +194,13 @@ def ensure_active_league_from_user(user_id: str | None) -> Optional[str]:
 
     if not rows:
         return None
+    # The website always opens a real league; the test copy (leagues.is_test) is only for the app.
+    try:
+        ids = [r["league_id"] for r in rows if r.get("league_id")]
+        tests = {str(l["id"]) for l in (sb.table("leagues").select("id, is_test").in_("id", ids).execute().data or []) if l.get("is_test")}
+        rows = [r for r in rows if str(r.get("league_id")) not in tests] or rows
+    except Exception:
+        pass
 
     st.session_state["active_league_id"] = rows[0].get("league_id")
     st.session_state["role"] = rows[0].get("role")

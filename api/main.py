@@ -72,9 +72,7 @@ def resolve_team(client: Client, user: Any) -> dict[str, Any]:
 
 
 def _resolve_team(client: Client, user: Any) -> dict[str, Any]:
-    membership = _first(
-        client.table("league_memberships").select("*").eq("user_id", user.id).limit(1).execute().data
-    )
+    membership = _pick_membership(client, user)
     if not membership:
         raise HTTPException(status_code=404, detail="This account isn't linked to a league yet.")
 
@@ -103,6 +101,29 @@ def _resolve_team(client: Client, user: Any) -> dict[str, Any]:
         "role": membership.get("role"),
         "sleeper_roster_id": roster_id,
     }
+
+
+def _my_leagues(client: Client, user: Any) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]], str | None]:
+    """(my memberships, league id -> league row, the league I picked in Settings or None)."""
+    rows = client.table("league_memberships").select("*").eq("user_id", user.id).execute().data or []
+    ids = sorted({str(m["league_id"]) for m in rows if m.get("league_id")})
+    try:
+        leagues = {str(l["id"]): l for l in (client.table("leagues").select("*").in_("id", ids).execute().data or [])} if ids else {}
+    except Exception:
+        leagues = {}
+    try:
+        chosen = _first(client.table("user_active_league").select("league_id").eq("user_id", user.id).limit(1).execute().data)
+    except Exception:  # before the test-league SQL is run
+        chosen = None
+    return rows, leagues, str(chosen["league_id"]) if chosen else None
+
+
+def _pick_membership(client: Client, user: Any) -> dict[str, Any] | None:
+    """The league picked in Settings; otherwise the first real (non-test) league, so a test copy never opens by itself."""
+    rows, leagues, chosen = _my_leagues(client, user)
+    picked = [m for m in rows if str(m.get("league_id")) == chosen]
+    real = [m for m in rows if not (leagues.get(str(m.get("league_id"))) or {}).get("is_test")]
+    return (picked or real or rows or [None])[0]
 
 
 def _with_team_names(owner: tuple[Client, Any], result: Any) -> Any:
@@ -230,7 +251,53 @@ def my_settings(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, 
         "email": getattr(user, "email", None), "role": role, "is_commissioner": role == "commissioner", "team_id": team["team_id"],
         "is_co_owner": role in ("co_owner", "co-owner"),
         "profile": jobs["profile"].result(), "gm": jobs["gm"].result(), "people": jobs["people"].result(),
+        "leagues": _league_choices(client, user, team),
     }
+
+
+def _league_choices(client: Client, user: Any, team: dict[str, Any]) -> list[dict[str, Any]]:
+    """Settings > League: each league I'm in (only shown when there's more than one), and in a test league where I'm
+    commissioner, every team so I can play each side of a trade."""
+    try:
+        rows, leagues, _ = _my_leagues(client, user)
+    except Exception:
+        return []
+    out = []
+    for m in rows:
+        lid = str(m.get("league_id"))
+        row = leagues.get(lid) or {}
+        try:  # a test copy's seasons carry the mirror Sleeper id
+            is_test = bool(row.get("is_test")) or league.sleeper.is_mirror(league.sleeper_league_id(client, lid))
+        except Exception:
+            is_test = bool(row.get("is_test"))
+        item = {"league_id": lid, "name": "Legacy Test" if is_test else (row.get("name") or "Legacy Dynasty"),
+                "is_test": is_test, "active": lid == str(team.get("league_id")), "teams": []}
+        if item["is_test"] and item["active"] and str(m.get("role") or "").lower() == "commissioner":
+            teams_rows = client.table("league_teams").select("id,team_name,owner_name,sleeper_roster_id").eq("league_id", lid).execute().data or []
+            item["teams"] = sorted(({"team_id": t["id"], "name": t.get("team_name") or t.get("owner_name") or "Team",
+                                     "mine": str(t["id"]) == str(team.get("team_id"))} for t in teams_rows),
+                                   key=lambda t: str(t["name"]))
+        out.append(item)
+    return out if len(out) > 1 else []
+
+
+class LeagueChoice(BaseModel):
+    league_id: str
+    team_id: str | None = None
+
+
+@app.post("/me/league")
+def choose_league(body: LeagueChoice, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """Open another league I'm in (the test copy and back), or in a test league, play as another team."""
+    client, user = owner
+    try:
+        client.rpc("set_active_league_authenticated", {"p_league_id": body.league_id}).execute()
+        if body.team_id:
+            client.rpc("switch_test_team_authenticated", {"p_league_id": body.league_id, "p_team_id": body.team_id}).execute()
+    except Exception:
+        raise HTTPException(status_code=400, detail="That league isn't available.")
+    cache.clear()  # the team lookup and every league read are cached
+    return resolve_team(client, user)
 
 
 @app.post("/me/profile")
@@ -986,6 +1053,11 @@ def commissioner_switch(body: CommishSwitch, owner: tuple[Client, Any] = Depends
     client, user = owner
     ctx = _commissioner_ctx(client, user)
     result = _commish_call(commissioner.set_switch, client, ctx["league_id"], body.enabled, body.own_from_week)
+    if body.enabled:  # FAAB moves into the app with the switch: each team starts with what it has left on Sleeper
+        try:
+            commissioner.seed_faab(client, ctx["league_id"], int(ctx["season"]), league.sleeper_league_id(client, ctx["league_id"]))
+        except Exception as exc:
+            print(f"APP_FAAB_SEED_ERROR {type(exc).__name__}", flush=True)
     cache.clear()
     return {"ok": True, "switch": result}
 
