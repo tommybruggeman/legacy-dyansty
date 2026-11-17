@@ -343,19 +343,19 @@ function RosterTab({ team, onChange, after }: { team: TeamPage; onChange?: () =>
           <Card style={styles.half}>
             <Text style={styles.eyebrow}>TAXI</Text>
             {taxi.length ? taxi.map((p) => (
-              <View key={p.player_id} style={styles.mini}>
+              <Pressable key={p.player_id} style={styles.mini} onPress={() => go(`/player/${p.player_id}`)} hitSlop={4}>
                 <Text style={ui.name} numberOfLines={1}>{p.name}</Text>
                 <Text style={ui.sub}>{p.pos} · {money(p.salary)} cap</Text>
-              </View>
+              </Pressable>
             )) : <Text style={ui.sub}>Empty</Text>}
           </Card>
           <Card style={styles.half}>
             <Text style={styles.eyebrow}>IR</Text>
             {ir.length ? ir.map((p) => (
-              <View key={p.player_id} style={styles.mini}>
+              <Pressable key={p.player_id} style={styles.mini} onPress={() => go(`/player/${p.player_id}`)} hitSlop={4}>
                 <Text style={ui.name} numberOfLines={1}>{p.name}</Text>
                 <Text style={ui.sub}>{p.pos} · {money(p.salary)}</Text>
-              </View>
+              </Pressable>
             )) : <Text style={ui.sub}>1 spot open</Text>}
             {team.is_me ? (
               <Pressable onPress={() => go('/ir')} hitSlop={8}>
