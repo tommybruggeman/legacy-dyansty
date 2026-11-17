@@ -449,7 +449,7 @@ def after_answer(session: Session, seen: Any, *, conversation_id: str | None, qu
 
 
 def ask(session: Session, question: str, conversation_id: str | None, on_event: Callable[[str, Any], None] | None = None,
-        inbox: Callable[[bool], list[str]] | None = None) -> dict[str, Any]:
+        inbox: Callable[[bool], list[str]] | None = None, images: list[Any] | None = None) -> dict[str, Any]:
     """One chat turn. Returns the answer, or a friendly error the app can show."""
     o, client = session.owner, session.client
     memory = o.memory(client)
@@ -459,7 +459,7 @@ def ask(session: Session, question: str, conversation_id: str | None, on_event: 
         if row is None:
             conversation_id = None
         else:
-            history = [{"role": m.get("role", "user"), "content": m.get("content", "")} for m in row.get("messages") or []]
+            history = [history_message(m) for m in row.get("messages") or []]
     try:
         fo = session.front_office()
     except Exception as exc:
@@ -467,7 +467,8 @@ def ask(session: Session, question: str, conversation_id: str | None, on_event: 
         fo = None
     tools, seen = gm_tools(session, fo, question=lambda: question, conversation_id=lambda: conversation_id)
     turn = runtime.chat_turn(client, o, question=question, history=history, conversation_id=conversation_id, pack=session.pack(), tools=tools,
-                             on_event=on_event, week_context=week_context(fo, o.owner_name), **({"inbox": inbox} if inbox else {}))
+                             on_event=on_event, week_context=week_context(fo, o.owner_name), **({"inbox": inbox} if inbox else {}),
+                             **({"images": images} if images else {}))
     if turn.result.ok:
         after_answer(session, seen, conversation_id=turn.conversation_id, question=question, answer=turn.result.text)
     if turn.notes_changed:
@@ -475,6 +476,14 @@ def ask(session: Session, question: str, conversation_id: str | None, on_event: 
     result = turn.result
     print(result.trace_line(), flush=True)
     return {"ok": result.ok, "text": result.text if result.ok else result.human_error, "conversation_id": turn.conversation_id}
+
+
+def history_message(m: dict[str, Any]) -> dict[str, Any]:
+    """A saved message as the next turn needs it: role and text, plus the text reading of any screenshot it carried."""
+    out = {"role": m.get("role", "user"), "content": m.get("content", "")}
+    if m.get("photos"):
+        out.update(photos=m.get("photos"), screenshot=m.get("screenshot") or "")
+    return out
 
 
 def stream_event(kind: str, payload: Any) -> dict[str, Any] | None:
@@ -563,7 +572,7 @@ def _sweep(now: float) -> None:
             _jobs.pop(key, None)
 
 
-def ask_stream(session: Session, question: str, conversation_id: str | None) -> Iterator[str]:
+def ask_stream(session: Session, question: str, conversation_id: str | None, images: list[Any] | None = None) -> Iterator[str]:
     """The same turn as ask(), as newline-delimited JSON events ending with a 'done' event.
     The answer runs on its own thread, so it finishes even if the phone drops the connection."""
     job = ChatJob(question, conversation_id)
@@ -578,7 +587,7 @@ def ask_stream(session: Session, question: str, conversation_id: str | None) -> 
 
     def run() -> None:
         try:
-            done = {"e": "done", **ask(session, question, conversation_id, on_event, inbox=job.take)}
+            done = {"e": "done", **ask(session, question, conversation_id, on_event, inbox=job.take, **({"images": images} if images else {}))}
         except Exception as exc:
             print(f"APP_CHAT_ERROR {type(exc).__name__}", flush=True)
             done = {"e": "done", "ok": False, "text": "Something went wrong. Try again.", "conversation_id": conversation_id}
@@ -620,7 +629,8 @@ def conversation(client: Any, owner: runtime.Owner, conversation_id: str) -> dic
     row = owner.memory(client).get_conversation(conversation_id)
     if not row:
         return None
-    messages = [{"role": m.get("role", "user"), "content": m.get("content", "")} for m in row.get("messages") or []]
+    messages = [{"role": m.get("role", "user"), "content": m.get("content", ""), **({"photos": int(m["photos"])} if m.get("photos") else {})}
+                for m in row.get("messages") or []]
     # The website's old opening line isn't part of the conversation.
     messages = [m for m in messages if not str(m["content"]).startswith("Hi, I'm **Coach Condor**")]
     return {"id": str(row["id"]), "title": row.get("title") or "Conversation", "messages": messages}

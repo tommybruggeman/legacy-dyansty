@@ -654,7 +654,9 @@ export type FrontOffice = {
   report_card: ReportCard;
   sleeper_league_id: string | null;
 };
-export type ChatMessage = { role: 'user' | 'assistant'; content: string };
+// photos: screenshots sent with a question (the server keeps only their count and a text reading);
+// uris: their thumbnails, only in the chat they were sent from.
+export type ChatMessage = { role: 'user' | 'assistant'; content: string; photos?: number; uris?: string[] };
 export type ChatReply = { ok: boolean; text: string; conversation_id: string | null };
 export type ChatEvent =
   | { e: 'status'; text: string }

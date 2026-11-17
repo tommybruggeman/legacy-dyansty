@@ -1,8 +1,9 @@
 import { router, useLocalSearchParams, useNavigation } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator, AppState, Keyboard, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, type ScrollViewInstance, StyleSheet, Text, TextInput, View,
+  ActivityIndicator, AppState, Image, Keyboard, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, type ScrollViewInstance, StyleSheet, Text, TextInput, View,
 } from 'react-native';
+import ImageCropPicker from 'react-native-image-crop-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Markdown } from '../../components/frontoffice/Markdown';
@@ -13,6 +14,11 @@ import { type ChatEvent, type ChatMessage, type Conversation, type FoHeader, typ
 import { clearLastChat, saveLastChat } from '../../lib/lastChat';
 import { isTradeQuestion } from '../../lib/tradeQuestion';
 import { colors } from '../../lib/theme';
+
+// Screenshots per question (a trade offer, a roster, another league). The server allows the same.
+const MAX_PHOTOS = 10;
+const PHOTO_QUESTION = 'What do you make of this?';
+type Photo = { uri: string; data: string };
 
 // Resolves right away when the app is on screen, otherwise the next time it comes back.
 function whenOnScreen(): Promise<void> {
@@ -32,6 +38,7 @@ export default function FrontOfficeScreen() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
+  const [photos, setPhotos] = useState<Photo[]>([]);
   const [thinking, setThinking] = useState(false);
   // While the GM works: what it's checking right now, and the answer so far.
   const [status, setStatus] = useState('');
@@ -62,6 +69,7 @@ export default function FrontOfficeScreen() {
     setMessages([]);
     setConversationId(null);
     setDraft('');
+    setPhotos([]);
     setTyping(false);
     setThinking(false);
     busy.current = false;
@@ -181,9 +189,29 @@ export default function FrontOfficeScreen() {
     }
   };
 
-  const send = async (input: string, convo: string | null = convoRef.current) => {
-    const question = input.trim();
+  // Screenshots shrink on the phone to the size the GM reads anyway (1568px, about 200 KB each).
+  const attach = async () => {
+    const left = MAX_PHOTOS - photos.length;
+    if (left <= 0) return;
+    const res = await ImageCropPicker.openPicker({
+      mediaType: 'photo', multiple: true, maxFiles: left, includeBase64: true, forceJpg: true,
+      compressImageMaxWidth: 1568, compressImageMaxHeight: 1568, compressImageQuality: 0.8,
+    }).catch(() => null); // cancelled
+    if (!res) return;
+    const picked = (Array.isArray(res) ? res : [res]).filter((r) => r.data).map((r) => ({ uri: r.path, data: r.data as string }));
+    setPhotos((p) => [...p, ...picked].slice(0, MAX_PHOTOS));
+    if (picked.length < (Array.isArray(res) ? res.length : 1) || photos.length + picked.length > MAX_PHOTOS) {
+      setProblem(`Up to ${MAX_PHOTOS} screenshots per question.`);
+    }
+  };
+
+  const send = async (input: string, convo: string | null = convoRef.current, shots: Photo[] = []) => {
+    const question = input.trim() || (shots.length ? PHOTO_QUESTION : '');
     if (!question) return;
+    if (busy.current && shots.length) {
+      setProblem('Send the screenshots once this answer is done.');
+      return;
+    }
     if (busy.current) {
       // Still answering: this goes straight into the answer the GM is working on,
       // and shows up in the chat as soon as the GM has it.
@@ -203,8 +231,9 @@ export default function FrontOfficeScreen() {
     }
     busy.current = true;
     setDraft('');
+    setPhotos([]);
     setProblem(null);
-    setMessages((m) => [...m, { role: 'user', content: question }]);
+    setMessages((m) => [...m, { role: 'user', content: question, ...(shots.length ? { photos: shots.length, uris: shots.map((p) => p.uri) } : {}) }]);
     setThinking(true);
     setStatus('Reading your roster');
     setPartial('');
@@ -214,7 +243,8 @@ export default function FrontOfficeScreen() {
     let done = false;
     const onEvent = listen(mine);
     try {
-      await apiStream<ChatEvent>('/front-office/chat/stream', { question, conversation_id: convo }, (event) => {
+      const images = shots.map((p) => ({ media_type: 'image/jpeg', data: p.data }));
+      await apiStream<ChatEvent>('/front-office/chat/stream', { question, conversation_id: convo, ...(images.length ? { images } : {}) }, (event) => {
         started = true;
         if (event.e === 'done') done = true;
         onEvent(event);
@@ -226,7 +256,10 @@ export default function FrontOfficeScreen() {
         follow(mine, question);
         return;
       }
-      if (chat.current === mine) setProblem(e?.message ?? 'Something went wrong.');
+      if (chat.current === mine) {
+        setProblem(e?.message ?? 'Something went wrong.');
+        if (shots.length && !started) setPhotos(shots); // not sent: keep them attached to try again
+      }
     }
     finish(mine);
   };
@@ -289,18 +322,27 @@ export default function FrontOfficeScreen() {
             </Pressable>
           </>
         ) : messages.length === 0 ? (
-          <Text style={styles.hint}>Ask anything about your team, another team, a player, a trade or the draft.</Text>
+          <Text style={styles.hint}>Ask anything about your team, another team, a player, a trade or the draft. Tap + to add screenshots, even from another league.</Text>
         ) : null}
 
         {messages.map((m, i) => (
           <View key={i} style={m.role === 'user' ? styles.mine : styles.theirs}>
             {m.role === 'user' ? (
-              <Text style={styles.mineText}>{m.content}</Text>
+              <>
+                {m.uris?.length ? (
+                  <View style={styles.shots}>
+                    {m.uris.map((u) => <Image key={u} source={{ uri: u }} style={styles.shot} />)}
+                  </View>
+                ) : m.photos ? (
+                  <Text style={styles.shotNote}>📎 {m.photos === 1 ? 'a screenshot' : `${m.photos} screenshots`}</Text>
+                ) : null}
+                <Text style={styles.mineText}>{m.content}</Text>
+              </>
             ) : (
               <>
                 <Text style={styles.gm}>GM</Text>
                 <Markdown text={m.content} />
-                {sleeper && isTradeQuestion(messages[i - 1]?.content) ? (
+                {sleeper && !messages[i - 1]?.photos && isTradeQuestion(messages[i - 1]?.content) ? (
                   <Pressable style={styles.sleeper} onPress={() => Linking.openURL(sleeper)}>
                     <Text style={styles.sleeperText}>Open in Sleeper ↗</Text>
                   </Pressable>
@@ -334,7 +376,24 @@ export default function FrontOfficeScreen() {
         </ScrollView>
       ) : null}
 
+      {photos.length ? (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipsBar} contentContainerStyle={styles.tray} keyboardShouldPersistTaps="handled">
+          {photos.map((p, i) => (
+            <View key={p.uri}>
+              <Image source={{ uri: p.uri }} style={styles.trayShot} />
+              <Pressable onPress={() => setPhotos((all) => all.filter((_, j) => j !== i))} hitSlop={8} style={styles.trayX}>
+                <Text style={styles.trayXText}>×</Text>
+              </Pressable>
+            </View>
+          ))}
+        </ScrollView>
+      ) : null}
+
       <View style={styles.inputBar}>
+        <Pressable onPress={attach} disabled={!data.ai_ready || thinking || photos.length >= MAX_PHOTOS} hitSlop={6}
+          style={[styles.attach, (!data.ai_ready || thinking || photos.length >= MAX_PHOTOS) && styles.sendOff]}>
+          <Text style={styles.attachText}>+</Text>
+        </Pressable>
         <TextInput
           value={draft}
           onChangeText={setDraft}
@@ -345,11 +404,12 @@ export default function FrontOfficeScreen() {
           editable={data.ai_ready}
           style={styles.input}
           multiline
-          onSubmitEditing={() => send(draft)}
+          onSubmitEditing={() => send(draft, convoRef.current, photos)}
           blurOnSubmit
           returnKeyType="send"
         />
-        <Pressable onPress={() => send(draft)} disabled={!draft.trim() || !data.ai_ready} style={[styles.sendButton, (!draft.trim() || !data.ai_ready) && styles.sendOff]}>
+        <Pressable onPress={() => send(draft, convoRef.current, photos)} disabled={(!draft.trim() && !photos.length) || !data.ai_ready}
+          style={[styles.sendButton, ((!draft.trim() && !photos.length) || !data.ai_ready) && styles.sendOff]}>
           <Text style={styles.sendText}>↑</Text>
         </Pressable>
       </View>
@@ -489,5 +549,14 @@ const styles = StyleSheet.create({
   },
   sendButton: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.gold, alignItems: 'center', justifyContent: 'center' },
   sendOff: { opacity: 0.4 },
+  attach: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.line, alignItems: 'center', justifyContent: 'center' },
+  attachText: { color: colors.gold, fontSize: 22, fontWeight: '700', marginTop: -2 },
+  tray: { gap: 8, paddingHorizontal: 16, paddingTop: 4, paddingBottom: 6 },
+  trayShot: { width: 56, height: 84, borderRadius: 8, backgroundColor: colors.card },
+  trayX: { position: 'absolute', top: -4, right: -4, width: 20, height: 20, borderRadius: 10, backgroundColor: colors.bg, borderWidth: 1, borderColor: colors.line, alignItems: 'center', justifyContent: 'center' },
+  trayXText: { color: colors.text, fontSize: 13, fontWeight: '800', marginTop: -1 },
+  shots: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 8 },
+  shot: { width: 64, height: 96, borderRadius: 8, backgroundColor: colors.card },
+  shotNote: { color: colors.bg, fontSize: 12, fontWeight: '700', marginBottom: 4, opacity: 0.8 },
   sendText: { color: colors.bg, fontSize: 18, fontWeight: '800' },
 });

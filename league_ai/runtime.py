@@ -12,7 +12,7 @@ from typing import Any, Callable, Mapping
 
 from dataclasses import replace
 
-from league_ai import fact_check
+from league_ai import fact_check, screenshots
 from league_ai.client import ClaudeClient
 from league_ai.config import load_config
 from league_ai.context_pack import Asker
@@ -30,6 +30,7 @@ from league_ai.team_context import team_context
 from league_ai.tools import ToolRegistry
 from league_ai.tools.history import history_tools, pack_history_summary
 from league_ai.tools.nfl import NflData, build_registry
+from league_ai.tools.outside_league import outside_league_tools
 from league_ai.usage import record as record_usage, row_from_trace, usage_row
 
 
@@ -64,6 +65,8 @@ TOOL_STATUS = {
     "get_playoff_odds": "Simulating the rest of the season",
     "get_pickup_odds": "Simulating the season with him on your roster",
     "get_matchup_odds": "Working out your odds to win this week",
+    "get_outside_league": "Pulling up that league from Sleeper",
+    "read_screenshot": "Reading your screenshot",
 }
 
 
@@ -347,7 +350,8 @@ def chat_tools(client: Any, owner: Owner, *, state: Mapping[str, Any], rules: Ma
 
     return build_registry(client, league_state=state, salary_cap=rules.get("salary_cap", 225), dead_cap_pct=float(rules.get("default_dead_cap_pct", 50) or 50),
                           week_projection=week_projection,
-                          extra=[*history_tools(client, owner.league_id), *owner.memory(client).tools(), *ledger.tools(), *finder, *(extra or [])])
+                          extra=[*history_tools(client, owner.league_id), *owner.memory(client).tools(), *ledger.tools(), *finder,
+                                 *outside_league_tools(client, league.get("sleeper_league_id")), *(extra or [])])
 
 
 @dataclass
@@ -358,9 +362,11 @@ class ChatTurn:
 
 
 def chat_turn(client: Any, owner: Owner, *, question: str, history: list[dict[str, str]], conversation_id: str | None, pack: str,
-              tools: ToolRegistry, on_event: Any = None, week_context: str | None = None, inbox: Any = None) -> ChatTurn:
+              tools: ToolRegistry, on_event: Any = None, week_context: str | None = None, inbox: Any = None,
+              images: list[screenshots.Shot] | None = None) -> ChatTurn:
     """One question and answer: run Claude, save the conversation, log the cost.
-    inbox(final) hands over anything the owner typed while the answer was being worked on (see ClaudeClient.run)."""
+    inbox(final) hands over anything the owner typed while the answer was being worked on (see ClaudeClient.run).
+    images: screenshots attached to this question (league_ai.screenshots); only their text reading is saved."""
     added: list[str] = []
 
     def take(final: bool) -> list[str]:
@@ -369,18 +375,31 @@ def chat_turn(client: Any, owner: Owner, *, question: str, history: list[dict[st
         return got
 
     memory = owner.memory(client)
+    question = question.strip() or (screenshots.DEFAULT_QUESTION if images else question)
+    reading = ""
+    if images:
+        _emit_status(on_event, "read_screenshot")
+        shot = screenshots.read(images, question)
+        reading = shot.text
+        if shot.usage:
+            record_usage(client, usage_row(league_id=owner.league_id, user_id=owner.user_id, feature="screenshot_read", model=screenshots.MODEL,
+                                           topic=str(len(images)), conversation_id=conversation_id, latency_ms=shot.latency_ms, **shot.usage))
+    routed = screenshots.routing_text(question, reading)
     from league_ai import owner_prefs  # answer length and contend/rebuild from the owner's Settings
     week_context = owner_prefs.with_prefs(week_context, owner_prefs.load(client, owner.user_id))
-    week_context = with_question_focus(week_context, question)
-    topic = question_topic(question)
+    week_context = with_question_focus(week_context, routed)
+    topic = question_topic(routed)
     sources = LeagueDataSources(client=client, league_id=owner.league_id, season=owner.season)
     model = pick_model(topic, conversation_id or question)
     result = answer(question=question, history=history, asker=owner.asker(), sources=sources, tools=tools,
                     client=ClaudeClient(replace(load_config(), model=model) if model else None), pack=pack, on_event=on_event,
-                    week_context=week_context, turn_effort=effort_for(question), prior_facts=_prior_facts(memory, conversation_id) if history else None,
+                    week_context=week_context, turn_effort=effort_for(routed), prior_facts=_prior_facts(memory, conversation_id) if history else None,
+                    images=images or None, screenshot_reading=reading or None,
                     **({"inbox": take} if inbox else {}))
+    result.screenshot = reading
     if result.ok and fact_check.enabled():
-        checked = fact_check.check(result.text, pack=result.pack or pack, evidence=result.evidence, week_context=week_context)
+        evidence = ([{"tool": "owner_screenshot", "input": {}, "result": reading}] if reading else []) + list(result.evidence)
+        checked = fact_check.check(result.text, pack=result.pack or pack, evidence=evidence, week_context=week_context)
         if checked.ran:
             record_usage(client, usage_row(league_id=owner.league_id, user_id=owner.user_id, feature="fact_check", model=fact_check.MODEL,
                                            topic="fixed" if checked.fixed else ("flagged" if checked.problems else "ok"),
@@ -391,7 +410,8 @@ def chat_turn(client: Any, owner: Owner, *, question: str, history: list[dict[st
             _emit_replace(on_event, checked.text)
             print(f"LEAGUE_AI_FACT_FIX problems={len(checked.problems)}", flush=True)
     if result.ok:
-        full = [*history, {"role": "user", "content": question}, *({"role": "user", "content": a} for a in added),
+        asked = {"role": "user", "content": question, **({"photos": len(images), "screenshot": reading} if images else {})}
+        full = [*history, asked, *({"role": "user", "content": a} for a in added),
                 {"role": "assistant", "content": result.text, "facts": facts_digest(result.evidence)}]
         conversation_id = memory.save_conversation(conversation_id, full)
     record_usage(client, row_from_trace(result.trace, league_id=owner.league_id, user_id=owner.user_id, feature="chat",
@@ -456,6 +476,15 @@ def _prior_facts(memory: Memory, conversation_id: str | None) -> str | None:
     row = memory.get_conversation(conversation_id) or {}
     last = next((m for m in reversed(row.get("messages") or []) if m.get("role") == "assistant"), None)
     return (last or {}).get("facts") or None
+
+
+def _emit_status(on_event: Any, tool: str) -> None:
+    if on_event is None:
+        return
+    try:
+        on_event("tool", tool)
+    except Exception:
+        pass
 
 
 def _emit_replace(on_event: Any, text: str) -> None:

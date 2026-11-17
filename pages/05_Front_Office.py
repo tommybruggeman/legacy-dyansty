@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from hashlib import sha256
+from typing import Any
 
 import streamlit as st
 
@@ -8,6 +9,7 @@ from components.sidebar_nav import render_nav
 from auth import current_user, require_login
 from gm_assistant.data import load_gm_context
 from gm_assistant.request_context import AssistantRequestContext
+from league_ai import screenshots as _screenshots
 from league_ai.front_office import week_context as _week_context
 from league_ai.page_glue import (
     CONVERSATION_KEY,
@@ -165,8 +167,11 @@ if fo:
 
 # chat_input pins to the bottom wherever it's called; reading it up here lets the
 # brief and starter topics step aside the moment a question is on its way.
-typed_prompt = st.chat_input("Ask your assistant GM...")
-prompt = st.session_state.pop("gm_pending_prompt", None) or typed_prompt
+# Screenshots (a trade offer, a roster, another league) can ride along with a question: up to 10.
+typed = st.chat_input("Ask your assistant GM, or attach screenshots...", accept_file="multiple", file_type=["png", "jpg", "jpeg", "webp"])
+typed_prompt = (getattr(typed, "text", None) or "").strip() if typed is not None and not isinstance(typed, str) else typed
+typed_files = list(getattr(typed, "files", None) or []) if typed is not None and not isinstance(typed, str) else []
+prompt = st.session_state.pop("gm_pending_prompt", None) or typed_prompt or (_screenshots.DEFAULT_QUESTION if typed_files else None)
 fresh_conversation = len(gm_messages) <= 1 and not prompt
 
 # Tiles (desktop only; the phone CSS hides them)
@@ -214,23 +219,41 @@ def _render_chat_markdown(text: str) -> None:
     st.markdown(str(text).replace("$", "\\$"))
 
 
+def _photos_caption(count: Any) -> None:
+    if count:
+        st.caption(f"📎 {_screenshots.label(int(count))}")
+
+
 for msg in gm_messages:
     with st.chat_message(msg["role"], avatar=(GM_AVATAR if msg["role"] == "assistant" else _me_avatar)):
+        _photos_caption(msg.get("photos"))
         _render_chat_markdown(msg["content"])
 
 if prompt:
-    prompt_hash = sha256(f"{history_key}:{prompt}".encode("utf-8")).hexdigest()
+    prompt_hash = sha256(f"{history_key}:{prompt}:{[f.name for f in typed_files]}".encode("utf-8")).hexdigest()
     if st.session_state.get(pending_hash_key) == prompt_hash:
         st.stop()
     st.session_state[pending_hash_key] = prompt_hash
-    gm_messages.append({"role": "user", "content": prompt})
+    try:
+        if len(typed_files) > _screenshots.MAX_IMAGES:
+            raise _screenshots.ScreenshotError(f"Attach up to {_screenshots.MAX_IMAGES} screenshots per question.")
+        shots = [_screenshots.shrink(f.getvalue(), f.type or "image/jpeg") for f in typed_files]
+    except _screenshots.ScreenshotError as exc:
+        st.session_state.pop(pending_hash_key, None)
+        st.error(str(exc))
+        st.stop()
+    gm_messages.append({"role": "user", "content": prompt, **({"photos": len(shots)} if shots else {})})
     with st.chat_message("user", avatar=_me_avatar):
+        if typed_files:
+            st.image([f.getvalue() for f in typed_files], width=140)
         _render_chat_markdown(prompt)
     with st.chat_message("assistant", avatar=GM_AVATAR):
         live = LiveAnswer()
         result = run_league_ai(request_context=request_context, team=team, question=prompt, history=gm_messages[:-1], on_event=live, fo=fo,
-                               week_context=_week_context(fo, owner_team_name))
+                               week_context=_week_context(fo, owner_team_name), images=shots or None)
         live.finish()
+        if shots:
+            gm_messages[-1]["screenshot"] = getattr(result, "screenshot", "") or ""  # follow-ups get the reading
         print(result.trace_line(), flush=True)
         response = result.text if result.ok else result.human_error
         if result.ok:
