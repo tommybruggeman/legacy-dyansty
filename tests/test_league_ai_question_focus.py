@@ -58,6 +58,10 @@ class QuestionFocusTests(unittest.TestCase):
         self.assertIn("ask one short question back", SYSTEM_PROMPT)
         self.assertNotIn("Lead with the verdict in one sentence", SYSTEM_PROMPT)
 
+    def test_value_questions_dont_jump_to_offers(self):
+        self.assertIn("Value questions", SYSTEM_PROMPT)
+        self.assertIn("Don't open with a specific offer", SYSTEM_PROMPT)
+
 
 if __name__ == "__main__":
     unittest.main()
