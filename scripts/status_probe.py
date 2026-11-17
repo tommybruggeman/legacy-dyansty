@@ -60,7 +60,50 @@ def main() -> int:
     for (a, b), n in sorted(pairs.items(), key=lambda kv: -kv[1]):
         if a != b:
             print(f"  {a:>12} -> {b:<12} {n}")
+    rosters(client, sleeper, ids)
     return 0
+
+
+def rosters(client, sleeper, ids) -> None:
+    """ESPN's 32 team rosters: what status fields an athlete carries, and whether they cover the IR/PUP players."""
+    from pipeline.nfl_data import espn_rosters as er
+    team_ids = er.espn_team_ids(fetch_json(er.ESPN_TEAMS_URL, timeout=60))
+    keys, st_type, st_name, inj = Counter(), Counter(), Counter(), Counter()
+    by_espn = {}
+    for tid in team_ids:
+        try:
+            payload = fetch_json(er.ESPN_ROSTER_URL.format(team_id=tid), timeout=60)
+        except Exception:
+            continue
+        for group in payload.get("athletes") or []:
+            for a in (group.get("items") if isinstance(group, dict) and "items" in group else [group]) or []:
+                pos = ((a.get("position") or {}).get("abbreviation"))
+                if pos not in ps.POSITIONS:
+                    continue
+                keys.update(k for k in a.keys())
+                st = a.get("status") or {}
+                st_type[str(st.get("type"))] += 1
+                st_name[str(st.get("name") or st.get("abbreviation"))] += 1
+                injs = a.get("injuries") or []
+                inj[str((injs[0] or {}).get("status")) if injs else "none"] += 1
+                by_espn[str(a.get("id"))] = (str(st.get("type")), str((injs[0] or {}).get("status")) if injs else "")
+    print(f"rosters: {len(team_ids)} teams; athlete keys: {sorted(k for k, n in keys.items() if n > 50)}")
+    print("roster status.type:", dict(st_type.most_common()))
+    print("roster status.name:", dict(st_name.most_common()))
+    print("roster injuries[0].status:", dict(inj.most_common()))
+    rev = {}
+    for r in client.table("nfl_injuries").select("espn_id,sleeper_id").execute().data or []:
+        if r.get("sleeper_id"):
+            rev[str(r["sleeper_id"])] = str(r["espn_id"])
+    rev.update({s: e for e, s in ids.items()})
+    cover = Counter()
+    for sid, lab in sleeper.items():
+        if lab in ("IR", "PUP", "Out", "Questionable"):
+            e = rev.get(sid)
+            cover[(lab, by_espn.get(e, ("not found", ""))[0] if e else "no espn id")] += 1
+    print("app today (Sleeper) vs ESPN roster status.type:")
+    for (a, b), n in sorted(cover.items()):
+        print(f"  {a:>12} | {b:<24} {n}")
 
 
 if __name__ == "__main__":
