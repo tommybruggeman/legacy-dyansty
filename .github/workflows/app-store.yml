@@ -88,6 +88,15 @@ jobs:
           maestro --device "$UDID" test -e REVIEW_EMAIL="$REVIEW_EMAIL" -e REVIEW_PASSWORD="$REVIEW_PASSWORD" ../../maestro/screenshots.yaml
           ls -la
 
+      # On a failed run, Maestro's own screenshots of where it got stuck (kept 1 day).
+      - name: Keep screenshot debug output
+        if: ${{ failure() && inputs.screenshots }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: maestro-debug
+          path: ~/.maestro/tests
+          retention-days: 1
+
       - name: Upload the listing to App Store Connect
         working-directory: mobile
         env:
