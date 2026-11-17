@@ -8,10 +8,10 @@ import { ErrorState, Loading } from '../components/ScreenState';
 import { Back, Card, Note, Row, Screen, Segmented, Title, ui } from '../components/ui';
 import { type GmPrefs, type LeagueChoice, type MySettings, apiSend, clearApiCache, useApi } from '../lib/api';
 import { useAppLock } from '../lib/appLock';
+import { PRIVACY_URL, SUPPORT_URL, WEBSITE } from '../lib/links';
 import { supabase } from '../lib/supabase';
 import { colors } from '../lib/theme';
 
-const WEBSITE = 'https://legacy-dynasty.streamlit.app';
 const LENGTHS = ['Short', 'Detailed'] as const;
 const PLANS = ['Auto', 'Contend', 'Rebuild'] as const;
 
@@ -51,6 +51,16 @@ export default function Settings() {
           <Text style={ui.link}>↗</Text>
         </Row>
         <Note>Rookie drafts, the free agent auction and season rollover live on the website.</Note>
+      </Card>
+      <Card title="Help">
+        <Row first onPress={() => Linking.openURL(SUPPORT_URL)}>
+          <Text style={[ui.value, ui.flex]}>Help and support</Text>
+          <Text style={ui.link}>↗</Text>
+        </Row>
+        <Row onPress={() => Linking.openURL(PRIVACY_URL)}>
+          <Text style={[ui.value, ui.flex]}>Privacy policy</Text>
+          <Text style={ui.link}>↗</Text>
+        </Row>
       </Card>
       <AccountCard email={data.email} />
       <Pressable style={styles.signOut} onPress={() => supabase.auth.signOut()}>
@@ -242,6 +252,10 @@ function AccountCard({ email }: { email: string | null }) {
           <Switch value={lock.enabled} onValueChange={lock.setEnabled} trackColor={{ true: colors.gold }} />
         </Row>
       ) : null}
+      <Row onPress={() => router.push('/delete-account')}>
+        <Text style={[ui.value, ui.flex, { color: colors.danger }]}>Delete account</Text>
+        <Text style={ui.link}>›</Text>
+      </Row>
     </Card>
   );
 }

@@ -6,6 +6,7 @@ from typing import Any
 import streamlit as st
 
 from components.sidebar_nav import render_nav
+from services.account_web import render_report
 from auth import current_user, require_login
 from gm_assistant.data import load_gm_context
 from gm_assistant.request_context import AssistantRequestContext
@@ -224,10 +225,14 @@ def _photos_caption(count: Any) -> None:
         st.caption(f"📎 {_screenshots.label(int(count))}")
 
 
-for msg in gm_messages:
+for _i, msg in enumerate(gm_messages):
     with st.chat_message(msg["role"], avatar=(GM_AVATAR if msg["role"] == "assistant" else _me_avatar)):
         _photos_caption(msg.get("photos"))
         _render_chat_markdown(msg["content"])
+        if msg["role"] == "assistant" and _i > 0:
+            _prev = gm_messages[_i - 1]
+            render_report(f"{history_key}_{_i}", _prev.get("content") if _prev.get("role") == "user" else None, msg["content"],
+                          league_id=league_id)
 
 if prompt:
     prompt_hash = sha256(f"{history_key}:{prompt}:{[f.name for f in typed_files]}".encode("utf-8")).hexdigest()

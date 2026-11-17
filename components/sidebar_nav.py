@@ -204,8 +204,22 @@ def _render_page_links():
         label="Settings",
     )
 
+    st.page_link(
+        "pages/91_Account.py",
+        label="Account",
+    )
+
 
 def render_nav():
+
+    # Page-view counts for the usage report (our own table; never breaks the page).
+    try:
+        import inspect
+
+        from services.account_web import log_page_view
+        log_page_view(inspect.stack()[1].filename)
+    except Exception:
+        pass
 
     st.markdown(
         NAV_CSS,

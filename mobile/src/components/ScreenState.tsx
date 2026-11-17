@@ -1,8 +1,10 @@
-import { router, type ErrorBoundaryProps } from 'expo-router';
+import { router, usePathname, type ErrorBoundaryProps } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { supabase } from '../lib/supabase';
+import { reportCrash } from '../lib/telemetry';
 import { colors } from '../lib/theme';
 
 // Loading (Tommy's pick): a first open shows the page's shape as soft pulsing blocks, and the gold wheel
@@ -50,6 +52,25 @@ export function Loading() {
 }
 
 export function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
+  // Signed in, but the commissioner hasn't linked this login to a team yet (e.g. signed up without the invite link).
+  if (message.includes("isn't linked to")) {
+    return (
+      <View style={styles.center}>
+        <Text style={styles.title}>You’re not on a team yet</Text>
+        <Text style={styles.error}>
+          Open the invite link your commissioner emailed you, using this same email. Once it’s accepted, your team shows up here.
+        </Text>
+        <View style={styles.actions}>
+          <Pressable onPress={onRetry} style={styles.retry}>
+            <Text style={styles.retryText}>Check again</Text>
+          </Pressable>
+          <Pressable onPress={() => supabase.auth.signOut()} style={styles.retry}>
+            <Text style={styles.retryText}>Sign out</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
   return (
     <View style={styles.center}>
       <Text style={styles.error}>{message}</Text>
@@ -63,6 +84,10 @@ export function ErrorState({ message, onRetry }: { message: string; onRetry: () 
 // Shown instead of crashing the app when a screen throws while drawing.
 // Route files re-export it as ErrorBoundary; the message helps us find the bug.
 export function ScreenError({ error, retry }: ErrorBoundaryProps) {
+  const pathname = usePathname();
+  useEffect(() => {
+    reportCrash(error, pathname);
+  }, [error, pathname]);
   return (
     <View style={styles.center}>
       <Text style={styles.title}>This page hit a snag</Text>

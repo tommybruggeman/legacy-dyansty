@@ -8,6 +8,23 @@ import { supabase } from './supabase';
 
 const API_URL = (process.env.EXPO_PUBLIC_API_URL ?? '').replace(/\/$/, '');
 
+export const OFFLINE_MESSAGE = 'No connection. Check your signal and try again.';
+
+// fetch, but a dropped connection reads as a plain sentence instead of "Network request failed".
+async function reach<R>(doFetch: () => Promise<R>): Promise<R> {
+  try {
+    return await doFetch();
+  } catch {
+    throw new Error(OFFLINE_MESSAGE);
+  }
+}
+
+function failure(status: number, body: any): Error {
+  if (body?.detail) return new Error(body.detail);
+  if (status === 502 || status === 503 || status === 504) return new Error('The league server is busy. Try again in a moment.');
+  return new Error(`Request failed (${status}).`);
+}
+
 // Calls the Legacy API as the signed-in owner. The server checks the token
 // and reads as that owner, so the database rules still apply.
 export async function apiGet<T>(path: string): Promise<T> {
@@ -15,9 +32,9 @@ export async function apiGet<T>(path: string): Promise<T> {
   const token = data.session?.access_token;
   if (!token) throw new Error('Sign in required.');
 
-  const response = await fetch(`${API_URL}${path}`, { headers: { Authorization: `Bearer ${token}` } });
+  const response = await reach(() => fetch(`${API_URL}${path}`, { headers: { Authorization: `Bearer ${token}` } }));
   const body = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(body?.detail ?? `Request failed (${response.status}).`);
+  if (!response.ok) throw failure(response.status, body);
   return body as T;
 }
 
@@ -27,13 +44,13 @@ export async function apiSend<T>(method: 'POST' | 'DELETE', path: string, body?:
   const token = data.session?.access_token;
   if (!token) throw new Error('Sign in required.');
 
-  const response = await fetch(`${API_URL}${path}`, {
+  const response = await reach(() => fetch(`${API_URL}${path}`, {
     method,
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  }));
   const result = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(result?.detail ?? `Request failed (${response.status}).`);
+  if (!response.ok) throw failure(response.status, result);
   return result as T;
 }
 
@@ -44,14 +61,14 @@ export async function apiStream<E>(path: string, body: unknown, onEvent: (event:
   const token = data.session?.access_token;
   if (!token) throw new Error('Sign in required.');
 
-  const response = await streamingFetch(`${API_URL}${path}`, {
+  const response = await reach(() => streamingFetch(`${API_URL}${path}`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/x-ndjson' },
     body: JSON.stringify(body),
-  });
+  }));
   if (!response.ok || !response.body) {
     const detail = await response.json().catch(() => null);
-    throw new Error(detail?.detail ?? `Request failed (${response.status}).`);
+    throw failure(response.status, detail);
   }
   const reader = response.body.getReader();
   const decoder = new TextDecoder();

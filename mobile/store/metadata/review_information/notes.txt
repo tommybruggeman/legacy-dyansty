@@ -1,1 +1,10 @@
-Legacy Dynasty is the companion app for a fantasy football league that uses salary caps and multi-year player contracts. The league's commissioner invites each owner, so the app has no public sign-up. The demo account is linked to a real team, so every screen has live data. Tabs: Home, My Team, Front Office (AI assistant), League and Market. Odds shown on player pages are information only; the app has no betting or real-money features. Trades happen in the Sleeper app, which the Trade buttons open.
+Legacy Dynasty is the companion app for one private fantasy football league that uses salary caps and multi-year player contracts. The commissioner invites each owner by email, so the app has no public sign-up.
+
+The demo account is linked to a real team, so every screen has live data. To protect that owner's real team, the demo account can't change lineups, bids, trades or contracts; those buttons show "This is a demo account, so changes are turned off." Everything else works, including the Front Office AI assistant.
+
+Tabs: Home, My Team, Front Office (AI assistant), League and Market.
+- Delete account: Home > initials circle (top right) > Settings > Account > Delete account. (Disabled for the demo account only.)
+- Report an AI answer: tap "Report" under any Front Office answer.
+- Privacy policy and support: Settings > Help.
+
+Odds shown on player pages are information only; the app has no betting, payments or real-money features. The league's scoring data comes from Sleeper's public API; some trade buttons open the Sleeper app.

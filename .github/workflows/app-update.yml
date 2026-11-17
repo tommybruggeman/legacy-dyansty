@@ -1,0 +1,44 @@
+# Screen and design fixes straight to owners' phones, no App Store review (EAS Update).
+# Phones download the update in the background and use it the next time the app opens.
+# Only JavaScript changes can go this way. Native changes (new packages with native code, app.json
+# plugins, icon, widgets) change the fingerprint runtime version, so they need a new build from Ship app;
+# phones on older builds simply don't get updates meant for newer ones.
+name: App update (no review)
+
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: What changed (shown in the Expo dashboard)
+        required: true
+
+concurrency:
+  group: app-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - run: npm ci
+      - name: Publish the update
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          # Same public values the production build uses (eas.json). An update without them would break sign-in.
+          EXPO_PUBLIC_API_URL: https://legacy-api-94901925561.us-central1.run.app
+          EXPO_PUBLIC_SUPABASE_URL: https://fhyaahtdbqbdbbspynye.supabase.co
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          MESSAGE: ${{ inputs.message }}
+        run: |
+          [ -n "$EXPO_PUBLIC_SUPABASE_ANON_KEY" ] || { echo "SUPABASE_ANON_KEY secret is missing"; exit 1; }
+          npx -y eas-cli@latest update --channel production --environment production --platform ios --message "$MESSAGE" --non-interactive

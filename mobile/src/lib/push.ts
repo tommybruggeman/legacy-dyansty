@@ -35,6 +35,23 @@ export async function registerForPush(): Promise<void> {
   }
 }
 
+// On every launch: refresh the token only if the owner already said yes. Never shows Apple's prompt;
+// that comes from the "Turn on alerts" card on Home, where the owner sees what the alerts are first.
+export async function registerIfAllowed(): Promise<void> {
+  if (await alertsAllowed()) await registerForPush();
+}
+
+// Whether Apple's prompt can still be shown (the owner hasn't answered it yet).
+export async function canAskForAlerts(): Promise<boolean> {
+  if (Platform.OS !== 'ios') return false;
+  try {
+    const { status, canAskAgain } = await Notifications.getPermissionsAsync();
+    return status === 'undetermined' && canAskAgain !== false;
+  } catch {
+    return false;
+  }
+}
+
 export async function alertsAllowed(): Promise<boolean> {
   try {
     return (await Notifications.getPermissionsAsync()).status === 'granted';
