@@ -342,7 +342,7 @@ SHOTGUN_WINDOWS = {"late": 10.0, "night": 7.0, "monday": 5.0}
 CEILING = 2.5                 # a big game: 2.5x what's left of a projection
 RISER_MIN_PROJ, RISER_MIN_GAMES, RISERS_SHOWN = 8.0, 2, 20
 TOP_PER_POS = 5   # Highest projected: the card shows 5 per position chip
-OUT_TAGS = {"out", "ir", "doubtful", "pup", "sus", "na"}
+OUT_TAGS = {"out", "ir", "doubtful", "pup", "sus", "na", "nfi"}
 
 
 def _late_slate(starts: Iterable[datetime], sunday: date) -> list[datetime]:

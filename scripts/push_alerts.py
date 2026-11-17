@@ -14,6 +14,9 @@ Producers, each safe to run again and again (every alert has a key, so it is que
   playoffs   clinched a spot; the bracket is set
   offers     trade offers in the app (sent to you, answered)
   rollover   the day the rollover completes
+  status     any rostered player's status changes (Healthy, Questionable, Doubtful, Out, IR, PUP...), from our own
+             status feed (api.player_status, refreshed at the start of every run); a starter ruled out before his
+             game gets the injury alert (with the swap) instead
 Completed-trade alerts come from scripts/notify_trades.py (after each Sleeper sync) through the same outbox.
 
 Only leagues with at least one phone signed up are worked. The first run in a league records what is already there
@@ -32,11 +35,11 @@ from typing import Any, Callable, Iterable, Mapping
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from api import alerts, apns, home, league, lineups, playoffs  # noqa: E402
+from api import alerts, apns, home, league, lineups, player_status, playoffs  # noqa: E402
 
 SEEDED = "alerts-seeded"
 OUT = {"out"}
-OFF_ROSTER = {"ir": "on IR", "sus": "suspended", "pup": "on PUP", "na": "not active"}
+OFF_ROSTER = {"ir": "on IR", "sus": "suspended", "pup": "on PUP", "nfi": "on NFI", "na": "not active"}
 NOT_HEALTHY = OUT | set(OFF_ROSTER) | {"doubtful"}
 INACTIVE_LEAD = timedelta(minutes=35)
 LINEUP_LEAD = timedelta(hours=24)
@@ -116,8 +119,10 @@ def main_kickoff(starts: Mapping[str, datetime]) -> datetime | None:
 
 
 def fresh_statuses(ids: Iterable[str]) -> dict[str, str]:
-    """Injury statuses right now for these players (our nfl_players table refreshes nightly; inactives come out
-    90 minutes before kickoff). Raw player news is a feed like stats, read through this one function."""
+    """Statuses right now for these players. Our own status table (api.player_status, refreshed at the start of every
+    run) is already copied into nfl_players, so this is only a backup: Sleeper's file when our table isn't in use."""
+    if CLIENT and player_status.in_use(CLIENT[0]):
+        return {}
     try:
         players = league.sleeper.get("players/nfl", ttl=3000) or {}
     except Exception:
@@ -211,6 +216,59 @@ def game_day(lg: League) -> None:
                                                  bench=bench, status=status, tz=alerts.LEAGUE_TZ.key):
             if now >= start:
                 lg.send(alert, users, expires_at=stale)
+
+
+# ---- player status changes ---------------------------------------------------------------------------
+
+CHANGES: list[dict[str, Any]] = []  # this run's confirmed status changes (api.player_status.refresh)
+CLIENT: list[Any] = []
+
+
+def held_players(lg: League) -> dict[str, int]:
+    """sleeper_id -> roster id for every player on a team (active, taxi, IR): the app's rosters, Sleeper's as backup."""
+    from api import own_league
+    rosters: list[Mapping[str, Any]] = []
+    try:
+        rosters = own_league.app_rosters(lg.client, lg.id, lg.season, {t: r for t, r in lg.roster_of.items() if r is not None})
+    except Exception:
+        rosters = []
+    if not any(r.get("players") for r in rosters) and lg.sid:
+        rosters = league.sleeper.get(f"league/{lg.sid}/rosters", ttl=300) or []
+    out: dict[str, int] = {}
+    for r in rosters:
+        for p in set(r.get("players") or []) | set(r.get("taxi") or []) | set(r.get("reserve") or []):
+            if p and r.get("roster_id") is not None:
+                out[str(p)] = int(r["roster_id"])
+    return out
+
+
+def status_alerts(lg: League) -> None:
+    if not CHANGES:
+        return
+    held = held_players(lg)
+    mine = [c for c in CHANGES if str(c["sleeper_id"]) in held]
+    if not mine:
+        return
+    from api import teams
+    info = teams.player_info(lg.client, [c["sleeper_id"] for c in mine])
+    names = {pid: _text(m.get("full_name")) or pid for pid, m in info.items()}
+    by_roster: dict[int, list[dict[str, Any]]] = {}
+    for c in mine:
+        by_roster.setdefault(held[str(c["sleeper_id"])], []).append(c)
+    for rid, changes in by_roster.items():
+        users = lg.roster_users(rid)
+        if not users:
+            continue
+        # a starter just ruled out already got the injury alert (it names the swap): leave him out here
+        outs = [f"out:{lg.week}:{c['sleeper_id']}" for c in changes if c["to_status"] == "Out"]
+        covered: set[tuple[str, str]] = set()
+        if outs:
+            for r in lg.client.table("push_outbox").select("user_id,key").in_("key", outs).in_("user_id", users).execute().data or []:
+                covered.add((str(r["user_id"]), str(r["key"]).rsplit(":", 1)[-1]))
+        for uid in users:
+            left = [c for c in changes if (uid, str(c["sleeper_id"])) not in covered]
+            if left:
+                lg.send(alerts.status_change(changes=left, names=names), [uid], expires_at=lg.now + timedelta(days=2))
 
 
 # ---- results, playoffs ------------------------------------------------------------------------------
@@ -572,11 +630,18 @@ def trade_offers(lg: League) -> None:
 PRODUCERS: list[tuple[str, Callable[[League], None]]] = [
     ("game day", game_day), ("results", results), ("playoffs", playoff_spots), ("waivers", waivers),
     ("deadlines", deadlines), ("cap", over_the_cap), ("rollover", rollover), ("offers", trade_offers),
-    ("shotgun", shotgun),
+    ("shotgun", shotgun), ("status", status_alerts),
 ]
 
 
 def run(client: Any, now: datetime) -> None:
+    CLIENT[:] = [client]
+    try:
+        from pipeline.nfl_data.common import fetch_json
+        CHANGES[:] = player_status.refresh(client, lambda url: fetch_json(url, timeout=30), now)
+    except Exception as exc:
+        print(f"player status: failed ({type(exc).__name__})", flush=True)
+        CHANGES[:] = []
     leagues = sorted({r["league_id"] for r in client.table("push_tokens").select("league_id,kind").eq("kind", "apns").execute().data or []})
     for n, league_id in enumerate(leagues, start=1):
         marks = {r["key"] for r in client.table("push_sent").select("key").eq("league_id", league_id).eq("key", SEEDED).execute().data or []}
