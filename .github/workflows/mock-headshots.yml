@@ -1,0 +1,28 @@
+name: mock headshots (one-off, for design mockups)
+on:
+  workflow_dispatch:
+    inputs:
+      names:
+        description: Comma-separated player names
+        required: true
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          mkdir out
+          curl -s https://api.sleeper.app/v1/players/nfl -o players.json
+          python3 - "${{ inputs.names }}" <<'PY'
+          import json, sys, urllib.request
+          players = json.load(open("players.json"))
+          want = [n.strip().lower() for n in sys.argv[1].split(",") if n.strip()]
+          for pid, p in players.items():
+              name = f"{p.get('first_name','')} {p.get('last_name','')}".strip().lower()
+              if name in want and p.get("active"):
+                  urllib.request.urlretrieve(f"https://sleepercdn.com/content/nfl/players/{pid}.jpg", f"out/{name.replace(' ', '_')}.jpg")
+                  print(name, pid)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: headshots
+          path: out
