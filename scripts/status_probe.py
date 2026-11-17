@@ -20,11 +20,17 @@ def main() -> int:
     from supabase import create_client
     client = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_ROLE_KEY"])
     t = time.monotonic()
-    entries = ps.fetch_feed(lambda url: fetch_json(url, timeout=30))
+    entries, report_ok = ps.fetch_feed(lambda url: fetch_json(url, timeout=30))
     if entries is None:
         print("feed down")
         return 1
-    print(f"feed: {len(entries)} players in {time.monotonic() - t:.1f}s")
+    print(f"feed: {len(entries)} players in {time.monotonic() - t:.1f}s (injury report {'ok' if report_ok else 'down'})")
+    t = time.monotonic()
+    cache: dict = {}
+    ps.fetch_feed(lambda url: fetch_json(url, timeout=30), cache)
+    t2 = time.monotonic()
+    ps.fetch_feed(lambda url: fetch_json(url, timeout=30), cache)
+    print(f"watcher check: first {t2 - t:.1f}s, then {time.monotonic() - t2:.1f}s with rosters cached")
     print("our labels:", dict(Counter(e["status"] for e in entries.values()).most_common()))
     t = time.monotonic()
     ids = ps.match_ids(client, entries, {})

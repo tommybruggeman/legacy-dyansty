@@ -29,16 +29,28 @@ def test_espn_entries_keep_fantasy_positions_and_designations():
     assert got["1"]["status"] == "IR" and got["3"]["status"] == "Questionable" and got["3"]["body_part"] == "Ankle"
 
 
-def test_change_needs_two_reads():
-    held = {"9": {"sleeper_id": "9", "status": "Healthy"}}
+def test_worse_status_counts_at_once():
+    held = {"9": {"sleeper_id": "9", "status": "Questionable"}}
+    up, ch = ps.step(held, {"9": {"status": "Out", "body_part": "Ankle"}}, T0)
+    assert [(c["from_status"], c["to_status"]) for c in ch] == [("Questionable", "Out")] and up[0]["status"] == "Out"
+
+
+def test_worse_status_waits_when_the_report_is_down():
+    held = {"9": {"sleeper_id": "9", "status": "Questionable"}}
+    up, ch = ps.step(held, {"9": {"status": "Out", "body_part": "Ankle"}}, T0, instant=False)
+    assert not ch and up[0]["pending"] == "Out"
+
+
+def test_better_status_needs_two_reads():
+    held = {"9": {"sleeper_id": "9", "status": "Out"}}
     feed = {"9": {"status": "Questionable", "body_part": "Ankle"}}
     up, ch = ps.step(held, feed, T0)
     assert not ch and up[0]["pending"] == "Questionable"
     held["9"].update(pending="Questionable", pending_since=T0.isoformat())
-    up, ch = ps.step(held, feed, T0 + timedelta(minutes=5))
-    assert ch == [{"sleeper_id": "9", "from_status": "Healthy", "to_status": "Questionable", "body_part": "Ankle",
-                   "source": "espn", "changed_at": (T0 + timedelta(minutes=5)).isoformat()}]
-    assert up[0]["status"] == "Questionable" and "since" in up[0]
+    up, ch = ps.step(held, feed, T0 + timedelta(minutes=1))
+    assert not ch
+    up, ch = ps.step(held, feed, T0 + timedelta(minutes=2))
+    assert [(c["from_status"], c["to_status"]) for c in ch] == [("Out", "Questionable")]
 
 
 def test_blip_back_cancels_pending():
@@ -53,9 +65,11 @@ def test_dropping_off_the_report_is_healthy():
     assert ch[0]["to_status"] == "Healthy"
 
 
-def test_new_player_starts_pending():
+def test_new_player_on_the_report_counts_at_once():
     up, ch = ps.step({}, {"5": {"status": "Out", "body_part": "Hamstring", "espn_id": "e5"}}, T0)
-    assert not ch and up[0]["status"] == ps.HEALTHY and up[0]["pending"] == "Out" and up[0]["espn_id"] == "e5"
+    assert ch[0]["to_status"] == "Out" and up[0]["status"] == "Out" and up[0]["espn_id"] == "e5"
+    up, ch = ps.step({}, {"5": {"status": "Out", "body_part": "Hamstring", "espn_id": "e5"}}, T0, instant=False)
+    assert not ch and up[0]["status"] == ps.HEALTHY and up[0]["pending"] == "Out"
 
 
 def test_short_feed_is_skipped():
@@ -166,13 +180,15 @@ def test_refresh_end_to_end(monkeypatch):
     db = _DB()
     feed = {"e1": {"status": "Healthy", "body_part": "", "date": "", "name": "A B", "position": "WR", "team": "LAR"},
             "e2": {"status": "Questionable", "body_part": "Ankle", "date": "x", "name": "C D", "position": "RB", "team": "LAR"}}
-    monkeypatch.setattr(ps, "fetch_feed", lambda get: {k: dict(v) for k, v in feed.items()})
+    monkeypatch.setattr(ps, "fetch_feed", lambda get, cache=None: ({k: dict(v) for k, v in feed.items()}, True))
     assert ps.refresh(db, None, T0) == []  # first read: taken as is
     players = {r["sleeper_id"]: r for r in db.db["nfl_players"]}
     assert players["11"]["injury_status"] is None and players["12"]["injury_status"] == "Questionable"
-    feed["e2"]["status"] = "Out"
-    assert ps.refresh(db, None, T0 + timedelta(minutes=5)) == []  # pending
-    assert players["12"]["injury_status"] == "Questionable"
-    got = ps.refresh(db, None, T0 + timedelta(minutes=10))
+    feed["e2"]["status"] = "Out"  # worse: counts on this read
+    got = ps.refresh(db, None, T0 + timedelta(minutes=1))
     assert [(c["sleeper_id"], c["from_status"], c["to_status"]) for c in got] == [("12", "Questionable", "Out")]
     assert players["12"]["injury_status"] == "Out" and players["12"]["injury_body_part"] == "Ankle"
+    del feed["e2"]  # off the report: healthy only after a second read
+    assert ps.refresh(db, None, T0 + timedelta(minutes=2)) == [] and players["12"]["injury_status"] == "Out"
+    got = ps.refresh(db, None, T0 + timedelta(minutes=4))
+    assert [(c["from_status"], c["to_status"]) for c in got] == [("Out", "Healthy")] and players["12"]["injury_status"] is None

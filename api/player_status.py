@@ -1,5 +1,5 @@
 """Our own player status (Healthy, Questionable, Doubtful, Out, IR, PUP, NFI, Suspended) for every NFL player, kept
-fresh every 5 minutes by the alert job on the free watcher VM (scripts/push_alerts.py), and every change logged.
+fresh every minute by the status watcher on the free watcher VM (scripts/status_watch.py), and every change logged.
 
 Where it comes from: ESPN's 32 public team rosters (every player's current injury entry, the complete list: IR players
 included) plus ESPN's injury report (adds the PUP / IR-return designations), the newer entry winning. Both mirror the
@@ -31,7 +31,7 @@ ESPN_INJURIES_URLS = (
     "https://site.web.api.espn.com/apis/site/v2/sports/football/nfl/injuries",
 )
 POSITIONS = {"QB", "RB", "WR", "TE", "K"}
-CONFIRM = timedelta(minutes=4)  # the VM runs every 5 minutes, so a change is confirmed on the next run
+CONFIRM = timedelta(minutes=2)  # a change toward healthy needs two reads this far apart (the watcher checks every minute)
 MIN_FEED = 0.5  # a read listing under half the players we have hurt is treated as a broken feed and skipped
 
 HEALTHY = "Healthy"
@@ -131,17 +131,29 @@ def merge(rosters: Mapping[str, Mapping[str, Any]], report: Mapping[str, Mapping
     return out
 
 
-def fetch_feed(get: Callable[[str], Any]) -> dict[str, dict[str, Any]] | None:
-    """Every NFL player's status now, or None when ESPN's rosters didn't all load (nothing changes that run, so a
-    missing team never reads as everyone on it getting healthy). The injury report is added when it answers."""
+ROSTER_AGE = 300.0  # seconds: the 32 rosters are re-read every 5 minutes; the injury report every check
+
+
+def fetch_feed(get: Callable[[str], Any], cache: dict[str, Any] | None = None) -> tuple[dict[str, dict[str, Any]] | None, bool]:
+    """(every NFL player's status now, whether the injury report answered). None when ESPN's rosters didn't all load
+    (nothing changes that check, so a missing team never reads as everyone on it getting healthy).
+
+    cache: a dict kept between checks by a long-running watcher; the rosters in it are reused for ROSTER_AGE seconds,
+    so the once-a-minute check is one small request. New injuries land in the report first."""
     from pipeline.nfl_data import espn_rosters as er
-    try:
-        ids = er.espn_team_ids(get(er.ESPN_TEAMS_URL))
-        payloads = [get(er.ESPN_ROSTER_URL.format(team_id=t)) for t in ids]
-    except Exception:
-        return None
-    if len(ids) < 32 or not all(payloads):
-        return None
+    cache = cache if cache is not None else {}
+    rosters = cache.get("rosters")
+    if rosters is None or time.monotonic() - cache.get("at", 0.0) > ROSTER_AGE:
+        try:
+            ids = er.espn_team_ids(get(er.ESPN_TEAMS_URL))
+            payloads = [get(er.ESPN_ROSTER_URL.format(team_id=t)) for t in ids]
+            if len(ids) >= 32 and all(payloads):
+                rosters = roster_entries(payloads)
+                cache.update(rosters=rosters, at=time.monotonic())
+        except Exception:
+            pass
+    if rosters is None:
+        return None, False
     report: dict[str, dict[str, Any]] = {}
     for url in ESPN_INJURIES_URLS:
         try:
@@ -150,14 +162,24 @@ def fetch_feed(get: Callable[[str], Any]) -> dict[str, dict[str, Any]] | None:
             continue
         if report:
             break
-    return merge(roster_entries(payloads), report)
+    return merge(rosters, report), bool(report)
+
+
+# How bad each status is: a change to a worse one is news the moment it shows (no second look); a change toward
+# healthy waits for a second read, since that's what a feed blip looks like.
+SEVERITY = {HEALTHY: 0, "DTD": 1, "Questionable": 2, "Doubtful": 3, "Out": 4, "IR": 5, "PUP": 5, "NFI": 5, "Sus": 5}
+
+
+def worse(new: str, old: str) -> bool:
+    return SEVERITY.get(new, 2) > SEVERITY.get(old, 2)
 
 
 def step(rows: Mapping[str, Mapping[str, Any]], feed: Mapping[str, Mapping[str, Any]], now: datetime,
-         ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+         instant: bool = True) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """One read compared with what we hold. rows/feed are keyed by sleeper_id.
 
-    Returns (row updates, confirmed changes). A new reading becomes pending; it's confirmed (and logged) when a later
+    Returns (row updates, confirmed changes). A worse status counts at once (instant=False, used when the injury report
+    didn't answer, makes it wait too). Any other new reading becomes pending and is confirmed (and logged) when a later
     read at least CONFIRM after it still says the same. A reading that goes back to the held status drops the pending one.
     """
     stamp = now.isoformat()
@@ -171,8 +193,14 @@ def step(rows: Mapping[str, Mapping[str, Any]], feed: Mapping[str, Mapping[str, 
         if not held and now_status == HEALTHY:  # a healthy player we haven't stored: keep his id link, nothing to say
             updates.append({"sleeper_id": sid, "status": HEALTHY, "body_part": "", "checked_at": stamp, **_ids(seen)})
             continue
+        if not held and instant:  # first time on a report: Healthy -> his status, right away
+            updates.append({"sleeper_id": sid, "status": now_status, "body_part": part, "pending": None, "pending_since": None,
+                            "since": stamp, "checked_at": stamp, **_ids(seen)})
+            changes.append({"sleeper_id": sid, "from_status": HEALTHY, "to_status": now_status, "body_part": part,
+                            "source": "espn", "changed_at": stamp})
+            continue
         if not held:
-            # first time on a report: pending from Healthy, like any change
+            # first time on a report while the report itself is down: pending from Healthy, like any change
             updates.append({"sleeper_id": sid, "status": HEALTHY, "body_part": part, "pending": now_status,
                             "pending_since": stamp, "checked_at": stamp, **_ids(seen)})
             continue
@@ -182,7 +210,7 @@ def step(rows: Mapping[str, Mapping[str, Any]], feed: Mapping[str, Mapping[str, 
                                 "checked_at": stamp})
             continue
         since = _ts(held.get("pending_since"))
-        if _text(held.get("pending")) == now_status and since and now - since >= CONFIRM:
+        if (instant and worse(now_status, cur)) or (_text(held.get("pending")) == now_status and since and now - since >= CONFIRM):
             updates.append({"sleeper_id": sid, "status": now_status, "body_part": part, "pending": None, "pending_since": None,
                             "since": stamp, "checked_at": stamp})
             changes.append({"sleeper_id": sid, "from_status": cur, "to_status": now_status, "body_part": part,
@@ -262,7 +290,7 @@ CROSSWALK_CACHE = os.path.join(tempfile.gettempdir(), "legacy-player-ids.csv")
 
 
 def crosswalk(max_age: float = 86400.0):
-    """The public ESPN/Sleeper/gsis id table (DynastyProcess), kept a day in a local file so a 5-minute job doesn't
+    """The public ESPN/Sleeper/gsis id table (DynastyProcess), kept a day in a local file so a once-a-minute check doesn't
     download it each time."""
     try:
         from pipeline.nfl_data.crosswalk import CROSSWALK_URL, Crosswalk
@@ -278,7 +306,8 @@ def crosswalk(max_age: float = 86400.0):
         return None
 
 
-def refresh(client: Any, get: Callable[[str], Any], now: datetime | None = None) -> list[dict[str, Any]]:
+def refresh(client: Any, get: Callable[[str], Any], now: datetime | None = None,
+            cache: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Read the feed, update our statuses, log and return the confirmed changes ([] when the feed is down)."""
     now = now or datetime.now(timezone.utc)
     try:
@@ -287,16 +316,16 @@ def refresh(client: Any, get: Callable[[str], Any], now: datetime | None = None)
     except Exception:
         print("player status: table missing (sql/player-status.sql); skipping", flush=True)
         return []
-    entries = fetch_feed(get)
+    entries, report_ok = fetch_feed(get, cache)
     if entries is None or not feed_ok(entries, held):
         print(f"player status: feed {'down' if entries is None else 'too short'}; nothing changed", flush=True)
         return []
     ids = match_ids(client, entries, {_text(r.get("espn_id")): sid for sid, r in held.items() if r.get("espn_id")})
     feed = {sid: {**entries[e], "espn_id": e} for e, sid in ids.items()}
     first = not held
-    updates, changes = step(held, feed, now)
+    updates, changes = step(held, feed, now, instant=report_ok)
     if first:  # the very first read: take it as it is, no pending, nothing logged
-        updates = [{**u, "status": u.get("pending") or HEALTHY, "pending": None, "pending_since": None, "since": now.isoformat()}
+        updates = [{**u, "status": u.get("pending") or u.get("status") or HEALTHY, "pending": None, "pending_since": None, "since": now.isoformat()}
                    for u in updates]
         changes = []
     full = [{c: {**held.get(u["sleeper_id"], {}), **u}.get(c) for c in COLUMNS} for u in updates]  # every row the same columns

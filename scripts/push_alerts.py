@@ -648,22 +648,43 @@ PRODUCERS: list[tuple[str, Callable[[League], None]]] = [
 
 def run(client: Any, now: datetime) -> None:
     CLIENT[:] = [client]
+    CHANGES[:] = []
+    if status_watcher_down():  # the once-a-minute status watcher (scripts/status_watch.py) normally does this
+        try:
+            from pipeline.nfl_data.common import fetch_json
+            CHANGES[:] = player_status.refresh(client, lambda url: fetch_json(url, timeout=30), now)
+        except Exception as exc:
+            print(f"player status: failed ({type(exc).__name__})", flush=True)
+    run_leagues(client, now, PRODUCERS)
+
+
+STATUS_BEAT = "/run/legacy-status.beat"
+
+
+def status_watcher_down() -> bool:
+    """True when this run should read statuses itself: on the VM with the status watcher quiet for 3 minutes.
+    Never on GitHub (the backup schedule), so two readers never race on the same change."""
+    if os.environ.get("GITHUB_ACTIONS"):
+        return False
     try:
-        from pipeline.nfl_data.common import fetch_json
-        CHANGES[:] = player_status.refresh(client, lambda url: fetch_json(url, timeout=30), now)
-    except Exception as exc:
-        print(f"player status: failed ({type(exc).__name__})", flush=True)
-        CHANGES[:] = []
+        return datetime.now().timestamp() - os.path.getmtime(STATUS_BEAT) > 180
+    except OSError:
+        return True
+
+
+def run_leagues(client: Any, now: datetime, producers: list[tuple[str, Callable[["League"], None]]]) -> None:
     leagues = sorted({r["league_id"] for r in client.table("push_tokens").select("league_id,kind").eq("kind", "apns").execute().data or []})
     for n, league_id in enumerate(leagues, start=1):
         marks = {r["key"] for r in client.table("push_sent").select("key").eq("league_id", league_id).eq("key", SEEDED).execute().data or []}
         seed = SEEDED not in marks
+        if seed and producers is not PRODUCERS:  # a league's first run records everything; leave that to the full job
+            continue
         try:
             lg = League(client, league_id, now, seed)
         except Exception as exc:
             print(f"league {n}: skipped ({type(exc).__name__})", flush=True)
             continue
-        for label, producer in PRODUCERS:
+        for label, producer in producers:
             try:
                 producer(lg)
             except Exception as exc:
