@@ -1,9 +1,10 @@
 """Our own player status (Healthy, Questionable, Doubtful, Out, IR, PUP, NFI, Suspended) for every NFL player, kept
 fresh every 5 minutes by the alert job on the free watcher VM (scripts/push_alerts.py), and every change logged.
 
-Where it comes from: ESPN's public injury report (one request; the same feed the nightly injuries loader reads),
-which mirrors the teams' official reports and adds IR / PUP / suspensions. Sleeper isn't used. The feed is read
-through fetch_feed() only, so another source can be swapped in behind it.
+Where it comes from: ESPN's 32 public team rosters (every player's current injury entry, the complete list: IR players
+included) plus ESPN's injury report (adds the PUP / IR-return designations), the newer entry winning. Both mirror the
+teams' official reports. Sleeper isn't used. The feed is read through fetch_feed() only, so another source can be
+swapped in behind it.
 
 What we keep:
   nfl_player_status    one row per player we've seen on a report: the confirmed status, and a pending one while a change
@@ -14,7 +15,7 @@ What we keep:
                        read the fresh status (the nightly Sleeper players loader no longer overwrites them once this
                        table has rows)
 
-A player who drops off ESPN's report is Healthy. Prints counts only (the repo and its Actions logs are public).
+A player on a roster with no injury listed, or on no roster at all, is Healthy. Prints counts only (the repo and its Actions logs are public).
 """
 from __future__ import annotations
 
@@ -69,7 +70,7 @@ def body_part(details: Mapping[str, Any]) -> str:
 
 
 def espn_entries(payload: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
-    """ESPN injury report -> {espn_id: {status, body_part, name, position, team, raw}} for fantasy positions."""
+    """ESPN injury report -> {espn_id: {status, body_part, date, name, position, team}} for fantasy positions."""
     out: dict[str, dict[str, Any]] = {}
     for team in payload.get("injuries") or []:
         abbr = _text(team.get("abbreviation")) or _text(team.get("displayName"))
@@ -79,27 +80,74 @@ def espn_entries(payload: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
             pos = _text((athlete.get("position") or {}).get("abbreviation"))
             if not espn_id or pos not in POSITIONS or espn_id in out:
                 continue
-            details = e.get("details") or {}
-            # fantasyStatus carries the roster designation (IR, PUP) where the plain status says "Out"
-            fantasy = label((details.get("fantasyStatus") or {}).get("abbreviation") or (details.get("fantasyStatus") or {}).get("description"))
-            status = label(e.get("status"))
-            if fantasy in {"IR", "PUP", "NFI", "Sus"} and status in {"Out", HEALTHY, "IR"}:
-                status = fantasy
-            out[espn_id] = {"status": status, "body_part": body_part(details), "raw": _text(e.get("status")),
-                            "name": _text(athlete.get("displayName")), "position": pos, "team": abbr}
+            out[espn_id] = {**_entry(e), "name": _text(athlete.get("displayName")), "position": pos, "team": abbr}
+    return out
+
+
+def _entry(e: Mapping[str, Any]) -> dict[str, Any]:
+    details = e.get("details") or {}
+    # fantasyStatus carries the roster designation (IR, IR-R, PUP-R) where the plain status says "Out"
+    fs = details.get("fantasyStatus") or {}
+    fantasy = label(fs.get("abbreviation") or fs.get("description"))
+    status = label(e.get("status"))
+    if fantasy in {"IR", "PUP", "NFI", "Sus"} and status in {"Out", HEALTHY, "IR"}:
+        status = fantasy
+    return {"status": status, "body_part": body_part(details), "date": _text(e.get("date"))}
+
+
+def roster_entries(payloads: Iterable[Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
+    """ESPN's team rosters -> the same shape, for every player on a 53 (practice squad left out). A player with no
+    injury listed is Healthy. Rosters are the complete list (the injury report alone leaves many IR players out)."""
+    from pipeline.nfl_data.espn_rosters import team_code
+    out: dict[str, dict[str, Any]] = {}
+    for payload in payloads:
+        team = team_code((payload.get("team") or {}).get("abbreviation")) or ""
+        for group in payload.get("athletes") or []:
+            items = group.get("items") if isinstance(group, dict) and "items" in group else [group]
+            for a in items or []:
+                if not isinstance(a, dict):
+                    continue
+                pos = _text((a.get("position") or {}).get("abbreviation"))
+                espn_id = _text(a.get("id"))
+                if pos not in POSITIONS or not espn_id or _text((a.get("status") or {}).get("type")) == "practice-squad":
+                    continue
+                injuries = [i for i in a.get("injuries") or [] if isinstance(i, dict)]
+                latest = max(injuries, key=lambda i: _text(i.get("date")), default=None)
+                got = _entry(latest) if latest else {"status": HEALTHY, "body_part": "", "date": ""}
+                out[espn_id] = {**got, "name": _text(a.get("fullName")) or _text(a.get("displayName")), "position": pos, "team": team}
+    return out
+
+
+def merge(rosters: Mapping[str, Mapping[str, Any]], report: Mapping[str, Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Every rostered player's status: the newer of his roster entry and his injury report entry (the report on a tie)."""
+    out = {e: dict(r) for e, r in rosters.items()}
+    for e, r in report.items():
+        mine = out.get(e)
+        if mine is None or _text(r.get("date")) >= _text(mine.get("date")):
+            out[e] = {**(mine or {}), **r, "name": r.get("name") or (mine or {}).get("name"), "team": (mine or {}).get("team") or r.get("team")}
     return out
 
 
 def fetch_feed(get: Callable[[str], Any]) -> dict[str, dict[str, Any]] | None:
-    """Today's report from the first source that answers; None when none does (nothing changes that run)."""
+    """Every NFL player's status now, or None when ESPN's rosters didn't all load (nothing changes that run, so a
+    missing team never reads as everyone on it getting healthy). The injury report is added when it answers."""
+    from pipeline.nfl_data import espn_rosters as er
+    try:
+        ids = er.espn_team_ids(get(er.ESPN_TEAMS_URL))
+        payloads = [get(er.ESPN_ROSTER_URL.format(team_id=t)) for t in ids]
+    except Exception:
+        return None
+    if len(ids) < 32 or not all(payloads):
+        return None
+    report: dict[str, dict[str, Any]] = {}
     for url in ESPN_INJURIES_URLS:
         try:
-            got = espn_entries(get(url) or {})
+            report = espn_entries(get(url) or {})
         except Exception:
             continue
-        if got:
-            return got
-    return None
+        if report:
+            break
+    return merge(roster_entries(payloads), report)
 
 
 def step(rows: Mapping[str, Mapping[str, Any]], feed: Mapping[str, Mapping[str, Any]], now: datetime,
@@ -117,7 +165,8 @@ def step(rows: Mapping[str, Mapping[str, Any]], feed: Mapping[str, Mapping[str, 
         now_status = seen["status"] if seen else HEALTHY
         part = (seen or {}).get("body_part") or ""
         cur = _text(held.get("status")) or HEALTHY
-        if not held and now_status == HEALTHY:
+        if not held and now_status == HEALTHY:  # a healthy player we haven't stored: keep his id link, nothing to say
+            updates.append({"sleeper_id": sid, "status": HEALTHY, "body_part": "", "checked_at": stamp, **_ids(seen)})
             continue
         if not held:
             # first time on a report: pending from Healthy, like any change
@@ -170,7 +219,8 @@ def _all(client: Any, table: str, cols: str, key: str) -> list[dict[str, Any]]:
 
 
 def match_ids(client: Any, entries: Mapping[str, Mapping[str, Any]], known: Mapping[str, str]) -> dict[str, str]:
-    """espn_id -> sleeper_id: ids we already hold, then the injuries loader's crosswalk, then a unique name+position match."""
+    """espn_id -> sleeper_id: ids we already hold, then the injuries loader's crosswalk, then a unique name+position
+    (and team when two share a name) match against nfl_players."""
     from pipeline.nfl_data.common import normalize_name
 
     out = {e: s for e, s in known.items() if e in entries}
@@ -179,14 +229,22 @@ def match_ids(client: Any, entries: Mapping[str, Mapping[str, Any]], known: Mapp
         for r in client.table("nfl_injuries").select("espn_id,sleeper_id").in_("espn_id", left[i:i + 200]).execute().data or []:
             if r.get("sleeper_id"):
                 out[str(r["espn_id"])] = str(r["sleeper_id"])
-    for e in [e for e in left if e not in out]:
+    left = [e for e in left if e not in out]
+    if not left:
+        return out
+    by_name: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for r in _all(client, "nfl_players", "sleeper_id,search_name,position,team", "sleeper_id"):
+        if _text(r.get("position")) in POSITIONS:
+            by_name.setdefault((_text(r.get("search_name")), _text(r.get("position"))), []).append(r)
+    taken = set(out.values())
+    for e in left:
         info = entries[e]
-        hits = (client.table("nfl_players").select("sleeper_id,team").eq("search_name", normalize_name(info["name"]))
-                .eq("position", info["position"]).execute().data or [])
+        hits = [h for h in by_name.get((normalize_name(info.get("name")), _text(info.get("position"))), []) if str(h["sleeper_id"]) not in taken]
         if len(hits) > 1:
-            hits = [h for h in hits if _text(h.get("team")) == info["team"]]
+            hits = [h for h in hits if _text(h.get("team")) == _text(info.get("team"))]
         if len(hits) == 1:
             out[e] = str(hits[0]["sleeper_id"])
+            taken.add(out[e])
     return out
 
 
