@@ -7,7 +7,8 @@
 -- The copy:
 --   * gets every row of the league's own tables (teams, contracts, picks, cap adjustments, settings, history...) with
 --     new ids, so nothing is shared with the real league;
---   * renames every team "Test Team N" and owner "Owner N" (N = roster number), everywhere the old name appears;
+--   * renames every team "Test Team N" and each owner a distinct fake first name (Alex, Blair, ... by roster number),
+--     everywhere the old name appears (the app shows first names);
 --   * has no Sleeper league: its seasons carry a mirror id ("mirror-" + the Sleeper id written in letters) that the
 --     server reads from the real league, read only (api/sleeper.py). Jobs that keep only digits skip it;
 --   * gets only the commissioner as a member, so no owner sees it or gets its alerts. In Settings > League the
@@ -156,7 +157,9 @@ begin
 
   -- fake names, by roster number
   insert into _test_names
-  select owner_name, 'Owner ' || sleeper_roster_id from public.league_teams
+  select owner_name, coalesce((array['Alex','Blair','Casey','Drew','Ellis','Finley','Gray','Hayden','Jules','Kai','Lane','Morgan',
+                                      'Noel','Parker','Quinn','Reese'])[sleeper_roster_id], 'Owner ' || sleeper_roster_id)
+  from public.league_teams
   where league_id = src and nullif(btrim(owner_name), '') is not null and sleeper_roster_id is not null
   on conflict do nothing;
   insert into _test_names
