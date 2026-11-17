@@ -81,9 +81,9 @@ def test_short_feed_is_skipped():
 def test_alert_wording():
     names = {"1": "Puka Nacua", "2": "Travis Kelce"}
     a = alerts.status_change(changes=[{"id": 4, "sleeper_id": "1", "from_status": "Healthy", "to_status": "Questionable", "body_part": "ankle"}], names=names)
-    assert (a.kind, a.title, a.body, a.url) == ("status", "Puka Nacua: Questionable", "Ankle. Was healthy.", "/player/1?section=health")
+    assert (a.kind, a.title, a.body, a.url) == ("status", "Puka Nacua: Questionable", "Ankle.", "/player/1?section=health")
     a = alerts.status_change(changes=[{"id": 5, "sleeper_id": "1", "from_status": "IR", "to_status": "Healthy"}], names=names)
-    assert a.title == "Puka Nacua back to healthy" and a.body == "Off the injury report. Was on IR."
+    assert a.title == "Puka Nacua back to healthy" and a.body == "Off the injury report."
     a = alerts.status_change(changes=[{"id": 6, "sleeper_id": "1", "from_status": "Out", "to_status": "IR"},
                                       {"id": 7, "sleeper_id": "2", "from_status": "Healthy", "to_status": "Out"}], names=names)
     assert a.title == "2 player status changes" and a.body == "Puka Nacua IR, Travis Kelce out." and a.key == "status:6-7"

@@ -170,23 +170,21 @@ def inactive(*, week: int, name: str, player_id: str, sub: Mapping[str, Any] | N
 
 STATUS_TITLE = {"Healthy": "back to healthy", "Questionable": "Questionable", "Doubtful": "Doubtful", "Out": "Out",
                 "IR": "placed on IR", "PUP": "on the PUP list", "NFI": "on the NFI list", "Sus": "suspended", "DTD": "day-to-day"}
-STATUS_WAS = {"Healthy": "healthy", "Questionable": "questionable", "Doubtful": "doubtful", "Out": "out", "IR": "on IR",
-              "PUP": "on the PUP list", "NFI": "on the NFI list", "Sus": "suspended", "DTD": "day-to-day"}
 STATUS_SHORT = {"Healthy": "healthy", "Questionable": "Q", "Doubtful": "D", "Out": "out", "IR": "IR", "PUP": "PUP", "NFI": "NFI",
                 "Sus": "suspended", "DTD": "day-to-day"}
 
 
 def status_change(*, changes: list[Mapping[str, Any]], names: Mapping[str, str]) -> Alert:
     """One owner's status changes from one check (usually one). changes: [{id, sleeper_id, from_status, to_status, body_part}].
-    One change: "Puka Nacua: Questionable" / "Ankle. Was healthy." Several: "3 player status changes" / one line."""
+    One change: "Puka Nacua: Questionable" / "Ankle." (no "was ..." line, Tommy 2026-11-17). Several: "3 player status changes" / one line."""
     ids = "-".join(str(c.get("id") or c["sleeper_id"]) for c in changes)
     if len(changes) == 1:
         c = changes[0]
         name, new, old = names.get(c["sleeper_id"], "Your player"), c["to_status"], c["from_status"]
         title = f"{name}: {STATUS_TITLE.get(new, new)}" if new in ("Questionable", "Doubtful", "Out") else f"{name} {STATUS_TITLE.get(new, new)}"
         part = str(c.get("body_part") or "").strip()
-        lead = "Off the injury report. " if new == "Healthy" else (f"{part[:1].upper()}{part[1:]}. " if part else "")
-        return Alert("status", f"status:{ids}", title, f"{lead}Was {STATUS_WAS.get(old, old)}.", health_url(c["sleeper_id"]))
+        body = "Off the injury report." if new == "Healthy" else (f"{part[:1].upper()}{part[1:]}." if part else "")
+        return Alert("status", f"status:{ids}", title, body, health_url(c["sleeper_id"]))
     line = ", ".join(f"{names.get(c['sleeper_id'], 'Player')} {STATUS_SHORT.get(c['to_status'], c['to_status'])}" for c in changes[:4])
     more = f" and {len(changes) - 4} more" if len(changes) > 4 else ""
     return Alert("status", f"status:{ids}", f"{len(changes)} player status changes", f"{line}{more}.", LINEUP_URL)
