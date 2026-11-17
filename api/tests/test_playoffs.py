@@ -46,8 +46,11 @@ def test_two_week_rounds_add_up_and_name_the_winner():
     assert [t["roster_id"] for t in final["teams"]] == [4, 2] and final["label"] == "Championship"
     assert v["games"][0] is final  # the title game always comes first
     assert final["state"] == "live"
-    loser_r2 = [tuple(t.get("roster_id") for t in g["teams"]) for g in v["losers"]]
-    assert loser_r2 == [(5, 8), (6, 7)]
+    # Loser bracket, one week per round: week 15 7v10 and 8v9, week 16 5 v 8, 6 v 7 and 10 v 9, week 17 placement games.
+    week16 = [tuple(t.get("roster_id") for t in g["teams"]) for g in view(16, 16, 15)["losers"]]
+    assert week16 == [(5, 8), (6, 7), (10, 9)]
+    week17 = [(g["label"], tuple(t.get("roster_id") for t in g["teams"])) for g in v["losers"]]
+    assert week17 == [("5th place", (5, 6)), ("7th place", (8, 7)), ("9th place", (10, 9))]
 
 
 def test_format_is_ours_from_settings():
@@ -68,9 +71,11 @@ def test_legacy_cards_for_old_app_builds():
     assert len(cards) == 4 and all(len(c["teams"]) == 2 for c in cards)
 
 
-def test_own_league_loser_layout_is_trimmed_to_playoff_rounds():
-    assert max(g[0] for g in own_league.loser_layout(6, 2)) == 2
-    assert own_league.loser_layout(3, 2) == []
+def test_loser_bracket_for_teams_5_to_10_runs_three_one_week_rounds():
+    assert own_league.loser_weeks(15, 6) == {1: [15], 2: [16], 3: [17]}
+    assert own_league.loser_layout(3) == []
+    places = sorted(g[4] for g in own_league.loser_layout(6) if g[4])
+    assert places == [1, 3, 5]  # 5th, 7th and 9th place games
 
 
 def test_home_bracket_and_my_game_from_our_view():
