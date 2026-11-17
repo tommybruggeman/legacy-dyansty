@@ -1,10 +1,7 @@
 name: mock headshots (one-off, for design mockups)
 on:
-  workflow_dispatch:
-    inputs:
-      names:
-        description: Comma-separated player names
-        required: true
+  push:
+    branches: [claude/headshots-mock]
 jobs:
   fetch:
     runs-on: ubuntu-latest
@@ -12,7 +9,7 @@ jobs:
       - run: |
           mkdir out
           curl -s https://api.sleeper.app/v1/players/nfl -o players.json
-          python3 - "${{ inputs.names }}" <<'PY'
+          python3 - "Justin Jefferson,Drake Maye,Bijan Robinson,Puka Nacua,Tucker Kraft,Bucky Irving,Josh Allen" <<'PY'
           import json, sys, urllib.request
           players = json.load(open("players.json"))
           want = [n.strip().lower() for n in sys.argv[1].split(",") if n.strip()]
