@@ -306,6 +306,7 @@ function Points({ p, w }: { p: Player; w?: WeekPlayer }) {
   return (
     <View style={ui.right}>
       <Text style={[styles.big, styles.bigPre]}>{w.status === 'bye' ? '—' : w.proj != null ? w.proj.toFixed(1) : '—'}</Text>
+      {w.status !== 'bye' && w.proj != null ? <Text style={styles.projTag}>proj</Text> : null}
     </View>
   );
 }
@@ -737,6 +738,8 @@ const styles = StyleSheet.create({
   bigLive: { color: colors.live },
   bigPre: { color: '#CFC6B4' },
   under: { color: colors.muted, fontSize: 10, fontWeight: '700', marginTop: 2 },
+  // The small "proj" under a player's points before kickoff (Tommy, 2026-11-17).
+  projTag: { color: colors.muted, fontSize: 9, fontWeight: '600', marginTop: 1 },
   foot: { flexDirection: 'row', justifyContent: 'space-between', gap: 8, backgroundColor: '#0B1D15', borderRadius: 8, paddingVertical: 4, paddingHorizontal: 8, marginTop: 8 },
   footText: { color: colors.muted, fontSize: 10.5, flexShrink: 1 },
   footGold: { color: colors.gold, fontWeight: '800' },
