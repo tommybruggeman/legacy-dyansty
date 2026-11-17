@@ -70,11 +70,14 @@ export function LineupSheet({ lineup, players, picking, onClose, onSaved, game, 
   }
 
   let title = '';
-  let rows: { key: string; player: Player | null; note: string; disabled: boolean; current: boolean; onPick: () => void }[] = [];
+  type Row = { key: string; player: Player | null; note: string; disabled: boolean; current: boolean; onPick: () => void;
+    chip: string; section: 'current' | 'starter' | 'bench' };
+  let rows: Row[] = [];
+  let pinned: Row | null = null;
   if (picking?.kind === 'slot') {
     const s = lineup.slots[picking.index];
     const current = s.player_id;
-    title = `Who plays ${s.label}?`;
+    title = 'Swap Player';
     const options = players.filter((p) => p.player_id && fits(s.slot, p.player_id));
     // Current starter first, then bench players by PPG, then starters in other slots (a swap).
     options.sort((a, b) => Number(b.player_id === current) - Number(a.player_id === current)
@@ -83,54 +86,76 @@ export function LineupSheet({ lineup, players, picking, onClose, onSaved, game, 
       const at = ids.indexOf(p.player_id);
       const isLocked = locked.has(p.player_id) || (at >= 0 && at !== picking.index && !!ids[picking.index] && locked.has(ids[picking.index]!));
       return {
+        chip: p.player_id === current ? s.label : at >= 0 ? lineup.slots[at].label : 'BN',
+        section: (p.player_id === current ? 'current' : at >= 0 ? 'starter' : 'bench') as Row['section'],
         key: p.player_id, player: p, current: p.player_id === current, disabled: isLocked || p.player_id === current || !!(current && locked.has(current)),
         note: p.player_id === current ? 'Starting' : locked.has(p.player_id) ? 'Locked' : at >= 0 ? `Starting at ${lineup.slots[at].label}` : 'Bench',
         onPick: () => save(place(lineup, ids, posOf, picking.index, p.player_id)),
       };
     });
     if (current && !locked.has(current)) {
-      rows.push({ key: 'empty', player: null, note: 'Move him to the bench', disabled: false, current: false, onPick: () => save(place(lineup, ids, posOf, picking.index, null)) });
+      // Always possible: send him to the bench and leave the slot open.
+      rows.push({ key: 'empty', player: null, note: `Move ${byId.get(current)?.name ?? 'him'} to the bench`, disabled: false, current: false,
+        chip: 'BN', section: 'bench', onPick: () => save(place(lineup, ids, posOf, picking.index, null)) });
+    }
+    if (!current) {
+      pinned = { key: 'open', player: null, note: 'Empty slot', disabled: true, current: true, chip: s.label, section: 'current', onPick: () => undefined };
     }
   } else if (picking?.kind === 'bench') {
     const p = picking.player;
-    title = `Start ${p.name} at…`;
+    title = 'Swap Player';
+    pinned = { key: 'me', player: p, note: 'Bench', disabled: true, current: true, chip: 'BN', section: 'current', onPick: () => undefined };
     rows = lineup.slots.filter((s) => fits(s.slot, p.player_id)).map((s) => {
       const there = s.player_id ? byId.get(s.player_id) ?? null : null;
       const isLocked = locked.has(p.player_id) || (!!s.player_id && locked.has(s.player_id));
       return {
-        key: String(s.index), player: there, current: false, disabled: isLocked,
-        note: `${s.label} · ${isLocked ? 'Locked' : there ? 'goes to the bench' : 'empty slot'}`,
+        key: String(s.index), player: there, current: false, disabled: isLocked, chip: s.label, section: 'starter' as const,
+        note: isLocked ? 'Locked' : there ? 'Goes to the bench' : 'Empty slot',
         onPick: () => save(place(lineup, ids, posOf, s.index, p.player_id)),
       };
     });
   }
 
   const blocked = picking?.kind === 'slot' && !!lineup.slots[picking.index].player_id && locked.has(lineup.slots[picking.index].player_id!);
+  pinned = pinned ?? rows.find((r) => r.section === 'current') ?? null;
+  const listed = rows.filter((r) => r !== pinned);
+  const starters = listed.filter((r) => r.section === 'starter');
+  const benchRows = listed.filter((r) => r.section === 'bench');
+  const divider = picking?.kind === 'slot' ? `⇅ Choose who plays ${lineup.slots[picking.index].label}` : picking?.kind === 'bench' ? `⇅ Choose where ${picking.player.name.split(' ').slice(-1)[0]} starts` : '';
+
+  const line = (r: Row) => (
+    <Pressable key={r.key} disabled={r.disabled || saving} onPress={r.onPick} style={[styles.row, r.disabled && !r.current && styles.dim]}>
+      <SlotChip label={r.chip} bench={r.chip === 'BN'} locked={!!r.player && locked.has(r.player.player_id)} />
+      {r.player ? <PlayerFace name={r.player.name} team={r.player.nfl_team} pos={r.player.pos} /> : <View style={styles.emptyFace}><Text style={styles.emptyPlus}>+</Text></View>}
+      <View style={ui.flex}>
+        <Text style={ui.name} numberOfLines={1}>{r.player ? r.player.name : 'Empty'}</Text>
+        {r.player && game ? game(r.player) : null}
+        {!r.player || !game || r.section === 'starter' || r.disabled ? <Text style={[ui.sub, r.current && styles.currentNote]}>{r.note}</Text> : null}
+      </View>
+      {r.player ? (points ? points(r.player) : <Text style={styles.ppg}>{r.player.ppg != null ? r.player.ppg.toFixed(1) : '—'}<Text style={styles.ppgUnit}> PPG</Text></Text>) : null}
+    </Pressable>
+  );
+
+  // A half sheet over the roster (dimmed behind): who you're replacing on top, then the starters and bench
+  // players who can play that spot. "Empty" on the bench is always there to just sit him.
   return (
-    <Modal visible={!!picking} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+    <Modal visible={!!picking} animationType="slide" transparent onRequestClose={onClose}>
+      <Pressable style={styles.shade} onPress={onClose} />
       <View style={[styles.sheet, { paddingBottom: insets.bottom + 12 }]}>
         <View style={styles.grab} />
         <View style={styles.head}>
-          <Text style={styles.title} numberOfLines={1}>{title}</Text>
-          {saving ? <ActivityIndicator color={colors.gold} /> : <Pressable onPress={onClose} hitSlop={10}><Text style={ui.link}>Done</Text></Pressable>}
+          <Text style={styles.title}>{title}</Text>
+          {saving ? <ActivityIndicator color={colors.gold} style={styles.headRight} /> : <Pressable onPress={onClose} hitSlop={10} style={styles.headRight}><Text style={ui.link}>Done</Text></Pressable>}
         </View>
-        <Text style={[ui.sub, styles.subtitle]}>Week {lineup.week} · players lock when their game kicks off</Text>
         {blocked ? <Text style={styles.lockedNote}>His game has started, so this slot is locked for the week.</Text> : null}
         <ScrollView>
-          {rows.map((r, i) => (
-            <Pressable key={r.key} disabled={r.disabled || saving} onPress={r.onPick} style={[styles.row, i === 0 && styles.first, r.disabled && !r.current && styles.dim]}>
-              {r.player ? <PlayerFace name={r.player.name} team={r.player.nfl_team} pos={r.player.pos} /> : <View style={styles.emptyFace}><Text style={styles.emptyPlus}>{picking?.kind === 'bench' ? '+' : '–'}</Text></View>}
-              <View style={ui.flex}>
-                <Text style={ui.name} numberOfLines={1}>{r.player ? r.player.name : picking?.kind === 'bench' ? 'Open slot' : 'Leave it empty'}</Text>
-                {r.player && picking?.kind === 'slot' && game ? game(r.player) : null}
-                <Text style={[ui.sub, r.current && styles.currentNote]}>{r.player && picking?.kind === 'slot' && !game ? `${r.player.nfl_team || 'FA'} · ` : ''}{r.note}</Text>
-              </View>
-              {r.player && picking?.kind === 'slot' ? (points ? points(r.player) : (
-                <Text style={styles.ppg}>{r.player.ppg != null ? r.player.ppg.toFixed(1) : '—'}<Text style={styles.ppgUnit}> PPG</Text></Text>
-              )) : null}
-            </Pressable>
-          ))}
-          {!rows.length ? <Text style={[ui.sub, styles.subtitle]}>Nobody on your roster fits this slot.</Text> : null}
+          {pinned ? line(pinned) : null}
+          <View style={styles.divider}><Text style={styles.dividerText}>{divider}</Text></View>
+          {starters.map(line)}
+          {benchRows.length ? <Text style={styles.section}>Bench</Text> : null}
+          {benchRows.map(line)}
+          {!listed.length ? <Text style={[ui.sub, styles.subtitle]}>Nobody else on your roster fits this spot.</Text> : null}
+          <Text style={[ui.sub, styles.subtitle]}>{`Week ${lineup.week} · players lock when their game kicks off`}</Text>
         </ScrollView>
       </View>
     </Modal>
@@ -144,14 +169,20 @@ const styles = StyleSheet.create({
   chipText: { color: colors.bg, fontSize: 12, fontWeight: '900' },
   chipTextBench: { color: colors.muted },
   chipTextLocked: { fontSize: 12 },
-  sheet: { flex: 1, backgroundColor: '#0C2419', paddingHorizontal: 18, paddingTop: 10 },
+  shade: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)' },
+  sheet: { position: 'absolute', left: 0, right: 0, bottom: 0, maxHeight: '78%', backgroundColor: '#0C2419', paddingHorizontal: 16, paddingTop: 10,
+    borderTopLeftRadius: 24, borderTopRightRadius: 24, borderWidth: 1, borderColor: colors.line },
+  headRight: { position: 'absolute', right: 0 },
+  divider: { borderTopWidth: 1, borderTopColor: colors.line, marginTop: 14, marginBottom: 10, alignItems: 'center' },
+  dividerText: { marginTop: -11, backgroundColor: '#0C2419', borderWidth: 1, borderColor: colors.line, borderRadius: 12, overflow: 'hidden',
+    paddingHorizontal: 12, paddingVertical: 3, color: colors.gold, fontSize: 12, fontWeight: '800' },
+  section: { color: colors.text, fontSize: 16, fontWeight: '900', marginTop: 10, marginBottom: 2 },
   grab: { alignSelf: 'center', width: 40, height: 5, borderRadius: 3, backgroundColor: colors.line, marginBottom: 10 },
-  head: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12 },
-  title: { color: colors.text, fontSize: 20, fontWeight: '800', flexShrink: 1 },
+  head: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginBottom: 8 },
+  title: { color: colors.text, fontSize: 20, fontWeight: '900' },
   subtitle: { marginTop: 4, marginBottom: 10 },
   lockedNote: { color: colors.gold, fontSize: 13, marginBottom: 8 },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 11, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.line },
-  first: { borderTopWidth: 0 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 9 },
   dim: { opacity: 0.45 },
   currentNote: { color: colors.gold, fontWeight: '700' },
   emptyFace: { width: 44, height: 44, borderRadius: 22, borderWidth: 1, borderStyle: 'dashed', borderColor: colors.muted, alignItems: 'center', justifyContent: 'center' },
