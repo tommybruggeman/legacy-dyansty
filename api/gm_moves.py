@@ -8,6 +8,9 @@ sign-in, so every league rule (kickoff locks, slots, taxi/IR, the trade deadline
 exactly as if they had done it by hand. The tools are only offered while the league's switch
 (league_app_transactions.enabled) is on.
 
+Each card is the decision itself: two or three options (the GM's pick highlighted, e.g. "Start Odunze" or
+"Keep Pittman"; "Waddle" or "Waddle + 2027 2nd"), and tapping one makes it. "Keep" options change nothing.
+
 A card is saved with the conversation ({"moves": [...]} on the assistant message), so it shows again when the
 chat is reopened, and its status (pending, done, failed, dismissed) goes back to the GM in the next turn.
 """
@@ -27,8 +30,8 @@ STATUS_WORD = {PENDING: "waiting for the owner to confirm", DONE: "confirmed and
                DISMISSED: "dismissed by the owner"}
 MAX_MOVES = 3  # cards per answer
 
-CARD_NOTE = ("A confirm card now shows under your answer. Nothing has happened yet: the owner taps Confirm to make it. "
-             "Say in a few words that it's ready to confirm (never that it's done), and don't repeat the card's details at length.")
+CARD_NOTE = ("A card with these options now shows under your answer, your pick highlighted. Nothing has happened yet: the owner taps the "
+             "option they want. Don't repeat the options at length or say anything is done; at most say they can tap to make it.")
 
 
 class MoveError(Exception):
@@ -49,20 +52,37 @@ class Tray:
         return move
 
 
-def _new(kind: str, key: str, title: str, lines: list[str], action: dict[str, Any]) -> dict[str, Any]:
-    return {"id": str(uuid.uuid4()), "kind": kind, "key": key, "title": title, "lines": lines, "action": action, "status": PENDING}
+def option(oid: str, label: str, sub: str = "", action: dict[str, Any] | None = None, pick: bool = False) -> dict[str, Any]:
+    """One button on a card. action None = keep things as they are."""
+    return {"id": oid, "label": label, "sub": sub, "pick": pick, "action": action}
+
+
+def _new(kind: str, key: str, title: str, lines: list[str], options: list[dict[str, Any]]) -> dict[str, Any]:
+    return {"id": str(uuid.uuid4()), "kind": kind, "key": key, "title": title, "lines": lines, "options": options, "status": PENDING}
 
 
 def public(move: Mapping[str, Any]) -> dict[str, Any]:
-    """A card as the app and website show it."""
-    return {k: move.get(k) for k in ("id", "kind", "title", "lines", "status", "result")}
+    """A card as the app and website show it (never the raw requests behind the options)."""
+    out = {k: move.get(k) for k in ("id", "kind", "title", "lines", "status", "result", "chosen")}
+    out["options"] = [{k: o.get(k) for k in ("id", "label", "sub", "pick")} for o in move.get("options") or []]
+    return out
 
 
 def history_note(moves: Iterable[Mapping[str, Any]]) -> str:
     """What the GM sees about earlier cards in the next turn."""
-    rows = [f"- {m.get('title')}: {'; '.join(m.get('lines') or [])} ({STATUS_WORD.get(str(m.get('status')), m.get('status'))}"
-            f"{': ' + str(m['result']) if m.get('result') else ''})" for m in moves or []]
+    rows = []
+    for m in moves or []:
+        opts = " / ".join(f"{o.get('label')}{' (your pick)' if o.get('pick') else ''}" for o in m.get("options") or [])
+        chosen = next((o.get("label") for o in m.get("options") or [] if o.get("id") == m.get("chosen")), None)
+        rows.append(f"- {m.get('title')}: {opts} ({STATUS_WORD.get(str(m.get('status')), m.get('status'))}"
+                    f"{', owner chose ' + str(chosen) if chosen else ''}{': ' + str(m['result']) if m.get('result') else ''})")
     return "[Move cards under this answer]\n" + "\n".join(rows) if rows else ""
+
+
+def short(name: str) -> str:
+    """Last name for a button ('Michael Pittman Jr.' -> 'Pittman')."""
+    parts = [p for p in str(name or "").split() if p.rstrip(".").lower() not in {"jr", "sr", "ii", "iii", "iv", "v"}]
+    return parts[-1] if parts else str(name)
 
 
 # ---- finding players and teams ---------------------------------------------------------------------------------
@@ -172,20 +192,30 @@ def lineup_tool(data: Callable[[], Mapping[str, Any]], team_id: str, tray: Tray)
         except MoveError as exc:
             return {"error": f"Can't propose that lineup: {exc}."}
         proj = d.get("proj") or {}
-        pts = lambda p: f", {proj[p]:.1f} proj" if p in proj else ""  # noqa: E731
-        lines = []
-        for c in wanted:
-            slot = lineup_rules.label(d["slots"][new.index(c["start"])])
-            lines.append(f"Start {d['names'].get(c['start'])} at {slot}{pts(c['start'])}")
-            if c["bench"]:
-                lines.append(f"Bench {d['names'].get(c['bench'])}{pts(c['bench'])}")
+        pts = lambda p: f"{proj[p]:.1f} proj" if p in proj else ""  # noqa: E731
+        name = lambda p: d["names"].get(p) or p  # noqa: E731
+        go = {"week": d["week"], "changes": wanted}
         key = "lineup:" + ",".join(sorted(c["start"] for c in wanted))
-        move = tray.add(_new("lineup", key, f"Set your Week {d['week']} lineup", lines, {"week": d["week"], "changes": wanted}))
+        if len(wanted) == 1 and wanted[0]["bench"]:
+            s_, b_ = wanted[0]["start"], wanted[0]["bench"]
+            slot = lineup_rules.label(d["slots"][team["starters"].index(b_)])
+            options = [option("go", f"Start {short(name(s_))}", " · ".join(x for x in (pts(s_), "GM pick") if x), go, pick=True),
+                       option("keep", f"Keep {short(name(b_))}", pts(b_))]
+            move = tray.add(_new("lineup", key, f"Week {d['week']} {slot}", [], options))
+        else:
+            lines = []
+            for c in wanted:
+                slot = lineup_rules.label(d["slots"][new.index(c["start"])])
+                lines.append(f"Start {name(c['start'])} at {slot}" + (f", {pts(c['start'])}" if pts(c["start"]) else "")
+                             + (f" over {name(c['bench'])}" if c["bench"] else ""))
+            options = [option("go", "Make these changes", "GM pick", go, pick=True), option("keep", "Keep my lineup")]
+            move = tray.add(_new("lineup", key, f"Week {d['week']} lineup", lines, options))
         return {"card": public(move), "note": CARD_NOTE}
 
     return ToolSpec(
         "propose_lineup",
-        "Put a 'Set lineup' card under your answer that the owner taps to confirm (you can't set it yourself). Use it when you recommend "
+        "Put a decision card under your answer: your call ('Start Odunze', highlighted) next to keeping the lineup as set ('Keep Pittman'); "
+        "the owner taps one (you can't set it yourself). Use it when you recommend "
         "a start/sit change to the lineup this owner has SET now (check get_lineups), or when they ask you to set it. Each change starts "
         "one player and benches another (bench may be left out to fill an empty slot); flex slots are handled for you. Players are names "
         "or ids from this owner's roster. Taxi, IR and locked players are refused.",
@@ -195,16 +225,16 @@ def lineup_tool(data: Callable[[], Mapping[str, Any]], team_id: str, tray: Tray)
          "required": ["changes"]}, run)
 
 
-def confirm_lineup(client: Any, league_id: str, season: int, team_id: str, move: Mapping[str, Any], data: Mapping[str, Any]) -> str:
-    """Apply the card's changes to the lineup as it is NOW (it may have changed since) and save it like a tap would."""
-    week = int(move["action"]["week"])
+def confirm_lineup(client: Any, league_id: str, season: int, team_id: str, action: Mapping[str, Any], data: Mapping[str, Any]) -> str:
+    """Apply the option's changes to the lineup as it is NOW (it may have changed since) and save it like a tap would."""
+    week = int(action["week"])
     if int(data.get("week") or 0) != week:
         raise MoveError(f"Week {week} is over; ask for a new lineup")
     team = next((t for t in data["teams"] if str(t["team_id"]) == str(team_id)), None)
     if team is None:
         raise MoveError("Your team wasn't found")
     pos = {p: str((data["info"].get(p) or {}).get("position") or "") for p in team["roster"]}
-    new = apply_lineup(data["slots"], team["starters"], move["action"]["changes"], roster=team["roster"], pos=pos,
+    new = apply_lineup(data["slots"], team["starters"], action["changes"], roster=team["roster"], pos=pos,
                        inactive=data["designation"].keys(), locked=data["locked"], names=data["names"])
     try:
         client.rpc("set_lineup_authenticated", {"p_request": {
@@ -263,44 +293,60 @@ def trade_tool(state: Callable[[], Mapping[str, Any]], teams: Callable[[], list[
                tray: Tray) -> Any:
     from league_ai.tools import ToolSpec
 
-    def run(to_owner: str = "", give: list[str] | None = None, get: list[str] | None = None, give_picks: list[str] | None = None,
-            get_picks: list[str] | None = None, give_cap: float = 0, get_cap: float = 0, note: str | None = None) -> dict[str, Any]:
+    def run(to_owner: str = "", offers: list[dict[str, Any]] | None = None, note: str | None = None, **single: Any) -> dict[str, Any]:
         if not window().get("open"):
             return {"error": "Trades are closed (past the trade deadline), so no offer can be sent."}
+        offers = (offers or [single])[:3]
         try:
             people = teams()
-            them, body, lines = build_offer(state(), people, me, to_owner=to_owner, give=give or [], get=get or [], give_picks=give_picks or [],
-                                            get_picks=get_picks or [], give_cap=give_cap, get_cap=get_cap)
+            built = []
+            for o in offers:
+                them, body, lines = build_offer(state(), people, me, to_owner=to_owner, give=o.get("give") or [], get=o.get("get") or [],
+                                                give_picks=o.get("give_picks") or [], get_picks=o.get("get_picks") or [],
+                                                give_cap=o.get("give_cap") or 0, get_cap=o.get("get_cap") or 0)
+                if note:
+                    body["note"] = str(note)[:280]
+                built.append((o, them, body, lines))
         except MoveError as exc:
             return {"error": f"Can't build that offer: {exc}."}
-        if note:
-            body["note"] = str(note)[:280]
-            lines.append(f"Note: {body['note']}")
+        them = built[0][1]
         partner = next((str(t.get("owner_name") or "") for t in people if str(t["id"]) == them), "them")
-        key = "trade:" + them + ":" + ",".join(sorted(str(p.get("contract_id") or p.get("pick_id")) for p in body["give"] + body["get"]))
-        move = tray.add(_new("trade", key, f"Send offer to {partner}", lines, body))
+        gets = {b[3][1] for b in built}
+        same_get = len(gets) == 1
+        title = f"Offer to {partner.split(' ')[0] or partner}" + (f" for {built[0][3][1].removeprefix('You get: ')}" if same_get else "")
+        options = []
+        for i, (o, _t, body, lines) in enumerate(built):
+            label = str(o.get("label") or lines[0].removeprefix("You send: "))
+            why = str(o.get("why") or "")
+            sub = " · ".join(x for x in (("GM pick" if i == 0 else ""), why, ("" if same_get else lines[1])) if x)
+            options.append(option(f"o{i + 1}", label, sub, body, pick=i == 0))
+        lines = [f"Note to {partner.split(' ')[0]}: {note[:280]}"] if note else []
+        key = "trade:" + them + ":" + "|".join(",".join(sorted(str(p.get("contract_id") or p.get("pick_id")) for p in b[2]["give"] + b[2]["get"])) for b in built)
+        move = tray.add(_new("trade", key, title, lines, options))
         return {"card": public(move), "note": CARD_NOTE}
 
     return ToolSpec(
         "propose_trade",
-        "Put a 'Send offer' card under your answer: the trade offer goes to the other owner only when this owner taps Confirm "
-        "(you can't send it). Use it only when the owner asks you to send, draft or make the offer, or says yes to one you suggested; "
-        "never for a value question or a brainstorm. Players are names from each roster; picks like '2027 1st'; cap space in dollars (this season). "
-        "The other owner still has to accept it.",
+        "Put an offer card under your answer: one to three offers to the same owner as buttons (your opening offer first and highlighted, "
+        "then e.g. where it should close); the offer the owner taps goes to the other owner (you can't send it). Use it when the owner asks "
+        "you to send, draft or build an offer, or says yes to one you suggested; never for a value question or a brainstorm. Players are names "
+        "from each roster; picks like '2027 1st'; cap space in dollars (this season). The other owner still has to accept it.",
         {"type": "object", "properties": {
             "to_owner": {"type": "string", "description": "The other owner's name"},
-            "give": {"type": "array", "items": {"type": "string"}, "description": "Players this owner sends"},
-            "get": {"type": "array", "items": {"type": "string"}, "description": "Players this owner gets"},
-            "give_picks": {"type": "array", "items": {"type": "string"}}, "get_picks": {"type": "array", "items": {"type": "string"}},
-            "give_cap": {"type": "number"}, "get_cap": {"type": "number"},
+            "offers": {"type": "array", "maxItems": 3, "items": {"type": "object", "properties": {
+                "label": {"type": "string", "description": "Short button text, e.g. 'Waddle' or 'Waddle + 2027 2nd'"},
+                "why": {"type": "string", "description": "A few words under the button, e.g. 'open here' or 'where it closes'"},
+                "give": {"type": "array", "items": {"type": "string"}, "description": "Players this owner sends"},
+                "get": {"type": "array", "items": {"type": "string"}, "description": "Players this owner gets"},
+                "give_picks": {"type": "array", "items": {"type": "string"}}, "get_picks": {"type": "array", "items": {"type": "string"}},
+                "give_cap": {"type": "number"}, "get_cap": {"type": "number"}}}},
             "note": {"type": "string", "description": "Optional short note to the other owner, in this owner's voice"}},
-         "required": ["to_owner"]}, run)
+         "required": ["to_owner", "offers"]}, run)
 
 
-def confirm_trade(client: Any, league_id: str, team_id: str, move: Mapping[str, Any]) -> str:
+def confirm_trade(client: Any, league_id: str, team_id: str, b: Mapping[str, Any]) -> str:
     if not trade_offers.league_window(client, league_id).get("open"):
         raise MoveError(trade_offers.CLOSED)
-    b = move["action"]
     try:
         client.rpc("propose_trade_offer_authenticated", {"p_request": trade_offers.offer_request(
             league_id, team_id, b["to_team_id"], b.get("give") or [], b.get("get") or [], b.get("give_cap") or 0, b.get("get_cap") or 0,
@@ -330,27 +376,32 @@ def waiver_tool(client: Any, state: Callable[[], Mapping[str, Any]], team_id: st
         meta = next(r for r in rows if str(r["sleeper_id"]) == pid)
         return pid, f"{meta.get('full_name')} ({meta.get('position') or '?'}, {meta.get('team') or 'FA'})"
 
-    def run(action: str = "", player: str = "", bid: int = 0, drop: str | None = None) -> dict[str, Any]:
+    def run(action: str = "", player: str = "", bid: int = 0, drop: str | None = None, other_bids: list[int] | None = None) -> dict[str, Any]:
         if action not in WAIVER_RPC:
             return {"error": "action must be bid, add or drop"}
         try:
             mine = {_pid(r): _name(r) for r in _roster_rows(state(), team_id) if _pid(r)}
             if action == "drop":
                 pid = pick_one(player, mine, "player on this roster")
-                body, lines, title = {"player_id": pid}, [f"Drop {mine[pid]}", "Dead cap is charged for any seasons still owed."], "Drop a player"
+                title, lines = f"Drop {mine[pid]}?", ["Dead cap is charged for any seasons still owed."]
+                options = [option("o1", f"Drop {short(mine[pid])}", "GM pick", {"type": "drop", "player_id": pid}, pick=True),
+                           option("keep", f"Keep {short(mine[pid])}")]
             else:
                 pid, label = free_agent(player)
                 body = {"player_id": pid, "drop_player_id": pick_one(drop, mine, "player on this roster") if drop else None}
-                lines = [f"{'Bid $' + str(int(bid)) + ' on' if action == 'bid' else 'Add'} {label}" + (" at $1" if action == "add" else "")]
+                lines = [f"Drop {mine[body['drop_player_id']]} to make room" ] if body["drop_player_id"] else []
                 if action == "bid":
-                    body["bid"] = int(bid)
+                    title = f"Bid on {label}"
                     lines.append("Bids run Wednesday and Sunday at 3 AM ET.")
-                if body["drop_player_id"]:
-                    lines.append(f"Drop {mine[body['drop_player_id']]}")
-                title = "Place a waiver bid" if action == "bid" else "Add a free agent"
+                    amounts = [int(bid)] + [int(b) for b in other_bids or [] if int(b) != int(bid)][:2]
+                    options = [option(f"o{i + 1}", f"Bid ${a}", "GM pick" if i == 0 else "", {"type": "bid", **body, "bid": a}, pick=i == 0)
+                               for i, a in enumerate(amounts)]
+                else:
+                    title = f"Add {label} at $1"
+                    options = [option("o1", f"Add {short(label.split(' (')[0])}", "GM pick", {"type": "add", **body}, pick=True)]
         except MoveError as exc:
             return {"error": f"Can't propose that move: {exc}."}
-        move = tray.add(_new(action, f"{action}:{pid}", title, lines, {"type": action, **body}))
+        move = tray.add(_new(action, f"{action}:{pid}", title, lines, options))
         return {"card": public(move), "note": CARD_NOTE}
 
     return ToolSpec(
@@ -361,13 +412,14 @@ def waiver_tool(client: Any, state: Callable[[], Mapping[str, Any]], team_id: st
         {"type": "object", "properties": {
             "action": {"type": "string", "enum": ["bid", "add", "drop"]},
             "player": {"type": "string", "description": "Player name or id"},
-            "bid": {"type": "integer", "description": "Whole-dollar FAAB bid (bid only)"},
+            "bid": {"type": "integer", "description": "Whole-dollar FAAB bid you recommend (bid only)"},
+            "other_bids": {"type": "array", "items": {"type": "integer"}, "description": "Up to two other amounts worth offering as buttons (bid only)"},
             "drop": {"type": "string", "description": "Player to drop to make room (bid/add only)"}},
          "required": ["action", "player"]}, run)
 
 
-def confirm_waiver(client: Any, league_id: str, move: Mapping[str, Any]) -> str:
-    a = dict(move["action"])
+def confirm_waiver(client: Any, league_id: str, action: Mapping[str, Any]) -> str:
+    a = dict(action)
     kind = a.pop("type")
     try:
         client.rpc(WAIVER_RPC[kind], {"p_request": {"league_id": league_id, **{k: v for k, v in a.items() if v is not None}}}).execute()
@@ -395,21 +447,32 @@ def find(messages: list[Mapping[str, Any]], move_id: str) -> tuple[int, dict[str
     return None
 
 
+KEPT = {"lineup": "Kept your lineup.", "drop": "Kept him."}
+
+
 def settle(client: Any, *, league_id: str, season: int, team_id: str, move: Mapping[str, Any], action: str,
-           lineup_data: Callable[[], Mapping[str, Any]]) -> dict[str, Any]:
-    """Confirm or dismiss one card: the move with its new status and the line to show."""
+           lineup_data: Callable[[], Mapping[str, Any]], option_id: str | None = None) -> dict[str, Any]:
+    """The owner tapped an option (action 'confirm', the GM's pick when option_id is left out) or dismissed the card:
+    the move with its new status and the line to show."""
     move = dict(move)
     if move.get("status") != PENDING:
         raise MoveError("That card was already handled")
     if action == "dismiss":
         return {**move, "status": DISMISSED, "result": None}
+    opts = move.get("options") or []
+    chosen = next((o for o in opts if o.get("id") == option_id), None) if option_id else next((o for o in opts if o.get("pick")), None)
+    if chosen is None:
+        raise MoveError("That option wasn't found")
+    when = datetime.now(ZoneInfo("UTC")).isoformat()
+    if chosen.get("action") is None:
+        return {**move, "status": DONE, "chosen": chosen["id"], "result": KEPT.get(move["kind"], "Kept as is."), "done_at": when}
     try:
         if move["kind"] == "lineup":
-            text = confirm_lineup(client, league_id, season, team_id, move, lineup_data())
+            text = confirm_lineup(client, league_id, season, team_id, chosen["action"], lineup_data())
         elif move["kind"] == "trade":
-            text = confirm_trade(client, league_id, team_id, move)
+            text = confirm_trade(client, league_id, team_id, chosen["action"])
         else:
-            text = confirm_waiver(client, league_id, move)
+            text = confirm_waiver(client, league_id, chosen["action"])
     except MoveError as exc:
-        return {**move, "status": FAILED, "result": str(exc)}
-    return {**move, "status": DONE, "result": text, "done_at": datetime.now(ZoneInfo("UTC")).isoformat()}
+        return {**move, "status": FAILED, "chosen": chosen["id"], "result": str(exc)}
+    return {**move, "status": DONE, "chosen": chosen["id"], "result": text, "done_at": when}

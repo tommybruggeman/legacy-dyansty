@@ -87,8 +87,10 @@ def test_lineup_tool_makes_a_card_and_replaces_a_repeat():
     tray = gm_moves.Tray()
     tool = gm_moves.lineup_tool(_data, "me", tray)
     out = tool.fn(changes=[{"start": "Odunze", "bench": "Pittman"}])
-    assert out["card"]["title"] == "Set your Week 12 lineup" and out["card"]["status"] == "pending"
-    assert out["card"]["lines"] == ["Start Rome Odunze at WR, 14.2 proj", "Bench Michael Pittman Jr., 11.8 proj"]
+    assert out["card"]["title"] == "Week 12 WR" and out["card"]["status"] == "pending"
+    assert [(o["label"], o["sub"], o["pick"]) for o in out["card"]["options"]] == [
+        ("Start Odunze", "14.2 proj · GM pick", True), ("Keep Pittman", "11.8 proj", False)]
+    assert "action" not in out["card"]["options"][0]
     tool.fn(changes=[{"start": "Odunze", "bench": "Pittman"}])
     assert len(tray.moves) == 1
     assert "error" in tool.fn(changes=[{"start": "Rookie Guy", "bench": "Pittman"}])
@@ -115,7 +117,7 @@ def test_settle_lineup_saves_through_the_same_rpc():
     gm_moves.lineup_tool(_data, "me", tray).fn(changes=[{"start": "Odunze", "bench": "Pittman"}])
     client = FakeRPC()
     done = gm_moves.settle(client, league_id="L", season=2026, team_id="me", move=tray.moves[0], action="confirm", lineup_data=_data)
-    assert done["status"] == "done"
+    assert done["status"] == "done" and done["chosen"] == "go"
     name, args = client.calls[0]
     assert name == "set_lineup_authenticated" and args["p_request"]["week"] == 12
     assert [s["player_id"] for s in args["p_request"]["slots"]][4] == "w3"
@@ -123,8 +125,32 @@ def test_settle_lineup_saves_through_the_same_rpc():
         gm_moves.settle(client, league_id="L", season=2026, team_id="me", move=done, action="confirm", lineup_data=_data)
 
 
+def test_keep_option_changes_nothing():
+    tray = gm_moves.Tray()
+    gm_moves.lineup_tool(_data, "me", tray).fn(changes=[{"start": "Odunze", "bench": "Pittman"}])
+    client = FakeRPC()
+    done = gm_moves.settle(client, league_id="L", season=2026, team_id="me", move=tray.moves[0], action="confirm", lineup_data=_data, option_id="keep")
+    assert done["status"] == "done" and done["result"] == "Kept your lineup." and client.calls == []
+
+
+def test_trade_card_offers_an_opening_and_a_closing_option(monkeypatch):
+    monkeypatch.setattr(gm_moves.trade_offers, "league_window", lambda client, league_id: {"open": True})
+    tray = gm_moves.Tray()
+    tool = gm_moves.trade_tool(lambda: STATE, lambda: TEAMS, "me", lambda: {"open": True}, tray)
+    out = tool.fn(to_owner="Dylan", offers=[{"label": "Waddle", "why": "open here", "give": ["Waddle"], "get": ["Nabers"]},
+                                            {"label": "Waddle + 2027 2nd", "why": "where it closes", "give": ["Waddle"], "give_picks": ["2027 2nd"], "get": ["Nabers"]}])
+    card = out["card"]
+    assert card["title"] == "Offer to Dylan for Malik Nabers"
+    assert [(o["label"], o["sub"]) for o in card["options"]] == [("Waddle", "GM pick · open here"), ("Waddle + 2027 2nd", "where it closes")]
+    client = FakeRPC()
+    done = gm_moves.settle(client, league_id="L", season=2026, team_id="me", move=tray.moves[0], action="confirm", lineup_data=_data, option_id="o2")
+    assert done["status"] == "done" and done["chosen"] == "o2"
+    name, args = client.calls[0]
+    assert name == "propose_trade_offer_authenticated" and [p.get("draft_pick_id") for p in args["p_request"]["picks"]] == ["p2"]
+
+
 def test_settle_reports_the_leagues_refusal():
-    move = gm_moves._new("bid", "bid:x", "Place a waiver bid", ["Bid $5 on X"], {"type": "bid", "player_id": "x", "bid": 5, "drop_player_id": None})
+    move = gm_moves._new("bid", "bid:x", "Bid on X", [], [gm_moves.option("o1", "Bid $5", "GM pick", {"type": "bid", "player_id": "x", "bid": 5, "drop_player_id": None}, pick=True)])
     done = gm_moves.settle(FakeRPC("bid_over_budget"), league_id="L", season=2026, team_id="me", move=move, action="confirm", lineup_data=_data)
     assert done["status"] == "failed" and done["result"] == "That's more FAAB than you have left."
     assert gm_moves.settle(FakeRPC(), league_id="L", season=2026, team_id="me", move=move, action="dismiss", lineup_data=_data)["status"] == "dismissed"
@@ -132,6 +158,7 @@ def test_settle_reports_the_leagues_refusal():
 
 def test_past_cards_go_back_to_the_gm():
     history = [{"role": "user", "content": "Pittman or Odunze?"},
-               {"role": "assistant", "content": "Odunze.", "moves": [{"title": "Set your Week 12 lineup", "lines": ["Start Rome Odunze at WR"], "status": "done", "result": "Lineup saved."}]}]
+               {"role": "assistant", "content": "Odunze.", "moves": [{"title": "Week 12 WR", "options": [{"id": "go", "label": "Start Odunze", "pick": True},
+                {"id": "keep", "label": "Keep Pittman"}], "chosen": "keep", "status": "done", "result": "Kept your lineup."}]}]
     text = _history_messages(history)[1]["content"]
-    assert "[Move cards under this answer]" in text and "confirmed and done" in text
+    assert "[Move cards under this answer]" in text and "owner chose Keep Pittman" in text and "Start Odunze (your pick)" in text

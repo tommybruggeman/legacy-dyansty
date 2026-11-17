@@ -137,7 +137,7 @@ def run_league_ai(*, request_context: Any, team: dict, question: str, history: l
     return turn.result
 
 
-def settle_move(request_context: Any, team: dict, move_id: str, action: str) -> dict[str, Any]:
+def settle_move(request_context: Any, team: dict, move_id: str, action: str, option_id: str | None = None) -> dict[str, Any]:
     """The owner tapped Confirm or Dismiss on a move card the GM proposed (same call the app makes)."""
     from api import front_office as app_fo
     from api import gm_moves
@@ -146,7 +146,7 @@ def settle_move(request_context: Any, team: dict, move_id: str, action: str) -> 
     if not conversation_id:
         return {"id": move_id, "status": gm_moves.FAILED, "result": "Start a conversation first."}
     try:
-        return app_fo.settle_move(app_session(request_context, team), str(conversation_id), move_id, action)
+        return app_fo.settle_move(app_session(request_context, team), str(conversation_id), move_id, action, option_id)
     except gm_moves.MoveError as exc:
         return {"id": move_id, "status": gm_moves.FAILED, "result": str(exc)}
 
