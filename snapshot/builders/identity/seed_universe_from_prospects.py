@@ -10,6 +10,18 @@ def norm(s: str) -> str:
     return " ".join((s or "").lower().replace(".", "").replace("'", "").split())
 
 
+NAME_SUFFIXES = {"jr", "sr", "ii", "iii", "iv", "v"}
+
+
+def match_key(s: str) -> str:
+    """norm() without a trailing Jr./Sr./II/III: Sleeper often leaves the suffix off ("Omar Cooper" vs
+    "Omar Cooper Jr."), and a missed match gives the rookie a made-up prospect_ id (2026-11-17)."""
+    words = norm(s).split()
+    while len(words) > 1 and words[-1] in NAME_SUFFIXES:
+        words.pop()
+    return " ".join(words)
+
+
 def load_sleeper_player_lookup(sb):
     all_rows = []
     page_size = 1000
@@ -35,7 +47,7 @@ def load_sleeper_player_lookup(sb):
     by_name = {}
 
     for r in all_rows:
-        name = norm(r.get("search_name") or r.get("full_name"))
+        name = match_key(r.get("search_name") or r.get("full_name"))
         pos = str(r.get("position") or "").upper()
 
         if name:
@@ -87,7 +99,7 @@ def seed_universe_from_prospects() -> None:
         if k in existing_keys:
             continue
 
-        sleeper_match = sleeper_lookup.get((norm(name), pos)) or sleeper_name_lookup.get(norm(name))
+        sleeper_match = sleeper_lookup.get((match_key(name), pos)) or sleeper_name_lookup.get(match_key(name))
         synthetic_id = (
             str(sleeper_match.get("sleeper_player_id"))
             if sleeper_match
