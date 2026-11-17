@@ -52,6 +52,12 @@ class QuestionFocusTests(unittest.TestCase):
         self.assertIn("compact Markdown table", SYSTEM_PROMPT)
         self.assertNotIn("and no table", SYSTEM_PROMPT)
 
+    def test_prompt_sounds_like_a_conversation(self):
+        self.assertIn("How you sound", SYSTEM_PROMPT)
+        self.assertIn("follow-ups build on what was already said", SYSTEM_PROMPT)
+        self.assertIn("ask one short question back", SYSTEM_PROMPT)
+        self.assertNotIn("Lead with the verdict in one sentence", SYSTEM_PROMPT)
+
 
 if __name__ == "__main__":
     unittest.main()
