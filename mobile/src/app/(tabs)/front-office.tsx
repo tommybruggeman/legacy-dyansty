@@ -559,7 +559,7 @@ const styles = StyleSheet.create({
   ringArc: { position: 'absolute', top: 0, width: RING, height: RING, borderRadius: RING / 2, borderWidth: RING_W, borderColor: 'transparent' },
   ringPct: { color: colors.gold, fontSize: 22, fontWeight: '800', lineHeight: 24 },
   ringLabel: { color: colors.muted, fontSize: 7.5, fontWeight: '800', letterSpacing: 0.8, marginTop: 1 },
-  ringChange: { fontSize: 9.5, fontWeight: '800', marginTop: 1 },
+  ringChange: { fontSize: 11, fontWeight: '800', marginTop: 5 },
   up: { color: colors.live },
   down: { color: '#E08A8A' },
   movesHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 },
