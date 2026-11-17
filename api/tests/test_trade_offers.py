@@ -74,3 +74,13 @@ def test_center_groups_offers_and_results():
 def test_friendly_errors():
     assert "already played" in to.friendly(Exception("ERROR: offer_player_locked"))
     assert to.friendly(Exception("boom")) == "The trade wasn't saved. Try again."
+
+
+def test_window_closes_after_deadline_until_season_ends():
+    from api import trade_offers
+    assert trade_offers.window("week 11", 11, 17)["open"] is True
+    closed = trade_offers.window("week 11", 12, 17)
+    assert closed["open"] is False and closed["deadline_week"] == 11 and closed["reopens_after_week"] == 17
+    assert trade_offers.window("Week 11 kickoff", 17, 17)["open"] is False
+    assert trade_offers.window("week 11", 18, 17)["open"] is True  # offseason
+    assert trade_offers.window("", 14, 17)["open"] is True  # no deadline set

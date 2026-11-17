@@ -22,7 +22,7 @@ export { LIVE_POLL_MS as LIVE_REFRESH_MS } from '../../lib/api';
 export const isLive = (team: TeamPage | null) => !!team?.week && !team.week.is_final && Object.values(team.week.players).some((p) => p.status === 'playing');
 
 // One owner's team with the same three tabs as My Team (league activity lives on League > Teams). Other owners' teams
-// are read only; trades are made in Sleeper.
+// are read only apart from the Trade pill next to the name.
 export function TeamView({ team, eyebrow, badge, top, onChange }: { team: TeamPage; eyebrow?: string; badge?: ReactNode; top?: ReactNode; onChange?: () => void }) {
   const [tab, setTab] = useState<(typeof TABS)[number]>('Roster');
   // Always open on the roster. Coming back from a player or cap page opened here keeps the tab;
