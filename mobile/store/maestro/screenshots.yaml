@@ -8,8 +8,12 @@ appId: com.tommybruggeman.legacydynasty
 - inputText: ${REVIEW_EMAIL}
 - tapOn: "Password"
 - inputText: ${REVIEW_PASSWORD}
+# Hiding the keyboard can press the password field's "Go" key, which already signs in
+# (the button then shows a spinner instead of "Sign in"), so the tap is optional.
 - hideKeyboard
-- tapOn: "Sign in"
+- tapOn:
+    text: "Sign in"
+    optional: true
 - extendedWaitUntil:
     visible: "My Team"
     timeout: 60000
