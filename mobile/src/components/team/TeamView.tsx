@@ -1,6 +1,6 @@
 import { router, useFocusEffect } from 'expo-router';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
-import { Dimensions, Linking, Modal, Pressable, ScrollView, StyleSheet, Text, View, type ScrollViewInstance } from 'react-native';
+import { Dimensions, Modal, Pressable, ScrollView, StyleSheet, Text, View, type ScrollViewInstance } from 'react-native';
 
 import type { Pick, Player, TeamPage, TeamWeek, TeamWeekItem, WeekPlayer } from '../../lib/api';
 import { colors } from '../../lib/theme';
@@ -408,11 +408,6 @@ function RosterTab({ team, onChange, after, onWeek }: { team: TeamPage; onChange
         <Note>{team.roster.count} players under contract</Note>
         </>
       ) : null}
-      {!team.is_me ? (
-        <Pressable style={styles.button} onPress={() => Linking.openURL(`https://sleeper.com/leagues/${team.sleeper_league_id}`)}>
-          <Text style={styles.buttonText}>Trade in Sleeper ↗</Text>
-        </Pressable>
-      ) : null}
     </>
   );
 }
@@ -613,7 +608,8 @@ function PicksCard({ team }: { team: TeamPage }) {
             {owned.filter((p) => p.year === year).map((p) => (
               <View key={`${p.year}-${p.round}-${p.original_owner}`} style={styles.chip}>
                 <Text style={styles.chipTop}>{ROUND[p.round] ?? `R${p.round}`}</Text>
-                <Text style={styles.chipSub}>{p.own ? 'own' : `from ${firstName(p.original_owner)}`}</Text>
+                {/* Every chip the same size: round over the original owner, no "from" (Tommy, 2026-11-17). */}
+                <Text style={styles.chipSub} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>{p.own ? 'Own' : firstName(p.original_owner)}</Text>
               </View>
             ))}
           </View>
@@ -704,10 +700,10 @@ const styles = StyleSheet.create({
   ringText: { color: colors.text, fontSize: 14, fontWeight: '800' },
   deadLine: { flexDirection: 'row', alignItems: 'center', borderTopWidth: 1, borderTopColor: '#22352B', marginTop: 10, paddingTop: 10 },
   deadValue: { color: colors.gold, fontSize: 13, fontWeight: '700' },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   pickYear: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, marginTop: 10 },
   pickYearLabel: { color: colors.gold, fontSize: 15, fontWeight: '900', width: 44, paddingTop: 8 },
-  chip: { backgroundColor: '#1A2E24', borderRadius: 10, paddingVertical: 7, paddingHorizontal: 10 },
+  chip: { width: '23%', backgroundColor: '#1A2E24', borderRadius: 10, paddingVertical: 7, paddingHorizontal: 4, alignItems: 'center' },
   chipTop: { color: colors.text, fontSize: 13, fontWeight: '800' },
   chipSub: { color: colors.muted, fontSize: 10, fontWeight: '600', marginTop: 1 },
   nameLine: { flexDirection: 'row', alignItems: 'center', gap: 6 },
@@ -754,8 +750,6 @@ const styles = StyleSheet.create({
   manage: { marginTop: 6, fontSize: 12 },
   year: { width: 44 },
   left: { width: 84, textAlign: 'right' },
-  button: { marginTop: 12, borderWidth: 1, borderColor: colors.gold, borderRadius: 14, padding: 14, alignItems: 'center' },
-  buttonText: { color: colors.gold, fontWeight: '800', fontSize: 15 },
   emptyFace: { width: 44, height: 44, borderRadius: 22, borderWidth: 1, borderStyle: 'dashed', borderColor: colors.muted, alignItems: 'center', justifyContent: 'center' },
   emptyPlus: { color: colors.muted, fontSize: 20, fontWeight: '700' },
   emptyName: { color: colors.muted },
