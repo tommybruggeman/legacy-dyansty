@@ -62,6 +62,9 @@ class QuestionFocusTests(unittest.TestCase):
         self.assertIn("Value questions", SYSTEM_PROMPT)
         self.assertIn("Don't open with a specific offer", SYSTEM_PROMPT)
 
+    def test_prompt_allows_one_specific_follow_up_hook(self):
+        self.assertIn("one short, specific hook", SYSTEM_PROMPT)
+
 
 if __name__ == "__main__":
     unittest.main()
