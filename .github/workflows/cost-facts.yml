@@ -110,7 +110,7 @@ jobs:
             newest=$(echo "$vs" | head -1); old=$(echo "$vs" | tail -n +2)
             echo "  $s: keep v$newest, old: $(echo $old | wc -w)"
             if [ "$MODE" = apply ]; then
-              for v in $old; do gcloud secrets versions destroy "$v" --secret "$s" --project "$PROJECT" --quiet >/dev/null && echo "    destroyed v$v"; done
+              for v in $(true); do gcloud secrets versions destroy "$v" --secret "$s" --project "$PROJECT" --quiet >/dev/null && echo "    destroyed v$v"; done
             fi
           done
           echo "== images: keep what Cloud Run runs now + newest 2 of each image, $MODE the rest"
@@ -128,7 +128,7 @@ jobs:
               echo "$inuse" | grep -q "@$digest$" && keep=yes
               echo "  $(basename $pkg) ${tags:-untagged} keep=$keep"
               if [ "$keep" = no ] && [ "$MODE" = apply ]; then
-                gcloud artifacts docker images delete "$pkg@$digest" --delete-tags --quiet >/dev/null 2>&1 && echo "    deleted"
+                gcloud artifacts docker images delete "$pkg@$digest" --delete-tags --quiet 2>&1 | tail -2 || true
               fi
             done
           done
