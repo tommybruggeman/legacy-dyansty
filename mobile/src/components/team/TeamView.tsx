@@ -575,14 +575,19 @@ function PicksCard({ team }: { team: TeamPage }) {
   return (
     <Card title="Picks" right={<Text style={[ui.value, ui.gold]}>{owned.length}</Text>}>
       {owned.length === 0 ? <Note>No draft picks on record.</Note> : null}
-      <View style={styles.chips}>
-        {owned.map((p) => (
-          <View key={`${p.year}-${p.round}-${p.original_owner}`} style={styles.chip}>
-            <Text style={styles.chipTop}>{p.year} {ROUND[p.round] ?? `R${p.round}`}</Text>
-            <Text style={styles.chipSub}>{p.own ? 'own' : `from ${firstName(p.original_owner)}`}</Text>
+      {[...new Set(owned.map((p) => p.year))].sort().map((year) => (
+        <View key={year} style={styles.pickYear}>
+          <Text style={styles.pickYearLabel}>{year}</Text>
+          <View style={[styles.chips, ui.flex]}>
+            {owned.filter((p) => p.year === year).map((p) => (
+              <View key={`${p.year}-${p.round}-${p.original_owner}`} style={styles.chip}>
+                <Text style={styles.chipTop}>{ROUND[p.round] ?? `R${p.round}`}</Text>
+                <Text style={styles.chipSub}>{p.own ? 'own' : `from ${firstName(p.original_owner)}`}</Text>
+              </View>
+            ))}
           </View>
-        ))}
-      </View>
+        </View>
+      ))}
       {away.length ? (
         <Text style={[ui.sub, styles.subGap]}>Traded away: {away.map((p) => `${p.year} ${ROUND[p.round] ?? p.round} (to ${firstName(p.current_owner)})`).join(', ')}</Text>
       ) : null}
@@ -666,6 +671,8 @@ const styles = StyleSheet.create({
   deadLine: { flexDirection: 'row', alignItems: 'center', borderTopWidth: 1, borderTopColor: '#22352B', marginTop: 10, paddingTop: 10 },
   deadValue: { color: colors.gold, fontSize: 13, fontWeight: '700' },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  pickYear: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, marginTop: 10 },
+  pickYearLabel: { color: colors.gold, fontSize: 15, fontWeight: '900', width: 44, paddingTop: 8 },
   chip: { backgroundColor: '#1A2E24', borderRadius: 10, paddingVertical: 7, paddingHorizontal: 10 },
   chipTop: { color: colors.text, fontSize: 13, fontWeight: '800' },
   chipSub: { color: colors.muted, fontSize: 10, fontWeight: '600', marginTop: 1 },
