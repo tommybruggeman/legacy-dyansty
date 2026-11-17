@@ -208,3 +208,16 @@ def test_week_lineup_shows_who_started_that_week():
     assert out["starters"][0]["injury"] is None  # today's tag stays off an old week
     assert [p["player_id"] for p in out["bench"]] == ["a"]
     assert out["taxi"] == roster["taxi"]
+
+
+def test_ir_card_shows_the_cap_charge_after_the_ir_break():
+    state = {**STATE, "cap_adjustments": [{"league_team_id": T1, "sleeper_player_id": "13", "amount": -7, "adjustment_type": "ir_adjustment"}]}
+    roster = teams.roster_rows(state, T1, {}, [], {}, {})
+    adams = roster["ir"][0]
+    assert adams["salary"] == 7 and adams["contract_salary"] == 14
+    assert roster["taxi"][0]["salary"] == 2.67
+
+
+def test_ir_break_matches_by_name_when_the_row_has_no_player_id():
+    state = {**STATE, "cap_adjustments": [{"player_name": "Davante Adams", "amount": -7, "adjustment_type": "ir_adjustment"}]}
+    assert teams.roster_rows(state, T1, {}, [], {}, {})["ir"][0]["salary"] == 7

@@ -230,8 +230,8 @@ function PlayerRow({ p, first, showSlot, chip, onEmpty, w, season }: { p: Player
               <Text style={[ui.name, styles.shrink]} numberOfLines={1}>{p.name}</Text>
               {tag}
             </View>
-            <GameText p={p} w={w} />
-            {season != null && !kickedOff(w) ? <Text style={styles.deal} numberOfLines={1}>{contractText(p, season)}</Text> : null}
+            <GameText p={p} w={w} season={season} />
+            {season != null && !kickedOff(w) && w?.status !== 'bye' ? <Text style={styles.deal} numberOfLines={1}>{contractText(p, season)}</Text> : null}
             {w?.line?.length ? (
               <Text style={styles.statLine}>
                 {w.line.map((s, i) => (
@@ -249,10 +249,11 @@ function PlayerRow({ p, first, showSlot, chip, onEmpty, w, season }: { p: Player
 
 // Line 1, the game: kickoff time before, the clock and score (with a football when his team has the ball) during,
 // the result after. The contract sits on its own second line until kickoff (Tommy, 2026-11-17).
-function GameText({ p, w }: { p: Player; w?: WeekPlayer }) {
+// On a bye the contract stays on the same line as BYE (Tommy, 2026-11-17).
+function GameText({ p, w, season }: { p: Player; w?: WeekPlayer; season?: number }) {
   const g = w?.game;
   if (!w) return <Text style={ui.sub}>{p.nfl_team || 'FA'}</Text>;
-  if (w.status === 'bye') return <Text style={styles.game}><Text style={styles.byeWord}>BYE</Text></Text>;
+  if (w.status === 'bye') return <Text style={styles.game}><Text style={styles.byeWord}>BYE</Text>{season != null ? <Text style={styles.byeDeal}> · {contractText(p, season)}</Text> : null}</Text>;
   const vs = g ? `${g.home ? 'vs' : '@'} ${g.opp}` : p.nfl_team || '';
   if (g && (w.status === 'playing' || g.state === 'in')) {
     return (
@@ -676,6 +677,7 @@ const styles = StyleSheet.create({
   miSub: { color: colors.muted, fontSize: 11.5, marginTop: 1 },
   gold: { color: colors.gold },
   deal: { color: colors.muted, fontSize: 11.5, marginTop: 2 },
+  byeDeal: { color: colors.muted },
   byeWord: { color: '#EF7A7A', fontWeight: '800' },
   dots: { flexDirection: 'row', gap: 3, marginLeft: 2 },
   ydot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.gold },
