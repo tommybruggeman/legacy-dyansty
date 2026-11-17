@@ -1432,6 +1432,8 @@ class TradeOffer(BaseModel):
     get: list[TradePiece] = []
     note: str | None = None
     parent_offer_id: str | None = None
+    give_cap: float = 0  # cap space (this season) you send; any amount
+    get_cap: float = 0   # cap space you ask for
 
 
 @app.post("/trade-offers")
@@ -1448,6 +1450,7 @@ def send_trade_offer(body: TradeOffer, owner: tuple[Client, Any] = Depends(owner
     request = {
         "league_id": ctx["league_id"], "to_league_team_id": body.to_team_id,
         "players": [i for i in items if i.get("contract_id")], "picks": [i for i in items if i.get("draft_pick_id")],
+        "cap": trade_offers.cap_items(ctx["team_id"], body.to_team_id, body.give_cap, body.get_cap),
         "note": (body.note or "")[:280] or None, "parent_offer_id": body.parent_offer_id if body.parent_offer_id and trade_offers.is_uuid(body.parent_offer_id) else None,
     }
     try:

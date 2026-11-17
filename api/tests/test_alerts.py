@@ -362,3 +362,11 @@ class ShotgunTests(unittest.TestCase):
         self.assertEqual(mnf, job.shotgun_window(starts, at(2026, 11, 9, 17, 0)))
         self.assertIsNone(job.shotgun_window(starts, mnf))
         self.assertIsNone(job.shotgun_window({"SF": at(2026, 11, 8, 13)}, at(2026, 11, 9, 18)))
+
+
+def test_over_cap_rule_wording():
+    from api import alerts as a
+    claim = a.over_cap_claim(run_key="2026-11-18", team_id="t1", player="Tank Bigsby", over=4.5)
+    assert claim.body == "Your claim for Tank Bigsby puts you over the cap. Get under before Sunday's first kickoff to avoid an auto-loss."
+    assert a.auto_loss(season=2026, week=12, over=3).title == "Week 12: automatic loss"
+    assert "Week 12 is an automatic loss" in a.over_cap_friday(season=2026, week=12, over=3, kickoff=None, tz=None).body
