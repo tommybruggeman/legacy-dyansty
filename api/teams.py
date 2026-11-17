@@ -211,6 +211,8 @@ def roster_rows(
             "salary": _f(row.get("cap_hit")),
             "contract_salary": _f(row.get("contract_cap_hit") or row.get("cap_hit")),
             "years_left": int(row.get("contract_years_left") or 0),
+            # Every season on the deal (main._add_contract_lengths); falls back to the years left.
+            "total_years": max(int(row.get("contract_total_years") or 0), int(row.get("contract_years_left") or 0)),
             "designation": roster_designation(row),
             "is_rookie": bool(row.get("is_rookie")),
             "ppg": ppg.get(pid),

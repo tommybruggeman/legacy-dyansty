@@ -601,7 +601,7 @@ def _saved_power_rank(client: Client, ctx: dict[str, Any], team_id: str) -> dict
     return {"rank": int(now["now_rank"]), "of": teams_ranked or None, "move": move}
 
 
-def _team_page(client: Client, ctx: dict[str, Any], team_id: str) -> dict[str, Any]:
+def _team_page(client: Client, ctx: dict[str, Any], team_id: str, week: int | None = None) -> dict[str, Any]:
     rows, states, standings_rows, cap = _league_teams(client, ctx)
     summary = next((t for t in rows if t["team_id"] == team_id), None)
     if summary is None:
@@ -616,6 +616,7 @@ def _team_page(client: Client, ctx: dict[str, Any], team_id: str) -> dict[str, A
     except Exception:
         pass
     standing = next((r for r in standings_rows if r["roster_id"] == summary["roster_id"]), None)
+    _add_contract_lengths(client, state, team_id)
     detail = teams.team_detail(
         team={k: summary[k] for k in ("team_id", "owner_name", "team_name", "roster_id")},
         summary=summary,
@@ -629,25 +630,101 @@ def _team_page(client: Client, ctx: dict[str, Any], team_id: str) -> dict[str, A
         later=states[1:],
         weeks=league.current_week(),
         power=_saved_power_rank(client, ctx, team_id),
-        app_lineup=_app_lineup(client, ctx, team_id) if _transactions_on(client, ctx["league_id"]) else None,
+        app_lineup=_app_lineup(client, ctx, team_id, week) if _transactions_on(client, ctx["league_id"]) else None,
     )
+    _add_pick_slots(detail["picks"], rows, standings_rows, ctx["season"])
     try:
-        week = _team_week(client, ctx, summary["roster_id"])
+        this_week = _team_week(client, ctx, summary["roster_id"], week)
     except Exception:
-        week = None
-    return {"season": ctx["season"], "salary_cap": cap, "sleeper_league_id": ctx["sleeper_id"], **detail, "week": week}
+        this_week = None
+    try:
+        weeks = _team_weeks(client, ctx, summary["roster_id"])
+    except Exception as exc:
+        print(f"APP_TEAM_WEEKS_ERROR {type(exc).__name__}", flush=True)
+        weeks = None
+    return {"season": ctx["season"], "salary_cap": cap, "sleeper_league_id": ctx["sleeper_id"], **detail, "week": this_week, "weeks": weeks,
+            "current_week": _home_week(client, ctx["season"], datetime.now(home.HOME_TZ).date())}
+
+
+def _add_contract_lengths(client: Client, state: dict[str, Any], team_id: str) -> None:
+    """Each of this team's contracts gets its full length (every season on the deal), for the Contracts tab dots
+    (filled = years left, all dots = whole contract). Leaves rows alone when the read fails."""
+    ids = [str(r["contract_agreement_id"]) for r in state.get("roster", [])
+           if str(r.get("league_team_id")) == team_id and r.get("contract_agreement_id")]
+    if not ids:
+        return
+    def load() -> dict[str, int]:
+        rows = client.table("contract_seasons").select("contract_id,season").in_("contract_id", ids).execute().data or []
+        out: dict[str, int] = {}
+        for r in rows:
+            out[str(r["contract_id"])] = out.get(str(r["contract_id"]), 0) + 1
+        return out
+    try:
+        lengths = cache.cached(("contract_lengths", team_id, tuple(sorted(ids))), 600, load)
+    except Exception as exc:
+        print(f"APP_CONTRACT_LENGTHS_ERROR {type(exc).__name__}", flush=True)
+        return
+    for r in state.get("roster", []):
+        n = lengths.get(str(r.get("contract_agreement_id")))
+        if n:
+            r["contract_total_years"] = n
+
+
+def _add_pick_slots(picks: dict[str, Any], rows: list[dict[str, Any]], standings_rows: list[dict[str, Any]], season: int) -> None:
+    """Next year's picks get a projected slot (1.06): the draft runs straight reverse of the standings."""
+    rank_of = {r["roster_id"]: r["rank"] for r in standings_rows}
+    owner_rank = {str(t.get("owner_name")): rank_of.get(t.get("roster_id")) for t in rows}
+    count = len(standings_rows)
+    for group in ("owned", "traded_away"):
+        for p in picks.get(group, []):
+            rank = owner_rank.get(p.get("original_owner"))
+            if p.get("year") == season + 1 and rank and count:
+                p["slot"] = f"{p['round']}.{count - rank + 1:02d}"
+
+
+def _team_weeks(client: Client, ctx: dict[str, Any], roster_id: int | None) -> list[dict[str, Any]] | None:
+    """Every week of the season for the My Team week menu: finished weeks with the result, later weeks with the
+    opponent, then the playoff weeks."""
+    if roster_id is None:
+        return None
+    sid = ctx["sleeper_id"]
+
+    def load() -> dict[str, Any]:
+        scored, end = league.last_scored_week(sid), league.regular_season_end(sid)
+        try:
+            rules = league.playoff_rules(client, ctx["league_id"])
+        except Exception:
+            rules = playoffs.rules_of({})
+        out = []
+        for wk in range(1, min(end, 18) + 1):
+            done = wk <= scored
+            rows = league.sleeper.get(f"league/{sid}/matchups/{wk}", ttl=86400 if done else 3600) or []
+            mine = next((r for r in rows if r.get("roster_id") == roster_id), None)
+            opp = next((r for r in rows if mine and r is not mine and r.get("matchup_id") and r.get("matchup_id") == mine.get("matchup_id")), None)
+            item: dict[str, Any] = {"week": wk, "opponent": ctx["names"].get(opp.get("roster_id")) if opp else None}
+            if done and mine and opp:
+                me_pts, them_pts = float(mine.get("points") or 0), float(opp.get("points") or 0)
+                item["result"] = "W" if me_pts > them_pts else "L" if me_pts < them_pts else "T"
+                item["score"] = [round(me_pts, 1), round(them_pts, 1)]
+            out.append(item)
+        for wk in range(int(rules["playoff_week_start"]), playoffs.last_week(rules) + 1):
+            out.append({"week": wk, "playoffs": True})
+        return {"weeks": out}
+
+    return cache.cached(("team_weeks", sid, ctx["season"], roster_id), 600, load)["weeks"]
 
 
 TEAM_WEEK_TTL = 15
 
 
-def _team_week(client: Client, ctx: dict[str, Any], roster_id: int | None) -> dict[str, Any] | None:
+def _team_week(client: Client, ctx: dict[str, Any], roster_id: int | None, pick: int | None = None) -> dict[str, Any] | None:
     """This week for one team's roster page: each player's projection, live points and live projection, game and
     stat line (scored the same way as the box score), the team's total and projected total, and its odds against
     this week's opponent. None when the team has no game this week."""
     if roster_id is None:
         return None
-    week = _home_week(client, ctx["season"], datetime.now(home.HOME_TZ).date())  # same week as Home: Monday's holds until midnight Pacific
+    # Same week as Home (Monday's holds until midnight Pacific), unless the week menu picked another one.
+    week = pick or _home_week(client, ctx["season"], datetime.now(home.HOME_TZ).date())
     final = week <= league.last_scored_week(ctx["sleeper_id"])
 
     def load() -> dict[str, Any] | None:
@@ -699,10 +776,11 @@ def _week_kickoffs(client: Client, season: int, week: int) -> dict[str, Any]:
     return lineups.kickoffs(cache.cached(("kickoffs", season, week), 600, load)["rows"])
 
 
-def _app_lineup(client: Client, ctx: dict[str, Any], team_id: str):
+def _app_lineup(client: Client, ctx: dict[str, Any], team_id: str, pick: int | None = None):
     """This week's app lineup for one team, for team_detail: (slot label, player id) pairs plus the editor's view."""
     def build(active: set[str], sleeper_starters: list[str]) -> tuple[list[tuple[str, str | None]], dict[str, Any]]:
-        week, slots = league.current_week(), _lineup_slots(client, ctx["league_id"])
+        # The week menu can open a later week to plan it; the saved lineup carries forward until changed.
+        week, slots = pick or league.current_week(), _lineup_slots(client, ctx["league_id"])
         saved = (client.table("league_lineups").select("week,slots").eq("league_id", ctx["league_id"])
                  .eq("league_team_id", team_id).eq("season", ctx["season"]).lte("week", week)
                  .order("week", desc=True).limit(1).execute().data or [])
@@ -935,12 +1013,12 @@ def team_page(team_id: str, owner: tuple[Client, Any] = Depends(owner_client)) -
 
 
 @app.get("/my-team")
-def my_team(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+def my_team(week: int | None = Query(default=None, ge=1, le=18), owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
     client, user = owner
     ctx = _season_context(client, user)
     if not ctx["team_id"]:
         raise HTTPException(status_code=404, detail="This account isn't linked to a team yet.")
-    return _team_page(client, ctx, ctx["team_id"])
+    return _team_page(client, ctx, ctx["team_id"], week)
 
 
 @app.get("/players/{player_id}")

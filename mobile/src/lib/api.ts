@@ -283,6 +283,7 @@ export type Player = {
   salary: number;
   contract_salary: number;
   years_left: number;
+  total_years?: number; // every season on the deal (Contracts tab dots)
   no_contract?: boolean;
   designation: 'taxi' | 'ir' | null;
   is_rookie: boolean;
@@ -302,7 +303,9 @@ export type Lineup = {
 };
 // A contract on the value board: PPG per cap dollar, graded against the whole league.
 export type ValuedContract = Player & { through: number; per_dollar: number | null; grade: 'bargain' | 'fair' | 'overpaid' | 'stash' | null };
-export type Pick = { year: number; round: number; original_owner: string; current_owner: string; own: boolean };
+export type Pick = { year: number; round: number; original_owner: string; current_owner: string; own: boolean; slot?: string };
+// One week in the My Team week menu: the result once it's played, the opponent before, or a playoff week.
+export type TeamWeekItem = { week: number; opponent?: string | null; result?: 'W' | 'L' | 'T'; score?: [number, number]; playoffs?: boolean };
 
 export type TeamPage = {
   season: number;
@@ -326,6 +329,8 @@ export type TeamPage = {
   head_to_head: { wins: number; losses: number; ties: number; last: { week: number; me: number; them: number } } | null;
   lineup?: Lineup | null;
   week?: TeamWeek | null;
+  weeks?: TeamWeekItem[] | null;
+  current_week?: number;
 };
 
 // This week on a team page, refreshed every 15 seconds while games are on: each player's projection, live points,
