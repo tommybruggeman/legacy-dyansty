@@ -5,6 +5,10 @@ name: Live scoring cost facts
 # secrets. Numbers and settings only (the repo and its logs are public): no keys, IPs or names.
 on:
   workflow_dispatch:
+    inputs:
+      cleanup:
+        description: "plan = list what would go; apply = destroy old secret versions (keep newest of each) and delete images no service runs (keep newest 2 per image)"
+        default: "no"
   push:
     branches: [claude/speed-test]
     paths: [.github/workflows/cost-facts.yml]
@@ -96,3 +100,36 @@ jobs:
             --project "$PROJECT" --freshness 6h --format 'value(timestamp,textPayload)' | sort | cut -c12-19,30-200 | tail -20
           echo "sync runs (stdout lines from the sync scripts, counts only):"
           gcloud logging read "$F AND textPayload:\"sync\"" --project "$PROJECT" --freshness 1h --format 'value(textPayload)' | cut -c1-120 | sort | uniq -c | head -15
+      - name: Cleanup (old secret versions, unused images)
+        if: ${{ inputs.cleanup == 'plan' || inputs.cleanup == 'apply' }}
+        run: |
+          MODE="${{ inputs.cleanup }}"
+          echo "== secrets: keep the newest enabled version of each, $MODE the rest"
+          for s in $(gcloud secrets list --project "$PROJECT" --format 'value(name.basename())'); do
+            vs=$(gcloud secrets versions list "$s" --project "$PROJECT" --filter 'state!=DESTROYED' --sort-by '~createTime' --format 'value(name.basename())')
+            newest=$(echo "$vs" | head -1); old=$(echo "$vs" | tail -n +2)
+            echo "  $s: keep v$newest, old: $(echo $old | wc -w)"
+            if [ "$MODE" = apply ]; then
+              for v in $old; do gcloud secrets versions destroy "$v" --secret "$s" --project "$PROJECT" --quiet >/dev/null && echo "    destroyed v$v"; done
+            fi
+          done
+          echo "== images: keep what Cloud Run runs now + newest 2 of each image, $MODE the rest"
+          REPO="$REGION-docker.pkg.dev/$PROJECT/legacy"
+          inuse=$(gcloud run services list --project "$PROJECT" --format 'value(spec.template.spec.containers[0].image)'; gcloud run jobs list --project "$PROJECT" --format 'value(spec.template.spec.template.spec.containers[0].image)' 2>/dev/null)
+          echo "in use:"; echo "$inuse" | sed 's|.*/||'
+          for pkg in $(gcloud artifacts docker images list "$REPO" --format 'value(package)' | sort -u); do
+            rows=$(gcloud artifacts docker images list "$pkg" --include-tags --sort-by '~CREATE_TIME' --format 'value(version,tags)')
+            n=0
+            echo "$rows" | while read -r digest tags; do
+              [ -z "$digest" ] && continue
+              n=$((n+1)); keep=no
+              [ $n -le 2 ] && keep=yes
+              for t in $(echo "$tags" | tr ',' ' '); do echo "$inuse" | grep -q ":$t$" && keep=yes; done
+              echo "$inuse" | grep -q "@$digest$" && keep=yes
+              echo "  $(basename $pkg) ${tags:-untagged} keep=$keep"
+              if [ "$keep" = no ] && [ "$MODE" = apply ]; then
+                gcloud artifacts docker images delete "$pkg@$digest" --delete-tags --quiet >/dev/null 2>&1 && echo "    deleted"
+              fi
+            done
+          done
+          gcloud artifacts repositories list --project "$PROJECT" --format 'table(name.basename(),sizeBytes)'
