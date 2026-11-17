@@ -122,7 +122,9 @@ def run_league_ai(*, request_context: Any, team: dict, question: str, history: l
         tools, seen = app_fo.gm_tools(session, fo, question=lambda: question, conversation_id=lambda: st.session_state.get(CONVERSATION_KEY),
                                       state=_cached_state(owner.league_id, owner.season, owner.user_id, epoch))
     turn = runtime.chat_turn(client, owner, question=question, history=history, conversation_id=st.session_state.get(CONVERSATION_KEY),
-                             pack=pack, tools=tools, on_event=on_event, week_context=week_context, **({"images": images} if images else {}))
+                             pack=pack, tools=tools, on_event=on_event, week_context=week_context, **({"images": images} if images else {}),
+                             **({"assistant_extra": lambda: app_fo._saved_moves(session)} if session is not None else {}))
+    turn.result.moves = app_fo.move_cards(session) if session is not None and turn.result.ok else []
     if session is not None and turn.result.ok:
         try:
             app_fo.after_answer(session, seen, conversation_id=turn.conversation_id, question=question, answer=turn.result.text)
@@ -133,6 +135,20 @@ def run_league_ai(*, request_context: Any, team: dict, question: str, history: l
     if turn.conversation_id:
         st.session_state[CONVERSATION_KEY] = turn.conversation_id
     return turn.result
+
+
+def settle_move(request_context: Any, team: dict, move_id: str, action: str) -> dict[str, Any]:
+    """The owner tapped Confirm or Dismiss on a move card the GM proposed (same call the app makes)."""
+    from api import front_office as app_fo
+    from api import gm_moves
+
+    conversation_id = st.session_state.get(CONVERSATION_KEY)
+    if not conversation_id:
+        return {"id": move_id, "status": gm_moves.FAILED, "result": "Start a conversation first."}
+    try:
+        return app_fo.settle_move(app_session(request_context, team), str(conversation_id), move_id, action)
+    except gm_moves.MoveError as exc:
+        return {"id": move_id, "status": gm_moves.FAILED, "result": str(exc)}
 
 
 def resume_conversation(request_context: Any) -> list[dict[str, str]] | None:

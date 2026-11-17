@@ -183,6 +183,18 @@ def offer_items(me: str, them: str, give: Iterable[Mapping[str, Any]], get: Iter
     return out
 
 
+def offer_request(league_id: str, me: str, them: str, give: Iterable[Mapping[str, Any]], get: Iterable[Mapping[str, Any]],
+                  give_cap: float = 0, get_cap: float = 0, note: str | None = None, parent_offer_id: str | None = None) -> dict[str, Any]:
+    """The propose_trade_offer_authenticated request for an offer (the trade screen and the GM's confirm card send the same one)."""
+    items = offer_items(me, them, give, get)
+    return {
+        "league_id": league_id, "to_league_team_id": them,
+        "players": [i for i in items if i.get("contract_id")], "picks": [i for i in items if i.get("draft_pick_id")],
+        "cap": cap_items(me, them, give_cap, get_cap),
+        "note": (note or "")[:280] or None, "parent_offer_id": parent_offer_id if parent_offer_id and is_uuid(parent_offer_id) else None,
+    }
+
+
 def _when(value: Any) -> datetime | None:
     try:
         return datetime.fromisoformat(str(value).replace("Z", "+00:00"))

@@ -19,6 +19,7 @@ from supabase import Client, create_client
 from api import box_score as box_score_mod
 from api import account, demo, usage_log
 from league_ai import screenshots
+from api import gm_moves
 from api import activity, alerts, cache, commissioner, owner_settings, profiles, front_office, home, league, lineups, live_activity, market, market_week, nfl_live, own_league, player, playoffs, projections, teams, trade_feed, trade_offers, waivers
 from season_engine import SeasonResolver
 from services.season_rollover_owner_ui import OwnerRolloverDecisionError, OwnerRolloverDecisionService
@@ -1627,13 +1628,8 @@ def send_trade_offer(body: TradeOffer, owner: tuple[Client, Any] = Depends(owner
     pieces = [p for p in [*body.give, *body.get] if (p.contract_id and trade_offers.is_uuid(p.contract_id)) or (p.pick_id and trade_offers.is_uuid(p.pick_id))]
     if len(pieces) != len(body.give) + len(body.get) or not trade_offers.is_uuid(body.to_team_id):
         raise HTTPException(status_code=400, detail="Something in this offer isn't a player or pick.")
-    items = trade_offers.offer_items(ctx["team_id"], body.to_team_id, [p.model_dump() for p in body.give], [p.model_dump() for p in body.get])
-    request = {
-        "league_id": ctx["league_id"], "to_league_team_id": body.to_team_id,
-        "players": [i for i in items if i.get("contract_id")], "picks": [i for i in items if i.get("draft_pick_id")],
-        "cap": trade_offers.cap_items(ctx["team_id"], body.to_team_id, body.give_cap, body.get_cap),
-        "note": (body.note or "")[:280] or None, "parent_offer_id": body.parent_offer_id if body.parent_offer_id and trade_offers.is_uuid(body.parent_offer_id) else None,
-    }
+    request = trade_offers.offer_request(ctx["league_id"], ctx["team_id"], body.to_team_id, [p.model_dump() for p in body.give],
+                                         [p.model_dump() for p in body.get], body.give_cap, body.get_cap, body.note, body.parent_offer_id)
     try:
         result = client.rpc("propose_trade_offer_authenticated", {"p_request": request}).execute().data
     except Exception as exc:
@@ -1907,6 +1903,26 @@ def front_office_chat_resume(owner: tuple[Client, Any] = Depends(owner_client)) 
     session = _front_office(*owner)
     return StreamingResponse(front_office.resume_stream(session), media_type="application/x-ndjson",
                              headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+
+
+class MoveRequest(BaseModel):
+    conversation_id: str
+
+
+@app.post("/front-office/moves/{move_id}/{action}")
+def front_office_move(move_id: str, action: str, body: MoveRequest, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """confirm | dismiss a move card the GM proposed. Confirm runs the same checked database call as the owner's own tap."""
+    if action not in {"confirm", "dismiss"} or not trade_offers.is_uuid(move_id) or not trade_offers.is_uuid(body.conversation_id):
+        raise HTTPException(status_code=400, detail="Unknown action.")
+    session = _front_office(*owner)
+    try:
+        card = front_office.settle_move(session, body.conversation_id, move_id, action)
+    except gm_moves.MoveError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if card["status"] == gm_moves.DONE:
+        for key in ("state", "activity"):
+            cache.forget(key, session.owner.league_id)
+    return {"ok": card["status"] == gm_moves.DONE, "move": card}
 
 
 @app.get("/front-office/conversations")

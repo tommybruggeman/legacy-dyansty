@@ -13,6 +13,7 @@ from datetime import date, datetime
 from typing import Any, Callable, Iterator
 from zoneinfo import ZoneInfo
 
+from api import gm_moves
 from league_ai import runtime
 from league_ai.config import load_config
 from league_ai import matchup_odds, odds_trial, playoff_odds
@@ -449,12 +450,65 @@ def gm_tools(session: Session, fo: dict[str, Any] | None, *, question: Callable[
             state = {**state, "sleeper_rostered": {pid: names.get(rid, f"Roster {rid}") for pid, rid in league_api.sleeper_owners(session.sleeper_id).items()}}
         except Exception:
             pass
+    # Moves the GM can propose for the owner to confirm (lineups, offers, bids, adds, drops): only once the league runs its own moves.
+    session.moves = gm_moves.Tray()
+    extra = [matchup_tool(session, fo), lineups_tool(session, fo, state)] if fo else None
+    if fo and moves_on(session):
+        extra += gm_moves.tools(session, fo, state, session.moves, lambda: set_lineups(session, fo, state))
     tools = runtime.chat_tools(client, o, state=state, rules=session.rules(), league=session.league, week=session.week(),
                                positions=session.positions, playoff_week=session.playoff_start,
                                question=question, conversation_id=conversation_id,
                                odds=(lambda: _gm_odds(session, fo)) if fo else None,
-                               extra=[matchup_tool(session, fo), lineups_tool(session, fo, state)] if fo else None)
+                               extra=extra)
     return tools, odds_trial.watch(tools)
+
+
+def moves_on(session: Session) -> bool:
+    """The league's own lineups, trades and pickups are switched on (league_app_transactions.enabled)."""
+    from api import trade_offers
+    o = session.owner
+    return bool(_cached(("moves_on", o.league_id), 60, lambda: trade_offers.enabled(session.client, o.league_id)))
+
+
+def _saved_moves(session: Any) -> dict[str, Any]:
+    tray = getattr(session, "moves", None)
+    return {"moves": list(tray.moves)} if tray and tray.moves else {}
+
+
+def move_cards(session: Session) -> list[dict[str, Any]]:
+    tray = getattr(session, "moves", None)
+    return [gm_moves.public(m) for m in (tray.moves if tray else [])]
+
+
+def settle_move(session: Session, conversation_id: str, move_id: str, action: str) -> dict[str, Any]:
+    """The owner tapped Confirm (or Dismiss) on a card the GM proposed. Confirm makes the move through the same
+    database calls as the owner's own taps; the card's new status is saved with the conversation."""
+    o, client = session.owner, session.client
+    memory = o.memory(client)
+    row = memory.get_conversation(conversation_id)
+    if row is None:
+        raise gm_moves.MoveError("Conversation not found")
+    messages = [dict(m) for m in row.get("messages") or []]
+    hit = gm_moves.find(messages, move_id)
+    if hit is None:
+        raise gm_moves.MoveError("That card wasn't found")
+    i, move = hit
+    if action == "confirm" and not moves_on(session):
+        raise gm_moves.MoveError("Moves in the app turn on for the playoffs")
+
+    def lineup_data() -> dict[str, Any]:
+        fo = session.front_office()
+        _cache.pop(("set_lineups", o.league_id, o.season, int(fo.get("week") or 0)), None)  # the lineup as it is right now
+        return set_lineups(session, fo, session.state())
+
+    done = gm_moves.settle(client, league_id=o.league_id, season=o.season, team_id=o.league_team_id, move=move, action=action,
+                           lineup_data=lineup_data)
+    messages[i]["moves"] = [done if str(m.get("id")) == move_id else m for m in messages[i].get("moves") or []]
+    memory.save_conversation(conversation_id, messages)
+    if done["status"] == gm_moves.DONE:
+        for key in [k for k in _cache if isinstance(k, tuple) and k and k[0] in ("state", "set_lineups", "fo")]:
+            _cache.pop(key, None)
+    return gm_moves.public(done)
 
 
 def after_answer(session: Session, seen: Any, *, conversation_id: str | None, question: str, answer: str) -> None:
@@ -483,19 +537,22 @@ def ask(session: Session, question: str, conversation_id: str | None, on_event: 
     tools, seen = gm_tools(session, fo, question=lambda: question, conversation_id=lambda: conversation_id)
     turn = runtime.chat_turn(client, o, question=question, history=history, conversation_id=conversation_id, pack=session.pack(), tools=tools,
                              on_event=on_event, week_context=week_context(fo, o.owner_name), **({"inbox": inbox} if inbox else {}),
-                             **({"images": images} if images else {}))
+                             **({"images": images} if images else {}), assistant_extra=lambda: _saved_moves(session))
     if turn.result.ok:
         after_answer(session, seen, conversation_id=turn.conversation_id, question=question, answer=turn.result.text)
     if turn.notes_changed:
         session.forget_pack()  # new notes show up in the next answer
     result = turn.result
     print(result.trace_line(), flush=True)
-    return {"ok": result.ok, "text": result.text if result.ok else result.human_error, "conversation_id": turn.conversation_id}
+    return {"ok": result.ok, "text": result.text if result.ok else result.human_error, "conversation_id": turn.conversation_id,
+            **({"moves": move_cards(session)} if result.ok and move_cards(session) else {})}
 
 
 def history_message(m: dict[str, Any]) -> dict[str, Any]:
     """A saved message as the next turn needs it: role and text, plus the text reading of any screenshot it carried."""
     out = {"role": m.get("role", "user"), "content": m.get("content", "")}
+    if m.get("moves"):
+        out["moves"] = m["moves"]  # kept, so the next save doesn't drop earlier cards
     if m.get("photos"):
         out.update(photos=m.get("photos"), screenshot=m.get("screenshot") or "")
     return out
@@ -644,7 +701,8 @@ def conversation(client: Any, owner: runtime.Owner, conversation_id: str) -> dic
     row = owner.memory(client).get_conversation(conversation_id)
     if not row:
         return None
-    messages = [{"role": m.get("role", "user"), "content": m.get("content", ""), **({"photos": int(m["photos"])} if m.get("photos") else {})}
+    messages = [{"role": m.get("role", "user"), "content": m.get("content", ""), **({"photos": int(m["photos"])} if m.get("photos") else {}),
+                 **({"moves": [gm_moves.public(x) for x in m["moves"]]} if m.get("moves") else {})}
                 for m in row.get("messages") or []]
     # The website's old opening line isn't part of the conversation.
     messages = [m for m in messages if not str(m["content"]).startswith("Hi, I'm **Coach Condor**")]

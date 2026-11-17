@@ -283,7 +283,7 @@ class ServiceTests(unittest.TestCase):
     def test_system_blocks_shape(self):
         blocks = system_blocks("PACK")
         self.assertEqual(len(blocks), 2)
-        self.assertIn("read-only", blocks[0]["text"])
+        self.assertIn("you never make a move yourself", blocks[0]["text"])
         self.assertEqual(blocks[1]["text"], "PACK")
 
     def test_empty_final_round_gets_one_forced_answer_without_tools(self):

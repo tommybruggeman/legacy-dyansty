@@ -111,6 +111,22 @@ def test_gm_tools_gives_the_website_the_same_odds_and_matchup_tools(monkeypatch)
     assert seen["odds"] is None and seen["extra"] is None and seen["state"] == {"roster": ["from session"]}
 
 
+def test_gm_gets_move_tools_only_when_the_league_runs_its_own_moves(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(front_office.runtime, "chat_tools", lambda client, owner, **kw: seen.update(kw) or object())
+    monkeypatch.setattr(front_office.odds_trial, "watch", lambda tools: None)
+    session = SimpleNamespace(owner=SimpleNamespace(league_id="L-moves", league_team_id="T", user_id="u"), client=None, sleeper_id=None,
+                              rules=lambda: {}, league={}, week=lambda: 8, positions=lambda: [], playoff_start=lambda: 15, state=lambda: {})
+    front_office.clear()
+    monkeypatch.setattr(front_office, "moves_on", lambda s: False)
+    front_office.gm_tools(session, {"week": 8}, question=lambda: "q", conversation_id=lambda: None)
+    assert [t.name for t in seen["extra"]] == ["get_matchup_odds", "get_lineups"]
+    monkeypatch.setattr(front_office, "moves_on", lambda s: True)
+    front_office.gm_tools(session, {"week": 8}, question=lambda: "q", conversation_id=lambda: None)
+    assert [t.name for t in seen["extra"]][2:] == ["propose_lineup", "propose_trade", "propose_waiver_move"]
+    assert front_office.move_cards(session) == [] and front_office._saved_moves(session) == {}
+
+
 def test_resume_replays_the_answer_after_the_phone_drops_off(monkeypatch):
     import json
     import threading
