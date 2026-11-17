@@ -141,11 +141,17 @@ begin
   join information_schema.tables tb on tb.table_schema = c.table_schema and tb.table_name = c.table_name and tb.table_type = 'BASE TABLE'
   where c.table_schema = 'public' and c.column_name = 'league_id' and not public.test_league_skip_private(c.table_name::text);
 
-  -- new ids for every copied row (and the commissioner's membership), before anything is written
+  -- new ids for every copied row (and the commissioner's membership), before anything is written: each table's
+  -- uuid primary key, whatever it's called (id, stable_pick_id, ...). Older tables keep league_id as text.
   foreach t in array tables || array['league_memberships'] loop
-    if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = t and column_name = 'id' and data_type = 'uuid') then
-      execute format('insert into _test_map select id::text, gen_random_uuid()::text from public.%I where league_id = $1 and id is not null on conflict do nothing', t) using src;
-    end if;
+    for cols in
+      select a.attname::text from pg_index i
+      join pg_attribute a on a.attrelid = i.indrelid and a.attnum = any(i.indkey)
+      where i.indrelid = format('public.%I', t)::regclass and i.indisprimary and i.indnatts = 1
+        and a.atttypid = 'uuid'::regtype and a.attname <> 'league_id'
+    loop
+      execute format('insert into _test_map select %1$I::text, gen_random_uuid()::text from public.%2$I where league_id::text = $1::text and %1$I is not null on conflict do nothing', cols, t) using src;
+    end loop;
   end loop;
 
   -- fake names, by roster number
@@ -185,7 +191,7 @@ begin
         and (column_name ~ '(_key|_token)$' or column_name = 'sleeper_league_id');
       begin
         execute format('insert into public.%1$I (%2$s) select %2$s from (select (jsonb_populate_record(null::public.%1$I,
-                          public.test_league_remap_private(to_jsonb(x))%4$s)).* from public.%1$I x where x.league_id = $1 %3$s) r',
+                          public.test_league_remap_private(to_jsonb(x))%4$s)).* from public.%1$I x where x.league_id::text = $1::text %3$s) r',
                        t, cols, case when t = 'league_memberships' then 'and x.role = ''commissioner''' else '' end, extra) using src;
         get diagnostics n = row_count;
         copied := copied || jsonb_build_object(t, n);
@@ -252,7 +258,7 @@ begin
     foreach t in array pending loop
       begin
         if not replica then execute format('alter table public.%I disable trigger user', t); end if;
-        execute format('delete from public.%I where league_id = $1', t) using p_league_id;
+        execute format('delete from public.%I where league_id::text = $1::text', t) using p_league_id;
         get diagnostics n = row_count;
         if not replica then execute format('alter table public.%I enable trigger user', t); end if;
         if n > 0 then removed := removed || jsonb_build_object(t, n); end if;
