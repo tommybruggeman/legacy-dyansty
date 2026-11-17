@@ -75,3 +75,26 @@ class RankedStatsTest(unittest.TestCase):
     def test_kicker_has_no_card(self):
         from api.player import ranked_stats
         self.assertIsNone(ranked_stats([{"week": 1}], "K", [], "me"))
+
+
+class HurtLastSeasonTest(unittest.TestCase):
+    """Out since last season (an ACL in December): hurt week from last season, IR eligibility long past."""
+
+    def test_acl_from_last_season(self):
+        from api.player import current_injury, injury_report
+        schedule = {w: {"opp": "X", "home": True} for w in [1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12]}
+        log = [{"week": w, "status": "out"} for w in [10, 9, 7, 6, 5, 4, 3, 2, 1]]
+        h = {"healthy": False, "status": "IR", "detail": "Knee - ACL", "missed": []}
+        r = injury_report(h, log, schedule, None, {"season": 2025, "week": 16, "opp": "BUF", "missed": 2})
+        self.assertEqual(r["hurt"], {"week": 16, "opp": "BUF", "season": 2025})
+        self.assertEqual((r["eligible_week"], r["eligible_now"], r["missed_before"]), (5, True, 2))
+        h["report"] = r
+        current_injury(h, 2026)
+        self.assertEqual(h["missed"][0], {"injury": "knee - acl", "season": 2025, "games": 11, "back": False})
+
+    def test_hurt_this_season_not_eligible_yet(self):
+        from api.player import injury_report
+        schedule = {w: {"opp": "X", "home": True} for w in range(1, 15)}
+        log = [{"week": 10, "status": "out"}, {"week": 9, "status": "out"}, {"week": 8, "status": "started", "opp": "KC"}]
+        r = injury_report({"healthy": False, "status": "IR"}, log, schedule, None, {"season": 2025, "week": 17, "missed": 0})
+        self.assertEqual((r["hurt"], r["eligible_week"], r["eligible_now"]), ({"week": 8, "opp": "KC"}, 13, False))

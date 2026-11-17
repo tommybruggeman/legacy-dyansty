@@ -1,6 +1,6 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Avatar } from '../../../components/Pictures';
@@ -14,18 +14,19 @@ export { ScreenError as ErrorBoundary } from '../../../components/ScreenState';
 // Live games refresh every 15 seconds while this screen is open (the server reads the NFL scoreboard at most that often).
 const LIVE_REFRESH_MS = LIVE_POLL_MS;
 const THEM = '#D08B6A';
-// Live row colors: game on, his team has the ball, his team is in the red zone.
-const LIVE_LOOK = {
-  live: { edge: colors.gold, tint: ['#3A3018', '#1D2A1D'] },
-  offense: { edge: colors.live, tint: ['#1C4A33', '#173326'] },
+// Live row looks (Tommy, 2026-11-15): game on = the row a shade lighter (plus the LIVE tag by the clock),
+// his team has the ball = gold edge + tint, his team is in the red zone = red edge + tint.
+const LIVE_LOOK: Record<'live' | 'offense' | 'redZone', { edge: string | null; tint: readonly [string, string] | null; lift?: string }> = {
+  live: { edge: null, tint: null, lift: '#1A3A2C' },
+  offense: { edge: colors.gold, tint: ['#4A3A16', '#1D2A1D'] },
   redZone: { edge: '#E05555', tint: ['#4A1E1E', '#2A1F1C'] },
-} as const;
+};
 
 type Side = BoxScore['teams'][number];
 
 // One game, slot by slot: your side on the left when you're playing.
-// "Spotlight": players whose NFL game is on get a colored edge and tint: gold while his game is on,
-// green when his team has the ball, red in the red zone. No extra text; the colors say it.
+// "Spotlight": players whose NFL game is on get a lighter row and a small LIVE tag by the clock;
+// gold edge + tint when his team has the ball, red in the red zone.
 export default function Game() {
   const { week, matchup } = useLocalSearchParams<{ week: string; matchup: string }>();
   const [live, setLive] = useState(true);
@@ -58,13 +59,24 @@ export default function Game() {
           <Lineup left={a.bench ?? []} right={b.bench ?? []} onScore={setShown} bench />
         </>
       ) : null}
+      {(['taxi', 'ir'] as const).map((held) => {
+        const l = (a.reserve ?? []).filter((p) => p.designation === held);
+        const r = (b.reserve ?? []).filter((p) => p.designation === held);
+        return l.length || r.length ? (
+          <Fragment key={held}>
+            <Text style={[styles.section, styles.sectionBench]}>{held === 'taxi' ? 'TAXI' : 'IR'}</Text>
+            <Lineup left={l} right={r} onScore={setShown} bench held={held} />
+          </Fragment>
+        ) : null;
+      })}
       <Breakdown player={shown} onClose={() => setShown(null)} />
     </Screen>
   );
 }
 
-// Two lineups side by side, row by row. Bench rows pair by order (QB, RB, WR, TE, then projection) and show each player's position.
-function Lineup({ left, right, onScore, bench }: { left: BoxPlayer[]; right: BoxPlayer[]; onScore: (p: BoxPlayer) => void; bench?: boolean }) {
+// Two lineups side by side, row by row. Bench rows pair by order (highest pregame projection first) and show each player's position.
+// Taxi and IR players (Tommy, 2026-11-15) get their own sections: dimmed rows with a T or IR tag, since they can't play.
+function Lineup({ left, right, onScore, bench, held }: { left: BoxPlayer[]; right: BoxPlayer[]; onScore: (p: BoxPlayer) => void; bench?: boolean; held?: 'taxi' | 'ir' }) {
   const rows = Math.max(left.length, right.length);
   return (
     <View style={styles.table}>
@@ -73,9 +85,9 @@ function Lineup({ left, right, onScore, bench }: { left: BoxPlayer[]; right: Box
         const pb = right[i];
         return (
           <View key={i} style={styles.row}>
-            <Half p={pa} vs={pb} side="l" onScore={onScore} bench={bench} first={i === 0} />
-            <View style={[styles.slot, i > 0 && styles.divider]}><Text style={styles.slotText}>{bench ? 'BN' : pa?.slot || pb?.slot || ''}</Text></View>
-            <Half p={pb} vs={pa} side="r" onScore={onScore} bench={bench} first={i === 0} />
+            <Half p={pa} vs={pb} side="l" onScore={onScore} bench={bench} held={held} first={i === 0} />
+            <View style={[styles.slot, i > 0 && styles.divider]}><Text style={[styles.slotText, held === 'taxi' && styles.gold, held === 'ir' && styles.irText]}>{held === 'taxi' ? 'TX' : held === 'ir' ? 'IR' : bench ? 'BN' : pa?.slot || pb?.slot || ''}</Text></View>
+            <Half p={pb} vs={pa} side="r" onScore={onScore} bench={bench} held={held} first={i === 0} />
           </View>
         );
       })}
@@ -120,25 +132,27 @@ function FinalBanner({ a, b }: { a: Side; b: Side }) {
 // ("7 REC, 51 YDS, TD"), with big points and the projection on the inside edge next to the slot. The right side is mirrored.
 // Live = gold edge + warm tint; has the ball = green; red zone = red.
 // The slot winner's points are gold once both players have played.
-function Half({ p, vs, side, onScore, bench, first }: { p?: BoxPlayer; vs?: BoxPlayer; side: 'l' | 'r'; onScore: (p: BoxPlayer) => void; bench?: boolean; first?: boolean }) {
+function Half({ p, vs, side, onScore, bench, held, first }: { p?: BoxPlayer; vs?: BoxPlayer; side: 'l' | 'r'; onScore: (p: BoxPlayer) => void; bench?: boolean; held?: 'taxi' | 'ir'; first?: boolean }) {
   if (!p || !p.player_id || p.player_id === '0') return <View style={[styles.half, bench && styles.halfBench, !first && styles.divider]}><Text style={styles.empty}>{p ? 'Empty' : ''}</Text></View>;
   const g = p.game;
   const on = p.status === 'playing';
   const right = side === 'r';
-  const look = on ? (g?.red_zone ? LIVE_LOOK.redZone : g?.possession ? LIVE_LOOK.offense : LIVE_LOOK.live) : null;
+  const look = on && !held ? (g?.red_zone ? LIVE_LOOK.redZone : g?.possession ? LIVE_LOOK.offense : LIVE_LOOK.live) : null;
   const edge = look?.edge ?? null;
   const tint = look?.tint ?? null;
+  const lift = look?.lift ? { backgroundColor: look.lift } : null;
   const scored = p.status === 'playing' || p.status === 'final';
   const vsScored = !!vs && (vs.status === 'playing' || vs.status === 'final');
   const lead = !bench && scored && vsScored && vs ? (p.points > vs.points ? 'win' : p.points < vs.points ? 'lose' : null) : null;
   const line = p.short_line ?? p.line ?? [];
   const align = right ? styles.textRight : null;
   return (
-    <View style={[styles.half, right && styles.halfRight, bench && styles.halfBench, !first && styles.divider, right ? { borderRightWidth: 4, borderRightColor: edge ?? 'transparent' } : { borderLeftWidth: 4, borderLeftColor: edge ?? 'transparent' }]}>
+    <View style={[styles.half, right && styles.halfRight, bench && styles.halfBench, lift, !first && styles.divider, right ? { borderRightWidth: 4, borderRightColor: edge ?? 'transparent' } : { borderLeftWidth: 4, borderLeftColor: edge ?? 'transparent' }]}>
       {tint ? <LinearGradient colors={tint as [string, string]} start={{ x: right ? 1 : 0, y: 0 }} end={{ x: right ? 0.2 : 0.8, y: 0 }} style={StyleSheet.absoluteFill} /> : null}
-      <View style={[styles.info, right && styles.infoRight]}>
+      <View style={[styles.info, right && styles.infoRight, held && styles.heldDim]}>
         <Pressable onPress={() => router.push(`/player/${p.player_id}`)} hitSlop={4} style={[styles.nameWrap, right && styles.nameWrapRight]}>
           <Text style={styles.name} numberOfLines={1}>{shortName(p.name)}</Text>
+          {held ? <View style={[styles.heldTag, held === 'ir' && styles.heldTagIr]}><Text style={[styles.heldTagText, held === 'ir' && styles.irText]}>{held === 'ir' ? 'IR' : 'T'}</Text></View> : null}
           {bench && p.pos ? <Text style={styles.benchPos}>{p.pos}</Text> : null}
           {p.team ? <Text style={styles.team}>{p.team}</Text> : null}
         </Pressable>
@@ -151,9 +165,9 @@ function Half({ p, vs, side, onScore, bench, first }: { p?: BoxPlayer; vs?: BoxP
             : ' '}
         </Text>
       </View>
-      <Pressable onPress={() => onScore(p)} hitSlop={8} style={[styles.pts, right && styles.ptsRight]}>
+      <Pressable onPress={() => onScore(p)} hitSlop={8} style={[styles.pts, right && styles.ptsRight, held && styles.heldDim]}>
         <Text style={[styles.points, lead === 'win' && styles.gold, lead === 'lose' && styles.pointsLose, bench && styles.pointsBench]}>{scored || p.points ? p.points.toFixed(1) : '–'}</Text>
-        <Text style={[styles.proj, on && p.live_proj != null && styles.projLive]}>{shownProj(p)}</Text>
+        <Text style={[styles.proj, on && p.live_proj != null && styles.projLive, projTone(p) === 'up' && styles.projUp, projTone(p) === 'down' && styles.projDown]}>{shownProj(p)}</Text>
       </Pressable>
     </View>
   );
@@ -168,7 +182,7 @@ function GameText({ p, right }: { p: BoxPlayer; right?: boolean }) {
   const opp = g ? `${g.home ? '' : '@'}${g.opp}` : '';
   if (g && (p.status === 'playing' || g.state === 'in')) {
     return (
-      <Text style={[styles.game, al]} numberOfLines={1}>{opp} {g.score}-{g.opp_score} <Text style={styles.clock}>{liveClock(g)}</Text></Text>
+      <Text style={[styles.game, al]} numberOfLines={1}>{opp} {g.score}-{g.opp_score} <Text style={styles.liveTag}> LIVE </Text> <Text style={styles.clock}>{liveClock(g)}</Text></Text>
     );
   }
   if (g && (p.status === 'final' || g.state === 'post')) {
@@ -190,6 +204,14 @@ function liveClock(g: NonNullable<BoxPlayer['game']>) {
 function shownProj(p: BoxPlayer) {
   const v = p.status === 'playing' && p.live_proj != null ? p.live_proj : p.proj;
   return v != null ? v.toFixed(1) : '';
+}
+
+// Like Sleeper: while his game is live, the live projection is green when it is tracking above his pregame
+// projection and red when below. Before kickoff and after the game it stays plain.
+function projTone(p: BoxPlayer): 'up' | 'down' | null {
+  if (p.status !== 'playing' || p.live_proj == null || p.proj == null) return null;
+  const diff = Math.round(p.live_proj * 10) - Math.round(p.proj * 10); // compare the numbers as shown (one decimal)
+  return diff > 0 ? 'up' : diff < 0 ? 'down' : null;
 }
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -289,11 +311,19 @@ const styles = StyleSheet.create({
   points: { color: colors.text, fontSize: 17, fontWeight: '800', fontVariant: ['tabular-nums'] },
   pointsBench: { color: '#C9C2B2' },
   pointsLose: { color: colors.muted },
+  heldDim: { opacity: 0.62 },
+  heldTag: { flexShrink: 0, borderWidth: 1, borderColor: colors.gold, backgroundColor: '#3A3018', borderRadius: 4, paddingHorizontal: 4, paddingVertical: 0.5 },
+  heldTagIr: { borderColor: '#E05555', backgroundColor: '#3A1A1A' },
+  heldTagText: { color: '#E2BC5B', fontSize: 8.5, fontWeight: '900' },
+  irText: { color: '#EF7A7A' },
   benchPos: { flexShrink: 0, color: colors.muted, fontSize: 10, fontWeight: '800' },
   proj: { color: colors.muted, fontSize: 10.5, marginTop: 1 },
   projLive: { color: colors.text, fontWeight: '700' },
+  projUp: { color: colors.live },
+  projDown: { color: '#EF7A7A' },
   game: { color: colors.muted, fontSize: 10.5, marginTop: 2, flexShrink: 1, alignSelf: 'stretch' },
-  clock: { color: colors.live, fontWeight: '800' },
+  clock: { color: colors.text, fontWeight: '800' },
+  liveTag: { color: '#FFFFFF', backgroundColor: '#E05555', fontSize: 7, fontWeight: '900', letterSpacing: 0.3 },
   stats: { color: '#D9D0BD', fontSize: 11, fontWeight: '600', marginTop: 2, lineHeight: 15, alignSelf: 'stretch' },
   good: { color: colors.live, fontWeight: '800' },
   bad: { color: '#EF7A7A', fontWeight: '800' },

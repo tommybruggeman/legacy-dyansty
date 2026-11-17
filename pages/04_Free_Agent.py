@@ -882,7 +882,8 @@ with league_players_tab:
                 lp_contract = st.selectbox("Contract", ["Any", "Expiring", "2+ years", "Rookie deal", "Taxi", "IR"],
                                            key="league_players_contract")
             with lp_sort_col:
-                lp_sort = st.selectbox("Sort", ["Points", "PPG", "Value per $", "Youngest"], key="league_players_sort")
+                lp_sort = st.selectbox("Sort", ["Points", "PPG", "Last 3 games", "This week", "Value per $", "Salary", "Youngest"],
+                                       key="league_players_sort")
             if lp_saved is not None:
                 lp_names = {p["player_id"]: f"{p['name']} · {p['pos']}" for p in league_players["players"]}
                 # Keyed on the saved list, so a star added in the app shows here on the next load.
@@ -925,6 +926,11 @@ with league_players_tab:
             def _lp_ppg(p: dict) -> str:
                 return _ppg_text(p.get("avg") if p.get("avg") is not None else p["rank_ppg"])
 
+            def _lp_weeks(p: dict) -> str:
+                """The app's weekly bars as text, oldest first: points, "bye", or "–" for a week he didn't play."""
+                return " · ".join("bye" if b.get("bye") else "–" if b.get("pts") is None else f"{b['pts']:.0f}"
+                                  for b in p.get("bars") or [])
+
             _render_html_table(pd.DataFrame([{
                 "Player": f"★ {p['name']}" if p["player_id"] in lp_star else p["name"],
                 "Pos": p["pos"],
@@ -934,8 +940,9 @@ with league_players_tab:
                 "Owner": _lp_owner(p),
                 "Contract": _lp_contract(p),
                 lp_week_label: app_market_week.week_text(p),
-                "Last 3": _ppg_text(p.get("last3")),
+                "Last 3 games": _ppg_text(p.get("last3")),
                 lp_rank: _lp_ppg(p),
+                "Last 6 weeks": _lp_weeks(p) or "—",
                 "Games": p.get("games") or "—",
                 "Points": f"{p['points']:.0f}" if p["points"] is not None else "—",
                 "Game": app_market_week.game_text(p),
@@ -945,7 +952,7 @@ with league_players_tab:
                 (p["pos"], f"★ {p['name']}" if p["player_id"] in lp_star else p["name"],
                  " · ".join(filter(None, [f"{_lp_owner(p)} · {_lp_contract(p)}" if p["team_id"] else f"{p['nfl_team']} · Free agent",
                                           app_market_week.game_text(p)])),
-                 [(app_market_week.week_text(p), lp_week_label, True), (_ppg_text(p.get("last3")), "Last 3", False), (_lp_ppg(p), lp_rank, False)])
+                 [(app_market_week.week_text(p), lp_week_label, True), (_ppg_text(p.get("last3")), "Last 3 games", False), (_lp_ppg(p), lp_rank, False)])
                 for p in lp_visible
             ])
             if len(lp_rows) > len(lp_visible):

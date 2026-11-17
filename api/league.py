@@ -102,6 +102,8 @@ def standings(sleeper_id: str, names: dict[int, str], my_roster_id: int | None) 
                 by_mid.setdefault(row["matchup_id"], []).append(row)
 
         results = []
+        # Over the cap at Sunday's first kickoff: an automatic loss (own_league.sync marks the row).
+        auto_loss = {str(r.get("roster_id")) for r in rows if r.get("auto_loss")}
         for pair in by_mid.values():
             if len(pair) < 2:
                 continue
@@ -118,7 +120,7 @@ def standings(sleeper_id: str, names: dict[int, str], my_roster_id: int | None) 
 
         if not results or all(s == 0 and o == 0 for _, s, o in results):
             continue
-        frame = pd.DataFrame(score_week(results))
+        frame = pd.DataFrame(score_week(results, auto_loss))
         frame["week"] = week
         frames.append(frame)
 

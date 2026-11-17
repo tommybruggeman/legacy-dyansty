@@ -398,7 +398,7 @@ def main() -> None:
     from supabase import create_client
 
     client = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_ROLE_KEY"])
-    for n, lg in enumerate(client.table("leagues").select("id, sleeper_league_id").execute().data or [], start=1):
+    for n, lg in enumerate(client.table("leagues").select("id, sleeper_league_id").eq("is_test", False).execute().data or [], start=1):
         if not lg.get("sleeper_league_id"):
             continue
         res = run_league(client, lg["id"], str(lg["sleeper_league_id"]))

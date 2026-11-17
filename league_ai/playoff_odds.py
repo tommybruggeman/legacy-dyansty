@@ -257,7 +257,7 @@ def main(argv: list[str] | None = None) -> int:
 
     _ = argv if argv is not None else sys.argv[1:]
     client = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_ROLE_KEY"])
-    for league in client.table("leagues").select("id, name").execute().data or []:
+    for league in client.table("leagues").select("id, name").eq("is_test", False).execute().data or []:
         rows = (client.table("league_matchups").select("season, week, owner_name, opponent_name, points, standing_points, is_playoff")
                 .eq("league_id", league["id"]).limit(20000).execute().data or [])
         seasons = sorted({int(r["season"]) for r in rows})

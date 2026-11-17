@@ -101,6 +101,8 @@ def test_pregame_snapshot_skips_when_no_kickoff_is_near(monkeypatch):
             return self
         def select(self, *_):
             return self
+        def eq(self, *_):
+            return self
         def execute(self):
             return type("R", (), {"data": [{"id": "L", "sleeper_league_id": "S"}]})()
 

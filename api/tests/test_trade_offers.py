@@ -74,3 +74,25 @@ def test_center_groups_offers_and_results():
 def test_friendly_errors():
     assert "already played" in to.friendly(Exception("ERROR: offer_player_locked"))
     assert to.friendly(Exception("boom")) == "The trade wasn't saved. Try again."
+
+
+def test_window_closes_after_deadline_until_season_ends():
+    from api import trade_offers
+    assert trade_offers.window("week 11", 11, 17)["open"] is True
+    closed = trade_offers.window("week 11", 12, 17)
+    assert closed["open"] is False and closed["deadline_week"] == 11 and closed["reopens_after_week"] == 17
+    assert trade_offers.window("Week 11 kickoff", 17, 17)["open"] is False
+    assert trade_offers.window("week 11", 18, 17)["open"] is True  # offseason
+    assert trade_offers.window("", 14, 17)["open"] is True  # no deadline set
+
+
+def test_cap_space_in_offers():
+    from api import trade_offers as t
+    assert t.cap_items("me", "them", 5, 0) == [{"from_league_team_id": "me", "to_league_team_id": "them", "amount": 5.0}]
+    assert t.cap_items("me", "them", 0, 0) == []
+    row = {"id": "o1", "from_league_team_id": "them", "to_league_team_id": "me", "status": "pending", "created_at": "2026-11-17",
+           "players": [{"contract_id": "c1", "player_id": "p1", "from_league_team_id": "me", "to_league_team_id": "them"}],
+           "picks": [], "cap": [{"from_league_team_id": "them", "to_league_team_id": "me", "amount": 7.5}]}
+    out = t.center([row], "me", {"them": "Grady"}, {})
+    offer = out["needs_answer"][0]
+    assert offer["you_get"][0]["kind"] == "cap" and offer["you_get"][0]["name"] == "$7.5 cap space"

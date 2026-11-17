@@ -597,7 +597,9 @@ function BracketCard({ rounds, playoffTeams }: { rounds: BracketRound[]; playoff
   const last = rounds[rounds.length - 1];
   const semis = rounds[rounds.length - 2];
   const classic = rounds.length === 2 && semis.games.length === 2 && last.games.length === 1;
+  // Home shows only the top bracket; tapping it opens this week's Matchups with both brackets.
   return (
+    <Pressable onPress={() => router.navigate({ pathname: '/league', params: { tab: 'Matchups', at: String(Date.now()) } })}>
     <Card>
       <Eyebrow right={playoffTeams ? `Top ${playoffTeams}` : undefined}>BRACKET</Eyebrow>
       {classic ? (
@@ -623,6 +625,7 @@ function BracketCard({ rounds, playoffTeams }: { rounds: BracketRound[]; playoff
         </View>
       )}
     </Card>
+    </Pressable>
   );
 }
 

@@ -29,12 +29,47 @@ ERRORS = {
     "offer_pick_moved": "A pick in this offer has already moved.",
     "offer_player_locked": "A player in this offer has already played this week. Try again after Monday night.",
     "offer_empty": "Add at least one player or pick.",
+    "offer_cap_amount_invalid": "Cap space has to be more than $0, once per side.",
+    "trade_deadline_passed": "The trade deadline has passed. Trading reopens the day after the championship.",
     "offer_one_sided": "Both teams have to get something.",
     "offer_not_open": "That offer was already answered.",
     "not_your_offer": "That offer isn't yours to answer.",
     "offer_action_invalid": "Unknown action.",
     "trade_pick_lifecycle_not_tradeable": "That pick's draft isn't open for trades.",
 }
+
+
+CLOSED = "Trades are closed until after the season."
+
+
+def deadline_week(text: Any) -> int | None:
+    """The league's trade deadline week from Settings ("week 11", "11", "Week 11 kickoff"), None when unset."""
+    match = re.search(r"\d+", str(text or ""))
+    return int(match.group()) if match else None
+
+
+def window(deadline_text: Any, current_week: int, last_week: int) -> dict[str, Any]:
+    """Whether trades are open this week. Closed after the deadline week until the season is over (the week after
+    the championship), so the offseason is open again."""
+    deadline = deadline_week(deadline_text)
+    closed = deadline is not None and deadline < current_week <= last_week
+    return {"open": not closed, "deadline_week": deadline, "reopens_after_week": last_week,
+            "message": f"The trade deadline was Week {deadline}. Trading reopens the day after the championship." if closed else None}
+
+
+def league_window(client: Any, league_id: str) -> dict[str, Any]:
+    """window() for a league from its Settings deadline, this NFL week and its last playoff week (app and website)."""
+    from api import league, playoffs
+    from league_ai.settings_store import load_settings
+    try:
+        deadline = load_settings(client, league_id).trade_deadline
+    except Exception:
+        return {"open": True, "deadline_week": None, "reopens_after_week": None, "message": None}
+    try:
+        last = playoffs.last_week(league.playoff_rules(client, league_id))
+    except Exception:
+        last = 17
+    return window(deadline, league.current_week(), last)
 
 
 def friendly(exc: Exception) -> str:
@@ -125,6 +160,16 @@ def read_text(g: Mapping[str, Any], partner: str) -> str:
     return f"About {g['pct']}% in {first}'s favor on today's dynasty value. You're paying a premium."
 
 
+def cap_items(me: str, them: str, give_cap: float, get_cap: float) -> list[dict[str, Any]]:
+    """Cap space in an offer (this season): [{from_league_team_id, to_league_team_id, amount}], any amount (no limit)."""
+    out = []
+    for amount, frm, to in ((give_cap, me, them), (get_cap, them, me)):
+        amount = round(float(amount or 0), 2)
+        if amount > 0:
+            out.append({"from_league_team_id": frm, "to_league_team_id": to, "amount": amount})
+    return out
+
+
 def offer_items(me: str, them: str, give: Iterable[Mapping[str, Any]], get: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """Builder picks -> the stored offer rows (contract or pick ids plus who gives and gets)."""
     out = []
@@ -160,6 +205,10 @@ def center(rows: Iterable[Mapping[str, Any]], me: str, owner_of: Mapping[str, st
                      "contract_id": item.get("contract_id"), "pick_id": item.get("draft_pick_id"),
                      "name": meta.get("full_name") or item.get("name") or item.get("label") or "Pick",
                      "pos": meta.get("position") or "", "nfl_team": meta.get("team") or ""}
+            (you_get if str(item.get("to_league_team_id")) == me else you_give).append(shown)
+        for item in r.get("cap") or []:
+            amount = float(item.get("amount") or 0)
+            shown = {"kind": "cap", "amount": amount, "name": f"${amount:g} cap space", "pos": "", "nfl_team": ""}
             (you_get if str(item.get("to_league_team_id")) == me else you_give).append(shown)
         offer = {"id": str(r["id"]), "partner": owner_of.get(partner_id, "Another team"), "partner_team_id": partner_id,
                  "you_get": you_get, "you_give": you_give, "note": r.get("note"), "created_at": r.get("created_at"),

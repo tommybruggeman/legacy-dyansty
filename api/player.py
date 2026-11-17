@@ -13,7 +13,7 @@ from typing import Any, Iterable
 
 from concurrent.futures import ThreadPoolExecutor
 
-from api import cache, nfl_live, projections, props, sleeper
+from api import cache, nfl_live, player_cards, projections, props, sleeper
 from api.home import EASTERN
 from api.teams import _f, _text
 from league_ai import injury_outlook
@@ -379,6 +379,7 @@ def contract_history(rows: list[dict[str, Any]], years_left: dict[str, int] | No
             "years": int(years) if years else None,
             "tag": tag,
             "live": live,
+            "at": when.isoformat() if when else f"{r.get('effective_season') or ''}",
         })
     # The live contract is the newest signing/trade still active; older rows for it are history.
     seen_live = False
@@ -389,6 +390,57 @@ def contract_history(rows: list[dict[str, Any]], years_left: dict[str, int] | No
             row["live"] = False
             if row["tag"] and "LEFT" in row["tag"]:
                 row["tag"] = "ACTIVE" if row["kind"] != "traded" else "TRADED"
+    return out
+
+
+LIFE_KINDS = ("draft_pick", "trade", "add", "waiver", "drop", "commissioner")
+# A league move and the contract row it created describe the same thing: keep the contract row (it has the money).
+SAME_AS = {"draft_pick": ("signed", "imported"), "add": ("signed", "imported"), "waiver": ("signed", "imported"),
+           "trade": ("traded",), "drop": ("released",), "commissioner": ("signed", "released")}
+
+
+def lifetime_history(contracts: list[dict[str, Any]], events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """His whole life in the league, newest first: contract rows plus every draft, trade, pickup and drop from
+    league history (all seasons), with a league move dropped when a contract row within 3 days already covers it."""
+    out = list(contracts)
+    for e in events:
+        kind = _text(e.get("kind"))
+        if kind not in LIFE_KINDS:
+            continue
+        when = _when(e.get("occurred_at"))
+        season = e.get("season")
+        if when and any(c["kind"] in SAME_AS[kind] and (cw := _when(c.get("at"))) and abs((cw - when).total_seconds()) <= 3 * 86400
+                        for c in contracts):
+            continue
+        d = e.get("details") or {}
+        if kind == "draft_pick":
+            rnd, slot = d.get("round"), d.get("slot")
+            title = f"Drafted {rnd}.{int(slot):02d}" if rnd and slot else "Drafted"
+            if d.get("draft_type") == "auction" or d.get("auction_amount"):
+                title = "Won at auction"
+        else:
+            title = {"trade": "Traded for", "add": "Picked up", "waiver": "Claimed off waivers", "drop": "Dropped",
+                     "commissioner": "Commissioner move"}[kind]
+        money = e.get("contract_salary") if e.get("contract_salary") is not None else None
+        faab = e.get("faab_bid") if kind == "waiver" else None
+        out.append({
+            "kind": {"trade": "traded", "drop": "released"}.get(kind, kind),
+            "title": title,
+            "owner": _text(e.get("owner_name")),
+            "team_id": None,
+            "date": when.strftime("%b %Y") if when else (str(season) if season else ""),
+            "salary": _f(money) if money is not None else None,
+            "years": int(e["contract_years"]) if e.get("contract_years") else None,
+            "faab": _f(faab) if faab is not None else None,
+            "tag": None,
+            "live": False,
+            "at": when.isoformat() if when else f"{season or ''}-12-31T00:00:00+00:00",
+        })
+
+    def key(row: dict[str, Any]) -> str:
+        w = _when(row.get("at"))
+        return w.isoformat() if w else f"{row.get('at') or ''}-12-31T00:00:00+00:00"
+    out.sort(key=key, reverse=True)
     return out
 
 
@@ -517,6 +569,22 @@ def health(
 
 
 PLAYED = ("started", "bench", "free_agent")
+OUT_WORDS = {"out", "ir", "injured reserve", "pup", "pup-r", "suspended", "sus", "doubtful-out"}
+
+
+def current_injury(h: dict[str, Any], season: int) -> None:
+    """Put the injury he's out with now at the top of his history when the saved history doesn't have it yet
+    (an absence that started last season isn't saved until he plays again)."""
+    r = h.get("report") or {}
+    total = len(r.get("missed_weeks") or []) + int(r.get("missed_before") or 0)
+    if not r or not total:
+        return
+    missed = h.setdefault("missed", [])
+    if any(not m.get("back") for m in missed):
+        return
+    hurt = r.get("hurt") or {}
+    name = (h.get("detail") or r.get("detail") or "injury").lower()
+    missed.insert(0, {"injury": name, "season": int(hurt.get("season") or season), "games": total, "back": False})
 IR_STATUSES = {"ir", "injured reserve", "pup", "pup-r"}
 IR_MIN_GAMES = 4
 
@@ -529,11 +597,12 @@ def _games_later(game_weeks: list[int], first: int, n: float) -> int | None:
 
 
 def injury_report(h: dict[str, Any], log: list[dict[str, Any]], schedule: dict[int, dict[str, Any]],
-                  espn: dict[str, Any] | None) -> dict[str, Any] | None:
+                  espn: dict[str, Any] | None, last_season: dict[str, Any] | None = None) -> dict[str, Any] | None:
     """The labelled rows of the player page's injury report: when he got hurt, games missed so far,
     the earliest week IR allows him back and the week range players like him usually return.
 
-    log is the game log (newest first). Only built for a player with an injury tag.
+    log is the game log (newest first). Only built for a player with an injury tag. last_season is his last game
+    the season before ({season, week, opp, missed}): when he hasn't played at all this season, that's where he got hurt.
     """
     if h.get("healthy"):
         return None
@@ -554,15 +623,21 @@ def injury_report(h: dict[str, Any], log: list[dict[str, Any]], schedule: dict[i
     first_out = missed[0] if missed else next((w for w in game_weeks if w > last_logged), None)
     on_ir = str(h.get("status") or "").strip().lower() in IR_STATUSES
     eligible = _games_later(game_weeks, first_out, IR_MIN_GAMES) if on_ir and first_out else None
+    next_game = next((w for w in game_weeks if w > last_logged), None)
+    # IR's 4 games are long done: he can come back any week now, once his team activates him.
+    eligible_now = bool(eligible and next_game and eligible <= next_game)
+    missed_before = 0
+    if hurt is None and missed and missed[0] == (game_weeks[0] if game_weeks else missed[0]) and last_season:
+        hurt = {"week": int(last_season["week"]), "opp": last_season.get("opp") or None, "season": int(last_season["season"])}
+        missed_before = int(last_season.get("missed") or 0)
     est = h.get("estimate") or None
     estimate = None
     if est and first_out and est.get("p25") is not None and est.get("p75") is not None:
-        if len(missed) > float(est["p75"]):
+        if len(missed) + missed_before > float(est["p75"]):
             estimate = {"past_usual": True}
         else:
             lo = _games_later(game_weeks, first_out, float(est["p25"]))
             hi = _games_later(game_weeks, first_out, float(est["p75"]))
-            next_game = next((w for w in game_weeks if w > last_logged), None)
             if lo and next_game:
                 lo = max(lo, next_game)
             if lo and eligible:
@@ -580,6 +655,8 @@ def injury_report(h: dict[str, Any], log: list[dict[str, Any]], schedule: dict[i
         "missed_weeks": missed,
         "on_ir": on_ir,
         "eligible_week": eligible,
+        "eligible_now": eligible_now,
+        "missed_before": missed_before,
         "estimate": estimate,
         "detail": detail,
         "news": news,
@@ -632,9 +709,29 @@ def load_nfl_rows(client: Any, player_id: str, season: int) -> list[dict[str, An
                  .eq("season_type", "REG").order("week").limit(25).execute().data or [], [])
 
 
+def load_last_season(client: Any, player_id: str, season: int) -> dict[str, Any] | None:
+    """His last regular-season game the season before, and how many of his team's games came after it."""
+    rows = _safe(lambda: client.table("nfl_player_stats").select("week,team,opponent").eq("sleeper_id", player_id)
+                 .eq("season", season - 1).eq("season_type", "REG").order("week", desc=True).limit(1).execute().data or [], [])
+    if not rows:
+        return None
+    last = rows[0]
+    week = int(last["week"])
+    later = [w for w in schedule_by_week(_safe(lambda: season_games(client, season - 1), []), _text(last.get("team"))) if w > week]
+    return {"season": season - 1, "week": week, "opp": _text(last.get("opponent")) or None, "missed": len(later)}
+
+
 def load_espn(client: Any, player_id: str) -> dict[str, Any] | None:
-    rows = _safe(lambda: client.table("nfl_injuries").select("status,injury_type,detail,side,short_comment,return_date,reported_at").eq("sleeper_id", player_id).limit(1).execute().data or [], [])
+    rows = _safe(lambda: client.table("nfl_injuries").select("status,injury_type,detail,side,short_comment,long_comment,return_date,reported_at").eq("sleeper_id", player_id).limit(1).execute().data or [], [])
     return rows[0] if rows else None
+
+
+def load_play_rates(client: Any) -> dict[tuple[str, str, str], dict[str, Any]]:
+    """How often players with a given tag played (nfl_injury_play_rates), shared for 6 hours."""
+    def load() -> dict[tuple[str, str, str], dict[str, Any]]:
+        rows = client.table("nfl_injury_play_rates").select("scope,game_status,practice,listings,rate").limit(2000).execute().data or []
+        return {(r["scope"], r.get("game_status") or "", r.get("practice") or ""): r for r in rows}
+    return cache.cached(("play_rates",), 21600, load)
 
 
 def load_practice(client: Any, player_id: str) -> list[dict[str, Any]]:
@@ -665,6 +762,12 @@ def load_history(client: Any, league_id: str, player_id: str) -> list[dict[str, 
     return _safe(lambda: client.rpc("read_player_contract_history_authenticated", {"p_league_id": league_id, "p_player_id": player_id}).execute().data or [], [])
 
 
+def load_league_events(client: Any, league_id: str, player_id: str) -> list[dict[str, Any]]:
+    """Every draft, trade, pickup and drop of this player in the league, all seasons (league_history_events)."""
+    return _safe(lambda: client.table("league_history_events").select("kind,season,occurred_at,owner_name,faab_bid,contract_salary,contract_years,details")
+                 .eq("league_id", league_id).eq("player_id", player_id).in_("kind", list(LIFE_KINDS)).limit(200).execute().data or [], [])
+
+
 def load_ranks(client: Any, league_id: str, sleeper_id: str, weeks: int, player_info: Any) -> dict[str, dict[str, Any]]:
     """Position ranks for every rostered player, shared by the whole league for 10 minutes."""
     def load() -> dict[str, dict[str, Any]]:
@@ -690,6 +793,7 @@ def page_extras(
     salary: float | None,
     player_info: Any,
     finished: dict[int, dict[str, Any]] | None = None,
+    playoff_weeks: Iterable[int] = player_cards.PLAYOFF_WEEKS,
 ) -> dict[str, Any]:
     """Everything beyond the basic contract card, read side by side.
 
@@ -708,12 +812,18 @@ def page_extras(
         "practice": lambda: load_practice(client, player_id),
         "practice_days": lambda: load_practice_days(client, player_id, season),
         "episodes": lambda: load_episodes(client, player_id),
+        "last_season": lambda: load_last_season(client, player_id, season),
         "history": lambda: load_history(client, league_id, player_id),
+        "league_events": lambda: load_league_events(client, league_id, player_id),
         "writeups": lambda: load_writeups(client, player_id, season),
         "ranks": lambda: _safe(lambda: load_ranks(client, league_id, sleeper_id, last_week, player_info), {}),
         "pool": lambda: _safe(lambda: position_pool(client, season, pos), []) if pos in RANK_STATS else [],
         "dvp": lambda: _safe(lambda: defense_vs_position(client, season), {}) if pos in DVP_POSITIONS else {},
         "week_ranks": lambda: weekly_ranks(sleeper_id, season, last_week, player_id, pos, open_weeks),
+        "team_rows": lambda: _safe(lambda: player_cards.load_team_rows(client, season, team), []) if team else [],
+        "team_hurt": lambda: _safe(lambda: player_cards.load_team_hurt(client, team), []) if team else [],
+        "career": lambda: _safe(lambda: player_cards.load_career(client, player_id), []),
+        "rates": lambda: _safe(lambda: load_play_rates(client), {}),
     }
     futures = {k: cache.pool.submit(f) for k, f in jobs.items()}
     got = {k: _safe(f.result, None) for k, f in futures.items()}
@@ -743,7 +853,16 @@ def page_extras(
         injury = _safe(lambda: injury_name(meta, got["espn"], got["practice"] or []), None)
         estimate = _safe(lambda: injury_estimate(load_injury_episodes(client, injury), pos, injury), None) if injury else None
     h = health(meta, got["espn"], got["practice"] or [], got["episodes"] or [], season, estimate, got["practice_days"] or [])
-    h["report"] = _safe(lambda: injury_report(h, log, schedule_by_week(games, team) if team else {}, got["espn"]), None)
+    h["report"] = _safe(lambda: injury_report(h, log, schedule_by_week(games, team) if team else {}, got["espn"], got["last_season"]), None)
+    current_injury(h, season)
+    is_out = bool((h.get("report") or {}).get("on_ir")) or _text(h.get("status")).lower() in OUT_WORDS
+    if upcoming and not upcoming.get("bye") and is_out:
+        upcoming["out"] = h.get("status")  # on IR / ruled out: no projection to show
+        upcoming["projected"] = None
+    h["call"] = _safe(lambda: player_cards.play_call(h, pos, got["espn"], got["rates"] or {}, player_cards.game_date((upcoming or {}).get("kickoff"))), None)
+    h["summary"] = player_cards.news_summary(got["espn"]) if not h.get("healthy") else None
+    career = got["career"] or []
+    ranks = _safe(lambda: player_cards.finishes(client, player_id, pos, {int(r["season"]) for r in career}, season), {})
     scored = [w["points"] for w in league_weeks if w.get("points")]
     best = max((g for g in done if g.get("points") is not None and g["status"] in ("started", "bench")), key=lambda g: g["points"], default=None)
     ppg = sum(scored) / len(scored) if scored else None
@@ -767,8 +886,11 @@ def page_extras(
         "live": bool(live),
         "next_game": upcoming,
         "health": h,
-        "history": contract_history(got["history"] or [], years_left),
+        "history": lifetime_history(contract_history(got["history"] or [], years_left), got["league_events"] or []),
         "writeups": got["writeups"] or [],
+        "role": _safe(lambda: player_cards.role_on_team(got["team_rows"] or [], player_id, pos, got["team_hurt"] or []), None),
+        "rest_of_season": _safe(lambda: player_cards.rest_of_season(games, team, pos, got["dvp"] or {}, (upcoming or {}).get("week"), playoff_weeks), None),
+        "past_seasons": _safe(lambda: player_cards.past_seasons(career, pos, ranks), None),
     }
 
 

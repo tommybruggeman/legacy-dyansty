@@ -58,6 +58,32 @@ def test_box_score_html_shows_points_projection_and_rank():
     assert "Grady" in out
 
 
+def test_box_score_html_colors_live_projection_vs_pregame():
+    game = {"teams": [
+        {"name": "Tommy", "score": 30.0, "projected": 40.0, "players": [
+            {"slot": "RB", "name": "Up", "points": 19.4, "proj": 16.9, "live_proj": 20.5, "status": "playing"},
+            {"slot": "WR", "name": "Down", "points": 0.0, "proj": 14.0, "live_proj": 6.5, "status": "playing"},
+            {"slot": "TE", "name": "Done", "points": 20.0, "proj": 8.0, "live_proj": 20.0, "status": "final"}]},
+        {"name": "Grady", "score": 0.0, "projected": None, "players": []}]}
+    out = box_score_html(game)
+    assert 'bx-sub bx-up">proj 20.5' in out
+    assert 'bx-sub bx-down">proj 6.5' in out
+    assert 'bx-sub">proj 8.0' in out    # after the game the pregame projection stays plain
+
+
+def test_box_score_html_live_row_looks():
+    g = {"state": "in", "quarter": 4, "clock": "7:00", "score": 21, "opp_score": 10, "opp": "LV"}
+    game = {"teams": [
+        {"name": "Tommy", "score": 1.0, "projected": None, "players": [
+            {"name": "Live", "points": 1.0, "proj": 5.0, "live_proj": 4.0, "status": "playing", "game": dict(g)},
+            {"name": "Ball", "points": 1.0, "proj": 5.0, "live_proj": 4.0, "status": "playing", "game": dict(g, possession=True)},
+            {"name": "RZ", "points": 1.0, "proj": 5.0, "live_proj": 4.0, "status": "playing", "game": dict(g, possession=True, red_zone=True)}]},
+        {"name": "Grady", "score": 0.0, "projected": None, "players": []}]}
+    out = box_score_html(game)
+    assert 'bx-row live"' in out and 'bx-row live ball"' in out and 'bx-row live rz"' in out
+    assert out.count('class="bx-tag">LIVE<') == 3
+
+
 def test_mobile_status_includes_playoff_odds_tile():
     tiles = [{"label": "Record · 2nd of 10", "value": "5-2"}, {"label": "Playoff odds · +4 this week", "value": "62%"}]
     assert mobile_status(8, tiles) == "Week 8 · 5-2, 2nd of 10 · 62% playoff odds"

@@ -6,7 +6,7 @@ import { Alert, Linking, Pressable, Share, StyleSheet, Switch, Text, TextInput, 
 import { Avatar } from '../components/Pictures';
 import { ErrorState, Loading } from '../components/ScreenState';
 import { Back, Card, Note, Row, Screen, Segmented, Title, ui } from '../components/ui';
-import { type GmPrefs, type MySettings, apiSend, useApi } from '../lib/api';
+import { type GmPrefs, type LeagueChoice, type MySettings, apiSend, clearApiCache, useApi } from '../lib/api';
 import { useAppLock } from '../lib/appLock';
 import { PRIVACY_URL, SUPPORT_URL, WEBSITE } from '../lib/links';
 import { supabase } from '../lib/supabase';
@@ -27,6 +27,7 @@ export default function Settings() {
       <Back label="Home" />
       <Title>Settings</Title>
       <ProfileCard data={data} />
+      {data.leagues && data.leagues.length > 1 ? <LeaguesCard leagues={data.leagues} /> : null}
       {data.is_commissioner ? (
         <Card title="Commissioner" gold>
           <Row first onPress={() => router.push('/commissioner')}>
@@ -67,6 +68,52 @@ export default function Settings() {
       </Pressable>
       <Text style={styles.version}>Version {Constants.expoConfig?.version ?? ''}</Text>
     </Screen>
+  );
+}
+
+// The test copy of the league and back. In the test league the commissioner can play as any team, to send a trade from
+// one side and accept it from the other.
+function LeaguesCard({ leagues }: { leagues: LeagueChoice[] }) {
+  const [busy, setBusy] = useState(false);
+  const open = async (leagueId: string, teamId?: string) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await apiSend('POST', '/me/league', { league_id: leagueId, team_id: teamId ?? null });
+      await clearApiCache();
+      router.replace('/');
+    } catch (e) {
+      Alert.alert("Couldn't switch", e instanceof Error ? e.message : 'Try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
+  const test = leagues.find((l) => l.is_test && l.active && l.teams.length);
+  return (
+    <>
+      <Card title="Leagues">
+        {leagues.map((l, i) => (
+          <Row key={l.league_id} first={i === 0} onPress={l.active ? undefined : () => open(l.league_id)}>
+            <View style={ui.flex}>
+              <Text style={ui.value}>{l.name}</Text>
+              {l.is_test ? <Text style={ui.sub}>Test copy: nothing here touches the real league</Text> : null}
+            </View>
+            <Text style={l.active ? styles.on : ui.link}>{l.active ? '✓' : 'Open'}</Text>
+          </Row>
+        ))}
+      </Card>
+      {test ? (
+        <Card title="Play as">
+          {test.teams.map((t, i) => (
+            <Row key={t.team_id} first={i === 0} onPress={t.mine ? undefined : () => open(test.league_id, t.team_id)}>
+              <Text style={[ui.value, ui.flex]}>{t.name}</Text>
+              <Text style={t.mine ? styles.on : ui.link}>{t.mine ? '✓' : 'Switch'}</Text>
+            </Row>
+          ))}
+          <Note>Send a trade as one team, switch, and accept it as the other.</Note>
+        </Card>
+      ) : null}
+    </>
   );
 }
 
@@ -225,5 +272,6 @@ const styles = StyleSheet.create({
   danger: { color: colors.danger, fontWeight: '700', fontSize: 13 },
   signOut: { alignSelf: 'center', padding: 14, marginTop: 8 },
   signOutText: { color: colors.danger, fontSize: 15, fontWeight: '700' },
+  on: { color: colors.gold, fontSize: 16, fontWeight: '900' },
   version: { color: colors.muted, fontSize: 12, textAlign: 'center' },
 });

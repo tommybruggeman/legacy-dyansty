@@ -18,6 +18,7 @@ from supabase import Client, create_client
 
 from api import box_score as box_score_mod
 from api import account, demo, usage_log
+from league_ai import screenshots
 from api import activity, alerts, cache, commissioner, owner_settings, profiles, front_office, home, league, lineups, live_activity, market, market_week, nfl_live, own_league, player, playoffs, projections, teams, trade_feed, trade_offers, waivers
 from season_engine import SeasonResolver
 from services.season_rollover_owner_ui import OwnerRolloverDecisionError, OwnerRolloverDecisionService
@@ -74,9 +75,7 @@ def resolve_team(client: Client, user: Any) -> dict[str, Any]:
 
 
 def _resolve_team(client: Client, user: Any) -> dict[str, Any]:
-    membership = _first(
-        client.table("league_memberships").select("*").eq("user_id", user.id).limit(1).execute().data
-    )
+    membership = _pick_membership(client, user)
     if not membership:
         raise HTTPException(status_code=404, detail="This account isn't linked to a league yet.")
 
@@ -105,6 +104,29 @@ def _resolve_team(client: Client, user: Any) -> dict[str, Any]:
         "role": membership.get("role"),
         "sleeper_roster_id": roster_id,
     }
+
+
+def _my_leagues(client: Client, user: Any) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]], str | None]:
+    """(my memberships, league id -> league row, the league I picked in Settings or None)."""
+    rows = client.table("league_memberships").select("*").eq("user_id", user.id).execute().data or []
+    ids = sorted({str(m["league_id"]) for m in rows if m.get("league_id")})
+    try:
+        leagues = {str(l["id"]): l for l in (client.table("leagues").select("*").in_("id", ids).execute().data or [])} if ids else {}
+    except Exception:
+        leagues = {}
+    try:
+        chosen = _first(client.table("user_active_league").select("league_id").eq("user_id", user.id).limit(1).execute().data)
+    except Exception:  # before the test-league SQL is run
+        chosen = None
+    return rows, leagues, str(chosen["league_id"]) if chosen else None
+
+
+def _pick_membership(client: Client, user: Any) -> dict[str, Any] | None:
+    """The league picked in Settings; otherwise the first real (non-test) league, so a test copy never opens by itself."""
+    rows, leagues, chosen = _my_leagues(client, user)
+    picked = [m for m in rows if str(m.get("league_id")) == chosen]
+    real = [m for m in rows if not (leagues.get(str(m.get("league_id"))) or {}).get("is_test")]
+    return (picked or real or rows or [None])[0]
 
 
 def _with_team_names(owner: tuple[Client, Any], result: Any) -> Any:
@@ -309,7 +331,53 @@ def my_settings(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, 
         "email": getattr(user, "email", None), "role": role, "is_commissioner": role == "commissioner", "team_id": team["team_id"],
         "is_co_owner": role in ("co_owner", "co-owner"),
         "profile": jobs["profile"].result(), "gm": jobs["gm"].result(), "people": jobs["people"].result(),
+        "leagues": _league_choices(client, user, team),
     }
+
+
+def _league_choices(client: Client, user: Any, team: dict[str, Any]) -> list[dict[str, Any]]:
+    """Settings > League: each league I'm in (only shown when there's more than one), and in a test league where I'm
+    commissioner, every team so I can play each side of a trade."""
+    try:
+        rows, leagues, _ = _my_leagues(client, user)
+    except Exception:
+        return []
+    out = []
+    for m in rows:
+        lid = str(m.get("league_id"))
+        row = leagues.get(lid) or {}
+        try:  # a test copy's seasons carry the mirror Sleeper id
+            is_test = bool(row.get("is_test")) or league.sleeper.is_mirror(league.sleeper_league_id(client, lid))
+        except Exception:
+            is_test = bool(row.get("is_test"))
+        item = {"league_id": lid, "name": "Legacy Test" if is_test else (row.get("name") or "Legacy Dynasty"),
+                "is_test": is_test, "active": lid == str(team.get("league_id")), "teams": []}
+        if item["is_test"] and item["active"] and str(m.get("role") or "").lower() == "commissioner":
+            teams_rows = client.table("league_teams").select("id,team_name,owner_name,sleeper_roster_id").eq("league_id", lid).execute().data or []
+            item["teams"] = sorted(({"team_id": t["id"], "name": t.get("team_name") or t.get("owner_name") or "Team",
+                                     "mine": str(t["id"]) == str(team.get("team_id"))} for t in teams_rows),
+                                   key=lambda t: str(t["name"]))
+        out.append(item)
+    return out if len(out) > 1 else []
+
+
+class LeagueChoice(BaseModel):
+    league_id: str
+    team_id: str | None = None
+
+
+@app.post("/me/league")
+def choose_league(body: LeagueChoice, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """Open another league I'm in (the test copy and back), or in a test league, play as another team."""
+    client, user = owner
+    try:
+        client.rpc("set_active_league_authenticated", {"p_league_id": body.league_id}).execute()
+        if body.team_id:
+            client.rpc("switch_test_team_authenticated", {"p_league_id": body.league_id, "p_team_id": body.team_id}).execute()
+    except Exception:
+        raise HTTPException(status_code=400, detail="That league isn't available.")
+    cache.clear()  # the team lookup and every league read are cached
+    return resolve_team(client, user)
 
 
 @app.post("/me/profile")
@@ -680,7 +748,7 @@ def _saved_power_rank(client: Client, ctx: dict[str, Any], team_id: str) -> dict
     return {"rank": int(now["now_rank"]), "of": teams_ranked or None, "move": move}
 
 
-def _team_page(client: Client, ctx: dict[str, Any], team_id: str) -> dict[str, Any]:
+def _team_page(client: Client, ctx: dict[str, Any], team_id: str, week: int | None = None) -> dict[str, Any]:
     rows, states, standings_rows, cap = _league_teams(client, ctx)
     summary = next((t for t in rows if t["team_id"] == team_id), None)
     if summary is None:
@@ -695,6 +763,7 @@ def _team_page(client: Client, ctx: dict[str, Any], team_id: str) -> dict[str, A
     except Exception:
         pass
     standing = next((r for r in standings_rows if r["roster_id"] == summary["roster_id"]), None)
+    _add_contract_lengths(client, state, team_id)
     detail = teams.team_detail(
         team={k: summary[k] for k in ("team_id", "owner_name", "team_name", "roster_id")},
         summary=summary,
@@ -708,25 +777,101 @@ def _team_page(client: Client, ctx: dict[str, Any], team_id: str) -> dict[str, A
         later=states[1:],
         weeks=league.current_week(),
         power=_saved_power_rank(client, ctx, team_id),
-        app_lineup=_app_lineup(client, ctx, team_id) if _transactions_on(client, ctx["league_id"]) else None,
+        app_lineup=_app_lineup(client, ctx, team_id, week) if _transactions_on(client, ctx["league_id"]) else None,
     )
+    _add_pick_slots(detail["picks"], rows, standings_rows, ctx["season"])
     try:
-        week = _team_week(client, ctx, summary["roster_id"])
+        this_week = _team_week(client, ctx, summary["roster_id"], week)
     except Exception:
-        week = None
-    return {"season": ctx["season"], "salary_cap": cap, "sleeper_league_id": ctx["sleeper_id"], **detail, "week": week}
+        this_week = None
+    try:
+        weeks = _team_weeks(client, ctx, summary["roster_id"])
+    except Exception as exc:
+        print(f"APP_TEAM_WEEKS_ERROR {type(exc).__name__}", flush=True)
+        weeks = None
+    return {"season": ctx["season"], "salary_cap": cap, "sleeper_league_id": ctx["sleeper_id"], **detail, "week": this_week, "weeks": weeks,
+            "current_week": _home_week(client, ctx["season"], datetime.now(home.HOME_TZ).date())}
+
+
+def _add_contract_lengths(client: Client, state: dict[str, Any], team_id: str) -> None:
+    """Each of this team's contracts gets its full length (every season on the deal), for the Contracts tab dots
+    (filled = years left, all dots = whole contract). Leaves rows alone when the read fails."""
+    ids = [str(r["contract_agreement_id"]) for r in state.get("roster", [])
+           if str(r.get("league_team_id")) == team_id and r.get("contract_agreement_id")]
+    if not ids:
+        return
+    def load() -> dict[str, int]:
+        rows = client.table("contract_seasons").select("contract_id,season").in_("contract_id", ids).execute().data or []
+        out: dict[str, int] = {}
+        for r in rows:
+            out[str(r["contract_id"])] = out.get(str(r["contract_id"]), 0) + 1
+        return out
+    try:
+        lengths = cache.cached(("contract_lengths", team_id, tuple(sorted(ids))), 600, load)
+    except Exception as exc:
+        print(f"APP_CONTRACT_LENGTHS_ERROR {type(exc).__name__}", flush=True)
+        return
+    for r in state.get("roster", []):
+        n = lengths.get(str(r.get("contract_agreement_id")))
+        if n:
+            r["contract_total_years"] = n
+
+
+def _add_pick_slots(picks: dict[str, Any], rows: list[dict[str, Any]], standings_rows: list[dict[str, Any]], season: int) -> None:
+    """Next year's picks get a projected slot (1.06): the draft runs straight reverse of the standings."""
+    rank_of = {r["roster_id"]: r["rank"] for r in standings_rows}
+    owner_rank = {str(t.get("owner_name")): rank_of.get(t.get("roster_id")) for t in rows}
+    count = len(standings_rows)
+    for group in ("owned", "traded_away"):
+        for p in picks.get(group, []):
+            rank = owner_rank.get(p.get("original_owner"))
+            if p.get("year") == season + 1 and rank and count:
+                p["slot"] = f"{p['round']}.{count - rank + 1:02d}"
+
+
+def _team_weeks(client: Client, ctx: dict[str, Any], roster_id: int | None) -> list[dict[str, Any]] | None:
+    """Every week of the season for the My Team week menu: finished weeks with the result, later weeks with the
+    opponent, then the playoff weeks."""
+    if roster_id is None:
+        return None
+    sid = ctx["sleeper_id"]
+
+    def load() -> dict[str, Any]:
+        scored, end = league.last_scored_week(sid), league.regular_season_end(sid)
+        try:
+            rules = league.playoff_rules(client, ctx["league_id"])
+        except Exception:
+            rules = playoffs.rules_of({})
+        out = []
+        for wk in range(1, min(end, 18) + 1):
+            done = wk <= scored
+            rows = league.sleeper.get(f"league/{sid}/matchups/{wk}", ttl=86400 if done else 3600) or []
+            mine = next((r for r in rows if r.get("roster_id") == roster_id), None)
+            opp = next((r for r in rows if mine and r is not mine and r.get("matchup_id") and r.get("matchup_id") == mine.get("matchup_id")), None)
+            item: dict[str, Any] = {"week": wk, "opponent": ctx["names"].get(opp.get("roster_id")) if opp else None}
+            if done and mine and opp:
+                me_pts, them_pts = float(mine.get("points") or 0), float(opp.get("points") or 0)
+                item["result"] = "W" if me_pts > them_pts else "L" if me_pts < them_pts else "T"
+                item["score"] = [round(me_pts, 1), round(them_pts, 1)]
+            out.append(item)
+        for wk in range(int(rules["playoff_week_start"]), playoffs.last_week(rules) + 1):
+            out.append({"week": wk, "playoffs": True})
+        return {"weeks": out}
+
+    return cache.cached(("team_weeks", sid, ctx["season"], roster_id), 600, load)["weeks"]
 
 
 TEAM_WEEK_TTL = 15
 
 
-def _team_week(client: Client, ctx: dict[str, Any], roster_id: int | None) -> dict[str, Any] | None:
+def _team_week(client: Client, ctx: dict[str, Any], roster_id: int | None, pick: int | None = None) -> dict[str, Any] | None:
     """This week for one team's roster page: each player's projection, live points and live projection, game and
     stat line (scored the same way as the box score), the team's total and projected total, and its odds against
     this week's opponent. None when the team has no game this week."""
     if roster_id is None:
         return None
-    week = _home_week(client, ctx["season"], datetime.now(home.HOME_TZ).date())  # same week as Home: Monday's holds until midnight Pacific
+    # Same week as Home (Monday's holds until midnight Pacific), unless the week menu picked another one.
+    week = pick or _home_week(client, ctx["season"], datetime.now(home.HOME_TZ).date())
     final = week <= league.last_scored_week(ctx["sleeper_id"])
 
     def load() -> dict[str, Any] | None:
@@ -778,10 +923,11 @@ def _week_kickoffs(client: Client, season: int, week: int) -> dict[str, Any]:
     return lineups.kickoffs(cache.cached(("kickoffs", season, week), 600, load)["rows"])
 
 
-def _app_lineup(client: Client, ctx: dict[str, Any], team_id: str):
+def _app_lineup(client: Client, ctx: dict[str, Any], team_id: str, pick: int | None = None):
     """This week's app lineup for one team, for team_detail: (slot label, player id) pairs plus the editor's view."""
     def build(active: set[str], sleeper_starters: list[str]) -> tuple[list[tuple[str, str | None]], dict[str, Any]]:
-        week, slots = league.current_week(), _lineup_slots(client, ctx["league_id"])
+        # The week menu can open a later week to plan it; the saved lineup carries forward until changed.
+        week, slots = pick or league.current_week(), _lineup_slots(client, ctx["league_id"])
         saved = (client.table("league_lineups").select("week,slots").eq("league_id", ctx["league_id"])
                  .eq("league_team_id", team_id).eq("season", ctx["season"]).lte("week", week)
                  .order("week", desc=True).limit(1).execute().data or [])
@@ -987,6 +1133,11 @@ def commissioner_switch(body: CommishSwitch, owner: tuple[Client, Any] = Depends
     client, user = owner
     ctx = _commissioner_ctx(client, user)
     result = _commish_call(commissioner.set_switch, client, ctx["league_id"], body.enabled, body.own_from_week)
+    if body.enabled:  # FAAB moves into the app with the switch: each team starts with what it has left on Sleeper
+        try:
+            commissioner.seed_faab(client, ctx["league_id"], int(ctx["season"]), league.sleeper_league_id(client, ctx["league_id"]))
+        except Exception as exc:
+            print(f"APP_FAAB_SEED_ERROR {type(exc).__name__}", flush=True)
     cache.clear()
     return {"ok": True, "switch": result}
 
@@ -1014,12 +1165,12 @@ def team_page(team_id: str, owner: tuple[Client, Any] = Depends(owner_client)) -
 
 
 @app.get("/my-team")
-def my_team(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+def my_team(week: int | None = Query(default=None, ge=1, le=18), owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
     client, user = owner
     ctx = _season_context(client, user)
     if not ctx["team_id"]:
         raise HTTPException(status_code=404, detail="This account isn't linked to a team yet.")
-    return _team_page(client, ctx, ctx["team_id"])
+    return _team_page(client, ctx, ctx["team_id"], week)
 
 
 @app.get("/players/{player_id}")
@@ -1058,7 +1209,7 @@ def player_page(player_id: str, owner: tuple[Client, Any] = Depends(owner_client
         client, league_id=ctx["league_id"], sleeper_id=ctx["sleeper_id"], season=ctx["season"], player_id=player_id,
         meta=meta, pos=result["pos"], league_weeks=league_weeks, last_week=weeks,
         years_left={c["team_id"]: c["years_left"]} if c else {}, salary=c["salary"] if c else None,
-        player_info=teams.player_info, finished=finished,
+        player_info=teams.player_info, finished=finished, playoff_weeks=_playoff_weeks(ctx["sleeper_id"]),
     )
     if c is None:
         # No contract row, but Sleeper may still have him on a roster (a new rookie pick, a pickup not synced yet).
@@ -1072,6 +1223,19 @@ def player_page(player_id: str, owner: tuple[Client, Any] = Depends(owner_client
             result["is_mine"] = rid == ctx["sleeper_roster_id"]
     return {"season": ctx["season"], **result, **extras, "transactions_enabled": _transactions_on(client, ctx["league_id"]),
             "sleeper_league_id": ctx["sleeper_id"]}
+
+
+def _playoff_weeks(sleeper_id: str) -> list[int]:
+    """The league's playoff weeks from its Sleeper settings (15-17 when unknown)."""
+    try:
+        settings = (league.sleeper.get(f"league/{sleeper_id}") or {}).get("settings") or {}
+        start = int(settings.get("playoff_week_start") or 15)
+        teams_in = int(settings.get("playoff_teams") or 4)
+        rounds = max(1, (teams_in - 1).bit_length())
+        weeks = own_league.round_weeks(start, rounds, int(settings.get("playoff_round_type") or 0))
+        return sorted(w for ws in weeks.values() for w in ws)
+    except Exception:
+        return [15, 16, 17]
 
 
 class IrRequest(BaseModel):
@@ -1358,6 +1522,11 @@ def _transactions_on(client: Client, league_id: str) -> bool:
     return cache.cached(("tx_on", league_id), 60, lambda: trade_offers.enabled(client, league_id))
 
 
+def _trade_window(client: Client, league_id: str) -> dict[str, Any]:
+    """Open or closed for the league's trade deadline (Settings), shared by the builder, sending and accepting."""
+    return cache.cached(("trade_window", league_id), 300, lambda: trade_offers.league_window(client, league_id))
+
+
 @app.get("/trade-builder/{team_id}")
 def trade_builder(team_id: str, add: str | None = None, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
     """Both rosters and pick lists for a trade with one team, with today's dynasty values for the live read."""
@@ -1365,6 +1534,12 @@ def trade_builder(team_id: str, add: str | None = None, owner: tuple[Client, Any
     ctx = _season_context(client, user)
     if not ctx["team_id"] or team_id == ctx["team_id"]:
         raise HTTPException(status_code=400, detail="Pick another owner's team to trade with.")
+    window = _trade_window(client, ctx["league_id"])
+    if not window["open"]:  # past the deadline: the app shows the closed screen, so skip the heavy reads
+        empty = {"owner_name": "", "cap_space": 0, "players": [], "picks": []}  # older app builds read these
+        return {"enabled": _transactions_on(client, ctx["league_id"]), "window": window, "season": ctx["season"],
+                "sleeper_league_id": ctx["sleeper_id"], "salary_cap": 0, "add": add,
+                "me": {"team_id": ctx["team_id"], **empty}, "them": {"team_id": team_id, **empty}}
     rows, states, _, cap = _league_teams(client, ctx)
     them = next((t for t in rows if t["team_id"] == team_id), None)
     me = next((t for t in rows if t["team_id"] == ctx["team_id"]), None)
@@ -1377,13 +1552,19 @@ def trade_builder(team_id: str, add: str | None = None, owner: tuple[Client, Any
     owner_of = {t["team_id"]: t["owner_name"] for t in rows}
     info = teams.player_info(client, ids)
     ppg = teams.player_ppg(ctx["sleeper_id"], league.last_scored_week(ctx["sleeper_id"]))
+    mine = profiles.by_team(client, ctx["league_id"])
+    me, them = (profiles.overlay_team(dict(t), mine.get(t["team_id"])) for t in (me, them))
     return {
         "enabled": _transactions_on(client, ctx["league_id"]),
+        "window": window,
+        "season": ctx["season"],
         "sleeper_league_id": ctx["sleeper_id"],
         "salary_cap": cap,
-        "me": {"team_id": ctx["team_id"], "owner_name": me["owner_name"], "cap_space": me["cap_space"],
+        "me": {"team_id": ctx["team_id"], "owner_name": me["owner_name"], "team_name": me.get("team_name"), "avatar": me.get("avatar"),
+               "cap_space": me["cap_space"],
                **trade_offers.side(state, ctx["team_id"], info, ppg, values, pick_value, owner_of)},
-        "them": {"team_id": team_id, "owner_name": them["owner_name"], "cap_space": them["cap_space"],
+        "them": {"team_id": team_id, "owner_name": them["owner_name"], "team_name": them.get("team_name"), "avatar": them.get("avatar"),
+                 "cap_space": them["cap_space"],
                  **trade_offers.side(state, team_id, info, ppg, values, pick_value, owner_of)},
         "add": add,
     }
@@ -1403,6 +1584,8 @@ class TradeOffer(BaseModel):
     get: list[TradePiece] = []
     note: str | None = None
     parent_offer_id: str | None = None
+    give_cap: float = 0  # cap space (this season) you send; any amount
+    get_cap: float = 0   # cap space you ask for
 
 
 @app.post("/trade-offers")
@@ -1410,6 +1593,8 @@ def send_trade_offer(body: TradeOffer, owner: tuple[Client, Any] = Depends(owner
     """Send an offer (or a counter, with parent_offer_id). The database checks ownership, locks and the league switch."""
     client, user = owner
     ctx = _season_context(client, user)
+    if not _trade_window(client, ctx["league_id"])["open"]:
+        raise HTTPException(status_code=400, detail=trade_offers.CLOSED)
     pieces = [p for p in [*body.give, *body.get] if (p.contract_id and trade_offers.is_uuid(p.contract_id)) or (p.pick_id and trade_offers.is_uuid(p.pick_id))]
     if len(pieces) != len(body.give) + len(body.get) or not trade_offers.is_uuid(body.to_team_id):
         raise HTTPException(status_code=400, detail="Something in this offer isn't a player or pick.")
@@ -1417,6 +1602,7 @@ def send_trade_offer(body: TradeOffer, owner: tuple[Client, Any] = Depends(owner
     request = {
         "league_id": ctx["league_id"], "to_league_team_id": body.to_team_id,
         "players": [i for i in items if i.get("contract_id")], "picks": [i for i in items if i.get("draft_pick_id")],
+        "cap": trade_offers.cap_items(ctx["team_id"], body.to_team_id, body.give_cap, body.get_cap),
         "note": (body.note or "")[:280] or None, "parent_offer_id": body.parent_offer_id if body.parent_offer_id and trade_offers.is_uuid(body.parent_offer_id) else None,
     }
     try:
@@ -1433,6 +1619,8 @@ def answer_trade_offer(offer_id: str, action: str, owner: tuple[Client, Any] = D
     if action not in {"accept", "decline", "cancel"} or not trade_offers.is_uuid(offer_id):
         raise HTTPException(status_code=400, detail="Unknown action.")
     ctx = resolve_team(client, user)
+    if action == "accept" and not _trade_window(client, ctx["league_id"])["open"]:
+        raise HTTPException(status_code=400, detail=trade_offers.CLOSED)
     try:
         result = client.rpc("respond_trade_offer_authenticated", {"p_request": {"offer_id": offer_id, "action": action}}).execute().data
     except Exception as exc:
@@ -1602,9 +1790,15 @@ def drop_player(body: DropRequest, owner: tuple[Client, Any] = Depends(owner_cli
 # ---- Front Office ------------------------------------------------------------------
 
 
+class ChatImage(BaseModel):
+    media_type: str = "image/jpeg"
+    data: str  # base64
+
+
 class ChatRequest(BaseModel):
-    question: str
+    question: str = ""
     conversation_id: str | None = None
+    images: list[ChatImage] | None = None  # screenshots (up to 10): a trade offer, a roster, another league
 
 
 def _front_office(client: Client, user: Any) -> front_office.Session:
@@ -1624,9 +1818,16 @@ def front_office_home(owner: tuple[Client, Any] = Depends(owner_client)) -> dict
         raise HTTPException(status_code=502, detail="Couldn't load the Front Office. Try again.")
 
 
+def _chat_images(body: ChatRequest) -> list[screenshots.Shot]:
+    try:
+        return screenshots.clean([i.model_dump() for i in body.images or []])
+    except screenshots.ScreenshotError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 def _chat_session(body: ChatRequest, client: Client, user: Any) -> tuple[front_office.Session, str]:
     question = body.question.strip()
-    if not question:
+    if not question and not body.images:
         raise HTTPException(status_code=400, detail="Ask a question first.")
     if len(question) > 2000:
         raise HTTPException(status_code=400, detail="That question is too long. Keep it under 2,000 characters.")
@@ -1640,15 +1841,17 @@ def _chat_session(body: ChatRequest, client: Client, user: Any) -> tuple[front_o
 
 @app.post("/front-office/chat")
 def front_office_chat(body: ChatRequest, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    images = _chat_images(body)
     session, question = _chat_session(body, *owner)
-    return front_office.ask(session, question, body.conversation_id)
+    return front_office.ask(session, question, body.conversation_id, images=images or None)
 
 
 @app.post("/front-office/chat/stream")
 def front_office_chat_stream(body: ChatRequest, owner: tuple[Client, Any] = Depends(owner_client)) -> StreamingResponse:
     """The same answer as /front-office/chat, streamed: what the GM is checking, then the answer as it's written."""
+    images = _chat_images(body)
     session, question = _chat_session(body, *owner)
-    return StreamingResponse(front_office.ask_stream(session, question, body.conversation_id), media_type="application/x-ndjson",
+    return StreamingResponse(front_office.ask_stream(session, question, body.conversation_id, images or None), media_type="application/x-ndjson",
                              headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
 
 

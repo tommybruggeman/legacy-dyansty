@@ -48,6 +48,8 @@ def main() -> None:
                 text = str(play.get("text") or "")
                 if last and last in text:
                     st = play.get("start") or {}
+                    hit = espn_feed.first_downs({"drives": {"previous": [{"team": {"abbreviation": team}, "plays": [play]}]}}, names)
+                    text = ("COUNTED " if hit else "") + text
                     print(f"     [{(play.get('type') or {}).get('text')}] dist={st.get('distance')} yds={play.get('statYardage')} :: {text[:150]}", flush=True)
 
 

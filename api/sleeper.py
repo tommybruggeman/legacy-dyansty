@@ -41,8 +41,46 @@ def raw(path: str, ttl: int = DEFAULT_TTL) -> Any:
     hit = _cache.get(url)
     if hit and hit[0] > now:
         return hit[1]
-    data = fetch(url)
+    parts = path.strip("/").split("/")
+    data = _mirrored(path) if parts[0] == "league" and len(parts) > 1 and is_mirror(parts[1]) else fetch(url)
     _cache[url] = (now + ttl, data)
+    return data
+
+
+# ---- Test leagues ----------------------------------------------------------------------------------------------------
+# A test copy of a league (public.create_test_league) has no Sleeper league of its own. Its seasons carry a mirror id:
+# "mirror-" plus the real Sleeper id with each digit written as a letter (0 -> a ... 9 -> j). Reads under it come from
+# the real league, read only, with owner names hidden and no transactions, and everything the app writes for it
+# (api/own_league.py overrides) lives under the mirror id, so it can never touch the real league. Scripts that keep
+# only the digits of a Sleeper id see an empty id and skip it.
+MIRROR = "mirror-"
+_TO_LETTERS = str.maketrans("0123456789", "abcdefghij")
+_TO_DIGITS = str.maketrans("abcdefghij", "0123456789")
+
+
+def is_mirror(sleeper_id: Any) -> bool:
+    return str(sleeper_id or "").startswith(MIRROR)
+
+
+def mirror_id(real_id: str) -> str:
+    return MIRROR + str(real_id).translate(_TO_LETTERS)
+
+
+def real_id(sleeper_id: str) -> str:
+    return str(sleeper_id)[len(MIRROR):].translate(_TO_DIGITS) if is_mirror(sleeper_id) else str(sleeper_id)
+
+
+def _mirrored(path: str) -> Any:
+    parts = path.strip("/").split("/")
+    rest = parts[2:]
+    if rest[:1] == ["transactions"] or rest[:1] == ["traded_picks"]:
+        return []  # the test league's moves are its own (the app's tables), not the real league's
+    data = fetch(f"{BASE}/league/{real_id(parts[1])}" + ("/" + "/".join(rest) if rest else ""))
+    if not rest and isinstance(data, dict):
+        return {**data, "league_id": parts[1], "name": "Legacy Test", "avatar": None, "previous_league_id": None}
+    if rest == ["users"] and isinstance(data, list):
+        return [{**u, "display_name": f"Owner {i}", "username": f"owner{i}", "avatar": None, "metadata": {}}
+                for i, u in enumerate(data, start=1) if isinstance(u, dict)]
     return data
 
 

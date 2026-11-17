@@ -149,6 +149,7 @@ RECEIVER = re.compile(r"\bpass\b[^.]*?\bto\s+" + NAME)
 PASSER = re.compile(r"^(?:\([^)]*\)\s*)*" + NAME + r"\s+pass\b")
 
 
+DIRECT_SNAP = re.compile(r"^(?:\([^)]*\)\s*)*Direct snap to " + NAME + r"\.\s*", re.IGNORECASE)  # wildcat: "Direct snap to X.  X up the middle..."
 ELIGIBLE = re.compile(r"[A-Z][\w.'-]*\s+reported in as eligible\.?\s*", re.IGNORECASE)
 GAIN = re.compile(r"\bfor (?:(-?\d+) yards?|(no gain))", re.IGNORECASE)
 
@@ -172,7 +173,7 @@ def first_downs(summary: Mapping[str, Any] | None, names: Names, include_td: boo
     out = []
     for team, play in _plays(summary):
         kind = str((play.get("type") or {}).get("text") or "").lower()
-        text = ELIGIBLE.sub("", str(play.get("text") or "")).strip()
+        text = DIRECT_SNAP.sub("", ELIGIBLE.sub("", str(play.get("text") or ""))).strip()
         low = text.lower()
         if "no play" in low or "two-point" in low or "kneel" in kind or "kick" in kind or "punt" in kind:
             continue

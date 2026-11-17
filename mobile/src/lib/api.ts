@@ -300,6 +300,7 @@ export type Player = {
   salary: number;
   contract_salary: number;
   years_left: number;
+  total_years?: number; // every season on the deal (Contracts tab dots)
   no_contract?: boolean;
   designation: 'taxi' | 'ir' | null;
   is_rookie: boolean;
@@ -319,7 +320,9 @@ export type Lineup = {
 };
 // A contract on the value board: PPG per cap dollar, graded against the whole league.
 export type ValuedContract = Player & { through: number; per_dollar: number | null; grade: 'bargain' | 'fair' | 'overpaid' | 'stash' | null };
-export type Pick = { year: number; round: number; original_owner: string; current_owner: string; own: boolean };
+export type Pick = { year: number; round: number; original_owner: string; current_owner: string; own: boolean; slot?: string };
+// One week in the My Team week menu: the result once it's played, the opponent before, or a playoff week.
+export type TeamWeekItem = { week: number; opponent?: string | null; result?: 'W' | 'L' | 'T'; score?: [number, number]; playoffs?: boolean };
 
 export type TeamPage = {
   season: number;
@@ -343,6 +346,8 @@ export type TeamPage = {
   head_to_head: { wins: number; losses: number; ties: number; last: { week: number; me: number; them: number } } | null;
   lineup?: Lineup | null;
   week?: TeamWeek | null;
+  weeks?: TeamWeekItem[] | null;
+  current_week?: number;
 };
 
 // This week on a team page, refreshed every 15 seconds while games are on: each player's projection, live points,
@@ -360,6 +365,7 @@ export type TeamWeek = {
 
 export type BoxPlayer = {
   player_id: string;
+  designation?: 'taxi' | 'ir';
   name: string;
   slot: string;
   points: number;
@@ -394,7 +400,7 @@ export type BoxScore = {
   is_final: boolean;
   matchup_id: number;
   my_roster_id: number | null;
-  teams: { roster_id: number; team_id: string | null; name: string; avatar?: string | null; team_name?: string | null; team_abbr?: string | null; score: number; projected?: number; players: BoxPlayer[]; bench?: BoxPlayer[] }[];
+  teams: { roster_id: number; team_id: string | null; name: string; avatar?: string | null; team_name?: string | null; team_abbr?: string | null; score: number; projected?: number; players: BoxPlayer[]; bench?: BoxPlayer[]; reserve?: BoxPlayer[] }[];
   win_chance?: [number, number] | null;
   // Two-week playoff rounds (asked with ?carry=): round totals and round win odds, in teams order.
   round?: { projected: [number, number]; score: [number, number]; win_chance: [number, number] | null } | null;
@@ -458,6 +464,7 @@ export type PlayerPage = {
     kickoff?: string | null;
     team_total?: number | null;
     yards_line?: { label: string; line: number } | null;
+    out?: string | null; // on IR / ruled out: shown instead of a projection
     projected?: number | null;
     weather?: string | null;
     vs_pos?: { label: 'tough' | 'soft' | 'neutral' | null; text: string; allowed: number | null } | null;
@@ -472,23 +479,39 @@ export type PlayerPage = {
     missed: { injury: string; season: number; games: number; back: boolean }[];
     estimate?: { injury: string; median_games: number; range: string; absences: number; scope: string; text: string } | null;
     report?: {
-      hurt: { week: number; opp: string | null } | null;
+      hurt: { week: number; opp: string | null; season?: number } | null;
       missed_weeks: number[];
       on_ir: boolean;
       eligible_week: number | null;
+      eligible_now?: boolean;
+      missed_before?: number;
       estimate: { weeks?: [number, number | null]; past_usual?: boolean } | null;
       detail: string | null;
       news: { text: string; date: string | null } | null;
     } | null;
+    // This week's call: chance he plays and the Official / Reported / Our call row (not for healthy or IR players).
+    call?: { pct: number; verdict: string; why: string | null; official: string | null; reported: string | null; reported_date: string | null; ours: string } | null;
+    summary?: { text: string; date: string | null; source: string } | null; // "Where he's at"
   };
+  role?: { chips: { slot: string; name: string; share: number; me: boolean }[]; rows: { label: string; value: string }[] } | null;
+  rest_of_season?: {
+    weeks: { week: number; opp: string; home: boolean; tone: 'easy' | 'avg' | 'tough' | null; playoff: boolean }[];
+    playoff_rank: number | null;
+    teams: number | null;
+  } | null;
+  past_seasons?: {
+    columns: { key: string; label: string }[];
+    seasons: ({ season: number; games: number; ppg: number | null; finish: number | null } & Record<string, number | null>)[];
+  } | null;
   history: {
     kind: string;
     title: string;
     owner: string;
-    team_id: string;
+    team_id: string | null;
     date: string;
     salary: number | null;
     years: number | null;
+    faab?: number | null;
     tag: string | null;
     live: boolean;
   }[];
@@ -557,7 +580,11 @@ export type LeaguePlayer = {
   // This week, in league scoring (missing on older servers): projection, season average, last-3 form, next game.
   proj?: number | null; avg?: number | null; last3?: number | null; trend?: number | null; next?: NextGame | null;
   games?: number | null; pos_rank?: string | null; week_pts?: number | null; // games played, "WR41", points this week once his game starts
+  // Same league-scoring lines as everything above (from build 92's server): games in the last-3 average, and one bar per
+  // week for the last 6 weeks (pts null = didn't play; bye on his team's bye; live while this week's game is on).
+  last3_games?: number | null; bars?: WeekBar[];
 };
+export type WeekBar = { week: number; pts: number | null; bye?: boolean; live?: boolean };
 export type NextGame = {
   week: number; bye: boolean; opp?: string; home?: boolean; kickoff?: string | null; opp_rank?: number | null; teams?: number | null; final?: boolean;
   // live game state (pre / in / post) with the score from his team's side once it starts (from build 66's server)
@@ -649,7 +676,9 @@ export type FrontOffice = {
   report_card: ReportCard;
   sleeper_league_id: string | null;
 };
-export type ChatMessage = { role: 'user' | 'assistant'; content: string };
+// photos: screenshots sent with a question (the server keeps only their count and a text reading);
+// uris: their thumbnails, only in the chat they were sent from.
+export type ChatMessage = { role: 'user' | 'assistant'; content: string; photos?: number; uris?: string[] };
 export type ChatReply = { ok: boolean; text: string; conversation_id: string | null };
 export type ChatEvent =
   | { e: 'status'; text: string }
@@ -742,9 +771,11 @@ export type HomeData = {
 // ---- trades between owners (off until the league leaves Sleeper) ----
 export type TradeAsset = { player_id: string; contract_id: string; name: string; pos: string; nfl_team: string; salary: number; years: number; ppg: number | null; value: number };
 export type TradePick = { pick_id: string; label: string; year: number; round: number; value: number };
-export type TradeSideData = { team_id: string; owner_name: string; cap_space: number; players: TradeAsset[]; picks: TradePick[] };
-export type TradeBuilder = { enabled: boolean; sleeper_league_id: string; salary_cap: number; me: TradeSideData; them: TradeSideData; add: string | null };
-export type OfferPiece = { kind: 'player' | 'pick'; player_id: string | null; contract_id: string | null; pick_id: string | null; name: string; pos: string; nfl_team: string };
+export type TradeSideData = { team_id: string; owner_name: string; team_name?: string | null; avatar?: string | null; cap_space: number; players: TradeAsset[]; picks: TradePick[] };
+export type TradeWindow = { open: boolean; deadline_week: number | null; reopens_after_week: number; message: string | null };
+// Past the deadline the server sends only enabled/window/season (the app shows the closed screen).
+export type TradeBuilder = { enabled: boolean; window?: TradeWindow; season?: number; sleeper_league_id: string; salary_cap: number; me: TradeSideData; them: TradeSideData; add: string | null };
+export type OfferPiece = { kind: 'player' | 'pick' | 'cap'; amount?: number; player_id: string | null; contract_id: string | null; pick_id: string | null; name: string; pos: string; nfl_team: string };
 export type Offer = {
   id: string; partner: string; partner_team_id: string; you_get: OfferPiece[]; you_give: OfferPiece[]; note: string | null;
   created_at: string; status: string; decided_at: string | null; is_counter: boolean; line?: string; sent_by_you?: boolean;
@@ -781,6 +812,12 @@ export type TeamPeople = {
 export type MySettings = {
   email: string | null; role: string; is_commissioner: boolean; is_co_owner: boolean; team_id: string;
   profile: OwnerProfile; gm: GmPrefs; people: TeamPeople;
+  // Only when I'm in more than one league (the test copy). teams: in an open test league I run, every team I can play as.
+  leagues?: LeagueChoice[];
+};
+export type LeagueChoice = {
+  league_id: string; name: string; is_test: boolean; active: boolean;
+  teams: { team_id: string; name: string; mine: boolean }[];
 };
 export type RulesView = { groups: { title: string; rows: [string, string][] }[]; house_rules: string | null };
 

@@ -85,3 +85,14 @@ class LeagueWeeksOneToThreeTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_over_cap_team_takes_auto_loss_but_keeps_its_top_five_rank():
+    # A outscores B but started Sunday over the cap: A loses and gets no top-5 point; nobody moves into the top 5.
+    rows = [("A", 150, 90), ("B", 90, 150), ("C", 140, 80), ("D", 80, 140), ("E", 130, 70), ("F", 70, 130),
+            ("G", 120, 60), ("H", 60, 120), ("I", 110, 50), ("J", 50, 110)]
+    out = {r["team"]: r for r in score_week(rows, {"A"})}
+    assert (out["A"]["win"], out["A"]["loss"], out["A"]["top5"], out["A"]["standing_points"]) == (0, 1, 0, 0)
+    assert (out["B"]["win"], out["B"]["loss"], out["B"]["standing_points"]) == (0, 1, 0)  # opponent didn't outscore A
+    assert out["J"]["top5"] == 0 and out["H"]["top5"] == 0  # 6th place doesn't move up
+    assert out["I"]["top5"] == 1

@@ -211,6 +211,8 @@ def roster_rows(
             "salary": _f(row.get("cap_hit")),
             "contract_salary": _f(row.get("contract_cap_hit") or row.get("cap_hit")),
             "years_left": int(row.get("contract_years_left") or 0),
+            # Every season on the deal (main._add_contract_lengths); falls back to the years left.
+            "total_years": max(int(row.get("contract_total_years") or 0), int(row.get("contract_years_left") or 0)),
             "designation": roster_designation(row),
             "is_rookie": bool(row.get("is_rookie")),
             "ppg": ppg.get(pid),
@@ -482,8 +484,9 @@ def box_score(
     slots: list[str],
     info: dict[str, dict[str, Any]] | None = None,
     ttl: int = 60,
+    held: dict[int, dict[str, list[str]]] | None = None,
 ) -> dict[str, Any] | None:
-    """Both lineups of one game, slot by slot."""
+    """Both lineups of one game, slot by slot. `held` = each roster's taxi/IR players from our database."""
     rows = [r for r in (sleeper.get(f"league/{sleeper_id}/matchups/{week}", ttl=ttl) or []) if r.get("matchup_id") == matchup_id]
     if len(rows) < 2:
         return None
@@ -503,29 +506,54 @@ def box_score(
                 "points": _f(points[index]) if index < len(points) else 0.0,
             })
         all_points = row.get("players_points") or {}
-        bench = [
-            {
-                "player_id": pid,
-                "name": _text((info or {}).get(pid, {}).get("full_name")) or pid,
-                "slot": "BN",
-                "points": _f(all_points.get(pid)),
-            }
-            for pid in bench_ids(sleeper_id, row, starters)
-        ]
+        def entry(pid: str, slot: str, designation: str | None = None) -> dict[str, Any]:
+            return {"player_id": pid, "name": _text((info or {}).get(pid, {}).get("full_name")) or pid, "slot": slot,
+                    "points": _f(all_points.get(pid)), **({"designation": designation} if designation else {})}
+
+        bench = [entry(pid, "BN") for pid in bench_ids(sleeper_id, row, starters, held)]
+        # taxi and IR players can't play: listed on their own (taxi first, then IR) so the page can show them apart
+        h = held_ids(sleeper_id, row, held)
+        reserve = [entry(pid, "TX", "taxi") for pid in h["taxi"] if pid not in starters] + [entry(pid, "IR", "ir") for pid in h["ir"] if pid not in starters]
         sides.append({
             "roster_id": row.get("roster_id"),
             "name": names.get(row.get("roster_id"), f"Roster {row.get('roster_id')}"),
             "score": _f(row.get("points")) or round(sum(p["points"] for p in players), 2),
             "players": players,
             "bench": bench,
+            "reserve": reserve,
         })
     return {"week": week, "matchup_id": matchup_id, "teams": sides}
 
 
-def bench_ids(sleeper_id: str, row: dict[str, Any], starters: Iterable[str]) -> list[str]:
-    """A matchup row's bench: its players minus starters and the roster's taxi and IR players (they can't play)."""
+def held_by_roster(state: dict[str, Any], team_rows: Iterable[dict[str, Any]]) -> dict[int, dict[str, list[str]]]:
+    """Each roster's taxi and IR players from our own contracts (roster_designation), keyed by Sleeper roster id."""
+    roster_of = {_text(t.get("team_id")): t.get("roster_id") for t in team_rows}
+    out: dict[int, dict[str, list[str]]] = {}
+    for row in state.get("roster", []):
+        kind = roster_designation(row)
+        rid = roster_of.get(_text(row.get("league_team_id")))
+        pid = _text(row.get("sleeper_player_id"))
+        if kind and rid is not None and pid:
+            out.setdefault(rid, {"taxi": [], "ir": []})[kind].append(pid)
+    return out
+
+
+def held_ids(sleeper_id: str, row: dict[str, Any], held: dict[int, dict[str, list[str]]] | None = None) -> dict[str, list[str]]:
+    """A matchup row's taxi and IR players: from our database when `held` is given (Tommy, 2026-11-15),
+    else Sleeper's roster lists (only if our read failed)."""
+    if held is not None:
+        mine = held.get(row.get("roster_id")) or {}
+        return {"taxi": list(mine.get("taxi") or []), "ir": [p for p in mine.get("ir") or [] if p not in (mine.get("taxi") or [])]}
     roster = next((r for r in (sleeper.get(f"league/{sleeper_id}/rosters", ttl=300) or []) if r.get("roster_id") == row.get("roster_id")), {})
-    skip = set(starters) | {_text(p) for p in (roster.get("taxi") or []) + (roster.get("reserve") or [])}
+    taxi = [pid for pid in (_text(p) for p in roster.get("taxi") or []) if pid and pid != "0"]
+    ir = [pid for pid in (_text(p) for p in roster.get("reserve") or []) if pid and pid != "0" and pid not in taxi]
+    return {"taxi": taxi, "ir": ir}
+
+
+def bench_ids(sleeper_id: str, row: dict[str, Any], starters: Iterable[str], held: dict[int, dict[str, list[str]]] | None = None) -> list[str]:
+    """A matchup row's bench: its players minus starters and the roster's taxi and IR players (they can't play)."""
+    h = held_ids(sleeper_id, row, held)
+    skip = set(starters) | set(h["taxi"]) | set(h["ir"])
     return [pid for pid in (_text(p) for p in row.get("players") or []) if pid and pid != "0" and pid not in skip]
 
 
@@ -534,10 +562,11 @@ def starter_ids(sleeper_id: str, week: int, matchup_id: int, ttl: int = 60) -> l
     return [_text(p) for r in rows if r.get("matchup_id") == matchup_id for p in (r.get("starters") or [])]
 
 
-def matchup_player_ids(sleeper_id: str, week: int, matchup_id: int, ttl: int = 60) -> list[str]:
+def matchup_player_ids(sleeper_id: str, week: int, matchup_id: int, ttl: int = 60, held: dict[int, dict[str, list[str]]] | None = None) -> list[str]:
     """Every player on both rosters of one game (starters and everyone else), for name and position lookups."""
-    rows = sleeper.get(f"league/{sleeper_id}/matchups/{week}", ttl=ttl) or []
-    return [_text(p) for r in rows if r.get("matchup_id") == matchup_id for p in (r.get("starters") or []) + (r.get("players") or [])]
+    rows = [r for r in (sleeper.get(f"league/{sleeper_id}/matchups/{week}", ttl=ttl) or []) if r.get("matchup_id") == matchup_id]
+    held_pids = [pid for r in rows for ids in held_ids(sleeper_id, r, held).values() for pid in ids]  # taxi/IR, in case the row leaves them out
+    return [_text(p) for r in rows for p in (r.get("starters") or []) + (r.get("players") or [])] + held_pids
 
 
 def ir_rows(state: dict[str, Any], team_id: str) -> list[dict[str, Any]]:

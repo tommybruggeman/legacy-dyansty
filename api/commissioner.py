@@ -176,6 +176,22 @@ def set_switch(client: Any, league_id: str, enabled: bool, own_from_week: int | 
                 {"p_league_id": league_id, "p_enabled": enabled, "p_own_from_week": own_from_week})
 
 
+def seed_faab(client: Any, league_id: str, season: int, sleeper_id: str) -> Any:
+    """Each team's FAAB left on Sleeper becomes its starting balance in the app (only for teams with none yet)."""
+    from api import sleeper, teams
+    rows = client.table("league_teams").select("id,sleeper_roster_id").eq("league_id", league_id).execute().data or []
+    rosters = {r.get("roster_id"): r for r in sleeper.raw(f"league/{sleeper_id}/rosters", ttl=60) or []}
+    out = []
+    for t in rows:
+        try:
+            left = teams.faab(sleeper_id, rosters.get(int(t["sleeper_roster_id"])) or {})
+        except (TypeError, ValueError):
+            left = None
+        if left is not None:
+            out.append({"league_team_id": t["id"], "amount": left["left"]})
+    return _rpc(client, "commissioner_seed_faab_authenticated", {"p_league_id": league_id, "p_season": season, "p_rows": out})
+
+
 def rules_form(client: Any, league_id: str) -> dict[str, Any]:
     from league_ai.settings_store import load_settings
     from scoring.rules import rows_from_rules

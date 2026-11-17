@@ -8,7 +8,9 @@ Producers, each safe to run again and again (every alert has a key, so it is que
   waivers    one line to everyone after a waiver run
   deadlines  taxi pick after the rookie draft and 24 hours before the season, team option 7 days and 24 hours before
              the rollover deadline, trade deadline 7 days and 12 hours out
-  cap        every morning while a team is over the cap
+  cap        every morning while a team is over the cap (Friday: the get-under-by-Sunday reminder); right after a
+             waiver claim puts a team over; and at Sunday's first kickoff a team still over takes an automatic loss
+             (recorded in cap_auto_losses, which standings and the bracket read through api.own_league)
   playoffs   clinched a spot; the bracket is set
   offers     trade offers in the app (sent to you, answered)
   rollover   the day the rollover completes
@@ -22,6 +24,7 @@ still queues, and sends on the next run that has it.
 """
 from __future__ import annotations
 
+import dataclasses
 import os
 import sys
 from datetime import datetime, timedelta, timezone
@@ -87,6 +90,8 @@ class League:
         return self.team_users(self.team_of_roster.get(roster_id)) if roster_id is not None else []
 
     def send(self, alert: alerts.Alert, users: Iterable[str], *, not_before: datetime | None = None, expires_at: datetime | None = None) -> None:
+        if league.sleeper.is_mirror(self.sid):  # the test copy: its own keys (never blocks a real alert) and a [Test] label
+            alert = dataclasses.replace(alert, key=f"test:{str(self.id)[:8]}:{alert.key}", title=f"[Test] {alert.title}".strip())
         self.queued += alerts.enqueue(self.client, alert, league_id=self.id, user_ids=users, not_before=not_before,
                                       expires_at=expires_at, seed=self.seed)
 
@@ -349,7 +354,7 @@ def waiver_runs(transactions: Iterable[Mapping[str, Any]], now: datetime, window
 def waivers(lg: League) -> None:
     since = lg.now - timedelta(hours=12)
     if app_transactions_on(lg):
-        rows = (lg.client.table("app_waiver_claims").select("status,process_at").eq("league_id", lg.id)
+        rows = (lg.client.table("app_waiver_claims").select("status,process_at,league_team_id,player_id").eq("league_id", lg.id)
                 .eq("status", "won").gte("decided_at", since.isoformat()).execute().data or [])
         runs: dict[str, int] = {}
         for r in rows:
@@ -357,6 +362,8 @@ def waivers(lg: League) -> None:
             if at:
                 key = at.astimezone(home.EASTERN).date().isoformat()
                 runs[key] = runs.get(key, 0) + 1
+                r["run_key"] = key
+        claims_over_cap(lg, rows)
     elif lg.sid:
         tx = []
         for w in sorted({max(lg.week - 1, 1), lg.week}):
@@ -366,6 +373,22 @@ def waivers(lg: League) -> None:
         runs = {}
     for key, moves in runs.items():
         lg.send(alerts.waivers_done(run_key=key, moves=moves, league_name=lg.name), lg.everyone(), expires_at=lg.now + timedelta(days=1))
+
+
+def claims_over_cap(lg: League, won: list[dict[str, Any]]) -> None:
+    """A personal alert to each owner whose waiver claim left them over the cap (the last claim of the run they won)."""
+    if not won:
+        return
+    from api import teams
+    cap, used = cap_status(lg)
+    over = over_by(cap, used)
+    names = teams.player_info(lg.client, sorted({str(r["player_id"]) for r in won}))
+    for r in won:
+        team_id = str(r.get("league_team_id"))
+        if team_id in over and r.get("run_key"):
+            player = _text((names.get(str(r["player_id"])) or {}).get("full_name")) or "a player"
+            lg.send(alerts.over_cap_claim(run_key=r["run_key"], team_id=team_id, player=player, over=over[team_id]),
+                    lg.team_users(team_id), expires_at=lg.now + timedelta(days=4))
 
 
 # ---- deadlines, cap, rollover --------------------------------------------------------------------------
@@ -451,21 +474,39 @@ def team_state(client: Any, league_id: str, season: int) -> dict[str, Any]:
     return load_team_state(Jobs(), league_id, season)
 
 
-def over_the_cap(lg: League) -> None:
+def cap_status(lg: League) -> tuple[float, dict[str, float]]:
+    """(salary cap, {team id: cap used}) for every team in the league right now."""
     from api import teams
     from services.team_roster_state import calculate_team_financials, state_cap_adjustments
-    today = lg.now.astimezone(alerts.LEAGUE_TZ).date()
     cap = teams.salary_cap(lg.client, lg.id)
     state = team_state(lg.client, lg.id, lg.season)
     adjustments = state_cap_adjustments({"dead_cap": state.get("dead_cap", []), "cap_adjustments": state.get("cap_adjustments", [])})
-    end_of_day = datetime.combine(today + timedelta(days=1), datetime.min.time(), alerts.LEAGUE_TZ).astimezone(timezone.utc)
+    used = {}
     for team_id in lg.roster_of:
         money = calculate_team_financials(state.get("roster", []), adjustments, salary_cap=cap, league_team_id=team_id)
-        used = float(money["cap_used"])
-        if used <= cap + 0.004:
-            continue
+        used[team_id] = float(money["cap_used"])
+    return cap, used
+
+
+def over_by(cap: float, used: Mapping[str, float]) -> dict[str, float]:
+    return {t: round(u - cap, 2) for t, u in used.items() if u > cap + 0.004}
+
+
+def over_the_cap(lg: League) -> None:
+    today = lg.now.astimezone(alerts.LEAGUE_TZ).date()
+    cap, used = cap_status(lg)
+    over = over_by(cap, used)
+    end_of_day = datetime.combine(today + timedelta(days=1), datetime.min.time(), alerts.LEAGUE_TZ).astimezone(timezone.utc)
+    morning = alerts.next_morning(datetime.combine(today, datetime.min.time(), alerts.LEAGUE_TZ))
+    starts = lg.kickoffs(lg.week)
+    kickoff = main_kickoff(starts)
+    for team_id, amount in over.items():
         users = lg.team_users(team_id)
         if not users:
+            continue
+        if today.weekday() == 4 and kickoff and kickoff > lg.now:  # Friday 9 AM MT: the get-under-by-Sunday reminder
+            lg.send(alerts.over_cap_friday(season=lg.season, week=lg.week, over=amount, kickoff=kickoff, tz=alerts.LEAGUE_TZ.key),
+                    users, not_before=morning, expires_at=kickoff)
             continue
         before = (lg.client.table("push_outbox").select("key").in_("user_id", users).like("key", f"cap:{lg.season}:%")
                   .execute().data or [])
@@ -475,9 +516,34 @@ def over_the_cap(lg: League) -> None:
                 days.append(datetime.fromisoformat(r["key"].rsplit(":", 1)[1]).date())
             except ValueError:
                 pass
-        alert = alerts.over_cap(season=lg.season, day=today, used=used, cap=cap, day_number=alerts.cap_streak(today, days))
-        lg.send(alert, users, not_before=alerts.next_morning(datetime.combine(today, datetime.min.time(), alerts.LEAGUE_TZ)),
-                expires_at=end_of_day)
+        alert = alerts.over_cap(season=lg.season, day=today, used=used[team_id], cap=cap, day_number=alerts.cap_streak(today, days))
+        lg.send(alert, users, not_before=morning, expires_at=end_of_day)
+    auto_losses(lg, kickoff, over)
+
+
+AUTO_LOSS_WINDOW = timedelta(hours=12)
+
+
+def auto_losses(lg: League, kickoff: datetime | None, over: Mapping[str, float]) -> None:
+    """At Sunday's first kickoff (first run after it), every team still over the cap takes this week's automatic loss:
+    one cap_auto_losses row (standings and the bracket read it) and an alert to its owner."""
+    if not kickoff or kickoff.astimezone(home.EASTERN).weekday() != 6 or not (kickoff <= lg.now < kickoff + AUTO_LOSS_WINDOW):
+        return
+    try:
+        done = {str(r["league_team_id"]) for r in lg.client.table("cap_auto_losses").select("league_team_id")
+                .eq("league_id", lg.id).eq("season", lg.season).eq("week", lg.week).execute().data or []}
+    except Exception:
+        print("ALERTS_AUTO_LOSS_TABLE_MISSING", flush=True)
+        return
+    for team_id, amount in over.items():
+        if team_id in done or lg.seed:
+            continue
+        lg.client.table("cap_auto_losses").upsert({
+            "league_id": lg.id, "season": lg.season, "week": lg.week, "league_team_id": team_id, "over_by": amount,
+        }, on_conflict="league_id,season,week,league_team_id", ignore_duplicates=True).execute()
+        lg.send(alerts.auto_loss(season=lg.season, week=lg.week, over=amount), lg.team_users(team_id),
+                expires_at=kickoff + timedelta(days=2))
+        print(f"ALERTS_AUTO_LOSS week={lg.week}", flush=True)
 
 
 def rollover(lg: League) -> None:

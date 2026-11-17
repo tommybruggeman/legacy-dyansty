@@ -14,6 +14,10 @@ def test_demo_login_is_read_only():
     assert not demo.blocked(reviewer, "POST", "/front-office/chat/stream")
     assert not demo.blocked(reviewer, "POST", "/front-office/report")
     assert not demo.blocked(reviewer, "POST", "/market/targets/123")
+    assert demo.blocked(reviewer, "POST", "/me/league")
+    assert demo.blocked(reviewer, "POST", "/commissioner/switch")
+    assert demo.blocked(reviewer, "POST", "/trade-offers")
+    assert not demo.blocked(reviewer, "POST", "/me/activity")
     assert not demo.blocked(owner, "POST", "/my-team/lineup")
 
 

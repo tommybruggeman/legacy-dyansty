@@ -19,6 +19,7 @@ _ALLOWED_PREFIXES = (
     "/me/live-activity",
     "/me/alerts",
     "/me/crash",
+    "/me/activity",
 )
 
 
