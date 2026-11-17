@@ -664,7 +664,7 @@ const styles = StyleSheet.create({
   mbarFinal: { color: colors.gold, fontWeight: '900' },
   h2h: { flexDirection: 'column', alignItems: 'stretch', gap: 0 },
   h2hLine: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  h2hLast: { borderTopWidth: 1, borderTopColor: '#22352B', marginTop: 6, paddingTop: 6 },
+  h2hLast: { marginTop: 6, paddingTop: 6 },
   h2hSub: { color: colors.muted, fontSize: 12 },
   wk: { borderWidth: 1, borderColor: '#2F4136', borderRadius: 8, paddingVertical: 3, paddingHorizontal: 9 },
   wkText: { color: '#A9A493', fontSize: 12, fontWeight: '700' },
