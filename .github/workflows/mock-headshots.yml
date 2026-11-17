@@ -2,8 +2,11 @@ name: mock headshots (one-off, for design mockups)
 on:
   push:
     branches: [claude/headshots-mock]
+permissions:
+  contents: write
 jobs:
   fetch:
+    if: "!contains(github.event.head_commit.message, 'mock headshots')"
     runs-on: ubuntu-latest
     steps:
       - run: |
@@ -19,7 +22,10 @@ jobs:
                   urllib.request.urlretrieve(f"https://sleepercdn.com/content/nfl/players/{pid}.jpg", f"out/{name.replace(' ', '_')}.jpg")
                   print(name, pid)
           PY
-      - uses: actions/upload-artifact@v4
+      - uses: actions/checkout@v4
         with:
-          name: headshots
-          path: out
+          path: repo
+      - run: |
+          cd repo && mkdir -p mock_heads && cp ../out/*.jpg mock_heads/
+          git config user.name "github-actions" && git config user.email "actions@github.com"
+          git add mock_heads && git commit -m "mock headshots [skip ci]" && git push
