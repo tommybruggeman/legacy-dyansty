@@ -302,6 +302,7 @@ export type Player = {
   years_left: number;
   total_years?: number; // every season on the deal (Contracts tab dots)
   no_contract?: boolean;
+  gone?: boolean; // a past week's starter who has since left the team
   designation: 'taxi' | 'ir' | null;
   is_rookie: boolean;
   ppg: number | null;

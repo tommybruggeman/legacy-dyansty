@@ -265,6 +265,48 @@ def roster_rows(
     return {"starters": starters, "bench": bench, "taxi": taxi, "ir": ir, "count": sum(1 for p in contracts.values() if not p.get("no_contract"))}
 
 
+def week_lineup(
+    roster: dict[str, Any],
+    starter_ids: list[str],
+    bench_ids: list[str],
+    slots: list[str],
+    info: dict[str, dict[str, Any]],
+    ppg: dict[str, float],
+) -> dict[str, Any]:
+    """A finished week's lineup as it was actually started: that week's starters in slot order and that week's bench,
+    using each player's current card when he's still here (contract, PPG) and a plain one when he has moved on.
+    Taxi and IR stay as they are now."""
+    known = {p["player_id"]: p for p in roster["starters"] + roster["bench"] + roster["taxi"] + roster["ir"] if p.get("player_id")}
+
+    def card(pid: str) -> dict[str, Any]:
+        if pid in known:  # today's injury tag doesn't belong on an old week
+            return {**known[pid], "injury": None}
+        meta = info.get(pid, {})
+        return {
+            "player_id": pid, "name": _text(meta.get("full_name")) or pid, "pos": _text(meta.get("position")),
+            "nfl_team": _text(meta.get("team")) or "FA", "injury": None, "salary": 0.0, "contract_salary": 0.0,
+            "years_left": 0, "designation": None, "is_rookie": False, "ppg": ppg.get(pid), "no_contract": True, "gone": True,
+        }
+
+    lineup_slots = [s for s in slots if s in LINEUP_SLOTS]
+    starters = []
+    for index, pid in enumerate(starter_ids):
+        slot = lineup_slots[index] if index < len(lineup_slots) else ""
+        slot = "FLX" if "FLEX" in slot else slot
+        if not pid or pid == "0":
+            starters.append({**EMPTY_SLOT, "slot": slot})
+            continue
+        # A taxi or IR tag from today doesn't apply to a week he started.
+        starters.append({**card(pid), "slot": slot or known.get(pid, {}).get("pos", ""), "designation": None})
+    taken = {p["player_id"] for p in starters if p.get("player_id")}
+    order = {"QB": 0, "RB": 1, "WR": 2, "TE": 3, "K": 4}
+    bench = sorted((card(pid) for pid in dict.fromkeys(bench_ids) if pid and pid not in taken),
+                   key=lambda p: (order.get(p["pos"], 9), -(p["ppg"] or 0), p["name"]))
+    for p in bench:
+        p["designation"] = None
+    return {**roster, "starters": starters, "bench": bench}
+
+
 def _dead_rows(state: dict[str, Any], team_id: str) -> list[dict[str, Any]]:
     return [
         r for r in state_cap_adjustments({"dead_cap": state.get("dead_cap", []), "cap_adjustments": state.get("cap_adjustments", [])})

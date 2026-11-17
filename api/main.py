@@ -798,13 +798,21 @@ def _team_page(client: Client, ctx: dict[str, Any], team_id: str, week: int | No
         this_week = _team_week(client, ctx, summary["roster_id"], week)
     except Exception:
         this_week = None
+    current = _home_week(client, ctx["season"], datetime.now(home.HOME_TZ).date())
+    if week and this_week and this_week.get("is_final") and week < current and this_week.get("starter_ids"):
+        # A finished week from the week menu shows the lineup actually started that week, with that week's points;
+        # there's nothing to edit in the past.
+        past_ids = [p for p in this_week["starter_ids"] + this_week.get("bench_ids", []) if p and p != "0"]
+        detail["roster"] = teams.week_lineup(detail["roster"], this_week["starter_ids"], this_week.get("bench_ids", []),
+                                             ctx["slots"], teams.player_info(client, past_ids), teams.player_ppg(ctx["sleeper_id"], weeks))
+        detail["lineup"] = None
     try:
         weeks = _team_weeks(client, ctx, summary["roster_id"])
     except Exception as exc:
         print(f"APP_TEAM_WEEKS_ERROR {type(exc).__name__}", flush=True)
         weeks = None
     return {"season": ctx["season"], "salary_cap": cap, "sleeper_league_id": ctx["sleeper_id"], **detail, "week": this_week, "weeks": weeks,
-            "current_week": _home_week(client, ctx["season"], datetime.now(home.HOME_TZ).date())}
+            "current_week": current}
 
 
 def _add_contract_lengths(client: Client, state: dict[str, Any], team_id: str) -> None:
@@ -910,8 +918,15 @@ def _team_week(client: Client, ctx: dict[str, Any], roster_id: int | None, pick:
         me = sides[0]
         keys = ("points", "proj", "live_proj", "status", "game", "line", "kickoff")
         odds = nfl_live.win_chance(sides, final) if opp else None
+        # The lineup exactly as it was set that week (empty slots kept), for the week menu's past weeks.
+        starter_ids = [str(p or "") for p in mine.get("starters") or []]
+        try:
+            bench_ids = teams.bench_ids(ctx["sleeper_id"], mine, starter_ids)
+        except Exception:
+            bench_ids = [p["player_id"] for p in me.get("bench", [])]
         return {
             "week": week, "is_final": final, "score": me["score"], "projected": me.get("projected"),
+            "starter_ids": starter_ids, "bench_ids": bench_ids,
             "opponent": {"name": ctx["names"].get(opp.get("roster_id"), "Opponent"), "score": sides[1]["score"],
                          "projected": sides[1].get("projected")} if opp else None,
             "win_chance": odds[0] if odds else None,
