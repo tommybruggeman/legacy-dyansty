@@ -19,7 +19,10 @@ A player on a roster with no injury listed, or on no roster at all, is Healthy. 
 """
 from __future__ import annotations
 
+import os
 import re
+import tempfile
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Iterable, Mapping
 
@@ -230,6 +233,13 @@ def match_ids(client: Any, entries: Mapping[str, Mapping[str, Any]], known: Mapp
             if r.get("sleeper_id"):
                 out[str(r["espn_id"])] = str(r["sleeper_id"])
     left = [e for e in left if e not in out]
+    if left:
+        cw = crosswalk()
+        for e in left:
+            sid = cw.sleeper_for_espn(e) if cw else None
+            if sid:
+                out[e] = str(sid)
+    left = [e for e in left if e not in out]
     if not left:
         return out
     by_name: dict[tuple[str, str], list[dict[str, Any]]] = {}
@@ -246,6 +256,26 @@ def match_ids(client: Any, entries: Mapping[str, Mapping[str, Any]], known: Mapp
             out[e] = str(hits[0]["sleeper_id"])
             taken.add(out[e])
     return out
+
+
+CROSSWALK_CACHE = os.path.join(tempfile.gettempdir(), "legacy-player-ids.csv")
+
+
+def crosswalk(max_age: float = 86400.0):
+    """The public ESPN/Sleeper/gsis id table (DynastyProcess), kept a day in a local file so a 5-minute job doesn't
+    download it each time."""
+    from pipeline.nfl_data.crosswalk import CROSSWALK_URL, Crosswalk
+    try:
+        if not os.path.exists(CROSSWALK_CACHE) or time.time() - os.path.getmtime(CROSSWALK_CACHE) > max_age:
+            import requests
+            resp = requests.get(CROSSWALK_URL, timeout=60)
+            resp.raise_for_status()
+            with open(CROSSWALK_CACHE, "w", encoding="utf-8") as f:
+                f.write(resp.text)
+        with open(CROSSWALK_CACHE, encoding="utf-8") as f:
+            return Crosswalk.from_csv(f.read())
+    except Exception:
+        return None
 
 
 def refresh(client: Any, get: Callable[[str], Any], now: datetime | None = None) -> list[dict[str, Any]]:

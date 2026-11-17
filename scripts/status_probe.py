@@ -29,6 +29,8 @@ def main() -> int:
     t = time.monotonic()
     ids = ps.match_ids(client, entries, {})
     print(f"matched to our players: {len(ids)} of {len(entries)} in {time.monotonic() - t:.1f}s")
+    miss = Counter(entries[e]["status"] for e in entries if e not in ids)
+    print("not matched, by status:", dict(miss.most_common()))
     ours = {sid: entries[e]["status"] for e, sid in ids.items()}
     sleeper: dict[str, str] = {}
     for r in ps._all(client, "nfl_players", "sleeper_id,injury_status,position", "sleeper_id"):
