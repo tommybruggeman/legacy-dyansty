@@ -19,6 +19,12 @@ if [ ! -f /swapfile ]; then
   fallocate -l 1G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
   echo '/swapfile none swap sw 0 0' >> /etc/fstab
 fi
+# A reboot in the middle of a pull can leave an empty object file behind (2026-11-17: "object file ... is empty"),
+# and every later pull then fails. If the checkout doesn't check out clean, clone it again from scratch.
+if [ -d "$APP/.git" ] && ! git -C "$APP" fsck --connectivity-only >/dev/null 2>&1; then
+  echo "legacy: repo checkout is damaged, cloning again"
+  rm -rf "$APP"
+fi
 if [ ! -d "$APP/.git" ]; then
   git clone --depth 1 "$REPO" "$APP"
 fi
