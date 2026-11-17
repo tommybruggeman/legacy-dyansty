@@ -2627,6 +2627,26 @@ side_html = ''.join([
     '</div>',
 ])
 
+@st.dialog("Trade", width="large")
+def _trade_dialog(roster_id):
+    """The same trade as the app's trade page (or the closed screen after the deadline)."""
+    from auth import _sb
+    from services.app_context import resolve_my_team
+    from services.trade_box import render_trade_box
+    user = current_user()
+    uid = user.get("id") if isinstance(user, dict) else getattr(user, "id", None)
+    client = _sb(st.session_state.get("sb_access_token"))
+    try:
+        client.auth.set_session(st.session_state.get("sb_access_token"), st.session_state.get("sb_refresh_token"))
+    except Exception:
+        pass
+    mine = resolve_my_team(uid, league_id) or {}
+    if not mine.get("team_id"):
+        st.info("Your account isn't linked to a team in this league.")
+        return
+    render_trade_box(client, league_id=str(league_id), season=int(active_season), my_team_id=str(mine["team_id"]), sleeper_roster_id=roster_id)
+
+
 # Body: roster | trade block, picks and the trade button | activity and dead cap.
 with st.container(key="teams_body"):
     body_roster, body_mid, body_side = st.columns([1.25, 1, 1], gap="small")
@@ -2638,12 +2658,11 @@ with body_mid:
     st.markdown(pair_html, unsafe_allow_html=True)
     with st.container(border=True, key="teams_mobile_trade_action"):
         if st.button(
-            "🔁 Send Trade Offer",
+            "Trade",
             key="mobile_trade_cta",
             use_container_width=True,
         ):
-            st.session_state["trade_from_team"] = sel_name
-            st.switch_page("pages/_82_Trades.py")
+            _trade_dialog(selected_team.get("sleeper_roster_id"))
 
 with body_side:
     st.markdown(side_html, unsafe_allow_html=True)

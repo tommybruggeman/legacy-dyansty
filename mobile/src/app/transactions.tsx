@@ -2,9 +2,9 @@ import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
 import { Alert, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { PlayerFace } from '../components/PlayerFace';
+import { Avatar, Headshot } from '../components/Pictures';
 import { ErrorState, Loading } from '../components/ScreenState';
-import { Back, Note, Screen, Title, ui } from '../components/ui';
+import { Back, Note, Screen, Title, firstName, ui } from '../components/ui';
 import { type BidResult, type Offer, type OfferPiece, type Transactions, apiSend, useApi } from '../lib/api';
 import { colors } from '../lib/theme';
 
@@ -169,11 +169,18 @@ function OfferCard({ offer, label, right, gold, children }: { offer: Offer; labe
         <Text style={styles.label}>{label}</Text>
         <Text style={right === 'WAITING' ? styles.waiting : ui.sub}>{right}</Text>
       </View>
-      <Text style={styles.owner}>You get</Text>
-      {offer.you_get.map((p, i) => <Piece key={`g${i}`} p={p} />)}
-      <View style={styles.split} />
-      <Text style={styles.owner}>You give</Text>
-      {offer.you_give.map((p, i) => <Piece key={`y${i}`} p={p} />)}
+      {/* Side by side, like the trade page: what you receive on the left, what they receive on the right. */}
+      <View style={styles.cols}>
+        <View style={styles.col}>
+          <Text style={styles.owner} numberOfLines={1}>You Receive</Text>
+          {offer.you_get.map((p, i) => <Piece key={`g${i}`} p={p} />)}
+        </View>
+        <Text style={styles.swap}>⇄</Text>
+        <View style={styles.col}>
+          <View style={styles.ownerRow}><Avatar name={offer.partner} size={20} /><Text style={styles.owner} numberOfLines={1}>{`${firstName(offer.partner)} Receives`}</Text></View>
+          {offer.you_give.map((p, i) => <Piece key={`y${i}`} p={p} />)}
+        </View>
+      </View>
       {offer.note ? <Text style={[ui.sub, styles.note]}>{`“${offer.note}”`}</Text> : null}
       {children}
     </View>
@@ -182,11 +189,11 @@ function OfferCard({ offer, label, right, gold, children }: { offer: Offer; labe
 
 function Piece({ p }: { p: OfferPiece }) {
   return (
-    <Pressable disabled={p.kind !== 'player'} onPress={() => p.player_id && router.push(`/player/${p.player_id}`)} style={styles.row}>
+    <Pressable disabled={p.kind !== 'player'} onPress={() => p.player_id && router.push(`/player/${p.player_id}`)} style={styles.piece}>
       {p.kind === 'player'
-        ? <PlayerFace name={p.name} team={p.nfl_team} pos={p.pos} size={34} />
+        ? <Headshot playerId={p.player_id} pos={p.pos} team={p.nfl_team} size={48} />
         : <View style={styles.pick}><Text style={styles.pickText}>PICK</Text></View>}
-      <Text style={[ui.name, ui.flex]} numberOfLines={1}>{p.name}</Text>
+      <Text style={styles.pieceName} numberOfLines={2}>{p.name}</Text>
     </Pressable>
   );
 }
@@ -216,9 +223,14 @@ const styles = StyleSheet.create({
   head: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
   label: { color: colors.gold, fontSize: 11, fontWeight: '900', letterSpacing: 1 },
   waiting: { color: '#F0C674', fontSize: 11, fontWeight: '800' },
-  owner: { color: colors.gold, fontSize: 13, fontWeight: '800', marginTop: 4 },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 4 },
-  pick: { width: 34, height: 34, borderRadius: 17, borderWidth: 1, borderColor: colors.gold, alignItems: 'center', justifyContent: 'center' },
+  owner: { color: colors.text, fontSize: 13, fontWeight: '900', marginVertical: 4, textAlign: 'center', flexShrink: 1 },
+  ownerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
+  cols: { flexDirection: 'row', gap: 4, marginTop: 4 },
+  col: { flex: 1, minWidth: 0 },
+  swap: { color: colors.gold, fontSize: 16, fontWeight: '900', alignSelf: 'center' },
+  piece: { backgroundColor: '#0E201A', borderRadius: 12, paddingVertical: 8, paddingHorizontal: 4, marginTop: 6, alignItems: 'center' },
+  pieceName: { color: colors.text, fontSize: 12, fontWeight: '800', marginTop: 6, textAlign: 'center' },
+  pick: { width: 48, height: 48, borderRadius: 24, borderWidth: 1, borderColor: colors.gold, alignItems: 'center', justifyContent: 'center' },
   pickText: { color: colors.gold, fontSize: 8, fontWeight: '900' },
   split: { height: 1, backgroundColor: colors.row, marginVertical: 6 },
   note: { marginTop: 6, fontStyle: 'italic' },

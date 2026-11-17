@@ -37,6 +37,39 @@ ERRORS = {
 }
 
 
+CLOSED = "Trades are closed until after the season."
+
+
+def deadline_week(text: Any) -> int | None:
+    """The league's trade deadline week from Settings ("week 11", "11", "Week 11 kickoff"), None when unset."""
+    match = re.search(r"\d+", str(text or ""))
+    return int(match.group()) if match else None
+
+
+def window(deadline_text: Any, current_week: int, last_week: int) -> dict[str, Any]:
+    """Whether trades are open this week. Closed after the deadline week until the season is over (the week after
+    the championship), so the offseason is open again."""
+    deadline = deadline_week(deadline_text)
+    closed = deadline is not None and deadline < current_week <= last_week
+    return {"open": not closed, "deadline_week": deadline, "reopens_after_week": last_week,
+            "message": f"The trade deadline was Week {deadline}. Trading reopens the day after the championship." if closed else None}
+
+
+def league_window(client: Any, league_id: str) -> dict[str, Any]:
+    """window() for a league from its Settings deadline, this NFL week and its last playoff week (app and website)."""
+    from api import league, playoffs
+    from league_ai.settings_store import load_settings
+    try:
+        deadline = load_settings(client, league_id).trade_deadline
+    except Exception:
+        return {"open": True, "deadline_week": None, "reopens_after_week": None, "message": None}
+    try:
+        last = playoffs.last_week(league.playoff_rules(client, league_id))
+    except Exception:
+        last = 17
+    return window(deadline, league.current_week(), last)
+
+
 def friendly(exc: Exception) -> str:
     text = str(exc)
     for code, message in ERRORS.items():

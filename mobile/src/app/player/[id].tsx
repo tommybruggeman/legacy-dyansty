@@ -74,7 +74,8 @@ export default function Player() {
   const action = data.is_mine
     ? { label: 'Drop', style: styles.pillDrop, onPress: data.transactions_enabled ? dropHim : sleeper }
     : c || data.rostered_by
-      ? { label: '⇄ Trade', style: styles.pillTrade, onPress: data.transactions_enabled && ownerTeam ? () => router.push({ pathname: '/trade/[teamId]', params: { teamId: ownerTeam, add: data.player_id } }) : sleeper }
+      // The trade page itself shows the closed screen after the deadline, and Send opens Sleeper until the switch is on.
+      ? { label: 'Trade', style: styles.pillTrade, onPress: ownerTeam ? () => router.push({ pathname: '/trade/[teamId]', params: { teamId: ownerTeam, add: data.player_id, from: name } }) : sleeper }
       : { label: 'Bid', style: styles.pillBid, onPress: data.transactions_enabled ? bid : sleeper };
 
   return (
@@ -88,10 +89,15 @@ export default function Player() {
             <View style={styles.nameRow}>
               <Text style={styles.name} numberOfLines={2}>{name}</Text>
               <Text style={[styles.pill, h.healthy ? styles.pillOk : styles.pillOut]}>{h.healthy ? 'Healthy' : h.status}</Text>
+              {action.label === 'Trade' ? (
+                <Pressable onPress={action.onPress} hitSlop={8}><Text style={[styles.pill, styles.pillTrade]}>Trade</Text></Pressable>
+              ) : null}
             </View>
-            <Pressable onPress={action.onPress} hitSlop={6} style={styles.actionWrap}>
-              <Text style={[styles.action, action.style]}>{action.label}</Text>
-            </Pressable>
+            {action.label !== 'Trade' ? (
+              <Pressable onPress={action.onPress} hitSlop={6} style={styles.actionWrap}>
+                <Text style={[styles.action, action.style]}>{action.label}</Text>
+              </Pressable>
+            ) : null}
           </View>
         </View>
 
