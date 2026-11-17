@@ -317,7 +317,8 @@ function RosterTab({ team, onChange, after }: { team: TeamPage; onChange?: () =>
   return (
     <>
       {editing && lineup ? (
-        <LineupSheet lineup={lineup} players={[...starters, ...bench]} picking={picking} onClose={() => setPicking(null)} onSaved={() => onChange?.()} />
+        <LineupSheet lineup={lineup} players={[...starters, ...bench]} picking={picking} onClose={() => setPicking(null)} onSaved={() => onChange?.()}
+          game={(p) => <GameText p={p} w={week[p.player_id]} />} points={(p) => <Points p={p} w={week[p.player_id]} />} />
       ) : null}
       <Card title="Starters" right={pointsLabel(team.week)}>
         {starters.length ? starters.map((p, i) => (

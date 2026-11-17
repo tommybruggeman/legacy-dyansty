@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { type ReactNode, useState } from 'react';
 import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -34,10 +34,13 @@ export function place(lineup: Lineup, ids: (string | null)[], posOf: (id: string
   return next;
 }
 
-export function LineupSheet({ lineup, players, picking, onClose, onSaved }: {
+export function LineupSheet({ lineup, players, picking, onClose, onSaved, game, points }: {
   lineup: Lineup;
   players: Player[]; // starters and bench (everyone who can start)
   picking: Picking;
+  // This week's opponent / kickoff and projected, live or final points, the same as the My Team rows.
+  game?: (p: Player) => ReactNode;
+  points?: (p: Player) => ReactNode;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -119,11 +122,12 @@ export function LineupSheet({ lineup, players, picking, onClose, onSaved }: {
               {r.player ? <PlayerFace name={r.player.name} team={r.player.nfl_team} pos={r.player.pos} /> : <View style={styles.emptyFace}><Text style={styles.emptyPlus}>{picking?.kind === 'bench' ? '+' : '–'}</Text></View>}
               <View style={ui.flex}>
                 <Text style={ui.name} numberOfLines={1}>{r.player ? r.player.name : picking?.kind === 'bench' ? 'Open slot' : 'Leave it empty'}</Text>
-                <Text style={[ui.sub, r.current && styles.currentNote]}>{r.player && picking?.kind === 'slot' ? `${r.player.nfl_team || 'FA'} · ` : ''}{r.note}</Text>
+                {r.player && picking?.kind === 'slot' && game ? game(r.player) : null}
+                <Text style={[ui.sub, r.current && styles.currentNote]}>{r.player && picking?.kind === 'slot' && !game ? `${r.player.nfl_team || 'FA'} · ` : ''}{r.note}</Text>
               </View>
-              {r.player && picking?.kind === 'slot' ? (
+              {r.player && picking?.kind === 'slot' ? (points ? points(r.player) : (
                 <Text style={styles.ppg}>{r.player.ppg != null ? r.player.ppg.toFixed(1) : '—'}<Text style={styles.ppgUnit}> PPG</Text></Text>
-              ) : null}
+              )) : null}
             </Pressable>
           ))}
           {!rows.length ? <Text style={[ui.sub, styles.subtitle]}>Nobody on your roster fits this slot.</Text> : null}
