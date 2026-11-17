@@ -7,6 +7,7 @@ import ImageCropPicker from 'react-native-image-crop-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Markdown } from '../../components/frontoffice/Markdown';
+import { MoveCard } from '../../components/frontoffice/MoveCard';
 import { ErrorState, Loading } from '../../components/ScreenState';
 import { usePullDown } from '../../components/PullDown';
 import { Pill, useScrollTopOnTab } from '../../components/ui';
@@ -142,7 +143,7 @@ export default function FrontOfficeScreen() {
       } else if (event.e === 'round' && answer) {
         answer += '\n\n';
       } else if (event.e === 'done') {
-        if (event.ok) setMessages((m) => [...m, { role: 'assistant', content: event.text }]);
+        if (event.ok) setMessages((m) => [...m, { role: 'assistant', content: event.text, ...(event.moves?.length ? { moves: event.moves } : {}) }]);
         else setProblem(event.text);
         if (event.conversation_id) {
           convoRef.current = event.conversation_id;
@@ -342,6 +343,10 @@ export default function FrontOfficeScreen() {
               <>
                 <Text style={styles.gm}>GM</Text>
                 <Markdown text={m.content} />
+                {m.moves?.map((card) => (
+                  <MoveCard key={card.id} card={card} conversationId={conversationId}
+                    onChange={(next) => setMessages((all) => all.map((x, j) => (j === i ? { ...x, moves: x.moves?.map((y) => (y.id === next.id ? next : y)) } : x)))} />
+                ))}
                 {sleeper && !messages[i - 1]?.photos && isTradeQuestion(messages[i - 1]?.content) ? (
                   <Pressable style={styles.sleeper} onPress={() => Linking.openURL(sleeper)}>
                     <Text style={styles.sleeperText}>Open in Sleeper ↗</Text>

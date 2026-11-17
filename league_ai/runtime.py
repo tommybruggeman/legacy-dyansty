@@ -363,10 +363,11 @@ class ChatTurn:
 
 def chat_turn(client: Any, owner: Owner, *, question: str, history: list[dict[str, str]], conversation_id: str | None, pack: str,
               tools: ToolRegistry, on_event: Any = None, week_context: str | None = None, inbox: Any = None,
-              images: list[screenshots.Shot] | None = None) -> ChatTurn:
+              images: list[screenshots.Shot] | None = None, assistant_extra: Any = None) -> ChatTurn:
     """One question and answer: run Claude, save the conversation, log the cost.
     inbox(final) hands over anything the owner typed while the answer was being worked on (see ClaudeClient.run).
-    images: screenshots attached to this question (league_ai.screenshots); only their text reading is saved."""
+    images: screenshots attached to this question (league_ai.screenshots); only their text reading is saved.
+    assistant_extra() adds fields to the saved answer (the move cards the GM proposed, api.gm_moves)."""
     added: list[str] = []
 
     def take(final: bool) -> list[str]:
@@ -412,7 +413,7 @@ def chat_turn(client: Any, owner: Owner, *, question: str, history: list[dict[st
     if result.ok:
         asked = {"role": "user", "content": question, **({"photos": len(images), "screenshot": reading} if images else {})}
         full = [*history, asked, *({"role": "user", "content": a} for a in added),
-                {"role": "assistant", "content": result.text, "facts": facts_digest(result.evidence)}]
+                {"role": "assistant", "content": result.text, "facts": facts_digest(result.evidence), **((assistant_extra() or {}) if assistant_extra else {})}]
         conversation_id = memory.save_conversation(conversation_id, full)
     record_usage(client, row_from_trace(result.trace, league_id=owner.league_id, user_id=owner.user_id, feature="chat",
                                         topic=topic, conversation_id=conversation_id))
