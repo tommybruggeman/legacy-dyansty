@@ -88,6 +88,35 @@ jobs:
           maestro --device "$UDID" test -e REVIEW_EMAIL="$REVIEW_EMAIL" -e REVIEW_PASSWORD="$REVIEW_PASSWORD" ../../maestro/screenshots.yaml
           ls -la
 
+      # On a failed run, say which known screen it's stuck on. Public log: only fixed phrases and
+      # sign-in error lines are printed, never team or player names.
+      - name: Where the screenshots got stuck
+        if: ${{ failure() && inputs.screenshots }}
+        run: |
+          UDID=$(xcrun simctl list devices booted -j | python3 -c "import json,sys; print([d for ds in json.load(sys.stdin)['devices'].values() for d in ds][0]['udid'])")
+          maestro --device "$UDID" hierarchy > "$RUNNER_TEMP/h.json" 2>/dev/null || true
+          python3 - "$RUNNER_TEMP/h.json" <<'PY'
+          import json, re, sys
+          try:
+              tree = json.load(open(sys.argv[1]))
+          except Exception as exc:
+              print("no hierarchy:", type(exc).__name__); sys.exit(0)
+          texts = []
+          def walk(n):
+              a = n.get("attributes", {})
+              for k in ("text", "accessibilityText", "hintText"):
+                  if a.get(k): texts.append(a[k])
+              for c in n.get("children", []): walk(c)
+          walk(tree)
+          known = ["Sign in", "Email", "Password", "don’t match", "Face ID", "Unlock", "not on a team", "Try again", "snag", "Save Password",
+                   "Not Now", "Turn on league alerts", "Home", "My Team", "Front Office", "Session expired", "No connection", "busy", "Allow", "Notifications"]
+          print("labels on screen:", len(texts))
+          for k in known:
+              if any(k.lower() in t.lower() for t in texts): print("  has:", k)
+          for t in texts:
+              if re.search(r"error|failed|invalid|password|expired|confirm|rate limit", t, re.I) and len(t) < 160: print("  message:", t)
+          PY
+
       # On a failed run, Maestro's own screenshots of where it got stuck (kept 1 day).
       - name: Keep screenshot debug output
         if: ${{ failure() && inputs.screenshots }}
