@@ -11,8 +11,14 @@ import { type Expiring, type TeamPage, useApi } from '../../lib/api';
 // The owner portal: your own team page, with IR moves, the league cap view and keep-or-walk calls in the offseason.
 export default function MyTeam() {
   const [live, setLive] = useState(false);
-  const { data, error, loading, reload, refresh } = useApi<TeamPage>('/my-team', live ? LIVE_REFRESH_MS : 0);
-  useEffect(() => setLive(isLive(data)), [data]);
+  // The week menu next to Starters opens another week to plan its lineup; null = this week.
+  const [week, setWeek] = useState<number | null>(null);
+  const { data: fresh, error, loading, reload, refresh } = useApi<TeamPage>(week ? `/my-team?week=${week}` : '/my-team', live ? LIVE_REFRESH_MS : 0);
+  // Keep showing the last page (faded) while another week loads, instead of a blank screen.
+  const last = useRef<TeamPage | null>(null);
+  if (fresh) last.current = fresh;
+  const data = fresh ?? last.current;
+  useEffect(() => setLive(isLive(fresh)), [fresh]);
   // Keep-or-walk calls, only from the final game to the June 30 rollover and until every one is made.
   const calls = useApi<{ calls: Expiring['calls']; sleeper_league_id: string }>('/my-team/calls');
 
@@ -33,7 +39,7 @@ export default function MyTeam() {
 
   return (
     <Screen loading={loading}>
-      <TeamView team={data} eyebrow="OWNER PORTAL" badge={<PendingBadge />} top={callsCard} onChange={refresh} />
+      <TeamView team={data} eyebrow="OWNER PORTAL" badge={<PendingBadge />} top={callsCard} onChange={refresh} onWeek={setWeek} />
     </Screen>
   );
 }

@@ -1,8 +1,8 @@
 import { router, useFocusEffect } from 'expo-router';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
-import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Linking, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import type { Pick, Player, TeamPage, TeamWeek, WeekPlayer } from '../../lib/api';
+import type { Pick, Player, TeamPage, TeamWeek, TeamWeekItem, WeekPlayer } from '../../lib/api';
 import { colors } from '../../lib/theme';
 import { PlayerFace } from '../PlayerFace';
 import { LineupSheet, type Picking, SlotChip } from './LineupSheet';
@@ -23,7 +23,7 @@ export const isLive = (team: TeamPage | null) => !!team?.week && !team.week.is_f
 
 // One owner's team with the same three tabs as My Team (league activity lives on League > Teams). Other owners' teams
 // are read only apart from the Trade pill next to the name.
-export function TeamView({ team, eyebrow, badge, top, onChange }: { team: TeamPage; eyebrow?: string; badge?: ReactNode; top?: ReactNode; onChange?: () => void }) {
+export function TeamView({ team, eyebrow, badge, top, onChange, onWeek }: { team: TeamPage; eyebrow?: string; badge?: ReactNode; top?: ReactNode; onChange?: () => void; onWeek?: (week: number | null) => void }) {
   const [tab, setTab] = useState<(typeof TABS)[number]>('Roster');
   // Always open on the roster. Coming back from a player or cap page opened here keeps the tab;
   // leaving for another part of the app and coming back starts over.
@@ -31,7 +31,10 @@ export function TeamView({ team, eyebrow, badge, top, onChange }: { team: TeamPa
   useFocusEffect(useCallback(() => {
     const back = opened.current;
     opened.current = false;
-    if (!back) setTab('Roster');
+    if (!back) {
+      setTab('Roster');
+      onWeek?.(null); // My Team always opens on this week
+    }
     return () => { opened.current = openedHere; openedHere = false; };
   }, []));
   useEffect(() => setTab('Roster'), [team.team_id]);
@@ -48,19 +51,98 @@ export function TeamView({ team, eyebrow, badge, top, onChange }: { team: TeamPa
   }
   return (
     <>
-      {/* My Team: no team name on top, just the portal label (and the pending trades badge). */}
-      <Title eyebrow={eyebrow} badge={badge} />
+      {/* My Team (Tommy, 2026-11-17): team name, record and cap left as a subtitle, standings spot in the circle,
+          then this week's matchup as one slim bar. */}
+      <MyHeader team={team} badge={badge} />
+      <MatchupBar team={team} />
       {top}
-      <TopTiles team={team} tab={tab} />
       <UnderlineTabs value={tab} onChange={setTab} />
       <SwipeTabs
         options={TABS}
         value={tab}
         onChange={setTab}
         render={(t) =>
-          t === 'Roster' ? <RosterTab team={team} onChange={onChange} /> : t === 'Contracts' ? <ContractsTab team={team} /> : <PicksTab team={team} />
+          t === 'Roster' ? <RosterTab team={team} onChange={onChange} onWeek={onWeek} /> : t === 'Contracts' ? <ContractsTab team={team} /> : <PicksTab team={team} />
         }
       />
+    </>
+  );
+}
+
+function MyHeader({ team, badge }: { team: TeamPage; badge?: ReactNode }) {
+  const r = team.record;
+  const now = team.cap.by_year.find((y) => y.season === team.season) ?? team.cap.by_year[0];
+  const space = now?.space ?? team.cap.space;
+  return (
+    <View style={styles.hdr}>
+      <View style={ui.flex}>
+        <View style={styles.nameLine}>
+          <Text style={styles.teamName} numberOfLines={1}>{team.team_name}</Text>
+          {badge}
+        </View>
+        <Text style={styles.hdrSub}>{record(r.wins, r.losses, r.ties)} · {r.standing_points} SP</Text>
+        <Text style={[styles.hdrSub, space < 0 ? styles.over : styles.capLeft]}>{space < 0 ? `${dollars(-space)} over the cap` : `${dollars(space)} cap left`}</Text>
+      </View>
+      {r.rank ? (
+        <View style={styles.rank}>
+          <Text style={styles.rankNum}>{ordinal(r.rank)}</Text>
+          <Text style={styles.rankWord}>PLACE</Text>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+// "Wk 11 vs Nick   118.4 – 112.0  58%": projections before kickoff, the score once games start.
+function MatchupBar({ team }: { team: TeamPage }) {
+  const w = team.week;
+  if (!w?.opponent) return null;
+  const started = w.is_final || Object.values(w.players).some((p) => p.status === 'playing' || p.status === 'final');
+  const mine = started ? w.score : w.projected;
+  const theirs = started ? w.opponent.score : w.opponent.projected;
+  const pct = w.win_chance != null ? Math.round(w.win_chance * 100) : null;
+  return (
+    <View style={styles.mbar}>
+      <Text style={styles.mbarLeft} numberOfLines={1}>Wk {w.week} vs <Text style={styles.mbarName}>{firstName(w.opponent.name)}</Text></Text>
+      <Text style={styles.mbarRight}>
+        <Text style={styles.mbarName}>{mine != null ? mine.toFixed(1) : '—'}</Text> – {theirs != null ? theirs.toFixed(1) : '—'}
+        {w.is_final ? <Text style={styles.mbarFinal}>  {w.score > w.opponent.score ? 'W' : w.score < w.opponent.score ? 'L' : 'T'}</Text>
+          : pct != null ? <Text style={styles.mbarPct}>  {pct}%</Text> : null}
+      </Text>
+    </View>
+  );
+}
+
+// The quiet week button next to Starters and its menu: past results, this week (gold), later opponents, playoffs.
+function WeekButton({ team, onWeek }: { team: TeamPage; onWeek: (week: number | null) => void }) {
+  const [open, setOpen] = useState(false);
+  const [at, setAt] = useState({ top: 0, right: 16 });
+  const ref = useRef<any>(null); // RN View instance (measureInWindow)
+  const shown = team.week?.week ?? team.current_week ?? 1;
+  const items = team.weeks ?? [];
+  const show = () => ref.current?.measureInWindow((_x: number, y: number, _w: number, h: number) => { setAt({ top: y + h + 6, right: 16 }); setOpen(true); });
+  return (
+    <>
+      <Pressable ref={ref} onPress={show} hitSlop={8} style={styles.wk}>
+        <Text style={styles.wkText}>Wk {shown} ▾</Text>
+      </Pressable>
+      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={() => setOpen(false)} />
+        <View style={[styles.menu, { top: at.top, right: at.right }]}>
+          {items.map((it: TeamWeekItem) => {
+            const now = it.week === team.current_week;
+            const sub = it.playoffs ? 'Playoffs'
+              : it.result && it.score ? `${it.result} ${it.score[0].toFixed(1)} – ${it.score[1].toFixed(1)}${it.opponent ? ` vs ${firstName(it.opponent)}` : ''}`
+              : it.opponent ? `vs ${firstName(it.opponent)}` : 'No game';
+            return (
+              <Pressable key={it.week} onPress={() => { setOpen(false); onWeek(now ? null : it.week); }} style={[styles.mi, now && styles.miNow]}>
+                <Text style={[styles.miWeek, now && styles.gold, it.playoffs && !now && styles.miPlayoff]}>Wk {it.week}</Text>
+                <Text style={styles.miSub}>{sub}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      </Modal>
     </>
   );
 }
@@ -182,7 +264,7 @@ function PlayerRow({ p, first, showSlot, chip, onEmpty, w, season }: { p: Player
               <Text style={[ui.name, styles.shrink]} numberOfLines={1}>{p.name}</Text>
               {tag}
             </View>
-            <GameText p={p} w={w} />
+            <GameText p={p} w={w} season={season} />
             {w?.line?.length ? (
               <Text style={styles.statLine}>
                 {w.line.map((s, i) => (
@@ -193,24 +275,25 @@ function PlayerRow({ p, first, showSlot, chip, onEmpty, w, season }: { p: Player
           </View>
           <Points p={p} w={w} />
         </View>
-        <ContractFoot p={p} w={w} season={season} />
       </View>
     </Pressable>
   );
 }
 
 // The game: kickoff time before, the clock and score (with a football when his team has the ball) during, the result after.
-function GameText({ p, w }: { p: Player; w?: WeekPlayer }) {
+function GameText({ p, w, season }: { p: Player; w?: WeekPlayer; season?: number }) {
   const g = w?.game;
-  if (!w) return <Text style={ui.sub}>{p.nfl_team || 'FA'}</Text>;
-  if (w.status === 'bye') return <Text style={styles.game}>BYE</Text>;
+  // The contract rides on the game line (Tommy, 2026-11-17: no separate bar under each player).
+  const deal = season != null ? <Text style={styles.deal}> · {contractText(p, season)}</Text> : null;
+  if (!w) return <Text style={ui.sub}>{p.nfl_team || 'FA'}{deal}</Text>;
+  if (w.status === 'bye') return <Text style={styles.game}><Text style={styles.byeWord}>BYE</Text>{deal}</Text>;
   const vs = g ? `${g.home ? 'vs' : '@'} ${g.opp}` : p.nfl_team || '';
   if (g && (w.status === 'playing' || g.state === 'in')) {
     return (
       <View style={styles.gameRow}>
         <View style={styles.dot} />
         <Text style={[styles.game, styles.gameLive]} numberOfLines={1}>
-          <Text style={styles.clock}>{g.quarter > 4 ? 'OT' : `Q${g.quarter}`} {g.clock}</Text> {g.score}-{g.opp_score} {vs}
+          <Text style={styles.clock}>{g.quarter > 4 ? 'OT' : `Q${g.quarter}`} {g.clock}</Text> {g.score}-{g.opp_score} {vs}{deal}
         </Text>
         {g.possession ? <View style={styles.ball}><View style={styles.lace} /></View> : null}
       </View>
@@ -218,10 +301,10 @@ function GameText({ p, w }: { p: Player; w?: WeekPlayer }) {
   }
   if (g && (w.status === 'final' || g.state === 'post')) {
     const res = g.score > g.opp_score ? 'W' : g.score < g.opp_score ? 'L' : 'T';
-    return <Text style={styles.game} numberOfLines={1}><Text style={styles.finalWord}>Final</Text> {res} {g.score}-{g.opp_score} {vs}</Text>;
+    return <Text style={styles.game} numberOfLines={2}><Text style={styles.finalWord}>Final</Text> {res} {g.score}-{g.opp_score} {vs}{deal}</Text>;
   }
-  if (w.status === 'final') return <Text style={styles.game}>Final</Text>;
-  return <Text style={styles.game} numberOfLines={1}>{[w.kickoff ? kickoffText(w.kickoff) : null, vs].filter(Boolean).join(' ')}</Text>;
+  if (w.status === 'final') return <Text style={styles.game}>Final{deal}</Text>;
+  return <Text style={styles.game} numberOfLines={2}>{[w.kickoff ? kickoffText(w.kickoff) : null, vs].filter(Boolean).join(' ')}{deal}</Text>;
 }
 
 // Before kickoff his projection; during the game live points with the projection that follows the game;
@@ -254,28 +337,14 @@ function Points({ p, w }: { p: Player; w?: WeekPlayer }) {
   return (
     <View style={ui.right}>
       <Text style={[styles.big, styles.bigPre]}>{w.status === 'bye' ? '—' : w.proj != null ? w.proj.toFixed(1) : '—'}</Text>
-      <Text style={styles.under}>PROJ</Text>
     </View>
   );
 }
 
-// Salary, years and the last season of the deal; on the right his season PPG, or once his game is done what each point cost.
-function ContractFoot({ p, w, season }: { p: Player; w?: WeekPlayer; season: number }) {
-  if (p.no_contract) {
-    return <View style={styles.foot}><Text style={styles.footText}>No contract</Text></View>;
-  }
-  const years = Math.max(p.years_left, 1);
-  const done = w?.status === 'final' && w.points > 0 && p.contract_salary > 0;
-  return (
-    <View style={styles.foot}>
-      <Text style={styles.footText} numberOfLines={1}>
-        <Text style={styles.footGold}>{dollars(p.contract_salary)}</Text> · {years} yr{years === 1 ? '' : 's'} · through {season + years - 1}
-      </Text>
-      <Text style={styles.footText} numberOfLines={1}>
-        {done ? <><Text style={styles.footGold}>${(p.contract_salary / w!.points).toFixed(2)} per point</Text> this week</> : p.ppg != null ? `${p.ppg.toFixed(1)} PPG this season` : 'no games yet'}
-      </Text>
-    </View>
-  );
+// "$48 · thru 2027" (or "No contract").
+function contractText(p: Player, season: number) {
+  if (p.no_contract) return 'No contract';
+  return `${dollars(p.contract_salary)} · thru ${season + Math.max(p.years_left, 1) - 1}`;
 }
 
 // "$48" for whole dollars, "$12.5" otherwise.
@@ -297,7 +366,7 @@ function pointsLabel(week: TeamWeek | null | undefined) {
   return ps.some((p) => p.status === 'playing' || p.status === 'final') ? 'LIVE PTS' : 'PROJ PTS';
 }
 
-function RosterTab({ team, onChange, after }: { team: TeamPage; onChange?: () => void; after?: ReactNode }) {
+function RosterTab({ team, onChange, after, onWeek }: { team: TeamPage; onChange?: () => void; after?: ReactNode; onWeek?: (week: number | null) => void }) {
   const lineup = team.lineup;
   const editing = !!lineup?.enabled;
   const [showBench, setShowBench] = useState(editing && team.is_me);
@@ -318,9 +387,9 @@ function RosterTab({ team, onChange, after }: { team: TeamPage; onChange?: () =>
     <>
       {editing && lineup ? (
         <LineupSheet lineup={lineup} players={[...starters, ...bench]} picking={picking} onClose={() => setPicking(null)} onSaved={() => onChange?.()}
-          game={(p) => <GameText p={p} w={week[p.player_id]} />} points={(p) => <Points p={p} w={week[p.player_id]} />} />
+          game={(p) => <GameText p={p} w={week[p.player_id]} season={team.season} />} points={(p) => <Points p={p} w={week[p.player_id]} />} />
       ) : null}
-      <Card title="Starters" right={pointsLabel(team.week)}>
+      <Card title="Starters" right={onWeek && team.weeks?.length ? <WeekButton team={team} onWeek={onWeek} /> : pointsLabel(team.week)}>
         {starters.length ? starters.map((p, i) => (
           <PlayerRow key={p.player_id || `empty-${i}`} p={p} first={i === 0} showSlot chip={slotChip(i)} w={week[p.player_id]} season={team.season}
             onEmpty={editing ? () => setPicking({ kind: 'slot', index: i }) : undefined} />
@@ -386,8 +455,9 @@ function ContractsTab({ team }: { team: TeamPage }) {
   const all = [...(team.contracts.all ?? [])].sort((a, b) => posRank(a.pos) - posRank(b.pos) || b.contract_salary - a.contract_salary);
   return (
     <>
+      {team.is_me ? <CapBars team={team} /> : null}
       <Card
-        title={team.is_me ? 'Your contracts' : 'Contracts'}
+        title="Contracts"
         right={
           <Pressable onPress={() => go('/league-cap')} hitSlop={8}>
             <Text style={ui.link}>Whole league ›</Text>
@@ -397,20 +467,21 @@ function ContractsTab({ team }: { team: TeamPage }) {
         {all.length === 0 ? <Note>No contracts yet.</Note> : null}
         {all.map((p, i) => {
           const tag = p.designation === 'taxi' ? 'T' : p.designation === 'ir' ? 'IR' : p.is_rookie ? 'R' : null;
-          const years = Math.max(p.years_left, 1);
+          const left = Math.max(p.years_left, 1);
           return (
             <Row key={p.player_id} first={i === 0} onPress={() => go(`/player/${p.player_id}`)}>
               <Face p={p} label={p.pos} />
               <View style={ui.flex}>
                 <View style={styles.nameLine}>
                   <Text style={[ui.name, styles.shrink]} numberOfLines={1}>{p.name}</Text>
+                  <YearDots left={left} total={Math.max(p.total_years ?? 0, left)} />
                   {tag ? <Pill label={tag} tone={tag === 'IR' ? 'out' : 'gold'} /> : null}
                 </View>
-                <Text style={[ui.sub, styles.subGap]}>{money(p.contract_salary)} · {years} yr{years === 1 ? '' : 's'}</Text>
+                <Text style={[ui.sub, styles.subGap]}>{p.pos} · {p.ppg != null ? `${p.ppg.toFixed(1)} PPG` : 'no games yet'}</Text>
               </View>
               <View style={ui.right}>
-                <Text style={styles.cPpg}>{p.ppg != null ? p.ppg.toFixed(1) : '—'}<Text style={styles.ppgUnit}> PPG</Text></Text>
-                <Text style={styles.perDollar}>{p.per_dollar != null ? `${p.per_dollar.toFixed(2)} PPG / $` : '— PPG / $'}</Text>
+                <Text style={styles.cSalary}>{dollars(p.contract_salary)}</Text>
+                <Text style={styles.under}>thru {p.through}</Text>
               </View>
             </Row>
           );
@@ -436,6 +507,31 @@ function ContractsTab({ team }: { team: TeamPage }) {
   );
 }
 
+// Filled dots = years left, all the dots = the whole contract (Tommy, 2026-11-17).
+function YearDots({ left, total }: { left: number; total: number }) {
+  return (
+    <View style={styles.dots}>
+      {Array.from({ length: Math.min(total, 6) }, (_, i) => <View key={i} style={[styles.ydot, i >= left && styles.ydotOff]} />)}
+    </View>
+  );
+}
+
+// This season and the next two as thin bars of the cap.
+function CapBars({ team }: { team: TeamPage }) {
+  const cap = team.salary_cap || 1;
+  return (
+    <Card title="Cap by year" right={`of ${dollars(team.salary_cap)}`}>
+      {team.cap.by_year.slice(0, 3).map((y) => (
+        <View key={y.season} style={styles.yr}>
+          <Text style={styles.yrLabel}>{y.season}</Text>
+          <View style={styles.track}><View style={[styles.fill, { width: `${Math.max(0, Math.min(1, y.used / cap)) * 100}%` }, y.space < 0 && styles.fillOver]} /></View>
+          <Text style={[styles.yrText, y.space < 0 && styles.over]}>{y.space < 0 ? `${dollars(-y.space)} over` : `${dollars(y.space)} left`}</Text>
+        </View>
+      ))}
+    </Card>
+  );
+}
+
 function deadYears(d: { years_left?: number; more?: boolean }) {
   const n = d.years_left ?? 1;
   return `${n}${d.more ? '+' : ''} ${n === 1 && !d.more ? 'yr' : 'yrs'}`;
@@ -443,31 +539,33 @@ function deadYears(d: { years_left?: number; more?: boolean }) {
 
 const ROUND = ['', '1st', '2nd', '3rd', '4th', '5th'];
 
+// One row per pick: its slot (projected for next year's draft, from the standings), where it came from; picks
+// traded away stay in the list, dimmed, with who has them now.
 function PicksTab({ team }: { team: TeamPage }) {
-  const years = [...new Set(team.picks.owned.map((p) => p.year))];
-  const away = team.picks.traded_away;
+  const all = [...team.picks.owned.map((p) => ({ p, gone: false })), ...team.picks.traded_away.map((p) => ({ p, gone: true }))];
+  const years = [...new Set(all.map((x) => x.p.year))].sort();
   return (
     <>
       {years.length === 0 ? <Note>No draft picks on record.</Note> : null}
       {years.map((year) => {
-        const picks = team.picks.owned.filter((p) => p.year === year);
+        const rows = all.filter((x) => x.p.year === year).sort((a, b) => a.p.round - b.p.round || (a.p.slot ?? '').localeCompare(b.p.slot ?? ''));
+        const next = year === team.season + 1;
         return (
-          <Card key={year} title={`${year} draft`} right={`${picks.length} pick${picks.length === 1 ? '' : 's'}`}>
-            {picks.map((p: Pick, i) => (
-              <Row key={`${p.round}-${p.original_owner}`} first={i === 0}>
-                <Pos label={ROUND[p.round] ?? `R${p.round}`} />
-                <View style={ui.flex}>
-                  <Text style={ui.name}>{year} {ROUND[p.round] ?? `Round ${p.round}`}</Text>
-                  <Text style={ui.sub}>{p.own ? 'Own' : `from ${p.original_owner}`}</Text>
+          <Card key={year} title={next ? `${year} Rookie Draft` : String(year)} right={next ? 'projected slot' : `slot set after ${year - 1}`}>
+            {rows.map(({ p, gone }: { p: Pick; gone: boolean }, i) => (
+              <Row key={`${p.round}-${p.original_owner}-${gone}`} first={i === 0}>
+                <View style={[styles.slot, p.own && !gone && styles.slotOwn, gone && styles.slotGone]}>
+                  <Text style={[styles.slotText, p.own && !gone && styles.slotTextOwn]}>{p.slot ?? `R${p.round}`}</Text>
+                </View>
+                <View style={[ui.flex, gone && styles.dim]}>
+                  <Text style={ui.name}>Round {p.round}</Text>
+                  <Text style={ui.sub}>{gone ? `Traded to ${firstName(p.current_owner)}` : p.own ? 'Your own pick' : `From ${firstName(p.original_owner)}`}</Text>
                 </View>
               </Row>
             ))}
           </Card>
         );
       })}
-      {away.length ? (
-        <Note>Traded away: {away.map((p) => `${p.year} ${ROUND[p.round] ?? p.round} (to ${p.current_owner})`).join(', ')}</Note>
-      ) : null}
     </>
   );
 }
@@ -569,6 +667,47 @@ function HeadToHead({ team }: { team: TeamPage }) {
 }
 
 const styles = StyleSheet.create({
+  hdr: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 12 },
+  teamName: { color: colors.text, fontSize: 26, fontWeight: '900', flexShrink: 1 },
+  hdrSub: { color: colors.muted, fontSize: 13, marginTop: 2 },
+  capLeft: { color: colors.gold, fontWeight: '600' },
+  over: { color: '#EF7A7A', fontWeight: '700' },
+  rank: { width: 52, height: 52, borderRadius: 26, borderWidth: 2, borderColor: colors.gold, alignItems: 'center', justifyContent: 'center' },
+  rankNum: { color: colors.gold, fontSize: 17, fontWeight: '900' },
+  rankWord: { color: colors.muted, fontSize: 8, fontWeight: '800', letterSpacing: 0.8 },
+  mbar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, borderWidth: 1, borderColor: '#22352B', borderRadius: 14, paddingVertical: 10, paddingHorizontal: 12, marginBottom: 10, backgroundColor: '#0B2118' },
+  mbarLeft: { color: colors.muted, fontSize: 13.5, flexShrink: 1 },
+  mbarName: { color: colors.text, fontWeight: '800' },
+  mbarRight: { color: colors.muted, fontSize: 13.5 },
+  mbarPct: { color: colors.live, fontWeight: '800' },
+  mbarFinal: { color: colors.gold, fontWeight: '900' },
+  wk: { borderWidth: 1, borderColor: '#2F4136', borderRadius: 8, paddingVertical: 3, paddingHorizontal: 9 },
+  wkText: { color: '#A9A493', fontSize: 12, fontWeight: '700' },
+  menu: { position: 'absolute', width: 250, maxHeight: 460, backgroundColor: '#10291F', borderWidth: 1, borderColor: colors.gold, borderRadius: 16, padding: 8, shadowColor: '#000', shadowOpacity: 0.6, shadowRadius: 20, shadowOffset: { width: 0, height: 12 } },
+  mi: { paddingVertical: 7, paddingHorizontal: 8, borderRadius: 10 },
+  miNow: { backgroundColor: 'rgba(200,155,74,0.18)' },
+  miWeek: { color: colors.text, fontSize: 13.5, fontWeight: '800' },
+  miPlayoff: { color: colors.live },
+  miSub: { color: colors.muted, fontSize: 11.5, marginTop: 1 },
+  gold: { color: colors.gold },
+  deal: { color: colors.muted },
+  byeWord: { color: '#EF7A7A', fontWeight: '800' },
+  dots: { flexDirection: 'row', gap: 3, marginLeft: 2 },
+  ydot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.gold },
+  ydotOff: { backgroundColor: '#2F4136' },
+  cSalary: { color: colors.gold, fontSize: 18, fontWeight: '900' },
+  yr: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 6 },
+  yrLabel: { color: colors.text, fontSize: 13, fontWeight: '800', width: 40 },
+  track: { flex: 1, height: 6, borderRadius: 3, backgroundColor: '#22352B', overflow: 'hidden' },
+  fill: { height: '100%', backgroundColor: colors.gold },
+  fillOver: { backgroundColor: '#EF7A7A' },
+  yrText: { color: colors.muted, fontSize: 12, width: 78, textAlign: 'right' },
+  slot: { minWidth: 46, height: 30, borderRadius: 8, borderWidth: 1, borderColor: colors.gold, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
+  slotOwn: { backgroundColor: colors.gold },
+  slotGone: { borderColor: '#2F4136' },
+  slotText: { color: colors.gold, fontSize: 12.5, fontWeight: '900' },
+  slotTextOwn: { color: '#071A12' },
+  dim: { opacity: 0.5 },
   smallLink: { color: colors.gold, fontSize: 11, fontWeight: '800', letterSpacing: 1 },
   rings: { flexDirection: 'row', justifyContent: 'space-around', paddingVertical: 6 },
   ringCol: { alignItems: 'center', gap: 6 },
