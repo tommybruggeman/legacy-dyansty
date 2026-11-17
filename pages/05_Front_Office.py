@@ -228,14 +228,21 @@ def _move_cards(msg: dict, index: int) -> None:
             st.markdown(f"**{card.get('title')}**")
             for line in card.get("lines") or []:
                 _render_chat_markdown(line)
-            status = card.get("status")
+            status, options = card.get("status"), card.get("options") or []
             if status == "pending":
-                c1, c2 = st.columns(2)
-                pressed = ("confirm" if c1.button("Confirm", key=f"mv_ok_{index}_{card['id']}", type="primary", use_container_width=True)
-                           else "dismiss" if c2.button("Dismiss", key=f"mv_no_{index}_{card['id']}", use_container_width=True) else None)
+                cols = st.columns(max(1, len(options)))
+                pressed = None
+                for col, opt in zip(cols, options):
+                    if col.button(str(opt.get("label")), key=f"mv_{index}_{card['id']}_{opt.get('id')}", help=opt.get("sub") or None,
+                                  type="primary" if opt.get("pick") else "secondary", use_container_width=True):
+                        pressed = ("confirm", opt.get("id"))
+                    if opt.get("sub"):
+                        col.caption(str(opt["sub"]))
+                if not pressed and st.button("Not now", key=f"mv_no_{index}_{card['id']}"):
+                    pressed = ("dismiss", None)
                 if pressed:
-                    done = settle_move(request_context, team, str(card["id"]), pressed)
-                    card.update({k: done.get(k) for k in ("status", "result")})
+                    done = settle_move(request_context, team, str(card["id"]), pressed[0], pressed[1])
+                    card.update({k: done.get(k) for k in ("status", "result", "chosen")})
                     st.rerun()
             elif status == "done":
                 st.success(card.get("result") or "Done.")

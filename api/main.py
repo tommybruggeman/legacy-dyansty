@@ -1907,16 +1907,17 @@ def front_office_chat_resume(owner: tuple[Client, Any] = Depends(owner_client)) 
 
 class MoveRequest(BaseModel):
     conversation_id: str
+    option: str | None = None  # the button tapped; left out = the GM's pick
 
 
 @app.post("/front-office/moves/{move_id}/{action}")
 def front_office_move(move_id: str, action: str, body: MoveRequest, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
-    """confirm | dismiss a move card the GM proposed. Confirm runs the same checked database call as the owner's own tap."""
+    """confirm (with the option tapped) | dismiss a move card the GM proposed. Confirm runs the same checked database call as the owner's own tap."""
     if action not in {"confirm", "dismiss"} or not trade_offers.is_uuid(move_id) or not trade_offers.is_uuid(body.conversation_id):
         raise HTTPException(status_code=400, detail="Unknown action.")
     session = _front_office(*owner)
     try:
-        card = front_office.settle_move(session, body.conversation_id, move_id, action)
+        card = front_office.settle_move(session, body.conversation_id, move_id, action, body.option)
     except gm_moves.MoveError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     if card["status"] == gm_moves.DONE:

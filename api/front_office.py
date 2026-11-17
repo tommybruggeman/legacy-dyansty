@@ -480,7 +480,7 @@ def move_cards(session: Session) -> list[dict[str, Any]]:
     return [gm_moves.public(m) for m in (tray.moves if tray else [])]
 
 
-def settle_move(session: Session, conversation_id: str, move_id: str, action: str) -> dict[str, Any]:
+def settle_move(session: Session, conversation_id: str, move_id: str, action: str, option_id: str | None = None) -> dict[str, Any]:
     """The owner tapped Confirm (or Dismiss) on a card the GM proposed. Confirm makes the move through the same
     database calls as the owner's own taps; the card's new status is saved with the conversation."""
     o, client = session.owner, session.client
@@ -502,7 +502,7 @@ def settle_move(session: Session, conversation_id: str, move_id: str, action: st
         return set_lineups(session, fo, session.state())
 
     done = gm_moves.settle(client, league_id=o.league_id, season=o.season, team_id=o.league_team_id, move=move, action=action,
-                           lineup_data=lineup_data)
+                           lineup_data=lineup_data, option_id=option_id)
     messages[i]["moves"] = [done if str(m.get("id")) == move_id else m for m in messages[i].get("moves") or []]
     memory.save_conversation(conversation_id, messages)
     if done["status"] == gm_moves.DONE:
