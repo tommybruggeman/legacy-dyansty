@@ -11,7 +11,9 @@ race in scoring/speed_test.py. GET answers 200 (health check). Prints counts onl
 ALERTS=1 (the live setup, replacing the e2-micro): each POST also runs one pass of the owners' push alerts
 (scripts/push_alerts.py, the e2-micro ran it every 5 minutes) and, alongside the stretch, the lock screen Live Activity
 loop (scripts/live_activity_watcher.py). The Live Activity loop stops as soon as no activity is running, so a quiet
-POST still answers within seconds and bills next to nothing.
+POST still answers within seconds and bills next to nothing. On calls at :00, :15, :30 and :45 it also runs the
+15-minute Sleeper sync (scripts/run_sleeper_sync.py then scripts/notify_trades.py, both safe to repeat), which the
+e2-micro used to run; GitHub's sleeper-sync.yml stays as a 4-hourly backup.
 """
 from __future__ import annotations
 
@@ -34,6 +36,20 @@ def _alerts() -> None:
         push_alerts.main()
     except Exception as exc:
         print(f"ALERTS_ERROR {type(exc).__name__}", flush=True)
+
+
+def _sleeper_sync() -> None:
+    """The 15-minute Sleeper sync, each script in its own process (they are written as standalone scripts)."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    for name in ("run_sleeper_sync.py", "notify_trades.py"):
+        try:
+            code = subprocess.run([sys.executable, os.path.join(here, name)], timeout=240).returncode
+            if code:
+                print(f"SYNC_ERROR {name} exit {code}", flush=True)
+                return
+        except Exception as exc:
+            print(f"SYNC_ERROR {name} {type(exc).__name__}", flush=True)
+            return
 
 
 def _live_activities(stop: float) -> None:
@@ -98,6 +114,8 @@ class Handler(BaseHTTPRequestHandler):
                 if os.getenv("ALERTS") == "1":
                     stop = time.time() + float(os.getenv("MAX_MINUTES", "5.5")) * 60
                     extras = [threading.Thread(target=_alerts), threading.Thread(target=_live_activities, args=(stop,))]
+                    if time.gmtime().tm_min % 15 < 5:  # the :00/:15/:30/:45 calls (timers fire every 5 minutes)
+                        extras.append(threading.Thread(target=_sleeper_sync))
                     for t in extras:
                         t.start()
                 code = live_watcher.main()
