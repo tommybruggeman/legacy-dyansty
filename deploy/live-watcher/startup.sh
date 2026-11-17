@@ -1,6 +1,7 @@
 #!/bin/bash
 # Boot script for the free e2-micro that runs the game-day live stats watcher (scripts/live_watcher.py)
-# and, every 5 minutes, the owners' push alert job (scripts/push_alerts.py; GitHub's schedule ran hours late).
+# and, every 5 minutes, the owners' push alert job (scripts/push_alerts.py; GitHub's schedule ran hours late), and
+# every 15 minutes the Sleeper sync (scripts/run_sleeper_sync.py; GitHub ran its 15-minute schedule about every 6 hours).
 # Runs on every boot: installs what's missing, pulls the latest main from the public repo, reads the Supabase
 # settings from Google Secret Manager (secrets legacy-supabase-url and legacy-supabase-service-key), and starts
 # the watcher as a systemd service that restarts itself if it ever stops. It also pulls the latest code daily.
@@ -136,6 +137,46 @@ UNIT
 sed -i 's|^ExecStart=/bin/systemctl restart legacy-watcher.service$|ExecStart=/bin/systemctl restart legacy-watcher.service legacy-live-activity.service|' \
   /etc/systemd/system/legacy-watcher-update.service
 
+# Sleeper sync every 15 minutes (Tommy, 2026-11-17): GitHub's "every 15 minutes" schedule only ran about every 6 hours,
+# so trades and pickups reached the app hours late. Same job as .github/workflows/sleeper-sync.yml (kept as a backup);
+# the sync is idempotent by key and flock keeps two passes on this VM from overlapping. Then the trade alerts.
+{
+  echo "SUPABASE_URL=$(secret legacy-supabase-url)"
+  echo "SUPABASE_SERVICE_ROLE_KEY=$(secret legacy-supabase-service-key)"
+  echo "SUPABASE_ANON_KEY=$(secret legacy-supabase-anon-key 2>/dev/null || true)"
+  echo "SYNC_BOT_EMAIL=$(secret legacy-sync-bot-email 2>/dev/null || true)"
+  echo "SYNC_BOT_PASSWORD='$(secret legacy-sync-bot-password 2>/dev/null || true)'"
+} > /etc/legacy-sync.env
+
+cat > /etc/systemd/system/legacy-sleeper-sync.service <<UNIT
+[Unit]
+Description=Legacy Dynasty Sleeper sync (one pass) + trade alerts
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/legacy-sync.env
+WorkingDirectory=$APP
+ExecStartPre=-/usr/bin/git -C $APP pull --ff-only --quiet
+ExecStart=/usr/bin/flock -n /run/legacy-sleeper-sync.lock $APP/.venv/bin/python scripts/run_sleeper_sync.py
+ExecStartPost=-$APP/.venv/bin/python scripts/notify_trades.py
+TimeoutStartSec=600
+MemoryMax=500M
+UNIT
+cat > /etc/systemd/system/legacy-sleeper-sync.timer <<UNIT
+[Unit]
+Description=Sleeper sync every 15 minutes
+
+[Timer]
+OnBootSec=4min
+OnUnitActiveSec=15min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target
+UNIT
+
 systemctl daemon-reload
-systemctl enable --now legacy-watcher.service legacy-watcher-update.timer legacy-alerts.timer legacy-live-activity.service
+systemctl enable --now legacy-watcher.service legacy-watcher-update.timer legacy-alerts.timer legacy-sleeper-sync.timer legacy-live-activity.service
 systemctl restart legacy-watcher.service legacy-live-activity.service

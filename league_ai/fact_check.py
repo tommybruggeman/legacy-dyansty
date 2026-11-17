@@ -34,6 +34,9 @@ Rules
 - Small rounding is fine (17.84 quoted as 17.8 or "about 18").
 - Generic PPR figures (fantasy_points_ppr, ppg_ppr) and league-scoring figures (ppg_league, league_points,
   this_week_projection) differ on purpose; only flag a number that matches neither.
+- The answer may be about ANOTHER league the owner plays in (an owner_screenshot or get_outside_league lookup). Its
+  rosters, scoring, records, salaries and owners come from that screenshot or lookup: never correct them from the
+  LEAGUE PACK, which is a different league.
 - If nothing is wrong, verdict "ok" and an empty list.
 - If something is wrong, verdict "fix", list each problem, and give corrected_answer: the ANSWER with only the wrong
   facts changed (same wording, length, order and formatting otherwise). If a wrong fact was the reason for the

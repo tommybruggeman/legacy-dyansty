@@ -103,7 +103,7 @@ def app_session(request_context: Any, team: dict) -> Any:
 
 
 def run_league_ai(*, request_context: Any, team: dict, question: str, history: list[dict[str, str]], tools: ToolRegistry | None = None, on_event: Any = None,
-                  week_context: str | None = None, fo: dict | None = None) -> AnswerResult:
+                  week_context: str | None = None, fo: dict | None = None, images: list[Any] | None = None) -> AnswerResult:
     from api import front_office as app_fo
 
     client = auth_client()
@@ -122,7 +122,7 @@ def run_league_ai(*, request_context: Any, team: dict, question: str, history: l
         tools, seen = app_fo.gm_tools(session, fo, question=lambda: question, conversation_id=lambda: st.session_state.get(CONVERSATION_KEY),
                                       state=_cached_state(owner.league_id, owner.season, owner.user_id, epoch))
     turn = runtime.chat_turn(client, owner, question=question, history=history, conversation_id=st.session_state.get(CONVERSATION_KEY),
-                             pack=pack, tools=tools, on_event=on_event, week_context=week_context)
+                             pack=pack, tools=tools, on_event=on_event, week_context=week_context, **({"images": images} if images else {}))
     if session is not None and turn.result.ok:
         try:
             app_fo.after_answer(session, seen, conversation_id=turn.conversation_id, question=question, answer=turn.result.text)
@@ -145,7 +145,9 @@ def resume_conversation(request_context: Any) -> list[dict[str, str]] | None:
     if not latest or not latest.get("messages"):
         return None
     st.session_state[CONVERSATION_KEY] = latest["id"]
-    return [{"role": m.get("role", "user"), "content": m.get("content", "")} for m in latest["messages"]]
+    from api.front_office import history_message
+
+    return [history_message(m) for m in latest["messages"]]
 
 
 def start_new_conversation() -> None:
@@ -163,7 +165,9 @@ def load_conversation(request_context: Any, conversation_id: str) -> list[dict[s
     if not row or not row.get("messages"):
         return None
     st.session_state[CONVERSATION_KEY] = row["id"]
-    msgs = [{"role": m.get("role", "user"), "content": m.get("content", "")} for m in row["messages"]]
+    from api.front_office import history_message
+
+    msgs = [history_message(m) for m in row["messages"]]
     return [m for m in msgs if not str(m.get("content", "")).startswith("Hi, I'm **Coach Condor**")]
 
 

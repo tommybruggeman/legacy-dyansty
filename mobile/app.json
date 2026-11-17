@@ -11,9 +11,9 @@
       "bundleIdentifier": "com.tommybruggeman.legacydynasty",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
-        "NSPhotoLibraryUsageDescription": "Pick a picture for your team."
+        "NSPhotoLibraryUsageDescription": "Pick a picture for your team, or screenshots to show your assistant GM."
       },
-      "buildNumber": "93"
+      "buildNumber": "95"
     },
     "android": {
       "adaptiveIcon": {
