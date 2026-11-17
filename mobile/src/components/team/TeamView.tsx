@@ -101,7 +101,8 @@ function MatchupBar({ team }: { team: TeamPage }) {
   const started = w.is_final || Object.values(w.players).some((p) => p.status === 'playing' || p.status === 'final');
   const mine = started ? w.score : w.projected;
   const theirs = started ? w.opponent.score : w.opponent.projected;
-  const pct = w.win_chance != null ? Math.round(w.win_chance * 100) : null;
+  // The server sends a whole percent (83), not a fraction.
+  const pct = w.win_chance != null ? Math.round(w.win_chance) : null;
   return (
     <View style={styles.mbar}>
       <Text style={styles.mbarLeft} numberOfLines={1}>Wk {w.week} vs <Text style={styles.mbarName}>{firstName(w.opponent.name)}</Text></Text>
@@ -229,7 +230,8 @@ function PlayerRow({ p, first, showSlot, chip, onEmpty, w, season }: { p: Player
               <Text style={[ui.name, styles.shrink]} numberOfLines={1}>{p.name}</Text>
               {tag}
             </View>
-            <GameText p={p} w={w} season={season} />
+            <GameText p={p} w={w} />
+            {season != null && !kickedOff(w) ? <Text style={styles.deal} numberOfLines={1}>{contractText(p, season)}</Text> : null}
             {w?.line?.length ? (
               <Text style={styles.statLine}>
                 {w.line.map((s, i) => (
@@ -245,20 +247,19 @@ function PlayerRow({ p, first, showSlot, chip, onEmpty, w, season }: { p: Player
   );
 }
 
-// The game: kickoff time before, the clock and score (with a football when his team has the ball) during, the result after.
-function GameText({ p, w, season }: { p: Player; w?: WeekPlayer; season?: number }) {
+// Line 1, the game: kickoff time before, the clock and score (with a football when his team has the ball) during,
+// the result after. The contract sits on its own second line until kickoff (Tommy, 2026-11-17).
+function GameText({ p, w }: { p: Player; w?: WeekPlayer }) {
   const g = w?.game;
-  // The contract rides on the game line (Tommy, 2026-11-17: no separate bar under each player).
-  const deal = season != null ? <Text style={styles.deal}> · {contractText(p, season)}</Text> : null;
-  if (!w) return <Text style={ui.sub}>{p.nfl_team || 'FA'}{deal}</Text>;
-  if (w.status === 'bye') return <Text style={styles.game}><Text style={styles.byeWord}>BYE</Text>{deal}</Text>;
+  if (!w) return <Text style={ui.sub}>{p.nfl_team || 'FA'}</Text>;
+  if (w.status === 'bye') return <Text style={styles.game}><Text style={styles.byeWord}>BYE</Text></Text>;
   const vs = g ? `${g.home ? 'vs' : '@'} ${g.opp}` : p.nfl_team || '';
   if (g && (w.status === 'playing' || g.state === 'in')) {
     return (
       <View style={styles.gameRow}>
         <View style={styles.dot} />
         <Text style={[styles.game, styles.gameLive]} numberOfLines={1}>
-          <Text style={styles.clock}>{g.quarter > 4 ? 'OT' : `Q${g.quarter}`} {g.clock}</Text> {g.score}-{g.opp_score} {vs}{deal}
+          <Text style={styles.clock}>{g.quarter > 4 ? 'OT' : `Q${g.quarter}`} {g.clock}</Text> {g.score}-{g.opp_score} {vs}
         </Text>
         {g.possession ? <View style={styles.ball}><View style={styles.lace} /></View> : null}
       </View>
@@ -266,11 +267,14 @@ function GameText({ p, w, season }: { p: Player; w?: WeekPlayer; season?: number
   }
   if (g && (w.status === 'final' || g.state === 'post')) {
     const res = g.score > g.opp_score ? 'W' : g.score < g.opp_score ? 'L' : 'T';
-    return <Text style={styles.game} numberOfLines={2}><Text style={styles.finalWord}>Final</Text> {res} {g.score}-{g.opp_score} {vs}{deal}</Text>;
+    return <Text style={styles.game} numberOfLines={1}><Text style={styles.finalWord}>Final</Text> {res} {g.score}-{g.opp_score} {vs}</Text>;
   }
-  if (w.status === 'final') return <Text style={styles.game}>Final{deal}</Text>;
-  return <Text style={styles.game} numberOfLines={2}>{[w.kickoff ? kickoffText(w.kickoff) : null, vs].filter(Boolean).join(' ')}{deal}</Text>;
+  if (w.status === 'final') return <Text style={styles.game}>Final</Text>;
+  return <Text style={styles.game} numberOfLines={1}>{[w.kickoff ? kickoffText(w.kickoff) : null, vs].filter(Boolean).join(' ')}</Text>;
 }
+
+// Has his game kicked off? From then on the row shows only the game and his stats, no contract.
+const kickedOff = (w?: WeekPlayer) => !!w && (w.status === 'playing' || w.status === 'final' || w.game?.state === 'in' || w.game?.state === 'post');
 
 // Before kickoff his projection; during the game live points with the projection that follows the game;
 // after it his final points with the projection he started the day with.
@@ -353,7 +357,7 @@ function RosterTab({ team, onChange, after, onWeek }: { team: TeamPage; onChange
     <>
       {editing && lineup ? (
         <LineupSheet lineup={lineup} players={[...starters, ...bench]} picking={picking} onClose={() => setPicking(null)} onSaved={() => onChange?.()}
-          game={(p) => <GameText p={p} w={week[p.player_id]} season={team.season} />} points={(p) => <Points p={p} w={week[p.player_id]} />} />
+          game={(p) => <GameText p={p} w={week[p.player_id]} />} points={(p) => <Points p={p} w={week[p.player_id]} />} />
       ) : null}
       <Card title="Starters" right={onWeek && team.weeks?.length ? <WeekButton team={team} onWeek={onWeek} /> : pointsLabel(team.week)}>
         {starters.length ? starters.map((p, i) => (
@@ -670,7 +674,7 @@ const styles = StyleSheet.create({
   miPlayoff: { color: colors.live },
   miSub: { color: colors.muted, fontSize: 11.5, marginTop: 1 },
   gold: { color: colors.gold },
-  deal: { color: colors.muted },
+  deal: { color: colors.muted, fontSize: 11.5, marginTop: 2 },
   byeWord: { color: '#EF7A7A', fontWeight: '800' },
   dots: { flexDirection: 'row', gap: 3, marginLeft: 2 },
   ydot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.gold },
