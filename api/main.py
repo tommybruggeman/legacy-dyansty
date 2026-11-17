@@ -12,7 +12,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 from supabase import Client, create_client
 
@@ -62,6 +62,20 @@ def _first(rows: list[dict] | None) -> dict | None:
 @app.get("/")
 def root() -> dict[str, str]:
     return {"service": "Legacy API", "status": "running"}
+
+
+_SITE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "site")
+_SITE_FILES = {"privacy.html": "text/html", "support.html": "text/html", "index.html": "text/html", "style.css": "text/css"}
+
+
+@app.get("/site/{name}")
+def public_page(name: str) -> Response:
+    """The public privacy policy and support pages Apple links to (site/ in the repo). No sign-in."""
+    kind = _SITE_FILES.get(name)
+    if not kind:
+        raise HTTPException(status_code=404, detail="Not found.")
+    with open(os.path.join(_SITE, name), encoding="utf-8") as f:
+        return Response(f.read(), media_type=f"{kind}; charset=utf-8", headers={"Cache-Control": "public, max-age=3600"})
 
 
 @app.get("/health")

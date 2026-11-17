@@ -3,10 +3,9 @@
 ## Tommy's steps (only he can do these)
 1. Accept Apple's new license agreement at developer.apple.com (builds are blocked until then).
 2. Run `supabase/migrations/20261220_app_store_ready.sql` in the Supabase SQL editor (delete account, report answer, screen time).
-3. Repo Settings > Pages > Source: **GitHub Actions** (the privacy and support pages publish from `site/`).
-4. Pick the support email to publish on the support and privacy pages (`SUPPORT_EMAIL` placeholder in `site/`).
-5. App Store Connect > App Privacy: enter the answers below (Apple keeps this web-only).
-6. Run **App Store** workflow (screenshots on, submit off) to upload the listing, then check it and run again with submit on.
+3. Pick the support email to publish on the support and privacy pages (`SUPPORT_EMAIL` placeholder in `site/`).
+4. App Store Connect > App Privacy: enter the answers below (Apple keeps this web-only).
+5. Run **App Store** workflow (screenshots on, submit off) to upload the listing, then check it and run again with submit on.
 
 ## App Privacy answers
 Tracking: **No** (no data is used to track people across other companies' apps or websites).

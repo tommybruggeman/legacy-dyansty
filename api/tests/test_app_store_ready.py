@@ -66,3 +66,14 @@ def test_daily_limit_uses_the_usage_log():
     assert not front_office.take_question("u9", day, client=_Count(front_office.DAILY_QUESTIONS))
     assert front_office.take_question("u9", day, client=_Count(3))
     front_office.clear()
+
+
+def test_public_pages_serve_without_sign_in():
+    from fastapi.testclient import TestClient
+
+    from api.main import app
+    client = TestClient(app)
+    assert "Privacy policy" in client.get("/site/privacy.html").text
+    assert client.get("/site/support.html").status_code == 200
+    assert client.get("/site/../api/main.py").status_code == 404
+    assert client.get("/site/secrets.env").status_code == 404

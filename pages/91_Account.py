@@ -12,7 +12,7 @@ from components.sidebar_nav import render_nav
 from services.account_web import delete_account
 
 ICON = Path(__file__).resolve().parents[1] / "assets" / "page_icon.png"
-SITE = "https://tommybruggeman.github.io/legacy-dyansty"
+SITE = "https://legacy-api-94901925561.us-central1.run.app/site"
 
 st.set_page_config(page_title="Legacy Dynasty — Account", page_icon=str(ICON), layout="centered")
 render_nav()
