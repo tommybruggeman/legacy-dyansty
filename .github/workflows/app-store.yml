@@ -47,6 +47,19 @@ jobs:
           cache: npm
           cache-dependency-path: mobile/package-lock.json
 
+      # Fail in seconds, not after the hour-long simulator build, if the App Store Connect key is missing.
+      # Prints only lengths and shape, never the key.
+      - name: Check the App Store Connect key
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          echo "key id length: ${#ASC_KEY_ID}, issuer id length: ${#ASC_ISSUER_ID}, p8 length: ${#ASC_KEY_P8}"
+          case "$ASC_KEY_P8" in *"BEGIN PRIVATE KEY"*) echo "p8 has the BEGIN line";; *) echo "p8 has no BEGIN line";; esac
+          echo "p8 lines: $(printf '%s' "$ASC_KEY_P8" | wc -l)"
+          [ -n "$ASC_KEY_ID" ] && [ -n "$ASC_ISSUER_ID" ] && [ -n "$ASC_KEY_P8" ] || { echo "App Store Connect key secrets are missing"; exit 1; }
+
       - name: Demo login for App Review
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
