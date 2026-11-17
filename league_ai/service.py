@@ -13,6 +13,7 @@ from typing import Any, Callable, Mapping
 from league_ai.client import ClaudeClient, ClientResult, Trace, human_message
 from league_ai.config import LeagueAIConfig, load_config
 from league_ai.context_pack import Asker, PackInputs, build_league_pack
+from league_ai import screenshots
 from league_ai.prompt import system_blocks
 from league_ai.settings_store import apply_sleeper_scoring, fetch_sleeper_scoring, load_settings
 from league_ai.tools import ToolRegistry
@@ -28,6 +29,7 @@ class AnswerResult:
     pack_chars: int = 0
     evidence: list[dict[str, Any]] = field(default_factory=list)
     pack: str = ""
+    screenshot: str = ""  # what the owner's screenshots showed (league_ai.screenshots), saved with the question
 
     @property
     def human_error(self) -> str:
@@ -107,6 +109,9 @@ def _history_messages(history: list[dict[str, str]], limit: int = 20) -> list[di
     for msg in history[-limit:]:
         role = "user" if msg.get("role") == "user" else "assistant"
         text = str(msg.get("content") or "").strip()
+        if role == "user" and msg.get("screenshot") is not None:
+            # a screenshot sent earlier comes back as its saved text reading (images aren't kept)
+            text = f"{screenshots.history_note(str(msg.get('screenshot') or ''), int(msg.get('photos') or 1))}\n\n{text}".strip()
         if not text:
             continue
         if out and out[-1]["role"] == role:
@@ -133,6 +138,8 @@ def answer(
     turn_effort: str | None = None,
     inbox: Callable[[bool], list[str]] | None = None,
     prior_facts: str | None = None,
+    images: list[screenshots.Shot] | None = None,
+    screenshot_reading: str | None = None,
 ) -> AnswerResult:
     config = config or load_config()
     if not config.enabled:
@@ -148,6 +155,10 @@ def answer(
 
     messages = _history_messages(history)
     asked = question.strip()
+    if images:
+        asked = screenshots.question_text(asked, len(images))
+        if screenshot_reading:
+            asked = f"(A quick transcription of the screenshot, to check names against: {screenshot_reading})\n\n{asked}"
     if prior_facts and messages:
         # what the last answer's lookups found, so a follow-up ("why?", "go deeper") reuses the same numbers
         asked = (f"(Figures from the lookups behind your previous answer. Reuse them instead of looking them up again, "
@@ -156,6 +167,9 @@ def answer(
         messages[-1]["content"] += "\n\n" + asked
     else:
         messages.append({"role": "user", "content": asked})
+    if images:
+        # the images go first in the latest message, then its text
+        messages[-1]["content"] = [*(shot.block() for shot in images), {"type": "text", "text": messages[-1]["content"]}]
 
     runner = client or ClaudeClient(config)
     result: ClientResult = runner.run(system=system_blocks(league_pack, week_context), messages=messages, tools=tools, on_event=on_event, turn_effort=turn_effort,

@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from supabase import Client, create_client
 
 from api import box_score as box_score_mod
+from league_ai import screenshots
 from api import activity, alerts, cache, commissioner, owner_settings, profiles, front_office, home, league, lineups, live_activity, market, market_week, nfl_live, own_league, player, playoffs, projections, teams, trade_feed, trade_offers, waivers
 from season_engine import SeasonResolver
 from services.season_rollover_owner_ui import OwnerRolloverDecisionError, OwnerRolloverDecisionService
@@ -1535,9 +1536,15 @@ def drop_player(body: DropRequest, owner: tuple[Client, Any] = Depends(owner_cli
 # ---- Front Office ------------------------------------------------------------------
 
 
+class ChatImage(BaseModel):
+    media_type: str = "image/jpeg"
+    data: str  # base64
+
+
 class ChatRequest(BaseModel):
-    question: str
+    question: str = ""
     conversation_id: str | None = None
+    images: list[ChatImage] | None = None  # screenshots (up to 10): a trade offer, a roster, another league
 
 
 def _front_office(client: Client, user: Any) -> front_office.Session:
@@ -1557,9 +1564,16 @@ def front_office_home(owner: tuple[Client, Any] = Depends(owner_client)) -> dict
         raise HTTPException(status_code=502, detail="Couldn't load the Front Office. Try again.")
 
 
+def _chat_images(body: ChatRequest) -> list[screenshots.Shot]:
+    try:
+        return screenshots.clean([i.model_dump() for i in body.images or []])
+    except screenshots.ScreenshotError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 def _chat_session(body: ChatRequest, client: Client, user: Any) -> tuple[front_office.Session, str]:
     question = body.question.strip()
-    if not question:
+    if not question and not body.images:
         raise HTTPException(status_code=400, detail="Ask a question first.")
     if len(question) > 2000:
         raise HTTPException(status_code=400, detail="That question is too long. Keep it under 2,000 characters.")
@@ -1573,15 +1587,17 @@ def _chat_session(body: ChatRequest, client: Client, user: Any) -> tuple[front_o
 
 @app.post("/front-office/chat")
 def front_office_chat(body: ChatRequest, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    images = _chat_images(body)
     session, question = _chat_session(body, *owner)
-    return front_office.ask(session, question, body.conversation_id)
+    return front_office.ask(session, question, body.conversation_id, images=images or None)
 
 
 @app.post("/front-office/chat/stream")
 def front_office_chat_stream(body: ChatRequest, owner: tuple[Client, Any] = Depends(owner_client)) -> StreamingResponse:
     """The same answer as /front-office/chat, streamed: what the GM is checking, then the answer as it's written."""
+    images = _chat_images(body)
     session, question = _chat_session(body, *owner)
-    return StreamingResponse(front_office.ask_stream(session, question, body.conversation_id), media_type="application/x-ndjson",
+    return StreamingResponse(front_office.ask_stream(session, question, body.conversation_id, images or None), media_type="application/x-ndjson",
                              headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
 
 
