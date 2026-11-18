@@ -168,30 +168,36 @@ def inactive(*, week: int, name: str, player_id: str, sub: Mapping[str, Any] | N
                  "Kickoff in 30 minutes and he's in your lineup." + _sub(sub), health_url(player_id), urgent=True)
 
 
-STATUS_TITLE = {"Healthy": "back to healthy", "Questionable": "Questionable", "Doubtful": "Doubtful", "Out": "Out",
-                "IR": "placed on IR", "PUP": "on the PUP list", "NFI": "on the NFI list", "Sus": "suspended", "DTD": "day-to-day"}
-# the second line when no injury is listed (a suspension, or a report without one): never a title-only alert
-STATUS_NO_PART = {"Questionable": "Injury not listed yet.", "Doubtful": "Injury not listed yet.", "Out": "Injury not listed yet.",
-                  "DTD": "Injury not listed yet.", "IR": "Moved to injured reserve.", "PUP": "Can't play until he's activated.",
-                  "NFI": "Can't play until he's activated.", "Sus": "Suspended by the league."}
-STATUS_SHORT = {"Healthy": "healthy", "Questionable": "Q", "Doubtful": "D", "Out": "out", "IR": "IR", "PUP": "PUP", "NFI": "NFI",
-                "Sus": "suspended", "DTD": "day-to-day"}
+# Sleeper-style status alerts (Tommy, 2026-11-18): an emoji per status + "Player Update", then one plain sentence.
+STATUS_EMOJI = {"Healthy": "\u2705", "Questionable": "\u26a0\ufe0f", "Doubtful": "\U0001f7e0", "Out": "\U0001f6d1", "DTD": "\u23f3",
+                "IR": "\U0001f3e5", "PUP": "\U0001fa7c", "NFI": "\U0001fa7c", "Sus": "\u26d4"}
+STATUS_NAME = {"Healthy": "Healthy", "Questionable": "Questionable", "Doubtful": "Doubtful", "Out": "Out", "DTD": "Day-to-day",
+               "IR": "IR", "PUP": "PUP", "NFI": "NFI", "Sus": "Suspended"}
+
+
+def _status_line(name: str, c: Mapping[str, Any]) -> str:
+    old, new = STATUS_NAME.get(c["from_status"], c["from_status"]), STATUS_NAME.get(c["to_status"], c["to_status"])
+    part = str(c.get("body_part") or "").strip().lower()
+    tail = f" ({part})" if part and c["to_status"] != "Healthy" else ""
+    return f"{name}'s status has changed from {old} to {new}{tail}"
 
 
 def status_change(*, changes: list[Mapping[str, Any]], names: Mapping[str, str]) -> Alert:
     """One owner's status changes from one check (usually one). changes: [{id, sleeper_id, from_status, to_status, body_part}].
-    One change: "Puka Nacua: Questionable" / "Ankle." (no "was ..." line, Tommy 2026-11-17). Several: "3 player status changes" / one line."""
+    One change: "\U0001f6d1 Player Update" / "Mike Evans's status has changed from Questionable to Out (hamstring)".
+    Several: "\U0001f4cb Player Updates" / one line per player."""
     ids = "-".join(str(c.get("id") or c["sleeper_id"]) for c in changes)
     if len(changes) == 1:
         c = changes[0]
-        name, new = names.get(c["sleeper_id"], "Your player"), c["to_status"]
-        title = f"{name}: {STATUS_TITLE.get(new, new)}" if new in ("Questionable", "Doubtful", "Out") else f"{name} {STATUS_TITLE.get(new, new)}"
-        part = str(c.get("body_part") or "").strip()
-        body = "Off the injury report." if new == "Healthy" else (f"{part[:1].upper()}{part[1:]}." if part else STATUS_NO_PART.get(new, "On the injury report."))
-        return Alert("status", f"status:{ids}", title, body, health_url(c["sleeper_id"]))
-    line = ", ".join(f"{names.get(c['sleeper_id'], 'Player')} {STATUS_SHORT.get(c['to_status'], c['to_status'])}" for c in changes[:4])
-    more = f" and {len(changes) - 4} more" if len(changes) > 4 else ""
-    return Alert("status", f"status:{ids}", f"{len(changes)} player status changes", f"{line}{more}.", LINEUP_URL)
+        name = names.get(c["sleeper_id"], "Your player")
+        emoji = STATUS_EMOJI.get(c["to_status"], "\U0001fa79")
+        return Alert("status", f"status:{ids}", emoji + " Player Update \U0001f3c8",
+                     _status_line(name, c), health_url(c["sleeper_id"]))
+    lines = [f"{names.get(c['sleeper_id'], 'Player')}: {STATUS_NAME.get(c['from_status'], c['from_status'])} to "
+             f"{STATUS_NAME.get(c['to_status'], c['to_status'])}" for c in changes[:4]]
+    if len(changes) > 4:
+        lines.append(f"and {len(changes) - 4} more")
+    return Alert("status", f"status:{ids}", "\U0001f4cb Player Updates \U0001f3c8", "\n".join(lines), LINEUP_URL)
 
 
 TRASH_TALK = (
@@ -200,8 +206,6 @@ TRASH_TALK = (
     "Tough one. {opp} gets the bragging rights this week.",
     "{opp} got you this time. Run it back.",
 )
-
-
 def _pts(x: float) -> str:
     return f"{x:.1f}"
 

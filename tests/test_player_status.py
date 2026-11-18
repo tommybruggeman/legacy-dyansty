@@ -79,14 +79,15 @@ def test_short_feed_is_skipped():
 
 
 def test_alert_wording():
-    names = {"1": "Puka Nacua", "2": "Travis Kelce"}
-    a = alerts.status_change(changes=[{"id": 4, "sleeper_id": "1", "from_status": "Healthy", "to_status": "Questionable", "body_part": "ankle"}], names=names)
-    assert (a.kind, a.title, a.body, a.url) == ("status", "Puka Nacua: Questionable", "Ankle.", "/player/1?section=health")
-    a = alerts.status_change(changes=[{"id": 5, "sleeper_id": "1", "from_status": "IR", "to_status": "Healthy"}], names=names)
-    assert a.title == "Puka Nacua back to healthy" and a.body == "Off the injury report."
+    names = {"1": "Darren Waller", "2": "Mike Evans"}
+    a = alerts.status_change(changes=[{"id": 4, "sleeper_id": "1", "from_status": "Healthy", "to_status": "Questionable", "body_part": "Hip"}], names=names)
+    assert (a.kind, a.title, a.url) == ("status", "\u26a0\ufe0f Player Update \U0001f3c8", "/player/1?section=health")
+    assert a.body == "Darren Waller's status has changed from Healthy to Questionable (hip)"
+    a = alerts.status_change(changes=[{"id": 5, "sleeper_id": "2", "from_status": "IR", "to_status": "Healthy", "body_part": "Knee"}], names=names)
+    assert a.body == "Mike Evans's status has changed from IR to Healthy"
     a = alerts.status_change(changes=[{"id": 6, "sleeper_id": "1", "from_status": "Out", "to_status": "IR"},
                                       {"id": 7, "sleeper_id": "2", "from_status": "Healthy", "to_status": "Out"}], names=names)
-    assert a.title == "2 player status changes" and a.body == "Puka Nacua IR, Travis Kelce out." and a.key == "status:6-7"
+    assert a.title.startswith("\U0001f4cb Player Updates") and a.body == "Darren Waller: Out to IR\nMike Evans: Healthy to Out" and a.key == "status:6-7"
     assert "status" in alerts.KINDS and "status" in alerts.NOT_LIMITED
 
 
@@ -194,12 +195,9 @@ def test_refresh_end_to_end(monkeypatch):
     assert [(c["from_status"], c["to_status"]) for c in got] == [("Out", "Healthy")] and players["12"]["injury_status"] is None
 
 
-def test_alert_always_has_a_second_line():
-    names = {"1": "Darren Waller"}
-    a = alerts.status_change(changes=[{"id": 1, "sleeper_id": "1", "from_status": "Healthy", "to_status": "Questionable", "body_part": ""}], names=names)
-    assert a.title == "Darren Waller: Questionable" and a.body == "Injury not listed yet."
-    a = alerts.status_change(changes=[{"id": 2, "sleeper_id": "1", "from_status": "Healthy", "to_status": "Sus"}], names=names)
-    assert a.body == "Suspended by the league."
+def test_alert_without_injury_is_still_a_full_sentence():
+    a = alerts.status_change(changes=[{"id": 1, "sleeper_id": "1", "from_status": "Healthy", "to_status": "Sus", "body_part": ""}], names={"1": "Darren Waller"})
+    assert a.body == "Darren Waller's status has changed from Healthy to Suspended"
 
 
 def test_merge_keeps_the_injury_from_either_source():
