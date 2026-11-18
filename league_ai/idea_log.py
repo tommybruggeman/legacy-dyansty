@@ -40,6 +40,8 @@ def compact(out: Mapping[str, Any]) -> list[dict[str, Any]]:
                 row[rung] = [_name(p) for p in idea[rung] if _is_player(p)]
         if idea.get("their_share"):
             row["their_share"] = dict(idea["their_share"])   # numbers per rung, for fitting an acceptance model later
+        if idea.get("fit"):
+            row["fit"] = dict(idea["fit"])   # each side's trade_fit utility at the likely close, graded weekly (trade_fit.settled_by_fit)
         if row["partner"] and row["gets"] and row.get("open_with"):
             rows.append(row)
     return rows

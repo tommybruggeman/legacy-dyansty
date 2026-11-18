@@ -17,7 +17,10 @@ and one number per side, weighted by the side's direction (contending / middle /
   value       : log of what it gets over what it gives, valued its own way (the old engine's share: this season vs
                 dynasty by direction, picks by the pick book, contracts counted)
 
-  utility = V * value + L * now_w * lineup_gain + F * (1 - now_w) * future + C * cap_freed / 10
+  selling     : a side that gives up lineup points for picks or cap room gets credit for them, scaled by how much the
+                future counts for it (sell_credit)
+
+  utility = V * value + R * selling + L * now_w * lineup_gain + F * (1 - now_w) * future + C * cap_freed / 10
 
 A trade "makes sense" when both sides' utility is high: score = min(u_a, u_b) + lam * (u_a + u_b).
 
@@ -54,7 +57,8 @@ GRID_L = (0.0, 0.02, 0.05, 0.1, 0.2)
 GRID_C = (0.0, 0.1, 0.25, 0.5)
 GRID_F = (0.0, 0.5, 1.0)
 GRID_LAM = (0.0, 0.5)
-DEFAULT_WEIGHTS = {"V": 1.0, "L": 0.05, "C": 0.1, "F": 0.5, "lam": 0.0, "floor": -0.6}  # until a league's own fit is saved
+GRID_R = (0.0, 0.25, 0.5)
+DEFAULT_WEIGHTS = {"V": 0.5, "L": 0.05, "C": 0.0, "F": 0.0, "lam": 0.5, "R": 0.0, "floor": -0.24}  # first pooled fit, 2026-11-18 (33 trades)  # until a league's own fit is saved
 FLOOR_PCT = 0.2  # the finder only pitches deals whose partner side reads at least as well as the bottom 20% of real accepted sides
 
 
@@ -124,7 +128,16 @@ def describe_side(f: Mapping[str, Any]) -> str:
 
 def utility(f: Mapping[str, Any], w: Mapping[str, float]) -> float:
     n = NOW_W.get(str(f.get("direction")), 0.5)
-    return (w.get("V", 0.0) * float(f.get("value") or 0.0) + w["L"] * n * float(f["lineup_gain"]) + w["F"] * (1 - n) * float(f["future"]) + w["C"] * float(f["cap_freed"]) / 10.0)
+    return (w.get("V", 0.0) * float(f.get("value") or 0.0) + w.get("R", 0.0) * sell_credit(f) + w["L"] * n * float(f["lineup_gain"]) + w["F"] * (1 - n) * float(f["future"]) + w["C"] * float(f["cap_freed"]) / 10.0)
+
+
+def sell_credit(f: Mapping[str, Any]) -> float:
+    """A side that gives up lineup points for picks or cap room is selling, which is what a rebuilder should do: credit the
+    picks and room it gets, scaled by how much the future counts for it (most for a rebuilder, little for a contender)."""
+    if float(f["lineup_gain"]) >= 0 or not (f.get("picks_in") or float(f.get("cap_freed") or 0) > 0):
+        return 0.0
+    n = NOW_W.get(str(f.get("direction")), 0.5)
+    return (1 - n) * (max(0.0, float(f.get("cap_freed") or 0)) / 10.0 + 0.5 * int(f.get("picks_in") or 0))
 
 
 def trade_score(us: list[float], w: Mapping[str, float]) -> float:
@@ -236,7 +249,7 @@ def evaluate(trades: list[Mapping[str, Any]], slots: list[str] | None = None, n:
     never grades weights it helped fit."""
     slots = slots or DEFAULT_SLOTS
     usable = [t for t in trades if len(t["sides"]) == 2 and t.get("rosters") and all(t["rosters"].get(o) for o in t["sides"])]
-    combos = [dict(V=v, L=l, C=c, F=f, lam=lam) for v, l, c, f, lam in product(GRID_V, GRID_L, GRID_C, GRID_F, GRID_LAM) if v or l or f]
+    combos = [dict(V=v, L=l, C=c, F=f, lam=lam, R=r) for v, l, c, f, lam, r in product(GRID_V, GRID_L, GRID_C, GRID_F, GRID_LAM, GRID_R) if v or l or f]
     rows = []  # per trade: real features + decoy features by kind
     for t in usable:
         real_f = features(t, t["sides"], slots)
@@ -260,10 +273,11 @@ def evaluate(trades: list[Mapping[str, Any]], slots: list[str] | None = None, n:
     m = len(rows)
     totals = [sum(x for x in col if x is not None) for col in combo_auc]
     counts = [sum(1 for x in col if x is not None) for col in combo_auc]
-    best_j = max(range(len(combos)), key=lambda j: totals[j] / counts[j] if counts[j] else -1) if combos and m else None
+    mean = [totals[j] / counts[j] if counts[j] else -1.0 for j in range(len(combos))]
+    best_j = _pick(combos, mean) if combos and m else None
     loo_any, loo_value = [], []
     for i, (t, rf, dec) in enumerate(rows):
-        j = max(range(len(combos)), key=lambda j: (totals[j] - (combo_auc[j][i] or 0)) / max(1, counts[j] - (combo_auc[j][i] is not None)))
+        j = _pick(combos, [(totals[j] - (combo_auc[j][i] or 0)) / max(1, counts[j] - (combo_auc[j][i] is not None)) for j in range(len(combos))])
         w = combos[j]
         real = trade_score([utility(f, w) for f in rf.values()], w)
         for k, bucket in (("any", loo_any), ("value", loo_value)):
@@ -271,7 +285,7 @@ def evaluate(trades: list[Mapping[str, Any]], slots: list[str] | None = None, n:
             if a is not None:
                 bucket.append(a)
     best = combos[best_j] if best_j is not None else dict(DEFAULT_WEIGHTS)
-    named = {"value_only": dict(V=1.0, L=0.0, C=0.0, F=0.0, lam=0.0), "lineup_only": dict(V=0.0, L=0.1, C=0.0, F=0.0, lam=0.0),
+    named = {"value_only": dict(V=1.0, L=0.0, C=0.0, F=0.0, lam=0.0, R=0.0), "lineup_only": dict(V=0.0, L=0.1, C=0.0, F=0.0, lam=0.0, R=0.0),
              "default": {k: v for k, v in DEFAULT_WEIGHTS.items() if k != "floor"}, "best_in_sample": best}
     in_sample = {}
     for name, w in named.items():
@@ -300,6 +314,15 @@ def evaluate(trades: list[Mapping[str, Any]], slots: list[str] | None = None, n:
         "old_gate": gate_rates(rows),
         "new_gate": gate_rates(rows, best, floor),
     }
+
+
+TIE = 0.005  # weights within this AUC of the best count as tied; the tie goes to more credit for selling (R), then fewer terms
+
+
+def _pick(combos: list[dict[str, float]], scores: list[float]) -> int:
+    top = max(scores)
+    tied = [j for j in range(len(combos)) if scores[j] >= top - TIE]
+    return max(tied, key=lambda j: (combos[j].get("R", 0.0), -sum(1 for k in ("V", "L", "C", "F") if combos[j].get(k)), scores[j]))
 
 
 def gate_rates(rows: list[tuple], w: Mapping[str, float] | None = None, floor: float | None = None) -> dict[str, Any]:
@@ -334,7 +357,13 @@ def describe(rows: list[tuple], w: Mapping[str, float]) -> dict[str, Any]:
     return {"trades_both_lineups_better": f"{both_lineups}/{len(rows)}",
             "trades_both_read_well": f"{sum(1 for _, rf, _ in rows if all(utility(f, w) > 0 for f in rf.values()))}/{len(rows)}",
             "by_direction": dict(by_dir),
-            "sell_for_picks_or_cap": f"{len(dumps)} sides, {sum(1 for f in dumps if utility(f, w) > 0)} read as sensible"}
+            "sell_for_picks_or_cap": f"{len(dumps)} sides, {sum(1 for f in dumps if utility(f, w) > 0)} read as sensible",
+            "sell_sides_above_floor": sum(1 for f in dumps if utility(f, w) >= floor_of(rows, w))}
+
+
+def floor_of(rows: list[tuple], w: Mapping[str, float]) -> float:
+    us = sorted(utility(f, w) for _, rf, _ in rows for f in rf.values())
+    return us[int(FLOOR_PCT * len(us))] if us else DEFAULT_WEIGHTS["floor"]
 
 
 # ---- loading rosters and directions at each trade ---------------------------------------------------------
@@ -439,6 +468,25 @@ def load_weights(client: Any, league_id: str) -> dict[str, float]:
 
 
 MIN_TRADES = 15
+FIT_BINS = ((-99.0, -0.3), (-0.3, 0.0), (0.0, 0.3), (0.3, 99.0))
+
+
+def settled_by_fit(rows: Iterable[Mapping[str, Any]]) -> dict[str, dict[str, int]]:
+    """Logged ideas (idea_log rows) that settled, by the partner side's fit utility when shown: once enough settle, whether
+    ideas that read better for the partner really happen more often is the check on this whole score."""
+    out = {f"{lo:g}..{hi:g}": {"happened": 0, "not_made": 0} for lo, hi in FIT_BINS}
+    for r in rows:
+        res = r.get("result") or {}
+        if res.get("status") not in ("happened", "not_made"):
+            continue
+        for idea in res.get("ideas") or []:
+            u = (idea.get("fit") or {}).get("them")
+            if u is None:
+                continue
+            for lo, hi in FIT_BINS:
+                if lo <= float(u) < hi:
+                    out[f"{lo:g}..{hi:g}"][res["status"]] += 1
+    return {k: v for k, v in out.items() if v["happened"] or v["not_made"]}
 
 
 def slots_for(client: Any, league_id: str) -> list[str]:

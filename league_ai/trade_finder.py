@@ -24,7 +24,7 @@ from league_ai.power import PlayerStrength, compute_power, fill_lineup
 from league_ai.playoff_odds import pickup_odds
 from league_ai.sleeper_roster import is_no_contract
 from league_ai.tools import ToolSpec
-from league_ai.trade_fit import DEFAULT_WEIGHTS as FIT_DEFAULTS, describe_side, summarize_side, trade_score, utility
+from league_ai.trade_fit import DEFAULT_WEIGHTS as FIT_DEFAULTS, describe_side, log_share, summarize_side, trade_score, utility
 from league_ai.trade_value import DEPTH_SHARE, WINDOWS, Valuer, market_value, nearest_pick, team_windows
 
 POSITIONS = ("QB", "RB", "WR", "TE")
@@ -241,6 +241,7 @@ def find_trades(*, league: League, asker_team_id: str, cap_space: Mapping[str, f
                 "why_they_say_yes": _why(league, tid, their_window, closing["sends"], ranks, target),
                 "schedule": {p.name: p.schedule_note for p in gets + closing["sends"] if getattr(p, "schedule_note", None)},
                 "what_it_does": {"for_you": describe_side(pair["you"]), "for_them": describe_side(pair["them"])},
+                "fit": {"you": round(pair["you_u"], 3), "them": round(pair["them_u"], 3)},
                 "your_lineup_gain": closing["my_gain"],
                 "their_lineup_gain": closing["their_gain"],
                 "cap_after": {"you": round(closing["cap"][0], 2), "them": round(closing["cap"][1], 2)},
@@ -361,6 +362,8 @@ def _fit_pair(league: League, asker: str, tid: str, d: Mapping[str, Any]) -> dic
 
     you = side(asker, sends, gets, mine, theirs, sum(_cap(p) for p in sends) - sum(_cap(p) for p in gets) - moved)
     them = side(tid, gets, sends, theirs, mine, sum(_cap(p) for p in gets) - sum(_cap(p) for p in sends) + moved)
+    you["value"] = log_share(d["my_in"] / d["my_out"] if d.get("my_out") else 5.0)
+    them["value"] = log_share(d.get("their_share"))
     w = league.fit_weights
     us = [utility(you, w), utility(them, w)]
     return {"you": you, "them": them, "you_u": us[0], "them_u": us[1], "score": trade_score(us, w)}

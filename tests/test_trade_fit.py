@@ -43,7 +43,10 @@ def test_rebuilder_selling_for_picks_and_cap_reads_sensible():
     pick = {"pick": 1.0, "market": vet["market"] * 0.9, "book": vet["market"] * 0.9}
     f = side_features(r, [vet], [pick], "rebuilding", SLOTS)
     assert f["lineup_gain"] < 0 and f["cap_freed"] == 30
-    assert utility(f, DEFAULT_WEIGHTS) > 0
+    f["value"] = 0.0
+    w = {**DEFAULT_WEIGHTS, "R": 0.25}
+    assert utility(f, w) > 0
+    assert utility(f, {**w, "R": 0.0}) < 0  # without selling credit the lost lineup points make it read badly
 
 
 def test_fit_beats_plain_value_on_need_swaps():
