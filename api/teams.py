@@ -78,7 +78,7 @@ def team_leans(client: Any, league_id: str) -> dict[str, str]:
 
 
 def seasons_state(client: Any, league_id: str, season: int) -> list[dict[str, Any]]:
-    """League-wide team state for this season and the next two (for cap by year)."""
+    """League-wide team state for this season and the next three (for cap by year)."""
     def later(year: int) -> dict[str, Any]:
         try:
             return load_team_state(client, league_id, year)

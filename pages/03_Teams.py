@@ -20,6 +20,7 @@ import streamlit as st
 from components.sidebar_nav import render_nav
 from auth import require_login, current_user
 from services.win_odds_view import win_odds_text
+from services.canonical_trades import draft_season_window
 from services.config import configured_value
 from services.standings_lookup import (
     build_sleeper_team_identities,
@@ -2168,7 +2169,7 @@ mobile_pick_total = 0
 if not picks_df.empty:
     mobile_picks = picks_df[
         (picks_df["current_owner"] == sel_name)
-        & picks_df["season"].isin([active_season, active_season + 1, active_season + 2])
+        & picks_df["season"].isin(list(draft_season_window(active_season)))
     ].copy()
 
     if not mobile_picks.empty:

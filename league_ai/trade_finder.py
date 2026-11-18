@@ -21,6 +21,7 @@ from statistics import median
 from typing import Any, Callable, Iterable, Mapping
 
 from league_ai.power import PlayerStrength, compute_power, fill_lineup
+from league_ai.pick_values import YEARS_OUT
 from league_ai.playoff_odds import pickup_odds
 from league_ai.sleeper_roster import is_no_contract
 from league_ai.tools import ToolSpec
@@ -1116,14 +1117,14 @@ def _pick_rows(client: Any) -> list[dict[str, Any]]:
 
 
 def _pick_values(client: Any, season: int) -> list[tuple[str, float]]:
-    """Next two drafts' pick values on the superflex market scale, latest scrape."""
+    """The next YEARS_OUT drafts' pick values on the superflex market scale, latest scrape."""
     try:
         rows = client.table("nfl_pick_values").select("pick_label, draft_year, value_2qb, scrape_date").order("scrape_date", desc=True).limit(400).execute().data or []
     except Exception:
         return []
     latest = rows[0]["scrape_date"] if rows else None
     return [(str(r["pick_label"]), float(r["value_2qb"])) for r in rows
-            if r.get("scrape_date") == latest and r.get("value_2qb") and int(r.get("draft_year") or 0) in (int(season) + 1, int(season) + 2)]
+            if r.get("scrape_date") == latest and r.get("value_2qb") and int(season) < int(r.get("draft_year") or 0) <= int(season) + YEARS_OUT]
 
 
 # ---- owner trade profiles (from every completed trade on Sleeper) ------------------------------------

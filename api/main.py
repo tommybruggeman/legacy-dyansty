@@ -709,7 +709,7 @@ def _league_team_rows(client: Client, league_id: str) -> list[dict[str, Any]]:
 
 
 def _seasons_state(client: Client, league_id: str, season: int) -> list[dict[str, Any]]:
-    """Contracts for this season and the next two, shared by the league for a minute."""
+    """Contracts for this season and the next three, shared by the league for a minute."""
     return cache.cached(("state", league_id, season), 60, lambda: teams.seasons_state(client, league_id, season))
 
 
@@ -1557,6 +1557,7 @@ def _trade_window(client: Client, league_id: str) -> dict[str, Any]:
     return cache.cached(("trade_window", league_id), 300, lambda: trade_offers.league_window(client, league_id))
 
 
+
 @app.get("/trade-builder/{team_id}")
 def trade_builder(team_id: str, add: str | None = None, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
     """Both rosters and pick lists for a trade with one team, with today's dynasty values for the live read."""
@@ -1577,7 +1578,10 @@ def trade_builder(team_id: str, add: str | None = None, owner: tuple[Client, Any
         raise HTTPException(status_code=404, detail="Team not found in your league.")
     state = states[0]
     ids = [str(r.get("sleeper_player_id")) for r in state.get("roster", []) if str(r.get("league_team_id")) in {team_id, ctx["team_id"]}]
-    values = trade_feed.market_now(client, sorted(set(ids)))
+    pricer = cache.cached(("trade_pricer", ctx["league_id"], ctx["season"]), 600, 
+                          lambda: trade_offers.build_pricer(client, state, ctx["season"], teams=len(rows),
+                                                            records={t["team_id"]: (int(t.get("wins") or 0), int(t.get("losses") or 0)) for t in rows}))
+    values = pricer.values
     pick_value = trade_offers.pick_pricer(trade_feed.pick_values(client))
     owner_of = {t["team_id"]: t["owner_name"] for t in rows}
     info = teams.player_info(client, ids)
@@ -1590,12 +1594,14 @@ def trade_builder(team_id: str, add: str | None = None, owner: tuple[Client, Any
         "season": ctx["season"],
         "sleeper_league_id": ctx["sleeper_id"],
         "salary_cap": cap,
+        # GM read: a dollar of cap space (any season) on the same value scale as players and picks
+        "cap_dollar_value": round(pricer.cap_dollar, 2),
         "me": {"team_id": ctx["team_id"], "owner_name": me["owner_name"], "team_name": me.get("team_name"), "avatar": me.get("avatar"),
-               "cap_space": me["cap_space"],
-               **trade_offers.side(state, ctx["team_id"], info, ppg, values, pick_value, owner_of)},
+               "cap_space": me["cap_space"], "cap_by_year": me.get("cap_by_year") or [],
+               **trade_offers.side(state, ctx["team_id"], info, ppg, values, pick_value, owner_of, pricer)},
         "them": {"team_id": team_id, "owner_name": them["owner_name"], "team_name": them.get("team_name"), "avatar": them.get("avatar"),
-                 "cap_space": them["cap_space"],
-                 **trade_offers.side(state, team_id, info, ppg, values, pick_value, owner_of)},
+                 "cap_space": them["cap_space"], "cap_by_year": them.get("cap_by_year") or [],
+                 **trade_offers.side(state, team_id, info, ppg, values, pick_value, owner_of, pricer)},
         "add": add,
     }
 
@@ -1614,8 +1620,9 @@ class TradeOffer(BaseModel):
     get: list[TradePiece] = []
     note: str | None = None
     parent_offer_id: str | None = None
-    give_cap: float = 0  # cap space (this season) you send; any amount
-    get_cap: float = 0   # cap space you ask for
+    # cap space you send / ask for: a number (this season, older app builds) or {season: amount} for several seasons
+    give_cap: float | dict[str, float] = 0
+    get_cap: float | dict[str, float] = 0
 
 
 @app.post("/trade-offers")

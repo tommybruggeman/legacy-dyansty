@@ -24,11 +24,14 @@ def _team_rows(sb: Any, league_id: str) -> list[dict[str, Any]]:
 def _sides(_sb: Any, league_id: str, season: int, me: str, them: str) -> dict[str, Any]:
     state = teams.load_team_state(_sb, league_id, season)
     ids = sorted({str(r.get("sleeper_player_id")) for r in state.get("roster", []) if str(r.get("league_team_id")) in {me, them}})
-    values = trade_feed.market_now(_sb, ids)
+    rows = _team_rows(_sb, league_id)
+    pricer = trade_offers.build_pricer(_sb, state, season, teams=len(rows) or 10)
     price = trade_offers.pick_pricer(trade_feed.pick_values(_sb))
-    owner_of = {str(t["id"]): str(t.get("owner_name") or "") for t in _team_rows(_sb, league_id)}
+    owner_of = {str(t["id"]): str(t.get("owner_name") or "") for t in rows}
     info = teams.player_info(_sb, ids)
-    return {side: trade_offers.side(state, tid, info, {}, values, price, owner_of) for side, tid in (("me", me), ("them", them))}
+    out = {side: trade_offers.side(state, tid, info, {}, pricer.values, price, owner_of, pricer) for side, tid in (("me", me), ("them", them))}
+    out["cap_dollar"] = pricer.cap_dollar
+    return out
 
 
 def _label(p: Mapping[str, Any], season: int) -> str:
@@ -76,18 +79,34 @@ def render_trade_box(sb: Any, *, league_id: str, season: int, my_team_id: str, s
         pool.update({_label(p, season): p for p in opts})
         give = st.multiselect("From your team", [_label(p, season) for p in opts], key="trade_give", label_visibility="collapsed",
                               placeholder="Add from your team")
+    # Cap space either side sends, a different amount in each season if wanted (this season and the next three).
+    give_cap: dict[str, float] = {}
+    get_cap: dict[str, float] = {}
+    with st.expander("Cap space (optional)"):
+        st.caption("Send cap space for any season. Each year can be a different amount.")
+        head = st.columns([1, 2, 2])
+        head[1].markdown(f"**{them_first} sends you**")
+        head[2].markdown(f"**You send {them_first}**")
+        for year in range(int(season), int(season) + 4):
+            row = st.columns([1, 2, 2])
+            row[0].markdown(f"**{year}**")
+            got = row[1].number_input(f"get {year}", min_value=0.0, step=1.0, value=0.0, key=f"trade_get_cap_{year}", label_visibility="collapsed")
+            sent = row[2].number_input(f"give {year}", min_value=0.0, step=1.0, value=0.0, key=f"trade_give_cap_{year}", label_visibility="collapsed")
+            if got > 0:
+                get_cap[str(year)] = round(got, 2)
+            if sent > 0:
+                give_cap[str(year)] = round(sent, 2)
     gets, gives = [pool[k] for k in get], [pool[k] for k in give]
-    g = trade_offers.grade(sum(p["value"] for p in gives), sum(p["value"] for p in gets))
+    cap_dollar = float(sides.get("cap_dollar") or 0)
+    g = trade_offers.grade(sum(p["value"] for p in gives) + cap_dollar * trade_offers.cap_total(give_cap),
+                           sum(p["value"] for p in gets) + cap_dollar * trade_offers.cap_total(get_cap))
     st.caption("GM READ · " + trade_offers.read_text(g, str(them.get("owner_name") or "")))
     if g["share"] is not None:
         st.progress(float(g["share"]))
     if not enabled:
         st.caption("Trades in the app turn on after the league leaves Sleeper. Until then, make the trade in Sleeper.")
-    if st.button("Send offer", type="primary", use_container_width=True, disabled=not (enabled and gets and gives)):
-        items = trade_offers.offer_items(str(my_team_id), str(them["id"]), gives, gets)
-        request = {"league_id": league_id, "to_league_team_id": str(them["id"]),
-                   "players": [i for i in items if i.get("contract_id")], "picks": [i for i in items if i.get("draft_pick_id")],
-                   "note": None, "parent_offer_id": None}
+    if st.button("Send offer", type="primary", use_container_width=True, disabled=not (enabled and (gets or get_cap) and (gives or give_cap) and (gets or gives))):
+        request = trade_offers.offer_request(league_id, str(my_team_id), str(them["id"]), gives, gets, give_cap, get_cap)
         try:
             sb.rpc("propose_trade_offer_authenticated", {"p_request": request}).execute()
         except Exception as exc:
