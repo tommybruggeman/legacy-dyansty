@@ -14,7 +14,10 @@ So each side of a trade is read on its own terms:
 
 and one number per side, weighted by the side's direction (contending / middle / rebuilding, from its record then):
 
-  utility = L * now_w * lineup_gain + F * (1 - now_w) * future + C * cap_freed / 10
+  value       : log of what it gets over what it gives, valued its own way (the old engine's share: this season vs
+                dynasty by direction, picks by the pick book, contracts counted)
+
+  utility = V * value + L * now_w * lineup_gain + F * (1 - now_w) * future + C * cap_freed / 10
 
 A trade "makes sense" when both sides' utility is high: score = min(u_a, u_b) + lam * (u_a + u_b).
 
@@ -31,6 +34,7 @@ from __future__ import annotations
 
 import math
 import random
+import zlib
 from bisect import bisect_right
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -45,11 +49,12 @@ NOW_W = {"contending": 0.8, "middle": 0.5, "rebuilding": 0.2}
 PICK_W = {"contending": 0.5, "middle": 0.8, "rebuilding": 1.0}
 DEPTH = 0.6
 DECOYS = 30
-GRID_L = (0.0, 0.02, 0.05, 0.1, 0.2, 0.35, 0.5)
+GRID_V = (0.0, 0.5, 1.0)
+GRID_L = (0.0, 0.02, 0.05, 0.1, 0.2)
 GRID_C = (0.0, 0.1, 0.25, 0.5)
-GRID_F = (0.0, 1.0)
-GRID_LAM = (0.0, 0.25, 0.5, 1.0)
-DEFAULT_WEIGHTS = {"L": 0.1, "C": 0.1, "F": 1.0, "lam": 0.25, "floor": -0.25}  # until a league's own fit is saved
+GRID_F = (0.0, 0.5, 1.0)
+GRID_LAM = (0.0, 0.5)
+DEFAULT_WEIGHTS = {"V": 1.0, "L": 0.05, "C": 0.1, "F": 0.5, "lam": 0.0, "floor": -0.6}  # until a league's own fit is saved
 FLOOR_PCT = 0.2  # the finder only pitches deals whose partner side reads at least as well as the bottom 20% of real accepted sides
 
 
@@ -85,21 +90,41 @@ def side_features(roster: list[Mapping[str, Any]], gives: list[Mapping[str, Any]
     after_roster = [p for p in before_roster if p.get("pid") not in out_ids] + [a for a in gets if not a.get("pick")]
     b, b_pos = best_lineup(before_roster, slots)
     a, a_pos = best_lineup(after_roster, slots)
+    cap = sum(float(x.get("cap") or 0) for x in gives if not x.get("pick")) - sum(float(x.get("cap") or 0) for x in gets if not x.get("pick")) + float(cap_in or 0)
+    by_pos = {pos: a_pos.get(pos, 0.0) - b_pos.get(pos, 0.0) for pos in set(a_pos) | set(b_pos)}
+    return summarize_side(a - b, by_pos, gives, gets, direction, cap)
+
+
+def summarize_side(lineup_gain: float, by_pos: Mapping[str, float], gives: list[Mapping[str, Any]], gets: list[Mapping[str, Any]], direction: str,
+                   cap_freed: float) -> dict[str, Any]:
+    """The side's features from its lineup change and what moves (assets with market, picks flagged pick)."""
     n_gives = sum(1 for x in gives if not x.get("pick"))
     n_gets = sum(1 for x in gets if not x.get("pick"))
     pw = PICK_W.get(direction, 0.8)
     give_v, get_v = _total(gives, n_gets, pw), _total(gets, n_gives, pw)
     future = math.log(max(0.2, min(5.0, (get_v + 1.0) / (give_v + 1.0))))
-    cap = sum(float(x.get("cap") or 0) for x in gives if not x.get("pick")) - sum(float(x.get("cap") or 0) for x in gets if not x.get("pick")) + float(cap_in or 0)
-    by_pos = {pos: round(a_pos.get(pos, 0.0) - b_pos.get(pos, 0.0), 2) for pos in set(a_pos) | set(b_pos)}
-    return {"lineup_gain": round(a - b, 3), "by_pos": {k: v for k, v in by_pos.items() if abs(v) >= 0.05}, "future": round(future, 4),
-            "cap_freed": round(cap, 2), "direction": direction, "picks_in": sum(1 for x in gets if x.get("pick")),
-            "picks_out": sum(1 for x in gives if x.get("pick"))}
+    return {"lineup_gain": round(float(lineup_gain), 3), "by_pos": {k: round(v, 2) for k, v in by_pos.items() if abs(v) >= 0.05},
+            "future": round(future, 4), "cap_freed": round(float(cap_freed), 2), "direction": direction,
+            "picks_in": sum(1 for x in gets if x.get("pick")), "picks_out": sum(1 for x in gives if x.get("pick"))}
+
+
+def describe_side(f: Mapping[str, Any]) -> str:
+    """'starting lineup +2.1 pts a week (QB +5.0, RB -2.9); dynasty value +15%; $8 more cap room'. Never says who wins."""
+    parts = []
+    g = float(f["lineup_gain"])
+    pos = ", ".join(f"{k} {v:+.1f}" for k, v in sorted(f.get("by_pos", {}).items(), key=lambda kv: -abs(kv[1])) if abs(v) >= 0.3)
+    parts.append(("starting lineup about the same" if abs(g) < 0.3 else f"starting lineup {g:+.1f} pts a week") + (f" ({pos})" if pos else ""))
+    fut = math.exp(float(f["future"])) - 1
+    parts.append("dynasty value about even" if abs(fut) < 0.05 else f"dynasty value {100 * fut:+.0f}%")
+    c = float(f["cap_freed"])
+    if abs(c) >= 1:
+        parts.append(f"${c:g} more cap room" if c > 0 else f"${-c:g} less cap room")
+    return "; ".join(parts)
 
 
 def utility(f: Mapping[str, Any], w: Mapping[str, float]) -> float:
     n = NOW_W.get(str(f.get("direction")), 0.5)
-    return (w["L"] * n * float(f["lineup_gain"]) + w["F"] * (1 - n) * float(f["future"]) + w["C"] * float(f["cap_freed"]) / 10.0)
+    return (w.get("V", 0.0) * float(f.get("value") or 0.0) + w["L"] * n * float(f["lineup_gain"]) + w["F"] * (1 - n) * float(f["future"]) + w["C"] * float(f["cap_freed"]) / 10.0)
 
 
 def trade_score(us: list[float], w: Mapping[str, float]) -> float:
@@ -151,7 +176,7 @@ def market_score(sides: Mapping[str, Mapping[str, Any]]) -> float:
 def decoys(trade: Mapping[str, Any], n: int = DECOYS, kind: str = "any", seed: int | None = None) -> list[dict[str, dict[str, list]]]:
     """Other trades the same two owners could have made at that moment: the same number of players each way, picks as in the
     real one, players drawn from their rosters. kind 'value' keeps each player's market value within 0.67-1.5x of the real one."""
-    rng = random.Random(seed if seed is not None else hash(str(trade.get("tid"))) & 0xFFFFFFFF)
+    rng = random.Random(seed if seed is not None else zlib.crc32(str(trade.get("tid")).encode()))
     owners = list(trade["sides"])
     if len(owners) != 2:
         return []
@@ -183,8 +208,19 @@ def decoys(trade: Mapping[str, Any], n: int = DECOYS, kind: str = "any", seed: i
 
 
 def features(trade: Mapping[str, Any], sides: Mapping[str, Mapping[str, Any]], slots: list[str]) -> dict[str, dict[str, Any]]:
-    return {o: side_features(list((trade.get("rosters") or {}).get(o) or []), list(s["gives"]), list(s["gets"]),
-                             (trade.get("directions") or {}).get(o, "middle"), slots) for o, s in sides.items()}
+    from league_ai.trade_backtest import side_share
+
+    out = {}
+    for o, s in sides.items():
+        direction = (trade.get("directions") or {}).get(o, "middle")
+        f = side_features(list((trade.get("rosters") or {}).get(o) or []), list(s["gives"]), list(s["gets"]), direction, slots)
+        f["value"] = log_share(side_share(s, NOW_W.get(direction, 0.5), "picks+contract"))
+        out[o] = f
+    return out
+
+
+def log_share(share: float | None) -> float:
+    return math.log(max(0.2, min(5.0, float(share)))) if share else math.log(0.2)
 
 
 # ---- the test --------------------------------------------------------------------------------------------
@@ -200,7 +236,7 @@ def evaluate(trades: list[Mapping[str, Any]], slots: list[str] | None = None, n:
     never grades weights it helped fit."""
     slots = slots or DEFAULT_SLOTS
     usable = [t for t in trades if len(t["sides"]) == 2 and t.get("rosters") and all(t["rosters"].get(o) for o in t["sides"])]
-    combos = [dict(L=l, C=c, F=f, lam=lam) for l, c, f, lam in product(GRID_L, GRID_C, GRID_F, GRID_LAM) if l or f]
+    combos = [dict(V=v, L=l, C=c, F=f, lam=lam) for v, l, c, f, lam in product(GRID_V, GRID_L, GRID_C, GRID_F, GRID_LAM) if v or l or f]
     rows = []  # per trade: real features + decoy features by kind
     for t in usable:
         real_f = features(t, t["sides"], slots)
@@ -235,6 +271,22 @@ def evaluate(trades: list[Mapping[str, Any]], slots: list[str] | None = None, n:
             if a is not None:
                 bucket.append(a)
     best = combos[best_j] if best_j is not None else dict(DEFAULT_WEIGHTS)
+    named = {"value_only": dict(V=1.0, L=0.0, C=0.0, F=0.0, lam=0.0), "lineup_only": dict(V=0.0, L=0.1, C=0.0, F=0.0, lam=0.0),
+             "default": {k: v for k, v in DEFAULT_WEIGHTS.items() if k != "floor"}, "best_in_sample": best}
+    in_sample = {}
+    for name, w in named.items():
+        j = next((j for j, c in enumerate(combos) if c == w), None)
+        if j is None:
+            col = []
+            for t, rf, dec in rows:
+                real = trade_score([utility(f, w) for f in rf.values()], w)
+                parts = [_auc(real, [trade_score([utility(f, w) for f in df.values()], w) for _, df in dec[k]]) for k in ("any", "value")]
+                parts = [p for p in parts if p is not None]
+                col.append(sum(parts) / len(parts) if parts else None)
+        else:
+            col = combo_auc[j]
+        vals = [x for x in col if x is not None]
+        in_sample[name] = round(sum(vals) / len(vals), 3) if vals else None
     sides_u = sorted(utility(f, best) for _, rf, _ in rows for f in rf.values())
     floor = sides_u[int(FLOOR_PCT * len(sides_u))] if sides_u else DEFAULT_WEIGHTS["floor"]
     avg = lambda xs: round(sum(xs) / len(xs), 3) if xs else None
@@ -242,6 +294,7 @@ def evaluate(trades: list[Mapping[str, Any]], slots: list[str] | None = None, n:
         "trades": len(trades), "graded": m,
         "auc": {"any_decoy": {"market": avg(base["any"]["market"]), "old_finder": avg(base["any"]["old_finder"]), "fit_loo": avg(loo_any)},
                 "same_value_decoy": {"market": avg(base["value"]["market"]), "old_finder": avg(base["value"]["old_finder"]), "fit_loo": avg(loo_value)}},
+        "in_sample_auc_both_decoys": in_sample,
         "weights": {**best, "floor": round(floor, 4)},
         "real_sides": describe(rows, best),
         "old_gate": gate_rates(rows),
@@ -410,17 +463,22 @@ def main() -> None:
 
     client = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_ROLE_KEY"])
     do_save = "--save" in sys.argv
+    pooled: list[dict[str, Any]] = []
     for n, lg in enumerate(client.table("leagues").select("id").eq("is_test", False).execute().data or [], start=1):
         trades = load_trades(client, lg["id"], with_rosters=True)
         with_r = sum(1 for t in trades if t.get("rosters") and len(t["rosters"]) == 2)
         print(f"league {n}: {len(trades)} completed trades, {with_r} with both rosters", flush=True)
         if not with_r:
             continue
+        pooled += trades
         result = evaluate(trades, slots_for(client, lg["id"]))
         print(json.dumps(result, indent=1, default=str), flush=True)
         if do_save and result["graded"] >= MIN_TRADES:
             save(client, lg["id"], result)
             print("  saved", flush=True)
+    if pooled:
+        print("all leagues together:", flush=True)
+        print(json.dumps(evaluate(pooled), indent=1, default=str), flush=True)
 
 
 if __name__ == "__main__":

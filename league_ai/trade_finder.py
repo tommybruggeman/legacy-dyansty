@@ -24,6 +24,7 @@ from league_ai.power import PlayerStrength, compute_power, fill_lineup
 from league_ai.playoff_odds import pickup_odds
 from league_ai.sleeper_roster import is_no_contract
 from league_ai.tools import ToolSpec
+from league_ai.trade_fit import DEFAULT_WEIGHTS as FIT_DEFAULTS, describe_side, summarize_side, trade_score, utility
 from league_ai.trade_value import DEPTH_SHARE, WINDOWS, Valuer, market_value, nearest_pick, team_windows
 
 POSITIONS = ("QB", "RB", "WR", "TE")
@@ -59,6 +60,7 @@ class League:
         self.playoff_odds: dict[str, float] = {}
         self.habits: dict[str, dict[str, Any]] = {}  # owner name -> league_ai.tendencies row (FAAB positions, start/sit lean...)
         self.owned_picks = _owned_picks(self, picks or [])
+        self.fit_weights: dict[str, float] = dict(FIT_DEFAULTS)  # league_ai.trade_fit, refitted weekly on this league's real trades
         self.set_windows(windows)
 
     def set_windows(self, overrides: Mapping[str, str] | None) -> None:
@@ -205,6 +207,9 @@ def find_trades(*, league: League, asker_team_id: str, cap_space: Mapping[str, f
                                 continue  # fair on paper, but it makes their lineup worse for the window they're in
                             if their_window != "rebuilding" and d["their_gain"] < REASON_GAIN and not any(p.position in their_needs for p in sends):
                                 continue  # no hole filled and no better lineup: they have no reason to do it
+                            d["fit"] = _fit_pair(league, asker, tid, d)
+                            if d["fit"]["them_u"] < league.fit_weights["floor"]:
+                                continue  # reads worse for them than nearly every trade owners here actually made
                             options.append(d)
             if not options:
                 continue
@@ -220,9 +225,11 @@ def find_trades(*, league: League, asker_team_id: str, cap_space: Mapping[str, f
             surplus = (my_in - closing["my_out"]) / my_in if my_in else 0.0
             fit = _habit_fit(league, str(team.get("owner_name") or ""), closing["sends"])
             gets = closing["gets"]
+            pair = closing["fit"]
             idea = {
-                "score": round(closing["my_gain"] + 10 * surplus + 3 * min(closing["their_share"] - 1, 0.5) + (HABIT_FIT_BONUS if fit else 0.0)
-                               + 0.5 * min(closing["their_gain"], 3.0) - 0.5 * (closing["complexity"] - 1), 2),
+                # what the trade does for both teams leads (fitted on this league's real trades); value surplus and simplicity break ties
+                "score": round(FIT_RANK * pair["score"] + VALUE_RANK * (closing["my_gain"] + 10 * surplus + 3 * min(closing["their_share"] - 1, 0.5))
+                               + (HABIT_FIT_BONUS if fit else 0.0) - 0.5 * (closing["complexity"] - 1), 2),
                 "partner": team.get("owner_name"),
                 "partner_window": their_window,
                 "you_get": [_label(p) for p in gets],
@@ -233,6 +240,7 @@ def find_trades(*, league: League, asker_team_id: str, cap_space: Mapping[str, f
                 "players": [v.explain(tid, p) for p in gets] + [v.explain(tid, p) for p in closing["sends"]],
                 "why_they_say_yes": _why(league, tid, their_window, closing["sends"], ranks, target),
                 "schedule": {p.name: p.schedule_note for p in gets + closing["sends"] if getattr(p, "schedule_note", None)},
+                "what_it_does": {"for_you": describe_side(pair["you"]), "for_them": describe_side(pair["them"])},
                 "your_lineup_gain": closing["my_gain"],
                 "their_lineup_gain": closing["their_gain"],
                 "cap_after": {"you": round(closing["cap"][0], 2), "them": round(closing["cap"][1], 2)},
@@ -328,6 +336,34 @@ def _price(league: League, asker: str, tid: str, target: PlayerStrength | list[P
         # plain swaps first: each player or pick is one piece, a cap sweetener one more, cap that only makes salaries fit half
         "complexity": len(sends) + len(gets) - 1 + len(picks) + (1 if sweetener else 0) + (0.5 if moved != sweetener else 0),
     }
+
+
+FIT_RANK = 6.0    # weight of the both-teams fit score (trade_fit) in ranking ideas
+VALUE_RANK = 0.5  # weight of the old ranking (asker's lineup gain, value surplus, partner's share)
+
+
+def _fit_pair(league: League, asker: str, tid: str, d: Mapping[str, Any]) -> dict[str, Any]:
+    """What one offer does for each team, read the way league_ai.trade_fit reads real trades: starting-lineup points a week by
+    position, dynasty value in and out (picks by direction), and cap room. Utility per side and the pair's score."""
+    moved = float(d.get("cap_moved") or 0)
+    pick_val = sum(val for _, val in d.get("picks") or [])
+    sends, gets = list(d["sends"]), list(d["gets"])
+    mine = [{"market": market_value(p)} for p in sends] + ([{"pick": 1.0, "market": pick_val}] if pick_val else [])
+    theirs = [{"market": market_value(p)} for p in gets]
+
+    def side(team: str, out: list[PlayerStrength], into: list[PlayerStrength], gives: list[dict], gets_: list[dict], cap: float) -> dict[str, Any]:
+        roster = league.by_team.get(team, [])
+        out_ids = {p.sleeper_id for p in out}
+        before = league.strength(roster, "now")
+        after = league.strength([p for p in roster if p.sleeper_id not in out_ids] + list(into), "now")
+        by_pos = {k: after.get(k, 0.0) - before.get(k, 0.0) for k in set(before) | set(after)}
+        return summarize_side(sum(after.values()) - sum(before.values()), by_pos, gives, gets_, league.window(team), cap)
+
+    you = side(asker, sends, gets, mine, theirs, sum(_cap(p) for p in sends) - sum(_cap(p) for p in gets) - moved)
+    them = side(tid, gets, sends, theirs, mine, sum(_cap(p) for p in gets) - sum(_cap(p) for p in sends) + moved)
+    w = league.fit_weights
+    us = [utility(you, w), utility(them, w)]
+    return {"you": you, "them": them, "you_u": us[0], "them_u": us[1], "score": trade_score(us, w)}
 
 
 CONTENDER_DROP = 0.5  # a contender won't take a deal that costs its best lineup more than this many points a week
@@ -1039,8 +1075,11 @@ def load_league(client: Any, state: Mapping[str, Any], season: int, roster_posit
         leanings = load_styles(client, league_id)
     from league_ai.pick_values import PickBook
     book = PickBook(_pick_rows(client), teams=len(teams), rounds=ROOKIE_ROUNDS, season=season)
-    return League(players, teams, roster_positions, records=records, leanings=leanings, pick_book=book,
-                  picks=state.get("draft_picks") or []), cap, str(asker_team_id)
+    lg = League(players, teams, roster_positions, records=records, leanings=leanings, pick_book=book, picks=state.get("draft_picks") or [])
+    if league_id:
+        from league_ai.trade_fit import load_weights
+        lg.fit_weights = load_weights(client, league_id)
+    return lg, cap, str(asker_team_id)
 
 
 def _attach_contracts(client: Any, players: list[PlayerStrength], roster: list[Mapping[str, Any]], season: int, league_id: str | None) -> None:
