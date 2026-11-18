@@ -5,9 +5,15 @@ from decimal import Decimal
 from typing import Any, Mapping, Sequence
 
 
-def draft_season_window(active_season: int) -> tuple[int, int, int]:
+# Draft picks are tradable three drafts ahead (Tommy, 2026-11-17): in season 2026 that is 2027, 2028 and 2029.
+# Matches the rollover's four-class horizon (this year's draft + three ahead) and ensure_draft_pick_horizons().
+PICK_YEARS_OUT = 3
+
+
+def draft_season_window(active_season: int) -> tuple[int, ...]:
+    """This season's draft plus the next PICK_YEARS_OUT."""
     season = int(active_season)
-    return season, season + 1, season + 2
+    return tuple(range(season, season + PICK_YEARS_OUT + 1))
 
 
 def is_draft_pick_tradeable(lifecycle_status: str, asset_status: str) -> bool:

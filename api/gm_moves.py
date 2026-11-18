@@ -254,8 +254,31 @@ def _pick_options(state: Mapping[str, Any], team_id: str, owner_of: Mapping[str,
             and str(r.get("asset_status") or "tradable") == "tradable"}
 
 
+def _merge_cap(amount: Any, by_year: Any) -> Any:
+    """The GM's give_cap (this season) plus give_cap_by_year ({season: dollars}) as one {season: amount} map."""
+    years = trade_offers.cap_years(by_year or {})
+    for season, value in trade_offers.cap_years(amount or 0).items():
+        years[season] = round(years.get(season, 0.0) + value, 2)
+    return {("" if k is None else k): v for k, v in years.items()} if years else 0
+
+
+def _cap_body(value: Any, season: Any = None) -> float | dict[str, float]:
+    """Cap for the offer body: a plain number when it's all this season, else {"2026": 5, "2027": 3}."""
+    years = trade_offers.cap_years(value)
+    if season:
+        if None in years:
+            years[int(season)] = round(years.get(int(season), 0.0) + years.pop(None), 2)
+        if list(years) == [int(season)]:
+            return years[int(season)]
+    if not years:
+        return 0.0
+    if list(years) == [None]:
+        return years[None]
+    return {str(y): a for y, a in sorted(years.items(), key=lambda kv: kv[0] or 0) if y}
+
+
 def build_offer(state: Mapping[str, Any], teams: list[Mapping[str, Any]], me: str, *, to_owner: str, give: list[str], get: list[str],
-                give_picks: list[str], get_picks: list[str], give_cap: float, get_cap: float) -> tuple[str, dict[str, Any], list[str]]:
+                give_picks: list[str], get_picks: list[str], give_cap: Any, get_cap: Any) -> tuple[str, dict[str, Any], list[str]]:
     """(partner team id, the offer body the trade screen sends, card lines) for an offer named in words."""
     owner_of = {str(t["id"]): str(t.get("owner_name") or "") for t in teams}
     them = pick_one(to_owner, {i: n for i, n in owner_of.items() if i != str(me)}, "other owner")
@@ -279,13 +302,12 @@ def build_offer(state: Mapping[str, Any], teams: list[Mapping[str, Any]], me: st
         return out
 
     g, r = players(str(me), give) + picks(str(me), give_picks), players(them, get) + picks(them, get_picks)
-    give_cap, get_cap = max(0.0, round(float(give_cap or 0), 2)), max(0.0, round(float(get_cap or 0), 2))
+    give_cap, get_cap = _cap_body(give_cap, state.get("season")), _cap_body(get_cap, state.get("season"))
     if not (g or give_cap) or not (r or get_cap):
         raise MoveError("each side has to send something")
     body = {"to_team_id": them, "give": g, "get": r, "give_cap": give_cap, "get_cap": get_cap}
-    money = lambda x: f"${x:g} cap space"  # noqa: E731
-    lines = [f"You send: {', '.join([p.get('name') or p.get('label') for p in g] + ([money(give_cap)] if give_cap else []))}",
-             f"You get: {', '.join([p.get('name') or p.get('label') for p in r] + ([money(get_cap)] if get_cap else []))}"]
+    lines = [f"You send: {', '.join([p.get('name') or p.get('label') for p in g] + ([trade_offers.cap_text(give_cap)] if give_cap else []))}",
+             f"You get: {', '.join([p.get('name') or p.get('label') for p in r] + ([trade_offers.cap_text(get_cap)] if get_cap else []))}"]
     return them, body, lines
 
 
@@ -303,7 +325,8 @@ def trade_tool(state: Callable[[], Mapping[str, Any]], teams: Callable[[], list[
             for o in offers:
                 them, body, lines = build_offer(state(), people, me, to_owner=to_owner, give=o.get("give") or [], get=o.get("get") or [],
                                                 give_picks=o.get("give_picks") or [], get_picks=o.get("get_picks") or [],
-                                                give_cap=o.get("give_cap") or 0, get_cap=o.get("get_cap") or 0)
+                                                give_cap=_merge_cap(o.get("give_cap"), o.get("give_cap_by_year")),
+                                                get_cap=_merge_cap(o.get("get_cap"), o.get("get_cap_by_year")))
                 if note:
                     body["note"] = str(note)[:280]
                 built.append((o, them, body, lines))
@@ -330,7 +353,9 @@ def trade_tool(state: Callable[[], Mapping[str, Any]], teams: Callable[[], list[
         "Put an offer card under your answer: one to three offers to the same owner as buttons (your opening offer first and highlighted, "
         "then e.g. where it should close); the offer the owner taps goes to the other owner (you can't send it). Use it when the owner asks "
         "you to send, draft or build an offer, or says yes to one you suggested; never for a value question or a brainstorm. Players are names "
-        "from each roster; picks like '2027 1st'; cap space in dollars (this season). The other owner still has to accept it.",
+        "from each roster; picks like '2027 1st' (picks are tradable three drafts ahead); cap space in dollars: give_cap/get_cap for this "
+        "season, or give_cap_by_year/get_cap_by_year like {\"2026\": 5, \"2027\": 3} to send different amounts in different seasons "
+        "(this season and the next three). The other owner still has to accept it.",
         {"type": "object", "properties": {
             "to_owner": {"type": "string", "description": "The other owner's name"},
             "offers": {"type": "array", "maxItems": 3, "items": {"type": "object", "properties": {
@@ -339,7 +364,9 @@ def trade_tool(state: Callable[[], Mapping[str, Any]], teams: Callable[[], list[
                 "give": {"type": "array", "items": {"type": "string"}, "description": "Players this owner sends"},
                 "get": {"type": "array", "items": {"type": "string"}, "description": "Players this owner gets"},
                 "give_picks": {"type": "array", "items": {"type": "string"}}, "get_picks": {"type": "array", "items": {"type": "string"}},
-                "give_cap": {"type": "number"}, "get_cap": {"type": "number"}}}},
+                "give_cap": {"type": "number"}, "get_cap": {"type": "number"},
+                "give_cap_by_year": {"type": "object", "additionalProperties": {"type": "number"}, "description": "Season -> dollars this owner sends"},
+                "get_cap_by_year": {"type": "object", "additionalProperties": {"type": "number"}, "description": "Season -> dollars this owner gets"}}}},
             "note": {"type": "string", "description": "Optional short note to the other owner, in this owner's voice"}},
          "required": ["to_owner", "offers"]}, run)
 

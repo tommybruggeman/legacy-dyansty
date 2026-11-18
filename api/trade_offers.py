@@ -29,7 +29,8 @@ ERRORS = {
     "offer_pick_moved": "A pick in this offer has already moved.",
     "offer_player_locked": "A player in this offer has already played this week. Try again after Monday night.",
     "offer_empty": "Add at least one player or pick.",
-    "offer_cap_amount_invalid": "Cap space has to be more than $0, once per side.",
+    "offer_cap_amount_invalid": "Cap space has to be more than $0, once per side for each season.",
+    "offer_cap_season_invalid": "Cap space can be sent for this season or the next three.",
     "trade_deadline_passed": "The trade deadline has passed. Trading reopens the day after the championship.",
     "offer_one_sided": "Both teams have to get something.",
     "offer_not_open": "That offer was already answered.",
@@ -112,28 +113,86 @@ def pick_pricer(picks: Mapping[tuple[int, int], float]):
     return price
 
 
+class ReadPricer:
+    """Prices for the GM read, on the dynasty market scale, the way the trade engine (league_ai.trade_value) does it:
+
+    - a player is his market value plus the contract's surplus or cost: how far his cap hit sits from what this league
+      pays players of his value, over the years left (up to 3), at CONTRACT_WEIGHT. A cheap long deal adds value, an
+      expensive one or one about to expire adds little.
+    - a dollar of cap space (any season) is worth CAP_DOLLAR_SHARE of what a rostered dollar buys in this league.
+    - a pick is priced by our own pick book (league_ai.pick_values: real drafts blended with the market's slot curve),
+      with next year's pick placed by its original owner's record.
+    """
+
+    def __init__(self, roster: Iterable[Mapping[str, Any]], values: Mapping[str, float], season: int,
+                 pick_rows: list[Mapping[str, Any]] | None = None, teams: int = 10,
+                 records: Mapping[str, tuple[int, int]] | None = None):
+        from league_ai.pick_values import PickBook
+        from league_ai.trade_value import CAP_DOLLAR_SHARE, TOP_SHARE, TOP_WORTH
+
+        rows = [r for r in roster if r.get("sleeper_player_id")]
+        hit = lambda r: _f(r.get("contract_cap_hit") or r.get("cap_hit"))  # noqa: E731
+        capped = [r for r in rows if hit(r) > 0]
+        hits = sorted((hit(r) for r in capped), reverse=True)
+        n_teams = len({str(r.get("league_team_id")) for r in capped}) or 1
+        top = TOP_SHARE * sum(hits) / n_teams
+        by_value = sorted(capped, key=lambda r: -values.get(str(r["sleeper_player_id"]), 0.0))
+        self.fair = {str(r["sleeper_player_id"]): hits[i] * (TOP_WORTH if hits[i] >= top else 1.0) for i, r in enumerate(by_value)}
+        self.values = values
+        total_cap = sum(hits)
+        self.cap_dollar = CAP_DOLLAR_SHARE * sum(values.get(str(r["sleeper_player_id"]), 0.0) for r in capped) / total_cap if total_cap else 0.0
+        self.book = PickBook(pick_rows or [], teams=teams, rounds=3, season=season, records=records)
+
+    def player(self, pid: str, salary: float, years: int) -> float:
+        from league_ai.trade_value import CONTRACT_WEIGHT
+
+        base = float(self.values.get(str(pid), 0.0))
+        fair = self.fair.get(str(pid))
+        if salary <= 0 or not fair or not base:
+            return base
+        gap = max(-1.0, min(1.0, (fair - salary) / max(fair, salary)))
+        return base + CONTRACT_WEIGHT * gap * min(max(int(years or 1), 1), 3) / 3 * base
+
+    def pick(self, year: int, rnd: int, original_team_id: str | None) -> float:
+        return self.book.value(f"{year} R{rnd}", original_team_id)[0]
+
+    def cap(self, dollars: float) -> float:
+        return max(0.0, float(dollars or 0.0)) * self.cap_dollar
+
+
+def build_pricer(client: Any, state: Mapping[str, Any], season: int, teams: int = 10,
+                 records: Mapping[str, tuple[int, int]] | None = None) -> ReadPricer:
+    """League-wide prices for the GM read (shared by the app's trade page and the website's trade window)."""
+    from api.trade_feed import market_now
+    from league_ai.trade_finder import _pick_rows
+    ids = sorted({str(r.get("sleeper_player_id")) for r in state.get("roster", []) if r.get("sleeper_player_id")})
+    return ReadPricer(state.get("roster", []), market_now(client, ids), int(season), pick_rows=_pick_rows(client), teams=teams, records=records)
+
+
 def side(state: Mapping[str, Any], team_id: str, info: Mapping[str, Mapping[str, Any]], ppg: Mapping[str, float],
-         values: Mapping[str, float], picks_value: Any, owner_of: Mapping[str, str]) -> dict[str, Any]:
-    """One team's tradeable players and picks, best first."""
+         values: Mapping[str, float], picks_value: Any, owner_of: Mapping[str, str], pricer: ReadPricer | None = None) -> dict[str, Any]:
+    """One team's tradeable players and picks, best first. With a pricer, each 'value' is the GM read's price
+    (contract and our own pick values counted); without one, the plain market value."""
     players = []
     for r in state.get("roster", []):
         if str(r.get("league_team_id")) != team_id or not r.get("contract_agreement_id"):
             continue
         pid = str(r.get("sleeper_player_id"))
         meta = info.get(pid) or {}
+        salary, years = _f(r.get("contract_cap_hit") or r.get("cap_hit")), int(r.get("contract_years_left") or 1)
         players.append({
             "player_id": pid, "contract_id": str(r["contract_agreement_id"]),
             "name": meta.get("full_name") or r.get("player_name") or "Player", "pos": meta.get("position") or r.get("position") or "",
-            "nfl_team": meta.get("team") or "FA", "salary": _f(r.get("contract_cap_hit") or r.get("cap_hit")),
-            "years": int(r.get("contract_years_left") or 1), "ppg": ppg.get(pid), "value": round(values.get(pid, 0.0)),
+            "nfl_team": meta.get("team") or "FA", "salary": salary, "years": years, "ppg": ppg.get(pid),
+            "value": round(pricer.player(pid, salary, years) if pricer else values.get(pid, 0.0)),
         })
     picks = []
     for r in state.get("draft_picks", []):
         if str(r.get("current_owner_league_team_id")) != team_id or str(r.get("asset_status") or "tradable") != "tradable" or not r.get("stable_pick_id"):
             continue
-        picks.append({"pick_id": str(r["stable_pick_id"]), "label": pick_label(r, owner_of),
-                      "year": int(r.get("draft_year") or 0), "round": int(r.get("round_number") or 0),
-                      "value": round(picks_value(int(r.get("draft_year") or 0), int(r.get("round_number") or 0)))})
+        year, rnd = int(r.get("draft_year") or 0), int(r.get("round_number") or 0)
+        price = pricer.pick(year, rnd, str(r.get("original_league_team_id") or "")) if pricer else picks_value(year, rnd)
+        picks.append({"pick_id": str(r["stable_pick_id"]), "label": pick_label(r, owner_of), "year": year, "round": rnd, "value": round(price)})
     players.sort(key=lambda p: (-p["value"], -(p["ppg"] or 0)))
     picks.sort(key=lambda p: (p["year"], p["round"]))
     return {"players": players, "picks": picks}
@@ -149,24 +208,59 @@ def grade(gives: float, gets: float) -> dict[str, Any]:
     return {"share": round(share, 3), "lean": lean, "pct": round(abs(share - 0.5) * 200)}
 
 
-def read_text(g: Mapping[str, Any], partner: str) -> str:
-    first = partner.split(" ")[0] if partner else "They"
-    if g["share"] is None:
-        return "Pick what each side gets."
-    if g["lean"] == "fair":
-        return f"About even on today's dynasty value. {first} should see it as fair."
-    if g["lean"] == "you":
-        return f"About {g['pct']}% in your favor on today's dynasty value. {first} may counter."
-    return f"About {g['pct']}% in {first}'s favor on today's dynasty value. You're paying a premium."
+def read_text(g: Mapping[str, Any], partner: str = "") -> str:
+    """The read never names a winner (Tommy, 2026-11-17): 'Even', or nothing."""
+    return "Even" if g.get("share") is not None and g.get("lean") == "fair" else ""
 
 
-def cap_items(me: str, them: str, give_cap: float, get_cap: float) -> list[dict[str, Any]]:
-    """Cap space in an offer (this season): [{from_league_team_id, to_league_team_id, amount}], any amount (no limit)."""
-    out = []
-    for amount, frm, to in ((give_cap, me, them), (get_cap, them, me)):
-        amount = round(float(amount or 0), 2)
+CapInput = Any  # a number (this season) or {season: amount} / [{season, amount}] for several seasons
+
+
+def cap_years(value: CapInput) -> dict[int | None, float]:
+    """Cap space one side sends, by season. A plain number is this season (key None: the database fills it in)."""
+    if isinstance(value, Mapping):
+        pairs = list(value.items())
+    elif isinstance(value, (list, tuple)):
+        pairs = [(i.get("season"), i.get("amount")) for i in value if isinstance(i, Mapping)]
+    else:
+        pairs = [(None, value)]
+    out: dict[int | None, float] = {}
+    for season, amount in pairs:
+        try:
+            amount = round(float(amount or 0), 2)
+            key = int(season) if season not in (None, "") else None
+        except (TypeError, ValueError):
+            continue
         if amount > 0:
-            out.append({"from_league_team_id": frm, "to_league_team_id": to, "amount": amount})
+            out[key] = round(out.get(key, 0.0) + amount, 2)
+    return out
+
+
+def cap_total(value: CapInput) -> float:
+    return round(sum(cap_years(value).values()), 2)
+
+
+def cap_text(value: CapInput) -> str:
+    """'$5 cap space', or '$8 cap space ($5 in 2026, $3 in 2027)' across seasons."""
+    years = cap_years(value)
+    if not years:
+        return ""
+    total = f"${sum(years.values()):g} cap space"
+    if len(years) == 1 and None in years:
+        return total
+    return total + " (" + ", ".join(f"${a:g} in {y}" if y else f"${a:g} this season" for y, a in sorted(years.items(), key=lambda kv: kv[0] or 0)) + ")"
+
+
+def cap_items(me: str, them: str, give_cap: CapInput, get_cap: CapInput) -> list[dict[str, Any]]:
+    """Cap space in an offer: [{from_league_team_id, to_league_team_id, amount, season?}], any amount (no limit).
+    Each side can send a different amount in each season (this one and the next three)."""
+    out = []
+    for value, frm, to in ((give_cap, me, them), (get_cap, them, me)):
+        for season, amount in sorted(cap_years(value).items(), key=lambda kv: kv[0] or 0):
+            row = {"from_league_team_id": frm, "to_league_team_id": to, "amount": amount}
+            if season:
+                row["season"] = season
+            out.append(row)
     return out
 
 
@@ -184,7 +278,7 @@ def offer_items(me: str, them: str, give: Iterable[Mapping[str, Any]], get: Iter
 
 
 def offer_request(league_id: str, me: str, them: str, give: Iterable[Mapping[str, Any]], get: Iterable[Mapping[str, Any]],
-                  give_cap: float = 0, get_cap: float = 0, note: str | None = None, parent_offer_id: str | None = None) -> dict[str, Any]:
+                  give_cap: CapInput = 0, get_cap: CapInput = 0, note: str | None = None, parent_offer_id: str | None = None) -> dict[str, Any]:
     """The propose_trade_offer_authenticated request for an offer (the trade screen and the GM's confirm card send the same one)."""
     items = offer_items(me, them, give, get)
     return {
@@ -219,8 +313,9 @@ def center(rows: Iterable[Mapping[str, Any]], me: str, owner_of: Mapping[str, st
                      "pos": meta.get("position") or "", "nfl_team": meta.get("team") or ""}
             (you_get if str(item.get("to_league_team_id")) == me else you_give).append(shown)
         for item in r.get("cap") or []:
-            amount = float(item.get("amount") or 0)
-            shown = {"kind": "cap", "amount": amount, "name": f"${amount:g} cap space", "pos": "", "nfl_team": ""}
+            amount, season = float(item.get("amount") or 0), item.get("season")
+            shown = {"kind": "cap", "amount": amount, "season": season, "pos": "", "nfl_team": "",
+                     "name": f"${amount:g} cap space" + (f" ({season})" if season else "")}
             (you_get if str(item.get("to_league_team_id")) == me else you_give).append(shown)
         offer = {"id": str(r["id"]), "partner": owner_of.get(partner_id, "Another team"), "partner_team_id": partner_id,
                  "you_get": you_get, "you_give": you_give, "note": r.get("note"), "created_at": r.get("created_at"),

@@ -34,6 +34,7 @@ MARKET = [7977, 6453, 5239, 4268, 3489, 2862, 2356, 1946, 1613, 1341, 1119, 937,
           475, 405, 345, 296, 254, 219, 189, 164, 143, 124, 109, 95, 84, 74, 66, 58, 51, 45, 40, 35, 31]
 MARKET_WEIGHT = 0.5
 FUTURE_DISCOUNT = 0.8      # per year out, when the market has no price for that draft
+YEARS_OUT = 3              # picks are tradable three drafts ahead (Tommy, 2026-11-17); services.canonical_trades.PICK_YEARS_OUT
 CLASS_TRUST = 0.5          # share of a class's ranked depth (vs an average class) applied to its picks
 FULL_SEASON_GAMES = 14     # by then a record says where the pick lands
 ROUND_WORDS = {"first": "1st", "second": "2nd", "third": "3rd", "fourth": "4th", "fifth": "5th"}
@@ -174,9 +175,9 @@ class PickBook:
         return avg, f"round {rnd} average"
 
     def labels(self) -> list[tuple[str, float]]:
-        """Round and early/mid/late prices for the next two drafts, for 'market fair would add a ___'."""
+        """Round and early/mid/late prices for the next YEARS_OUT drafts, for 'market fair would add a ___'."""
         out = []
-        for year in (self.season + 1, self.season + 2):
+        for year in range(self.season + 1, self.season + YEARS_OUT + 1):
             for rnd in range(1, self.rounds + 1):
                 suffix = {1: "1st", 2: "2nd", 3: "3rd"}.get(rnd, f"{rnd}th")
                 out.append((f"{year} {suffix}", self.round_value(year, rnd)))

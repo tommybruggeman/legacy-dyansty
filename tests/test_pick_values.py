@@ -64,6 +64,9 @@ class PickBookTests(unittest.TestCase):
         labels = dict(self.book.labels())
         self.assertIn("2027 1st", labels)
         self.assertGreater(labels["2027 Early 1st"], labels["2027 Late 1st"])
+        # picks are tradable three drafts ahead, so all three are priced and none beyond
+        self.assertIn("2029 1st", labels)
+        self.assertNotIn("2030 1st", labels)
 
     def test_non_increasing(self):
         self.assertEqual(non_increasing([4, 5, 3]), [4.5, 4.5, 3])

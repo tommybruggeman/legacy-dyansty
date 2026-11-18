@@ -162,3 +162,15 @@ def test_past_cards_go_back_to_the_gm():
                 {"id": "keep", "label": "Keep Pittman"}], "chosen": "keep", "status": "done", "result": "Kept your lineup."}]}]
     text = _history_messages(history)[1]["content"]
     assert "[Move cards under this answer]" in text and "owner chose Keep Pittman" in text and "Start Odunze (your pick)" in text
+
+
+def test_build_offer_staggers_cap_across_seasons():
+    state = {**STATE, "season": 2026}
+    _, body, lines = gm_moves.build_offer(state, TEAMS, "me", to_owner="dylan", give=["Waddle"], get=["Nabers"], give_picks=[], get_picks=[],
+                                          give_cap=gm_moves._merge_cap(5, {"2027": 3}), get_cap=0)
+    assert body["give_cap"] == {"2026": 5.0, "2027": 3.0}
+    assert lines[0] == "You send: Jaylen Waddle, $8 cap space ($5 in 2026, $3 in 2027)"
+    # only this season named: stays a plain number
+    _, body, _ = gm_moves.build_offer(state, TEAMS, "me", to_owner="dylan", give=["Waddle"], get=["Nabers"], give_picks=[], get_picks=[],
+                                      give_cap=gm_moves._merge_cap(0, {"2026": 4}), get_cap=0)
+    assert body["give_cap"] == 4.0
