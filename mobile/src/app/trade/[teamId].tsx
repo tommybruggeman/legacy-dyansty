@@ -87,7 +87,8 @@ export default function TradePage() {
   const ready = assets > 0 && (picked.give.players.length + picked.give.picks.length + (capTotal(cap.me) > 0 ? 1 : 0)) > 0
     && (picked.get.players.length + picked.get.picks.length + (capTotal(cap.them) > 0 ? 1 : 0)) > 0;
   const capBody = (c: CapByYear) => Object.fromEntries(capYears(c).map((y) => [String(y), c[y]]));
-  const lean = !g ? '' : g.lean === 'fair' ? 'Fair' : g.lean === 'you' ? `${me} +${g.pct}%` : `${them} +${g.pct}%`;
+  // The read never names a winner (Tommy, 2026-11-17): "Even", or nothing.
+  const lean = g?.lean === 'fair' ? 'Even' : '';
 
   const toggle = (side: 'me' | 'them', key: string, alt?: string) => {
     const [set, setter] = side === 'me' ? [mine, setMine] : [theirs, setTheirs];
@@ -138,10 +139,6 @@ export default function TradePage() {
 
       <View style={styles.gm}>
         <View style={styles.gmTop}><Text style={styles.gmTitle}>GM READ</Text><Text style={styles.gmLean}>{lean}</Text></View>
-        <View style={styles.meter}>
-          <View style={[styles.meterFill, { width: `${Math.round((g?.share ?? 0) * 100)}%` }]} />
-          <View style={styles.meterMid} />
-        </View>
         {capAfter.map((c) => {
           const bad = (c.me ?? 0) < 0 || (c.them ?? 0) < 0;
           const label = capAfter.length > 1 ? `Cap after (${c.year})` : 'Cap after';
@@ -386,10 +383,7 @@ const styles = StyleSheet.create({
   gmTop: { flexDirection: 'row', justifyContent: 'space-between' },
   gmTitle: { color: colors.gold, fontSize: 11, fontWeight: '900', letterSpacing: 1.3 },
   gmLean: { color: colors.text, fontSize: 12, fontWeight: '800' },
-  meter: { height: 6, borderRadius: 3, backgroundColor: '#22382D', marginTop: 10, marginBottom: 6, overflow: 'hidden' },
-  meterFill: { height: 6, backgroundColor: colors.gold },
-  meterMid: { position: 'absolute', left: '50%', top: 0, bottom: 0, width: 2, backgroundColor: colors.text },
-  capLine: { textAlign: 'center' },
+  capLine: { textAlign: 'center', marginTop: 6 },
   capBad: { color: '#E07C7C' },
   send: { backgroundColor: colors.gold, borderRadius: 14, paddingVertical: 13, alignItems: 'center', marginTop: 10, marginBottom: 20 },
   sendOff: { opacity: 0.4 },

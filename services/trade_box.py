@@ -100,9 +100,9 @@ def render_trade_box(sb: Any, *, league_id: str, season: int, my_team_id: str, s
     cap_dollar = float(sides.get("cap_dollar") or 0)
     g = trade_offers.grade(sum(p["value"] for p in gives) + cap_dollar * trade_offers.cap_total(give_cap),
                            sum(p["value"] for p in gets) + cap_dollar * trade_offers.cap_total(get_cap))
-    st.caption("GM READ · " + trade_offers.read_text(g, str(them.get("owner_name") or "")))
-    if g["share"] is not None:
-        st.progress(float(g["share"]))
+    read = trade_offers.read_text(g)  # "Even" or nothing: the read never names a winner
+    if read:
+        st.caption("GM READ · " + read)
     if not enabled:
         st.caption("Trades in the app turn on after the league leaves Sleeper. Until then, make the trade in Sleeper.")
     if st.button("Send offer", type="primary", use_container_width=True, disabled=not (enabled and (gets or get_cap) and (gives or give_cap) and (gets or gives))):

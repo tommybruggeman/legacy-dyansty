@@ -40,8 +40,9 @@ def test_grade_and_read():
     assert g == {"share": 0.54, "lean": "fair", "pct": 8}
     g = to.grade(40, 60)
     assert g["lean"] == "you" and g["pct"] == 20
-    assert "20% in your favor" in to.read_text(g, "Grady M")
-    assert "Grady's favor" in to.read_text(to.grade(60, 40), "Grady M")
+    # never names a winner: "Even" or nothing
+    assert to.read_text(to.grade(50, 52), "Grady M") == "Even"
+    assert to.read_text(g, "Grady M") == "" and to.read_text(to.grade(60, 40), "Grady M") == ""
     assert to.grade(0, 0)["share"] is None
 
 

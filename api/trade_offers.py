@@ -208,15 +208,9 @@ def grade(gives: float, gets: float) -> dict[str, Any]:
     return {"share": round(share, 3), "lean": lean, "pct": round(abs(share - 0.5) * 200)}
 
 
-def read_text(g: Mapping[str, Any], partner: str) -> str:
-    first = partner.split(" ")[0] if partner else "They"
-    if g["share"] is None:
-        return "Pick what each side gets."
-    if g["lean"] == "fair":
-        return f"About even on today's dynasty value. {first} should see it as fair."
-    if g["lean"] == "you":
-        return f"About {g['pct']}% in your favor on today's dynasty value. {first} may counter."
-    return f"About {g['pct']}% in {first}'s favor on today's dynasty value. You're paying a premium."
+def read_text(g: Mapping[str, Any], partner: str = "") -> str:
+    """The read never names a winner (Tommy, 2026-11-17): 'Even', or nothing."""
+    return "Even" if g.get("share") is not None and g.get("lean") == "fair" else ""
 
 
 CapInput = Any  # a number (this season) or {season: amount} / [{season, amount}] for several seasons
