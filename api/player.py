@@ -569,7 +569,7 @@ def health(
 
 
 PLAYED = ("started", "bench", "free_agent")
-OUT_WORDS = {"out", "ir", "injured reserve", "pup", "pup-r", "suspended", "sus", "doubtful-out"}
+OUT_WORDS = {"out", "ir", "injured reserve", "pup", "pup-r", "suspended", "sus", "doubtful-out", "nfi"}
 
 
 def current_injury(h: dict[str, Any], season: int) -> None:
@@ -585,7 +585,7 @@ def current_injury(h: dict[str, Any], season: int) -> None:
     hurt = r.get("hurt") or {}
     name = (h.get("detail") or r.get("detail") or "injury").lower()
     missed.insert(0, {"injury": name, "season": int(hurt.get("season") or season), "games": total, "back": False})
-IR_STATUSES = {"ir", "injured reserve", "pup", "pup-r"}
+IR_STATUSES = {"ir", "injured reserve", "pup", "pup-r", "nfi"}
 IR_MIN_GAMES = 4
 
 

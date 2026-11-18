@@ -11,7 +11,7 @@ from api import cache
 from league_ai import injury_outlook as io
 from league_ai.nfl_data import team_code
 
-OUT_TAGS = {"out", "ir", "injured reserve", "pup", "pup-r", "doubtful"}
+OUT_TAGS = {"out", "ir", "injured reserve", "pup", "pup-r", "doubtful", "nfi", "sus"}
 POSITIONS = ("QB", "RB", "WR", "TE")
 PLAYOFF_WEEKS = (15, 16, 17)
 

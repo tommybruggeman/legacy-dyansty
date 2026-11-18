@@ -52,6 +52,19 @@ class QuestionFocusTests(unittest.TestCase):
         self.assertIn("compact Markdown table", SYSTEM_PROMPT)
         self.assertNotIn("and no table", SYSTEM_PROMPT)
 
+    def test_prompt_sounds_like_a_conversation(self):
+        self.assertIn("How you sound", SYSTEM_PROMPT)
+        self.assertIn("follow-ups build on what was already said", SYSTEM_PROMPT)
+        self.assertIn("ask one short question back", SYSTEM_PROMPT)
+        self.assertNotIn("Lead with the verdict in one sentence", SYSTEM_PROMPT)
+
+    def test_value_questions_dont_jump_to_offers(self):
+        self.assertIn("Value questions", SYSTEM_PROMPT)
+        self.assertIn("Don't open with a specific offer", SYSTEM_PROMPT)
+
+    def test_prompt_allows_one_specific_follow_up_hook(self):
+        self.assertIn("one short, specific hook", SYSTEM_PROMPT)
+
 
 if __name__ == "__main__":
     unittest.main()

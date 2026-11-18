@@ -87,17 +87,13 @@ export default function Player() {
           <View style={styles.heroText}>
             <Text style={styles.eyebrow}>{eyebrow}</Text>
             <View style={styles.nameRow}>
-              <Text style={styles.name} numberOfLines={2}>{name}</Text>
+              <Text style={styles.name} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>{name}</Text>
               <Text style={[styles.pill, h.healthy ? styles.pillOk : styles.pillOut]}>{h.healthy ? 'Healthy' : h.status}</Text>
-              {action.label === 'Trade' ? (
-                <Pressable onPress={action.onPress} hitSlop={8}><Text style={[styles.pill, styles.pillTrade]}>Trade</Text></Pressable>
-              ) : null}
             </View>
-            {action.label !== 'Trade' ? (
-              <Pressable onPress={action.onPress} hitSlop={6} style={styles.actionWrap}>
-                <Text style={[styles.action, action.style]}>{action.label}</Text>
-              </Pressable>
-            ) : null}
+            {/* Same spot and size for Drop (yours), Trade (another owner's) and Bid (free agent). */}
+            <Pressable onPress={action.onPress} hitSlop={6} style={styles.actionWrap}>
+              <Text style={[styles.action, action.style]}>{action.label}</Text>
+            </Pressable>
           </View>
         </View>
 

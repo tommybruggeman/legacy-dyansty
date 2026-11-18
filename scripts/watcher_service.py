@@ -52,6 +52,19 @@ def _sleeper_sync() -> None:
             return
 
 
+def _pick_horizon() -> None:
+    """Once a day: keep every league's next three drafts stocked with tradable picks (ensure_draft_pick_horizons,
+    a no-op once stocked). Our own data, so it keeps working after the league leaves Sleeper."""
+    try:
+        from supabase import create_client
+        client = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_ROLE_KEY"])
+        added = (client.rpc("ensure_draft_pick_horizons", {}).execute().data or {}).get("picks_added", 0)
+        if added:
+            print(f"pick horizon: {added} picks added", flush=True)
+    except Exception as exc:
+        print(f"PICKS_ERROR {type(exc).__name__}", flush=True)
+
+
 def _live_activities(stop: float) -> None:
     """Keep running lock screen Live Activities current until the stretch ends or none is left running."""
     try:
@@ -116,6 +129,8 @@ class Handler(BaseHTTPRequestHandler):
                     extras = [threading.Thread(target=_alerts), threading.Thread(target=_live_activities, args=(stop,))]
                     if time.gmtime().tm_min % 15 < 5:  # the :00/:15/:30/:45 calls (timers fire every 5 minutes)
                         extras.append(threading.Thread(target=_sleeper_sync))
+                    if time.gmtime().tm_hour == 9 and time.gmtime().tm_min < 5:  # once a day, 9:00 UTC
+                        extras.append(threading.Thread(target=_pick_horizon))
                     for t in extras:
                         t.start()
                 code = live_watcher.main()

@@ -78,7 +78,7 @@ def team_leans(client: Any, league_id: str) -> dict[str, str]:
 
 
 def seasons_state(client: Any, league_id: str, season: int) -> list[dict[str, Any]]:
-    """League-wide team state for this season and the next two (for cap by year)."""
+    """League-wide team state for this season and the next three (for cap by year)."""
     def later(year: int) -> dict[str, Any]:
         try:
             return load_team_state(client, league_id, year)
@@ -217,6 +217,15 @@ def roster_rows(
             "is_rookie": bool(row.get("is_rookie")),
             "ppg": ppg.get(pid),
         }
+
+    # IR's cap break (ours: half) is booked as its own ir_adjustment, so the IR card would show the full salary;
+    # show what he really counts against the cap, the same way Taxi already does (Tommy, 2026-11-17).
+    for adj in state.get("cap_adjustments") or []:
+        player = contracts.get(_text(adj.get("sleeper_player_id"))) or next(
+            (c for c in contracts.values() if c["designation"] == "ir" and _text(adj.get("player_name")).casefold() == c["name"].casefold()), None)
+        if (adj.get("adjustment_type") == "ir_adjustment" and player and player["designation"] == "ir"
+                and _text(adj.get("league_team_id") or team_id) == team_id):
+            player["salary"] = max(0.0, round(player["salary"] + _f(adj.get("amount")), 2))
 
     # On the Sleeper roster but no contract row yet (e.g. a fresh rookie pick): still his player.
     sleeper_taxi = {_text(p) for p in lineup.get("taxi") or []}

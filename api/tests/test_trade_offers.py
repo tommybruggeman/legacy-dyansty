@@ -40,8 +40,9 @@ def test_grade_and_read():
     assert g == {"share": 0.54, "lean": "fair", "pct": 8}
     g = to.grade(40, 60)
     assert g["lean"] == "you" and g["pct"] == 20
-    assert "20% in your favor" in to.read_text(g, "Grady M")
-    assert "Grady's favor" in to.read_text(to.grade(60, 40), "Grady M")
+    # never names a winner: "Even" or nothing
+    assert to.read_text(to.grade(50, 52), "Grady M") == "Even"
+    assert to.read_text(g, "Grady M") == "" and to.read_text(to.grade(60, 40), "Grady M") == ""
     assert to.grade(0, 0)["share"] is None
 
 
@@ -96,3 +97,41 @@ def test_cap_space_in_offers():
     out = t.center([row], "me", {"them": "Grady"}, {})
     offer = out["needs_answer"][0]
     assert offer["you_get"][0]["kind"] == "cap" and offer["you_get"][0]["name"] == "$7.5 cap space"
+
+
+def test_cap_space_across_seasons():
+    # a number is this season (the database fills the year in); a map sends a different amount in each season
+    assert to.cap_years(5) == {None: 5.0}
+    assert to.cap_years({"2026": 5, "2027": 3, "2028": 0}) == {2026: 5.0, 2027: 3.0}
+    assert to.cap_years([{"season": 2027, "amount": 2.5}]) == {2027: 2.5}
+    assert to.cap_total({"2026": 5, "2027": 3}) == 8.0
+    assert to.cap_items("me", "them", {"2027": 3, "2026": 5}, {"2028": 1}) == [
+        {"from_league_team_id": "me", "to_league_team_id": "them", "amount": 5.0, "season": 2026},
+        {"from_league_team_id": "me", "to_league_team_id": "them", "amount": 3.0, "season": 2027},
+        {"from_league_team_id": "them", "to_league_team_id": "me", "amount": 1.0, "season": 2028},
+    ]
+    assert to.cap_text({"2026": 5, "2027": 3}) == "$8 cap space ($5 in 2026, $3 in 2027)"
+    assert to.cap_text(4) == "$4 cap space"
+    offer = to.center([{"id": "o1", "from_league_team_id": THEM, "to_league_team_id": ME, "status": "pending", "players": [], "picks": [],
+                        "cap": [{"from_league_team_id": THEM, "to_league_team_id": ME, "amount": 3, "season": 2027}]}], ME, OWNERS, {})["needs_answer"][0]
+    assert offer["you_get"][0]["name"] == "$3 cap space (2027)" and offer["you_get"][0]["season"] == 2027
+
+
+def test_gm_read_prices_contracts_cap_and_our_pick_values():
+    roster = [
+        {"league_team_id": ME, "sleeper_player_id": "a", "contract_cap_hit": 10},  # most valuable, cheap
+        {"league_team_id": ME, "sleeper_player_id": "b", "contract_cap_hit": 40},  # less valuable, expensive
+        {"league_team_id": THEM, "sleeper_player_id": "c", "contract_cap_hit": 20},
+    ]
+    values = {"a": 6000.0, "b": 3000.0, "c": 4000.0}
+    pricer = to.ReadPricer(roster, values, 2026, teams=2)
+    # a bargain contract adds value, more years add more; an overpay takes value away
+    assert pricer.player("a", 10, 3) > pricer.player("a", 10, 1) > 6000
+    assert pricer.player("b", 40, 3) < 3000
+    assert pricer.player("zz", 5, 2) == 0.0  # no market value, no price
+    assert pricer.cap(10) == 10 * pricer.cap_dollar > 0
+    # picks come from our pick book: three drafts ahead all priced, later years and later rounds worth less
+    p27, p29, r2 = pricer.pick(2027, 1, ME), pricer.pick(2029, 1, ME), pricer.pick(2027, 2, ME)
+    assert p27 > p29 > 0 and p27 > r2 > 0
+    priced = to.side(STATE, ME, INFO, {}, {"100": 7000.0}, to.pick_pricer({}), OWNERS, to.ReadPricer(STATE["roster"], {"100": 7000.0}, 2026, teams=2))
+    assert priced["picks"][0]["value"] > 0

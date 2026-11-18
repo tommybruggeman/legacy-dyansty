@@ -94,8 +94,8 @@ class CanonicalTradeTest(unittest.TestCase):
             ),))
 
     def test_dynamic_three_season_display_window(self):
-        self.assertEqual(draft_season_window(2026), (2026, 2027, 2028))
-        self.assertEqual(draft_season_window(2027), (2027, 2028, 2029))
+        self.assertEqual(draft_season_window(2026), (2026, 2027, 2028, 2029))
+        self.assertEqual(draft_season_window(2027), (2027, 2028, 2029, 2030))
 
     def test_lifecycle_status_alone_controls_pick_eligibility(self):
         self.assertTrue(is_draft_pick_tradeable("scheduled", "tradable"))

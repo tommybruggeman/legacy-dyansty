@@ -14,7 +14,15 @@ const FAIR_BAND = 0.05;
 const POSITIONS = ['All', 'QB', 'RB', 'WR', 'TE'] as const;
 const ids = (value?: string) => new Set((value ?? '').split(',').filter(Boolean));
 
-// Your share of the value that moves (same read as api/trade_offers.grade): today's dynasty market value.
+// Cap space by season: { 2026: 5, 2027: 3 }. Each side can send a different amount each season.
+type CapByYear = Record<number, number>;
+const CAP_YEARS_AHEAD = 3; // this season and the next three (same as the server)
+const capTotal = (c: CapByYear) => Object.values(c).reduce((n, v) => n + (v > 0 ? v : 0), 0);
+const capYears = (c: CapByYear) => Object.keys(c).map(Number).filter((y) => c[y] > 0).sort();
+const shortYear = (y: number) => `'${String(y).slice(-2)}`;
+
+// Your share of the value that moves (same read as api/trade_offers.grade): players with their contracts, picks and
+// cap space, on one value scale.
 function grade(gives: number, gets: number) {
   const total = gives + gets;
   if (total <= 0) return null;
@@ -32,8 +40,8 @@ export default function TradePage() {
   const [mine, setMine] = useState<Set<string>>(() => ids(give));
   const [theirs, setTheirs] = useState<Set<string>>(() => new Set([...ids(get), ...(add ? [`p:${add}`] : [])]));
   const [adding, setAdding] = useState<'me' | 'them' | null>(null);
-  // Cap space (this season) each side sends: any amount (Tommy, 2026-11-17: no limit).
-  const [cap, setCap] = useState<{ me: number; them: number }>({ me: 0, them: 0 });
+  // Cap space each side sends, by season: any amount (Tommy, 2026-11-17: no limit), staggered across years if wanted.
+  const [cap, setCap] = useState<{ me: CapByYear; them: CapByYear }>({ me: {}, them: {} });
   const [sending, setSending] = useState(false);
 
   const picked = useMemo(() => {
@@ -53,16 +61,34 @@ export default function TradePage() {
 
   const value = (s: { players: TradeAsset[]; picks: TradePick[] }) => s.players.reduce((n, p) => n + p.value, 0) + s.picks.reduce((n, p) => n + p.value, 0);
   const salary = (s: { players: TradeAsset[] }) => s.players.reduce((n, p) => n + p.salary, 0);
-  const g = grade(value(picked.give), value(picked.get));
+  const dollar = data.cap_dollar_value ?? 0;
+  const g = grade(value(picked.give) + dollar * capTotal(cap.me), value(picked.get) + dollar * capTotal(cap.them));
   const me = firstName(data.me.owner_name);
   const them = firstName(data.them.owner_name);
-  const myCapAfter = data.me.cap_space + salary(picked.give) - salary(picked.get) - cap.me + cap.them;
-  const theirCapAfter = data.them.cap_space + salary(picked.get) - salary(picked.give) - cap.them + cap.me;
-  const over = myCapAfter < 0 || theirCapAfter < 0;
+  const season = data.season ?? new Date().getFullYear();
+  // Cap after the trade, this season and any later season that has cap space in the deal. A player's salary counts in
+  // each season his contract still runs.
+  const salaryIn = (s: { players: TradeAsset[] }, k: number) => s.players.reduce((n, p) => n + (Math.max(1, p.years) > k ? p.salary : 0), 0);
+  const spaceIn = (side: TradeSideData, y: number) => (y === season ? side.cap_space : side.cap_by_year?.find((c) => c.season === y)?.space);
+  const capYearsShown = [...new Set([season, ...capYears(cap.me), ...capYears(cap.them)])].sort();
+  const capAfter = capYearsShown.map((y) => {
+    const k = y - season;
+    const mySpace = spaceIn(data.me, y);
+    const theirSpace = spaceIn(data.them, y);
+    const moved = (cap.them[y] ?? 0) - (cap.me[y] ?? 0);
+    return {
+      year: y,
+      me: mySpace == null ? null : mySpace + salaryIn(picked.give, k) - salaryIn(picked.get, k) + moved,
+      them: theirSpace == null ? null : theirSpace + salaryIn(picked.get, k) - salaryIn(picked.give, k) - moved,
+    };
+  });
+  const over = capAfter.some((c) => (c.me ?? 0) < 0 || (c.them ?? 0) < 0);
   const assets = picked.give.players.length + picked.give.picks.length + picked.get.players.length + picked.get.picks.length;
-  const ready = assets > 0 && (picked.give.players.length + picked.give.picks.length + (cap.me > 0 ? 1 : 0)) > 0
-    && (picked.get.players.length + picked.get.picks.length + (cap.them > 0 ? 1 : 0)) > 0;
-  const lean = !g ? '' : g.lean === 'fair' ? 'Fair' : g.lean === 'you' ? `${me} +${g.pct}%` : `${them} +${g.pct}%`;
+  const ready = assets > 0 && (picked.give.players.length + picked.give.picks.length + (capTotal(cap.me) > 0 ? 1 : 0)) > 0
+    && (picked.get.players.length + picked.get.picks.length + (capTotal(cap.them) > 0 ? 1 : 0)) > 0;
+  const capBody = (c: CapByYear) => Object.fromEntries(capYears(c).map((y) => [String(y), c[y]]));
+  // The read never names a winner (Tommy, 2026-11-17): "Even", or nothing.
+  const lean = g?.lean === 'fair' ? 'Even' : '';
 
   const toggle = (side: 'me' | 'them', key: string, alt?: string) => {
     const [set, setter] = side === 'me' ? [mine, setMine] : [theirs, setTheirs];
@@ -82,8 +108,8 @@ export default function TradePage() {
         to_team_id: data.them.team_id,
         give: [...picked.give.players.map((p) => ({ contract_id: p.contract_id, player_id: p.player_id, name: p.name })), ...picked.give.picks.map((p) => ({ pick_id: p.pick_id, label: p.label }))],
         get: [...picked.get.players.map((p) => ({ contract_id: p.contract_id, player_id: p.player_id, name: p.name })), ...picked.get.picks.map((p) => ({ pick_id: p.pick_id, label: p.label }))],
-        give_cap: cap.me,
-        get_cap: cap.them,
+        give_cap: capBody(cap.me),
+        get_cap: capBody(cap.them),
         parent_offer_id: parent ?? null,
       });
       router.replace('/transactions');
@@ -105,21 +131,23 @@ export default function TradePage() {
       </View>
       <View style={styles.cols}>
         <Column players={picked.get.players} picks={picked.get.picks} cap={cap.them} season={data.season} onRemove={(k, alt) => toggle('them', k, alt)}
-          onClearCap={() => setCap({ ...cap, them: 0 })} onAdd={() => setAdding('them')} />
+          onClearCap={() => setCap({ ...cap, them: {} })} onAdd={() => setAdding('them')} />
         <View style={styles.swap}><Text style={styles.swapText}>⇄</Text></View>
         <Column players={picked.give.players} picks={picked.give.picks} cap={cap.me} season={data.season} onRemove={(k, alt) => toggle('me', k, alt)}
-          onClearCap={() => setCap({ ...cap, me: 0 })} onAdd={() => setAdding('me')} />
+          onClearCap={() => setCap({ ...cap, me: {} })} onAdd={() => setAdding('me')} />
       </View>
 
       <View style={styles.gm}>
         <View style={styles.gmTop}><Text style={styles.gmTitle}>GM READ</Text><Text style={styles.gmLean}>{lean}</Text></View>
-        <View style={styles.meter}>
-          <View style={[styles.meterFill, { width: `${Math.round((g?.share ?? 0) * 100)}%` }]} />
-          <View style={styles.meterMid} />
-        </View>
-        <Text style={[ui.sub, styles.capLine, over && styles.capBad]}>
-          {`Cap after: you ${money(myCapAfter)} · ${them} ${money(theirCapAfter)}${over ? ' · over the cap' : ''}`}
-        </Text>
+        {capAfter.map((c) => {
+          const bad = (c.me ?? 0) < 0 || (c.them ?? 0) < 0;
+          const label = capAfter.length > 1 ? `Cap after (${c.year})` : 'Cap after';
+          return (
+            <Text key={c.year} style={[ui.sub, styles.capLine, bad && styles.capBad]}>
+              {`${label}: you ${c.me == null ? '–' : money(c.me)} · ${them} ${c.them == null ? '–' : money(c.them)}${bad ? ' · over the cap' : ''}`}
+            </Text>
+          );
+        })}
       </View>
 
       <Pressable disabled={!ready || sending} onPress={send} style={[styles.send, (!ready || sending) && styles.sendOff]}>
@@ -133,8 +161,9 @@ export default function TradePage() {
         chosen={adding === 'me' ? mine : theirs}
         season={data.season}
         onToggle={(k, alt) => adding && toggle(adding, k, alt)}
-        cap={adding ? cap[adding] : 0}
-        onCap={(n) => adding && setCap({ ...cap, [adding]: n })}
+        sender={adding === 'me' ? 'You' : them}
+        cap={adding ? cap[adding] : {}}
+        onCap={(y, n) => adding && setCap({ ...cap, [adding]: { ...cap[adding], [y]: n } })}
         onClose={() => setAdding(null)}
       />
     </Screen>
@@ -144,8 +173,11 @@ export default function TradePage() {
 const thru = (p: TradeAsset, season?: number) => (season ? `thru ${season + Math.max(1, p.years) - 1}` : `${p.years} yr${p.years === 1 ? '' : 's'}`);
 
 function Column({ players, picks, cap, season, onRemove, onClearCap, onAdd }: {
-  players: TradeAsset[]; picks: TradePick[]; cap: number; season?: number; onRemove: (key: string, alt?: string) => void; onClearCap: () => void; onAdd: () => void;
+  players: TradeAsset[]; picks: TradePick[]; cap: CapByYear; season?: number; onRemove: (key: string, alt?: string) => void; onClearCap: () => void; onAdd: () => void;
 }) {
+  const total = capTotal(cap);
+  const years = capYears(cap);
+  const capSub = years.length === 1 && years[0] === season ? 'cap space' : years.map((y) => `${money(cap[y])} in ${shortYear(y)}`).join(' · ');
   return (
     <View style={styles.col}>
       {players.map((p) => (
@@ -164,11 +196,11 @@ function Column({ players, picks, cap, season, onRemove, onClearCap, onAdd }: {
           <Text style={styles.remove}>×</Text>
         </Pressable>
       ))}
-      {cap > 0 ? (
+      {total > 0 ? (
         <Pressable onPress={onClearCap} style={styles.piece}>
           <View style={styles.pickBig}><Text style={styles.pickBigText}>$</Text></View>
-          <Text style={styles.pieceName} numberOfLines={1}>{money(cap)}</Text>
-          <Text style={styles.pieceSub}>cap space</Text>
+          <Text style={styles.pieceName} numberOfLines={1}>{years.length === 1 && years[0] === season ? money(total) : `${money(total)} cap`}</Text>
+          <Text style={styles.pieceSub} numberOfLines={2}>{capSub}</Text>
           <Text style={styles.remove}>×</Text>
         </Pressable>
       ) : null}
@@ -177,9 +209,9 @@ function Column({ players, picks, cap, season, onRemove, onClearCap, onAdd }: {
   );
 }
 
-function AddSheet({ visible, title, side, chosen, season, cap, onToggle, onCap, onClose }: {
-  visible: boolean; title: string; side: TradeSideData; chosen: Set<string>; season?: number; cap: number;
-  onToggle: (key: string, alt?: string) => void; onCap: (amount: number) => void; onClose: () => void;
+function AddSheet({ visible, title, side, chosen, season, sender, cap, onToggle, onCap, onClose }: {
+  visible: boolean; title: string; side: TradeSideData; chosen: Set<string>; season?: number; sender: string; cap: CapByYear;
+  onToggle: (key: string, alt?: string) => void; onCap: (year: number, amount: number) => void; onClose: () => void;
 }) {
   const [tab, setTab] = useState<'Players' | 'Picks' | 'Cap'>('Players');
   const [pos, setPos] = useState<(typeof POSITIONS)[number]>('All');
@@ -209,8 +241,8 @@ function AddSheet({ visible, title, side, chosen, season, cap, onToggle, onCap, 
             </View>
           </>
         ) : null}
-        {tab === 'Cap' ? <CapPicker cap={cap} space={side.cap_space} season={season} onCap={onCap} /> : null}
-        <ScrollView style={styles.list} contentContainerStyle={{ paddingBottom: 30 }}>
+        {tab === 'Cap' ? <CapPicker cap={cap} side={side} sender={sender} season={season ?? new Date().getFullYear()} onCap={onCap} /> : null}
+        <ScrollView style={[styles.list, tab === 'Cap' && styles.hidden]} contentContainerStyle={{ paddingBottom: 30 }}>
           {tab === 'Cap' ? null : tab === 'Players' ? players.map((p) => (
             <Pressable key={p.contract_id} onPress={() => onToggle(p.contract_id, `p:${p.player_id}`)} style={styles.row}>
               <Headshot playerId={p.player_id} pos={p.pos} team={p.nfl_team} size={40} />
@@ -240,28 +272,57 @@ function AddSheet({ visible, title, side, chosen, season, cap, onToggle, onCap, 
   );
 }
 
-// Cap space this side sends in the trade (this season). Any amount; going over the cap is allowed, but a team still
-// over at Sunday's first kickoff takes an automatic loss.
-function CapPicker({ cap, space, season, onCap }: { cap: number; space: number; season?: number; onCap: (amount: number) => void }) {
-  const [text, setText] = useState(cap ? String(cap) : '');
-  const set = (value: string) => {
+// Cap space this side sends, one row per season (this one and the next three), each its own amount. Any amount;
+// going over the cap is allowed, but a team still over at Sunday's first kickoff takes an automatic loss.
+function CapPicker({ cap, side, sender, season, onCap }: {
+  cap: CapByYear; side: TradeSideData; sender: string; season: number; onCap: (year: number, amount: number) => void;
+}) {
+  const years = Array.from({ length: CAP_YEARS_AHEAD + 1 }, (_, i) => season + i);
+  const total = capTotal(cap);
+  const used = capYears(cap).length;
+  const space = (y: number) => (y === season ? side.cap_space : side.cap_by_year?.find((c) => c.season === y)?.space);
+  return (
+    <ScrollView style={styles.capBox} contentContainerStyle={{ paddingBottom: 30 }} keyboardShouldPersistTaps="handled">
+      <Text style={[ui.sub, styles.capHint]}>Send cap space for any season. Each year can be a different amount.</Text>
+      {years.map((y) => (
+        <CapYearRow key={y} year={y} amount={cap[y] ?? 0} space={space(y)} sender={sender} onChange={(n) => onCap(y, n)} />
+      ))}
+      <View style={styles.capTotal}>
+        <Text style={ui.name}>Total sent</Text>
+        <Text style={styles.capTotalValue}>{total > 0 ? `${money(total)} over ${used} season${used === 1 ? '' : 's'}` : '$0'}</Text>
+      </View>
+      <Text style={[ui.sub, styles.capNote]}>Tap the amount to type cents. + and − move $1.</Text>
+    </ScrollView>
+  );
+}
+
+function CapYearRow({ year, amount, space, sender, onChange }: { year: number; amount: number; space?: number; sender: string; onChange: (n: number) => void }) {
+  const [text, setText] = useState(amount ? String(amount) : '');
+  const set = (n: number) => {
+    const v = Math.max(0, Math.round(n * 100) / 100);
+    setText(v ? String(v) : '');
+    onChange(v);
+  };
+  const type = (value: string) => {
     const clean = value.replace(/[^0-9.]/g, '');
     setText(clean);
     const n = Math.round(Number(clean) * 100) / 100;
-    onCap(Number.isFinite(n) && n > 0 ? n : 0);
+    onChange(Number.isFinite(n) && n > 0 ? n : 0);
   };
+  const has = sender === 'You' ? 'You have' : `${sender} has`;
   return (
-    <View style={styles.capBox}>
-      <Text style={ui.sub}>{`Cap space to send${season ? ` (${season})` : ''}. They have ${money(space)} of space now.`}</Text>
-      <View style={styles.capRow}>
-        <Text style={styles.capDollar}>$</Text>
-        <TextInput value={text} onChangeText={set} keyboardType="decimal-pad" placeholder="0" placeholderTextColor={colors.muted} style={styles.capInput} />
+    <View style={[styles.capYear, amount > 0 && styles.capYearOn]}>
+      <View style={ui.flex}>
+        <Text style={styles.capYearLabel}>{year}</Text>
+        {space != null ? <Text style={ui.sub}>{`${has} ${money(space)} of space`}</Text> : null}
       </View>
-      <View style={styles.chips}>
-        {[1, 5, 10, 20].map((n) => (
-          <Pressable key={n} onPress={() => set(String(n))} style={[styles.chip, cap === n && styles.chipOn]}><Text style={[styles.chipText, cap === n && styles.chipTextOn]}>{`$${n}`}</Text></Pressable>
-        ))}
+      <Pressable onPress={() => set(amount - 1)} style={styles.stepBtn} hitSlop={6}><Text style={styles.stepText}>−</Text></Pressable>
+      <View style={styles.capAmount}>
+        <Text style={[styles.capDollar, !amount && styles.capZero]}>$</Text>
+        <TextInput value={text} onChangeText={type} keyboardType="decimal-pad" placeholder="0" placeholderTextColor="#5d6b62"
+          style={[styles.capInput, !amount && styles.capZero]} />
       </View>
+      <Pressable onPress={() => set(amount + 1)} style={styles.stepBtn} hitSlop={6}><Text style={styles.stepText}>+</Text></Pressable>
     </View>
   );
 }
@@ -287,10 +348,21 @@ function Closed({ window, from }: { window: TradeWindow; from?: string }) {
 }
 
 const styles = StyleSheet.create({
-  capBox: { paddingVertical: 10, gap: 10 },
-  capRow: { flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderColor: '#2F4136', borderRadius: 12, paddingHorizontal: 12 },
-  capDollar: { color: colors.gold, fontSize: 22, fontWeight: '900' },
-  capInput: { flex: 1, color: colors.text, fontSize: 22, fontWeight: '800', paddingVertical: 10 },
+  capBox: { flex: 1, paddingTop: 4 },
+  hidden: { display: 'none' },
+  capHint: { marginBottom: 10 },
+  capYear: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.card, borderWidth: 1, borderColor: '#2F4136', borderRadius: 14, paddingVertical: 10, paddingHorizontal: 12, marginBottom: 8 },
+  capYearOn: { borderColor: colors.gold },
+  capYearLabel: { color: colors.text, fontSize: 17, fontWeight: '900' },
+  stepBtn: { width: 32, height: 32, borderRadius: 16, borderWidth: 1, borderColor: '#3A5446', alignItems: 'center', justifyContent: 'center' },
+  stepText: { color: colors.gold, fontSize: 18, fontWeight: '900' },
+  capAmount: { flexDirection: 'row', alignItems: 'center', minWidth: 58, justifyContent: 'center' },
+  capDollar: { color: colors.text, fontSize: 20, fontWeight: '900' },
+  capInput: { color: colors.text, fontSize: 20, fontWeight: '900', paddingVertical: 4, minWidth: 26, textAlign: 'center' },
+  capZero: { color: '#5d6b62' },
+  capTotal: { flexDirection: 'row', justifyContent: 'space-between', borderTopWidth: 1, borderTopColor: colors.line, paddingTop: 12, marginTop: 6 },
+  capTotalValue: { color: colors.gold, fontSize: 15, fontWeight: '900' },
+  capNote: { textAlign: 'center', marginTop: 10, fontSize: 11 },
   heads: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
   head: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 },
   headText: { color: colors.text, fontSize: 14, fontWeight: '900', flexShrink: 1 },
@@ -311,10 +383,7 @@ const styles = StyleSheet.create({
   gmTop: { flexDirection: 'row', justifyContent: 'space-between' },
   gmTitle: { color: colors.gold, fontSize: 11, fontWeight: '900', letterSpacing: 1.3 },
   gmLean: { color: colors.text, fontSize: 12, fontWeight: '800' },
-  meter: { height: 6, borderRadius: 3, backgroundColor: '#22382D', marginTop: 10, marginBottom: 6, overflow: 'hidden' },
-  meterFill: { height: 6, backgroundColor: colors.gold },
-  meterMid: { position: 'absolute', left: '50%', top: 0, bottom: 0, width: 2, backgroundColor: colors.text },
-  capLine: { textAlign: 'center' },
+  capLine: { textAlign: 'center', marginTop: 6 },
   capBad: { color: '#E07C7C' },
   send: { backgroundColor: colors.gold, borderRadius: 14, paddingVertical: 13, alignItems: 'center', marginTop: 10, marginBottom: 20 },
   sendOff: { opacity: 0.4 },

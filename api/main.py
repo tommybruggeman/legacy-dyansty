@@ -19,6 +19,7 @@ from supabase import Client, create_client
 from api import box_score as box_score_mod
 from api import account, demo, usage_log
 from league_ai import screenshots
+from api import gm_moves
 from api import activity, alerts, cache, commissioner, owner_settings, profiles, front_office, home, league, lineups, live_activity, market, market_week, nfl_live, own_league, player, playoffs, projections, teams, trade_feed, trade_offers, waivers
 from season_engine import SeasonResolver
 from services.season_rollover_owner_ui import OwnerRolloverDecisionError, OwnerRolloverDecisionService
@@ -708,7 +709,7 @@ def _league_team_rows(client: Client, league_id: str) -> list[dict[str, Any]]:
 
 
 def _seasons_state(client: Client, league_id: str, season: int) -> list[dict[str, Any]]:
-    """Contracts for this season and the next two, shared by the league for a minute."""
+    """Contracts for this season and the next three, shared by the league for a minute."""
     return cache.cached(("state", league_id, season), 60, lambda: teams.seasons_state(client, league_id, season))
 
 
@@ -1556,6 +1557,7 @@ def _trade_window(client: Client, league_id: str) -> dict[str, Any]:
     return cache.cached(("trade_window", league_id), 300, lambda: trade_offers.league_window(client, league_id))
 
 
+
 @app.get("/trade-builder/{team_id}")
 def trade_builder(team_id: str, add: str | None = None, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
     """Both rosters and pick lists for a trade with one team, with today's dynasty values for the live read."""
@@ -1576,7 +1578,10 @@ def trade_builder(team_id: str, add: str | None = None, owner: tuple[Client, Any
         raise HTTPException(status_code=404, detail="Team not found in your league.")
     state = states[0]
     ids = [str(r.get("sleeper_player_id")) for r in state.get("roster", []) if str(r.get("league_team_id")) in {team_id, ctx["team_id"]}]
-    values = trade_feed.market_now(client, sorted(set(ids)))
+    pricer = cache.cached(("trade_pricer", ctx["league_id"], ctx["season"]), 600, 
+                          lambda: trade_offers.build_pricer(client, state, ctx["season"], teams=len(rows),
+                                                            records={t["team_id"]: (int(t.get("wins") or 0), int(t.get("losses") or 0)) for t in rows}))
+    values = pricer.values
     pick_value = trade_offers.pick_pricer(trade_feed.pick_values(client))
     owner_of = {t["team_id"]: t["owner_name"] for t in rows}
     info = teams.player_info(client, ids)
@@ -1589,12 +1594,14 @@ def trade_builder(team_id: str, add: str | None = None, owner: tuple[Client, Any
         "season": ctx["season"],
         "sleeper_league_id": ctx["sleeper_id"],
         "salary_cap": cap,
+        # GM read: a dollar of cap space (any season) on the same value scale as players and picks
+        "cap_dollar_value": round(pricer.cap_dollar, 2),
         "me": {"team_id": ctx["team_id"], "owner_name": me["owner_name"], "team_name": me.get("team_name"), "avatar": me.get("avatar"),
-               "cap_space": me["cap_space"],
-               **trade_offers.side(state, ctx["team_id"], info, ppg, values, pick_value, owner_of)},
+               "cap_space": me["cap_space"], "cap_by_year": me.get("cap_by_year") or [],
+               **trade_offers.side(state, ctx["team_id"], info, ppg, values, pick_value, owner_of, pricer)},
         "them": {"team_id": team_id, "owner_name": them["owner_name"], "team_name": them.get("team_name"), "avatar": them.get("avatar"),
-                 "cap_space": them["cap_space"],
-                 **trade_offers.side(state, team_id, info, ppg, values, pick_value, owner_of)},
+                 "cap_space": them["cap_space"], "cap_by_year": them.get("cap_by_year") or [],
+                 **trade_offers.side(state, team_id, info, ppg, values, pick_value, owner_of, pricer)},
         "add": add,
     }
 
@@ -1613,8 +1620,9 @@ class TradeOffer(BaseModel):
     get: list[TradePiece] = []
     note: str | None = None
     parent_offer_id: str | None = None
-    give_cap: float = 0  # cap space (this season) you send; any amount
-    get_cap: float = 0   # cap space you ask for
+    # cap space you send / ask for: a number (this season, older app builds) or {season: amount} for several seasons
+    give_cap: float | dict[str, float] = 0
+    get_cap: float | dict[str, float] = 0
 
 
 @app.post("/trade-offers")
@@ -1627,13 +1635,8 @@ def send_trade_offer(body: TradeOffer, owner: tuple[Client, Any] = Depends(owner
     pieces = [p for p in [*body.give, *body.get] if (p.contract_id and trade_offers.is_uuid(p.contract_id)) or (p.pick_id and trade_offers.is_uuid(p.pick_id))]
     if len(pieces) != len(body.give) + len(body.get) or not trade_offers.is_uuid(body.to_team_id):
         raise HTTPException(status_code=400, detail="Something in this offer isn't a player or pick.")
-    items = trade_offers.offer_items(ctx["team_id"], body.to_team_id, [p.model_dump() for p in body.give], [p.model_dump() for p in body.get])
-    request = {
-        "league_id": ctx["league_id"], "to_league_team_id": body.to_team_id,
-        "players": [i for i in items if i.get("contract_id")], "picks": [i for i in items if i.get("draft_pick_id")],
-        "cap": trade_offers.cap_items(ctx["team_id"], body.to_team_id, body.give_cap, body.get_cap),
-        "note": (body.note or "")[:280] or None, "parent_offer_id": body.parent_offer_id if body.parent_offer_id and trade_offers.is_uuid(body.parent_offer_id) else None,
-    }
+    request = trade_offers.offer_request(ctx["league_id"], ctx["team_id"], body.to_team_id, [p.model_dump() for p in body.give],
+                                         [p.model_dump() for p in body.get], body.give_cap, body.get_cap, body.note, body.parent_offer_id)
     try:
         result = client.rpc("propose_trade_offer_authenticated", {"p_request": request}).execute().data
     except Exception as exc:
@@ -1907,6 +1910,27 @@ def front_office_chat_resume(owner: tuple[Client, Any] = Depends(owner_client)) 
     session = _front_office(*owner)
     return StreamingResponse(front_office.resume_stream(session), media_type="application/x-ndjson",
                              headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+
+
+class MoveRequest(BaseModel):
+    conversation_id: str
+    option: str | None = None  # the button tapped; left out = the GM's pick
+
+
+@app.post("/front-office/moves/{move_id}/{action}")
+def front_office_move(move_id: str, action: str, body: MoveRequest, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """confirm (with the option tapped) | dismiss a move card the GM proposed. Confirm runs the same checked database call as the owner's own tap."""
+    if action not in {"confirm", "dismiss"} or not trade_offers.is_uuid(move_id) or not trade_offers.is_uuid(body.conversation_id):
+        raise HTTPException(status_code=400, detail="Unknown action.")
+    session = _front_office(*owner)
+    try:
+        card = front_office.settle_move(session, body.conversation_id, move_id, action, body.option)
+    except gm_moves.MoveError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if card["status"] == gm_moves.DONE:
+        for key in ("state", "activity"):
+            cache.forget(key, session.owner.league_id)
+    return {"ok": card["status"] == gm_moves.DONE, "move": card}
 
 
 @app.get("/front-office/conversations")

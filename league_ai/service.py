@@ -112,6 +112,9 @@ def _history_messages(history: list[dict[str, str]], limit: int = 20) -> list[di
         if role == "user" and msg.get("screenshot") is not None:
             # a screenshot sent earlier comes back as its saved text reading (images aren't kept)
             text = f"{screenshots.history_note(str(msg.get('screenshot') or ''), int(msg.get('photos') or 1))}\n\n{text}".strip()
+        if role == "assistant" and msg.get("moves"):
+            from api.gm_moves import history_note  # cards the GM proposed and what the owner did with them
+            text = f"{text}\n\n{history_note(msg['moves'])}".strip()
         if not text:
             continue
         if out and out[-1]["role"] == role:

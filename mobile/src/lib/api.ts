@@ -679,8 +679,12 @@ export type FrontOffice = {
 };
 // photos: screenshots sent with a question (the server keeps only their count and a text reading);
 // uris: their thumbnails, only in the chat they were sent from.
-export type ChatMessage = { role: 'user' | 'assistant'; content: string; photos?: number; uris?: string[] };
-export type ChatReply = { ok: boolean; text: string; conversation_id: string | null };
+// A move the GM proposed for the owner to confirm (api/gm_moves.py).
+export type MoveOption = { id: string; label: string; sub?: string; pick?: boolean };
+export type MoveCard = { id: string; kind: 'lineup' | 'trade' | 'bid' | 'add' | 'drop'; title: string; lines: string[];
+  options: MoveOption[]; status: 'pending' | 'done' | 'failed' | 'dismissed'; result?: string | null; chosen?: string | null };
+export type ChatMessage = { role: 'user' | 'assistant'; content: string; photos?: number; uris?: string[]; moves?: MoveCard[] };
+export type ChatReply = { ok: boolean; text: string; conversation_id: string | null; moves?: MoveCard[] };
 export type ChatEvent =
   | { e: 'status'; text: string }
   | { e: 'text'; d: string }
@@ -772,11 +776,12 @@ export type HomeData = {
 // ---- trades between owners (off until the league leaves Sleeper) ----
 export type TradeAsset = { player_id: string; contract_id: string; name: string; pos: string; nfl_team: string; salary: number; years: number; ppg: number | null; value: number };
 export type TradePick = { pick_id: string; label: string; year: number; round: number; value: number };
-export type TradeSideData = { team_id: string; owner_name: string; team_name?: string | null; avatar?: string | null; cap_space: number; players: TradeAsset[]; picks: TradePick[] };
+export type TradeSideData = { team_id: string; owner_name: string; team_name?: string | null; avatar?: string | null; cap_space: number; cap_by_year?: CapYear[]; players: TradeAsset[]; picks: TradePick[] };
 export type TradeWindow = { open: boolean; deadline_week: number | null; reopens_after_week: number; message: string | null };
 // Past the deadline the server sends only enabled/window/season (the app shows the closed screen).
-export type TradeBuilder = { enabled: boolean; window?: TradeWindow; season?: number; sleeper_league_id: string; salary_cap: number; me: TradeSideData; them: TradeSideData; add: string | null };
-export type OfferPiece = { kind: 'player' | 'pick' | 'cap'; amount?: number; player_id: string | null; contract_id: string | null; pick_id: string | null; name: string; pos: string; nfl_team: string };
+// cap_dollar_value: one dollar of cap space on the GM read's value scale (players and picks use the same scale).
+export type TradeBuilder = { enabled: boolean; window?: TradeWindow; season?: number; sleeper_league_id: string; salary_cap: number; cap_dollar_value?: number; me: TradeSideData; them: TradeSideData; add: string | null };
+export type OfferPiece = { kind: 'player' | 'pick' | 'cap'; amount?: number; season?: number | null; player_id: string | null; contract_id: string | null; pick_id: string | null; name: string; pos: string; nfl_team: string };
 export type Offer = {
   id: string; partner: string; partner_team_id: string; you_get: OfferPiece[]; you_give: OfferPiece[]; note: string | null;
   created_at: string; status: string; decided_at: string | null; is_counter: boolean; line?: string; sent_by_you?: boolean;
