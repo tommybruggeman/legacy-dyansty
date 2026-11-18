@@ -2005,11 +2005,19 @@ def _league_live(client: Client, ctx: dict[str, Any], week: int, starts: dict[st
 
 
 def _game_day_bottom(client: Client, ctx: dict[str, Any], user: Any, week: int, current: dict[str, Any],
-                     pics: dict[int, str | None], now: datetime) -> dict[str, Any]:
-    """The bottom card of game-day Home: Highest projected, the week's scoreboard, or Shotgun watch."""
+                     pics: dict[int, str | None], now: datetime, playoffs: bool = False) -> dict[str, Any]:
+    """The bottom card of game-day Home: Highest projected, the week's scoreboard, or Shotgun watch.
+
+    In the playoffs Shotgun watch runs all week (Tommy, 2026-11-18): every team still scores and last place still
+    shotguns. It skips the scoreboard there, since Sleeper's pairings for playoff weeks aren't our bracket games.
+    """
     sid, my_roster = ctx["sleeper_id"], ctx["sleeper_roster_id"]
     starts = home.kickoffs(_nfl_week(client, ctx["season"], week))
     pick = home.bottom_mode(now, starts)
+    if playoffs:
+        live = _league_live(client, ctx, week, starts, now)
+        window = pick.get("window") or home.SHOTGUN_WINDOWS["late"]
+        return {"mode": "shotgun", "shotgun": home.shotgun(live, ctx["names"], pics, my_roster, window), "scoreboard": []}
     if pick["mode"] == "risers":
         # Mode stays "risers" so older app builds still render the card. The GM's Risers grading log
         # (league_ai/risers.py) is no longer fed: a top-projected list isn't a "beats his average" call.
@@ -2134,10 +2142,14 @@ def _home_raw(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, An
                 out["top5_line"] = home.top5_line(live_all, final=current["is_final"])
             except Exception as exc:
                 print(f"APP_HOME_TOP5_ERROR {type(exc).__name__}", flush=True)
+        if phase in ("game_day", "playoffs"):
+            # The bottom card (Shotgun Watch late in the week) runs in the playoffs too: every team still scores.
             try:
-                out["bottom"] = _game_day_bottom(client, ctx, user, week, current, pics, datetime.now(front_office.LEAGUE_TZ))
+                out["bottom"] = _game_day_bottom(client, ctx, user, week, current, pics, datetime.now(front_office.LEAGUE_TZ),
+                                                 playoffs=phase == "playoffs")
             except Exception as exc:  # the old standings / race cards still show
                 print(f"APP_HOME_BOTTOM_ERROR {type(exc).__name__}", flush=True)
+        if phase == "game_day":
             them = (mine_now or {}).get("them")
             if them:
                 out["series"] = teams.head_to_head(sid, weeks, my_roster, them["roster_id"])

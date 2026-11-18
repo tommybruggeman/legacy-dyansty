@@ -60,6 +60,18 @@ def test_format_is_ours_from_settings():
     assert v["round_name"] == "Championship" and v["legs"] == 1 and v["losers"] == [] and v["byes"] == []
 
 
+def test_two_week_final_ends_week_17():
+    # Legacy (Tommy, 2026-11-18): semis week 15, title game and 3rd place weeks 16-17, loser bracket weeks 15-17.
+    final_two = playoffs.rules_of({"playoff_teams": 4, "playoff_week_start": 15, "playoff_round_weeks": 3, "loser_bracket": True})
+    cfg = playoffs.settings_of(final_two, league_size=10)
+    assert cfg["weeks"] == {1: [15], 2: [16, 17]} and cfg["last_week"] == 17
+    semis = view(15, 15, 14, rules=final_two)
+    assert semis["round_name"] == "Semifinal" and semis["legs"] == 1
+    title = view(17, 17, 16, rules=final_two)
+    assert title["round_name"] == "Championship" and title["legs"] == 2 and title["leg"] == 2
+    assert playoffs.round_type(final_two) == 1 and playoffs.ROUND_FORMATS[3] == "Two-week final only"
+
+
 def test_settings_object_defaults():
     from league_ai.settings_store import LeagueAISettings
     r = playoffs.rules_of(LeagueAISettings(league_id="x", playoff_teams=4))
