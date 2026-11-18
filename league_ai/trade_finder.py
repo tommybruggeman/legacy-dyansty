@@ -914,13 +914,12 @@ def trade_finder_tools(load: Callable[[], tuple[League, Mapping[str, float], str
             if model is not None and model.remaining():
                 cache["league"].set_playoff_odds(model.odds())
             cache["league"].habits = habits()
-            # owners who have been selling or buying this season: treat them that way unless the owner says otherwise
+            # owners who have been selling or buying this season: shown with each idea, and sellers are pitched to all-in buyers first (and
+            # buyers to sellers). Their window is NOT switched: on this league's trades, reading recent sellers as rebuilders and buyers as
+            # contenders made the engine worse at telling real trades from decoys (AUC 0.74 -> 0.59, trade_fit revealed run, 2026-11-18)
             lg0 = cache["league"]
             named = recent_modes(_trade_rows(history), current_season) if history is not None else {}
             lg0.modes = {tid: named[str(t.get("owner_name"))] for tid, t in lg0.teams.items() if str(t.get("owner_name")) in named and tid != cache["asker"]}
-            if lg0.modes:
-                cache["windows"].update({tid: ("rebuilding" if m == "selling" else "contending") for tid, m in lg0.modes.items()})
-                lg0.set_windows(cache["windows"])
         if windows:
             cache["windows"].update({str(k): str(v).lower() for k, v in windows.items()})
             cache["league"].set_windows(cache["windows"])
@@ -1084,7 +1083,7 @@ def trade_finder_tools(load: Callable[[], tuple[League, Mapping[str, float], str
         "offer they might take), likely_close, walk_away_after (the most to pay), plus the market view and why they say yes. Use it first for any 'find me a "
         "trade' or 'who can I get at X' question. position defaults to this owner's weakest; goal 'now' (default) or 'future'; partner limits to one owner; "
         "creative only when the owner asks for creative or bigger deals. Selling off and going all in are never the default: use goal 'sell' or "
-        "'all_in' only when the owner says so. Owners who have been selling or buying this season are treated that way (partner_mode). "
+        "'all_in' only when the owner says so. Owners who have been selling or buying this season are flagged (partner_mode). "
         "When the owner names the player they want ('what would it take to get X'), pass target: it prices that one player with packages of up "
         "to three of this owner's players, or says nothing fair exists and shows the closest tries.",
         {"type": "object", "properties": {
