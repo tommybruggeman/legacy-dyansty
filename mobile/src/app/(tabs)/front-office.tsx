@@ -440,27 +440,53 @@ function reportAnswer(question: string | undefined, answer: string, conversation
   ]);
 }
 
-function Tile({ top, topTone, value, valueTone, label }: { top: string; topTone?: 'up' | 'down'; value: string; valueTone?: 'warn'; label: string }) {
-  return (
-    <View style={styles.tile}>
-      <Text style={[styles.tileTop, topTone === 'up' && styles.up, topTone === 'down' && styles.down]} numberOfLines={1}>{top}</Text>
-      <Text style={[styles.tileValue, valueTone === 'warn' && styles.down]} numberOfLines={1}>{value}</Text>
-      <Text style={styles.tileLabel} numberOfLines={1}>{label}</Text>
-    </View>
-  );
-}
-
 const arrow = (n: number | null | undefined, unit = '') =>
   n ? { top: `${n > 0 ? '▲' : '▼'} ${Math.abs(n)}${unit}`, tone: (n > 0 ? 'up' : 'down') as 'up' | 'down' } : { top: '–', tone: undefined };
 
+// The top of the GM page (Tommy, 2026-11-17, option 3): playoff odds in a ring with its label inside,
+// power rank and weakest spot as two quiet rows beside it.
 function Tiles({ header }: { header?: FoHeader }) {
   const w = header?.weakest, o = header?.odds, p = header?.power;
   const odds = arrow(o?.change, '%'), power = arrow(p?.move);
   return (
-    <View style={styles.tiles}>
-      <Tile top={w?.note || '–'} topTone={w?.note?.startsWith('-') ? 'down' : undefined} value={w?.slot ?? '—'} valueTone={w ? 'warn' : undefined} label="WEAKEST" />
-      <Tile top={odds.top} topTone={odds.tone} value={o ? `${o.pct}%` : '—'} label="PLAYOFF ODDS" />
-      <Tile top={power.top} topTone={power.tone} value={p ? `#${p.rank}` : '—'} label="POWER RANK" />
+    <View style={styles.hero}>
+      <OddsRing pct={o?.pct ?? null} change={o?.change ? odds : null} />
+      <View style={styles.heroRows}>
+        <View style={styles.heroRow}>
+          <Text style={styles.heroKey}>Power rank</Text>
+          <Text style={styles.heroVal}>
+            {p ? `#${p.rank}` : '—'}
+            {p?.move ? <Text style={[styles.heroMove, power.tone === 'up' ? styles.up : styles.down]}>  {power.top}</Text> : null}
+          </Text>
+        </View>
+        <View style={[styles.heroRow, styles.heroRowLine]}>
+          <Text style={styles.heroKey}>Weakest spot</Text>
+          <Text style={[styles.heroVal, w && styles.down]} numberOfLines={1}>{w ? `${w.slot}${w.note ? ` ${w.note.replace('-', '−')}` : ''}` : '—'}</Text>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+const RING = 92;
+const RING_W = 7;
+
+// Playoff odds as a ring filled clockwise from the top, drawn from two clipped half circles (no SVG in the app),
+// with the number, "PLAYOFF ODDS" and the weekly change inside.
+function OddsRing({ pct, change }: { pct: number | null; change: { top: string; tone?: 'up' | 'down' } | null }) {
+  const deg = Math.max(0, Math.min(100, pct ?? 0)) * 3.6;
+  const arc = { borderTopColor: colors.gold, borderRightColor: colors.gold };
+  return (
+    <View style={styles.oddsRing}>
+      <View style={[styles.ringHalf, { left: RING / 2 }]}>
+        <View style={[styles.ringArc, arc, { left: -RING / 2, transform: [{ rotate: `${45 + Math.min(deg, 180) - 180}deg` }] }]} />
+      </View>
+      <View style={[styles.ringHalf, { left: 0 }]}>
+        <View style={[styles.ringArc, arc, { left: 0, transform: [{ rotate: `${225 + Math.max(deg - 180, 0) - 180}deg` }] }]} />
+      </View>
+      <Text style={styles.ringPct}>{pct != null ? `${pct}%` : '—'}</Text>
+      <Text style={styles.ringLabel}>PLAYOFF ODDS</Text>
+      {change ? <Text style={[styles.ringChange, change.tone === 'up' ? styles.up : styles.down]}>{change.top}</Text> : null}
     </View>
   );
 }
@@ -521,11 +547,19 @@ const styles = StyleSheet.create({
   menu: { marginLeft: 'auto', width: 34, height: 34, borderRadius: 17, backgroundColor: colors.card, alignItems: 'center', justifyContent: 'center' },
   menuText: { color: colors.gold, fontSize: 16 },
   hint: { color: colors.muted, fontSize: 14, textAlign: 'center', marginTop: 40, paddingHorizontal: 24 },
-  tiles: { flexDirection: 'row', gap: 8, marginBottom: 16, marginTop: 6 },
-  tile: { flex: 1, backgroundColor: colors.card, borderRadius: 14, paddingVertical: 12, paddingHorizontal: 6, alignItems: 'center', gap: 3 },
-  tileTop: { color: colors.muted, fontSize: 12, fontWeight: '700' },
-  tileValue: { color: colors.gold, fontSize: 24, fontWeight: '800' },
-  tileLabel: { color: colors.muted, fontSize: 10, fontWeight: '700', letterSpacing: 1.2 },
+  hero: { flexDirection: 'row', alignItems: 'center', gap: 16, backgroundColor: colors.card, borderRadius: 18, padding: 14, marginBottom: 16, marginTop: 6 },
+  heroRows: { flex: 1 },
+  heroRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', paddingVertical: 8 },
+  heroRowLine: { borderTopWidth: 1, borderTopColor: '#1E3A2D' },
+  heroKey: { color: colors.muted, fontSize: 14 },
+  heroVal: { color: colors.text, fontSize: 16, fontWeight: '800' },
+  heroMove: { fontSize: 11, fontWeight: '700' },
+  oddsRing: { width: RING, height: RING, borderRadius: RING / 2, borderWidth: RING_W, borderColor: '#22352B', alignItems: 'center', justifyContent: 'center' },
+  ringHalf: { position: 'absolute', top: -RING_W, width: RING / 2, height: RING, overflow: 'hidden', marginLeft: -RING_W },
+  ringArc: { position: 'absolute', top: 0, width: RING, height: RING, borderRadius: RING / 2, borderWidth: RING_W, borderColor: 'transparent' },
+  ringPct: { color: colors.gold, fontSize: 22, fontWeight: '800', lineHeight: 24, marginTop: -6 },
+  ringLabel: { color: colors.muted, fontSize: 7.5, fontWeight: '800', letterSpacing: 0.8, marginTop: 1 },
+  ringChange: { fontSize: 11, fontWeight: '800', marginTop: 10, marginBottom: -8 },
   up: { color: colors.live },
   down: { color: '#E08A8A' },
   movesHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 },
