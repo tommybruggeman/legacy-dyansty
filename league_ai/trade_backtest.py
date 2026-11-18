@@ -212,7 +212,9 @@ def lean_label(w: float | None) -> str | None:
 
 # ---- loading trades and values as of each trade -----------------------------------------------------
 
-def load_trades(client: Any, league_id: str) -> list[dict[str, Any]]:
+def load_trades(client: Any, league_id: str, with_rosters: bool = False) -> list[dict[str, Any]]:
+    """with_rosters also attaches each side's roster just before the trade (from the weekly lineup events), each player
+    valued like the traded ones, and each side's direction then (league_ai.trade_fit uses them; no extra model calls)."""
     rows = (client.table("league_history_events").select("event_id, season, week, occurred_at, owner_name, player_id, player_name, position, details")
             .eq("league_id", league_id).eq("kind", "trade").limit(5000).execute().data or [])
     by_tid: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -223,7 +225,7 @@ def load_trades(client: Any, league_id: str) -> list[dict[str, Any]]:
     pids = sorted({str(r["player_id"]) for r in rows if r.get("player_id")})
     market = _market_history(client, pids)
     positions = _positions(client, pids)
-    seasons = sorted({int(r["season"]) for r in rows if r.get("season")})
+    seasons = sorted({int(r["season"]) for r in rows if r.get("season")} | {int(r["season"]) - 1 for r in rows if r.get("season")})
     production = {s: _season_weeks(client, s, positions) for s in seasons}
     curves = _now_curves(client)
     picks = _pick_values(client)
@@ -251,6 +253,35 @@ def load_trades(client: Any, league_id: str) -> list[dict[str, Any]]:
             fair_cache[key] = {pid: hits[i] for i, pid in enumerate(sorted(rows, key=lambda p: -val[p]))}
         return fair_cache[key]
 
+    def player_asset(pid: str, pos: Any, name: Any, season: int | None = None, week: int | None = None, when: str | None = None,
+                     snap: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        season, week, when, snap = (season, week, when, snap) if season is not None else ctx["at"]
+        ppg = _ppg(production.get(season, {}), pid, week) or _ppg(production.get(season - 1, {}), pid, 99)
+        mv = snap["players"].get(pid) if snap else None
+        asset = {"pid": pid, "pos": pos, "ppg": ppg or 0.0, "market": mv if mv is not None else _value_at(market.get(pid, []), when),
+                 "now": now_cache(snap["curves"] if snap else curves, pos, ppg, season, week),
+                 "name": name, "inj": _injury_mult(episodes.get(pid, []), season, week)}
+        c = contracts.get((pid, season))
+        if c:
+            asset.update(cap=c[0], years=c[1], fair=fair_caps(season, when, snap).get(pid))
+        return asset
+
+    peer_cache: dict[tuple[int, int, str], list[float]] = {}
+
+    def now_cache(curve_map: Mapping[str, list[float]], pos: Any, ppg: float | None, season: int, week: int) -> float:
+        """_now_value with the peers' points per game worked out once per season, week and position."""
+        curve = curve_map.get(str(pos)) or []
+        if ppg is None or not curve:
+            return 0.0
+        k = (season, week or 99, str(pos))
+        if k not in peer_cache:
+            weeks = production.get(season, {})
+            peer_cache[k] = sorted(x for pid, w in weeks.items() if positions.get(pid) == pos for x in [_ppg(weeks, pid, week or 99)] if x is not None)
+        peers = peer_cache[k]
+        rank = len(peers) - bisect_right(peers, ppg)
+        return curve[min(rank, len(curve) - 1)]
+
+    ctx: dict[str, Any] = {}
     trades = []
     for tid, legs in by_tid.items():
         first = legs[0]
@@ -258,6 +289,7 @@ def load_trades(client: Any, league_id: str) -> list[dict[str, Any]]:
         when = str(first.get("occurred_at") or "")[:10]
         details = first.get("details") or {}
         snap = history.get(when)
+        ctx["at"] = (season, week, when, snap)
         sides: dict[str, dict[str, list[dict[str, Any]]]] = {o: {"gets": [], "gives": []} for o in details.get("participants") or []}
         movers = {(p.get("player"), p.get("to")): p.get("from") for p in details.get("players") or []}
         for r in legs:
@@ -274,14 +306,7 @@ def load_trades(client: Any, league_id: str) -> list[dict[str, Any]]:
                 pid = str(r.get("player_id") or "")
                 frm = movers.get((r.get("player_name"), to))
                 pos = positions.get(pid) or r.get("position")
-                ppg = _ppg(production.get(season, {}), pid, week) or _ppg(production.get(season - 1, {}), pid, 99)
-                mv = snap["players"].get(pid) if snap else None
-                asset = {"market": mv if mv is not None else _value_at(market.get(pid, []), when),
-                         "now": _now_value(snap["curves"] if snap else curves, pos, ppg, production.get(season, {}), positions, week),
-                         "name": r.get("player_name"), "inj": _injury_mult(episodes.get(pid, []), season, week)}
-                c = contracts.get((pid, season))
-                if c:
-                    asset.update(cap=c[0], years=c[1], fair=fair_caps(season, when, snap).get(pid))
+                asset = player_asset(pid, pos, r.get("player_name"))
             if to in sides:
                 sides[to]["gets"].append(asset)
             if frm in sides:
@@ -289,7 +314,25 @@ def load_trades(client: Any, league_id: str) -> list[dict[str, Any]]:
         if len(sides) >= 2 and all(s["gets"] and s["gives"] for s in sides.values()):
             trades.append({"tid": tid, "season": season, "week": week, "date": when, "sides": sides,
                            "dated": bool(snap) or (bool(first_scrape) and when >= first_scrape), "faab": bool(details.get("faab"))})
-    return sorted(trades, key=lambda t: t["date"])
+    trades.sort(key=lambda t: t["date"])
+    if with_rosters and trades:
+        from league_ai.trade_fit import attach_rosters, load_lineup_rosters, load_records
+
+        rosters = load_lineup_rosters(client, league_id)
+        missing = sorted({pid for by_week in rosters.values() for _, ids, _ in by_week for pid in ids} - set(market))
+        market.update(_market_history(client, missing))
+        for by_week in rosters.values():
+            for _, _, pos in by_week:
+                for pid, ps in pos.items():
+                    if ps:
+                        positions.setdefault(pid, ps)
+        records = load_records(client, league_id)
+
+        def value(pid: str, t: Mapping[str, Any]) -> dict[str, Any]:
+            return player_asset(pid, positions.get(pid), pid, t["season"], t["week"], t["date"], history.get(t["date"]))
+
+        attach_rosters(trades, rosters, records, value)
+    return trades
 
 
 DP_REPO = "https://github.com/dynastyprocess/data.git"
