@@ -317,7 +317,7 @@ def sync(client: Any, league_id: str, sleeper_id: str, season: int) -> None:
         rules = playoffs.rules_of(settings)  # our playoff format (Settings), not Sleeper's
         start = rules["playoff_week_start"]
         info = {"settings": {"playoff_week_start": start, "playoff_teams": rules["playoff_teams"],
-                             "playoff_round_type": 2 if rules["playoff_round_weeks"] == 2 else 0,
+                             "playoff_round_type": playoffs.round_type(rules),
                              "loser_bracket": rules["loser_bracket"]}}
         own_from = int(switch.get("own_from_week") or start)
         current = league.current_week()

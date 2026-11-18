@@ -308,7 +308,9 @@ def render_league_rules(client: Any, league_id: str, rules: Mapping[str, Any]) -
             deadline = c2.text_input("Trade deadline (e.g. week 12)", value=ai.trade_deadline)
             max_trade_teams = c1.number_input("Max teams per trade", min_value=2, max_value=12, value=int(ai.max_trade_teams))
             playoff_start = c2.number_input("First playoff week", min_value=1, max_value=18, value=int(ai.playoff_week_start))
-            round_weeks = c1.number_input("Weeks per playoff round", min_value=1, max_value=2, value=int(ai.playoff_round_weeks))
+            from api.playoffs import ROUND_FORMATS
+            round_weeks = c1.selectbox("Playoff rounds", options=list(ROUND_FORMATS), format_func=ROUND_FORMATS.get,
+                                       index=list(ROUND_FORMATS).index(int(ai.playoff_round_weeks)) if int(ai.playoff_round_weeks) in ROUND_FORMATS else 1)
             loser_bracket = c2.toggle("Loser bracket for teams that miss the playoffs", value=bool(ai.loser_bracket))
 
         saved = st.form_submit_button("Save rules", use_container_width=True, type="primary")

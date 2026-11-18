@@ -520,6 +520,8 @@ function Playoffs({ data }: { data: HomeData }) {
       {pg ? <PlayoffHero data={data} pg={pg} /> : null}
       {data.bracket?.length ? <BracketCard rounds={data.bracket} playoffTeams={data.playoff_teams} /> : null}
       <PlayerHeads title="YOUR PLAYERS RIGHT NOW" players={mine.filter((p) => p.player_id).sort((a, b) => order(a) - order(b) || b.points - a.points).slice(0, 3)} sub={statusLine} />
+      {/* Shotgun watch stays live all through the playoffs: every team still scores and last place still shotguns. */}
+      {data.bottom ? <GameDayBottom bottom={data.bottom} week={data.week} /> : null}
       <AskBar placeholder="Who should I start this week?" />
       {!pg && data.standings?.length ? <Standings rows={data.standings} playoffTeams={data.playoff_teams} /> : null}
     </>

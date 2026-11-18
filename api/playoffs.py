@@ -17,6 +17,15 @@ from typing import Any, Callable, Mapping
 from api import own_league
 from services.matchups_view import _team_points
 
+# Settings > "Weeks per playoff round": 1 = one week each, 2 = two weeks each, 3 = one-week rounds and a two-week
+# final (Legacy, Tommy 2026-11-18: semis week 15, title game weeks 16-17, the season ends week 17).
+ROUND_FORMATS = {1: "One week each", 2: "Two weeks each", 3: "Two-week final only"}
+
+
+def round_type(rules: Mapping[str, Any]) -> int:
+    """own_league.round_weeks' round_type for our setting: 0 one week each, 1 a two-week final, 2 two weeks each."""
+    return {1: 0, 2: 2, 3: 1}.get(int(rules.get("playoff_round_weeks") or 2), 2)
+
 
 def rules_of(settings: Any) -> dict[str, Any]:
     """Our playoff format from league_ai_settings (a LeagueAISettings or a plain dict)."""
@@ -24,7 +33,7 @@ def rules_of(settings: Any) -> dict[str, Any]:
     teams = int(get("playoff_teams", 4) or 4)
     return {"playoff_teams": teams if teams in own_league.LAYOUTS else 4,
             "playoff_week_start": int(get("playoff_week_start", 15) or 15),
-            "playoff_round_weeks": max(1, min(2, int(get("playoff_round_weeks", 2) or 2))),
+            "playoff_round_weeks": max(1, min(3, int(get("playoff_round_weeks", 2) or 2))),
             "loser_bracket": bool(get("loser_bracket", True))}
 
 
@@ -33,7 +42,7 @@ def settings_of(rules: Mapping[str, Any], league_size: int | None = None) -> dic
     longest (three one-week rounds) so the last week is never cut short."""
     start, teams = int(rules["playoff_week_start"]), int(rules["playoff_teams"])
     rounds = max(r for r, *_ in own_league.LAYOUTS[teams])
-    weeks = own_league.round_weeks(start, rounds, 2 if int(rules["playoff_round_weeks"]) == 2 else 0)
+    weeks = own_league.round_weeks(start, rounds, round_type(rules))
     losers = bool(rules["loser_bracket"])
     lweeks = own_league.loser_weeks(start, league_size - teams) if losers and league_size else {}
     last = max(w for ws in weeks.values() for w in ws)
