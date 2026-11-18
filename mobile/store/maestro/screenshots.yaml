@@ -8,27 +8,35 @@ appId: com.tommybruggeman.legacydynasty
 - inputText: ${REVIEW_EMAIL}
 - tapOn: "Password"
 - inputText: ${REVIEW_PASSWORD}
-- hideKeyboard
-- tapOn: "Sign in"
+# "Go" on the keyboard signs in (same as the button), so no need to find the button under the keyboard.
+- pressKey: Enter
+- tapOn:
+    text: "Sign in"
+    optional: true
+# iOS may offer to save the password after signing in.
+# Tab buttons read as "My Team, tab, 2 of 5" to the test robot, hence the patterns below.
+- tapOn:
+    text: "Not Now"
+    optional: true
 - extendedWaitUntil:
-    visible: "My Team"
-    timeout: 60000
+    visible: "My Team(, tab.*)?"
+    timeout: 120000
 - waitForAnimationToEnd:
     timeout: 15000
 - takeScreenshot: 01-home
-- tapOn: "My Team"
+- tapOn: "My Team(, tab.*)?"
 - waitForAnimationToEnd:
     timeout: 15000
 - takeScreenshot: 02-my-team
-- tapOn: "League"
+- tapOn: "League(, tab.*)?"
 - waitForAnimationToEnd:
     timeout: 15000
 - takeScreenshot: 03-league
-- tapOn: "Market"
+- tapOn: "Market(, tab.*)?"
 - waitForAnimationToEnd:
     timeout: 15000
 - takeScreenshot: 04-market
-- tapOn: "Front Office"
+- tapOn: "Front Office(, tab.*)?"
 - waitForAnimationToEnd:
     timeout: 15000
 - takeScreenshot: 05-front-office

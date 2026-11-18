@@ -13,5 +13,14 @@
   "violenceRealisticProlongedGraphicOrSadistic": "NONE",
   "gambling": false,
   "unrestrictedWebAccess": false,
-  "kidsAgeBand": null
+  "kidsAgeBand": null,
+  "gunsOrOtherWeapons": "NONE",
+  "advertising": false,
+  "ageAssurance": false,
+  "healthOrWellnessTopics": false,
+  "lootBox": false,
+  "messagingAndChat": false,
+  "parentalControls": false,
+  "socialMedia": false,
+  "userGeneratedContent": false
 }
