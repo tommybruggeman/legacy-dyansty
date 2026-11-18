@@ -259,6 +259,7 @@ def status_alerts(lg: League) -> None:
     mine = [c for c in CHANGES if str(c["sleeper_id"]) in held]
     if not mine:
         return
+    player_status.fill_body_parts(lg.client, mine)
     from api import teams
     info = teams.player_info(lg.client, [c["sleeper_id"] for c in mine])
     names = {pid: _text(m.get("full_name")) or pid for pid, m in info.items()}

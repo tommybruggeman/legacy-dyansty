@@ -69,7 +69,7 @@ def label(raw: Any) -> str:
 
 
 def body_part(details: Mapping[str, Any]) -> str:
-    return _text(details.get("type")) or _text(details.get("location"))
+    return _text(details.get("type")) or _text(details.get("location")) or _text(details.get("detail"))
 
 
 def espn_entries(payload: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
@@ -127,7 +127,10 @@ def merge(rosters: Mapping[str, Mapping[str, Any]], report: Mapping[str, Mapping
     for e, r in report.items():
         mine = out.get(e)
         if mine is None or _text(r.get("date")) >= _text(mine.get("date")):
-            out[e] = {**(mine or {}), **r, "name": r.get("name") or (mine or {}).get("name"), "team": (mine or {}).get("team") or r.get("team")}
+            out[e] = {**(mine or {}), **r, "name": r.get("name") or (mine or {}).get("name"), "team": (mine or {}).get("team") or r.get("team"),
+                      "body_part": r.get("body_part") or (mine or {}).get("body_part") or ""}
+        elif mine is not None and not mine.get("body_part") and r.get("body_part"):
+            mine["body_part"] = r["body_part"]
     return out
 
 
@@ -189,6 +192,8 @@ def step(rows: Mapping[str, Mapping[str, Any]], feed: Mapping[str, Mapping[str, 
         seen = feed.get(sid)
         now_status = seen["status"] if seen else HEALTHY
         part = (seen or {}).get("body_part") or ""
+        if not part and now_status != HEALTHY:  # the feed dropped the injury: keep the one we had
+            part = _text((rows.get(sid) or {}).get("body_part"))
         cur = _text(held.get("status")) or HEALTHY
         if not held and now_status == HEALTHY:  # a healthy player we haven't stored: keep his id link, nothing to say
             updates.append({"sleeper_id": sid, "status": HEALTHY, "body_part": "", "checked_at": stamp, **_ids(seen)})
@@ -380,6 +385,27 @@ def game_tag_expired(change: Mapping[str, Any], team: str, played: set[str]) -> 
     """A game-week tag (Questionable, Doubtful, Out) dropping off after his game is just the report resetting for the
     next week, not news: no alert (the change is still logged). A player coming off IR or PUP is always news."""
     return change.get("to_status") == HEALTHY and change.get("from_status") in GAME_TAGS and team in played
+
+
+def fill_body_parts(client: Any, changes: list[dict[str, Any]]) -> None:
+    """Changes the feed gave no injury for get it from ESPN's injury table, then this season's practice report."""
+    need = [str(c["sleeper_id"]) for c in changes if c.get("to_status") != HEALTHY and not _text(c.get("body_part"))]
+    if not need:
+        return
+    found: dict[str, str] = {}
+    try:
+        for r in client.table("nfl_injuries").select("sleeper_id,injury_type,location,detail").in_("sleeper_id", need).execute().data or []:
+            found.setdefault(str(r["sleeper_id"]), _text(r.get("injury_type")) or _text(r.get("location")) or _text(r.get("detail")))
+        left = [p for p in need if not found.get(p)]
+        if left:
+            for r in (client.table("nfl_practice_reports").select("sleeper_id,season,week,report_injury,practice_injury")
+                      .in_("sleeper_id", left).order("season", desc=True).order("week", desc=True).execute().data or []):
+                found.setdefault(str(r["sleeper_id"]), _text(r.get("report_injury")) or _text(r.get("practice_injury")))
+    except Exception:
+        return
+    for c in changes:
+        if not _text(c.get("body_part")) and found.get(str(c["sleeper_id"])):
+            c["body_part"] = found[str(c["sleeper_id"])]
 
 
 def tag(status: str | None) -> str:

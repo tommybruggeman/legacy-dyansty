@@ -79,14 +79,15 @@ def test_short_feed_is_skipped():
 
 
 def test_alert_wording():
-    names = {"1": "Puka Nacua", "2": "Travis Kelce"}
-    a = alerts.status_change(changes=[{"id": 4, "sleeper_id": "1", "from_status": "Healthy", "to_status": "Questionable", "body_part": "ankle"}], names=names)
-    assert (a.kind, a.title, a.body, a.url) == ("status", "Puka Nacua: Questionable", "Ankle.", "/player/1?section=health")
-    a = alerts.status_change(changes=[{"id": 5, "sleeper_id": "1", "from_status": "IR", "to_status": "Healthy"}], names=names)
-    assert a.title == "Puka Nacua back to healthy" and a.body == "Off the injury report."
+    names = {"1": "Darren Waller", "2": "Mike Evans"}
+    a = alerts.status_change(changes=[{"id": 4, "sleeper_id": "1", "from_status": "Healthy", "to_status": "Questionable", "body_part": "Hip"}], names=names)
+    assert (a.kind, a.title, a.url) == ("status", "\u26a0\ufe0f Player Update \U0001f3c8", "/player/1?section=health")
+    assert a.body == "Darren Waller's status has changed from Healthy to Questionable (hip)"
+    a = alerts.status_change(changes=[{"id": 5, "sleeper_id": "2", "from_status": "IR", "to_status": "Healthy", "body_part": "Knee"}], names=names)
+    assert a.body == "Mike Evans's status has changed from IR to Healthy"
     a = alerts.status_change(changes=[{"id": 6, "sleeper_id": "1", "from_status": "Out", "to_status": "IR"},
                                       {"id": 7, "sleeper_id": "2", "from_status": "Healthy", "to_status": "Out"}], names=names)
-    assert a.title == "2 player status changes" and a.body == "Puka Nacua IR, Travis Kelce out." and a.key == "status:6-7"
+    assert a.title.startswith("\U0001f4cb Player Updates") and a.body == "Darren Waller: Out to IR\nMike Evans: Healthy to Out" and a.key == "status:6-7"
     assert "status" in alerts.KINDS and "status" in alerts.NOT_LIMITED
 
 
@@ -106,7 +107,7 @@ class _Q:
     def select(self, *_):
         return self
 
-    def order(self, *_):
+    def order(self, *_, **__):
         return self
 
     def range(self, a, b):
@@ -192,3 +193,30 @@ def test_refresh_end_to_end(monkeypatch):
     assert ps.refresh(db, None, T0 + timedelta(minutes=2)) == [] and players["12"]["injury_status"] == "Out"
     got = ps.refresh(db, None, T0 + timedelta(minutes=4))
     assert [(c["from_status"], c["to_status"]) for c in got] == [("Out", "Healthy")] and players["12"]["injury_status"] is None
+
+
+def test_alert_without_injury_is_still_a_full_sentence():
+    a = alerts.status_change(changes=[{"id": 1, "sleeper_id": "1", "from_status": "Healthy", "to_status": "Sus", "body_part": ""}], names={"1": "Darren Waller"})
+    assert a.body == "Darren Waller's status has changed from Healthy to Suspended"
+
+
+def test_merge_keeps_the_injury_from_either_source():
+    got = ps.merge({"e": {"status": "Questionable", "body_part": "Hip", "date": "1"}}, {"e": {"status": "Questionable", "body_part": "", "date": "2"}})
+    assert got["e"]["body_part"] == "Hip"
+    got = ps.merge({"e": {"status": "Out", "body_part": "", "date": "3"}}, {"e": {"status": "Q", "body_part": "Knee", "date": "2"}})
+    assert got["e"]["body_part"] == "Knee"
+
+
+def test_held_injury_used_when_feed_drops_it():
+    held = {"9": {"sleeper_id": "9", "status": "Questionable", "body_part": "Hip"}}
+    _, ch = ps.step(held, {"9": {"status": "Out", "body_part": ""}}, T0)
+    assert ch[0]["body_part"] == "Hip"
+
+
+def test_fill_body_parts_from_tables():
+    db = _DB()
+    db.db["nfl_injuries"] = [{"sleeper_id": "7", "injury_type": "", "location": "Hip", "detail": ""}]
+    db.db["nfl_practice_reports"] = [{"sleeper_id": "8", "season": 2026, "week": 11, "report_injury": "Knee", "practice_injury": ""}]
+    ch = [{"sleeper_id": "7", "to_status": "Questionable", "body_part": ""}, {"sleeper_id": "8", "to_status": "Out", "body_part": ""}]
+    ps.fill_body_parts(db, ch)
+    assert [c["body_part"] for c in ch] == ["Hip", "Knee"]
