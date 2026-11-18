@@ -153,7 +153,7 @@ function Hero({ title, pill, me, them, week, matchupId, meLabel, themLabel, badg
             <Text style={styles.vsText}>VS</Text>
             {odds ? <SplitOdds odds={odds} /> : null}
           </View>
-          <Side s={them} label={themLabel ?? (them ? teamLabel(them, true) : 'Bye')} lead={!total || !ahead} projected={them ? proj?.[1] : undefined} />
+          <Side s={them} label={themLabel ?? (them ? firstName(them.name ?? '') : 'Bye')} lead={!total || !ahead} projected={them ? proj?.[1] : undefined} />
         </View>
         <View style={styles.bar}><Bar fraction={total ? me.score / total : 0.5} /></View>
         {badges.length ? <Badges items={badges} /> : null}
@@ -376,7 +376,7 @@ function Recap({ data }: { data: HomeData }) {
     <>
       {game?.me ? (
         <Hero
-          title={`WEEK ${r!.week} FINAL${game.them ? ` · VS ${teamLabel(game.them, true).toUpperCase()}` : ''}`}
+          title={`WEEK ${r!.week} FINAL${game.them ? ` · VS ${firstName(game.them.name ?? '').toUpperCase()}` : ''}`}
           pill={<Pill label={won ? 'WIN' : game.me.score === game.them?.score ? 'TIE' : 'LOSS'} tone={won ? 'live' : 'out'} />}
           me={game.me}
           them={game.them}
@@ -408,7 +408,7 @@ function GameDay({ data }: { data: HomeData }) {
   const mine = data.players?.me ?? [];
   const theirs = data.players?.them ?? [];
   const started = g.me.score > 0 || (g.them?.score ?? 0) > 0 || mine.some((p) => p.status !== 'waiting' && p.status !== 'empty' && p.status !== 'bye');
-  const title = `WEEK ${data.week}${g.them ? ` · VS ${teamLabel(g.them, true).toUpperCase()}` : ''}`;
+  const title = `WEEK ${data.week}${g.them ? ` · VS ${firstName(g.them.name ?? '').toUpperCase()}` : ''}`;
 
   if (!started) {
     const first = mine.filter((p) => p.kickoff).sort((a, b) => (a.kickoff! < b.kickoff! ? -1 : 1));
@@ -461,7 +461,7 @@ function GameDay({ data }: { data: HomeData }) {
 function PreGameHero({ data, title }: { data: HomeData; title: string }) {
   const g = data.game!;
   const { proj } = useMatchupProj(data);
-  const them = g.them ? teamLabel(g.them, true).toUpperCase() : 'BYE';
+  const them = g.them ? firstName(g.them.name).toUpperCase() : 'BYE';
   return (
     <Hero
       title={title}
@@ -527,11 +527,11 @@ const asSide = (s: PlayoffSide, score?: number): HomeSide => ({ roster_id: s.ros
 // The playoff matchup: the weekend card with seeds and no bottom box (only the score matters now).
 // Scores are round totals; in week 2 of a two-week round the projections and win odds count week 1 too.
 function PlayoffHero({ data, pg }: { data: HomeData; pg: HomePlayoffGame }) {
-  const title = `${pg.label.toUpperCase()}${pg.them ? ` · VS ${teamLabel(pg.them, true).toUpperCase()}` : ''}`;
+  const title = `${pg.label.toUpperCase()}${pg.them ? ` · VS ${firstName(pg.them.name ?? '').toUpperCase()}` : ''}`;
   const props = { data, pg, title };
   return pg.matchup_id != null && pg.state !== 'pre' ? <PlayoffHeroLive {...props} mid={pg.matchup_id} /> : (
     <Hero title={title} pill={<LivePill data={data} />} me={asSide(pg.me)} them={pg.them ? asSide(pg.them) : null} week={data.week}
-      meLabel={seedLabel('You', pg.me)} themLabel={pg.them ? seedLabel(teamLabel(pg.them, true), pg.them) : undefined}
+      meLabel={seedLabel('You', pg.me)} themLabel={pg.them ? seedLabel(firstName(pg.them.name ?? ''), pg.them) : undefined}
       showScores={pg.state !== 'pre'} final={pg.state === 'final'} badges={[]} />
   );
 }
@@ -550,7 +550,7 @@ function PlayoffHeroLive({ data, pg, title, mid }: { data: HomeData; pg: HomePla
   const odds = final || !pg.them ? null : pick(round ? round.win_chance : box?.win_chance);
   return (
     <Hero title={title} pill={<LivePill data={data} />} me={asSide(pg.me, score?.[0])} them={pg.them ? asSide(pg.them, score?.[1]) : null}
-      week={data.week} matchupId={mid} meLabel={seedLabel('You', pg.me)} themLabel={pg.them ? seedLabel(teamLabel(pg.them, true), pg.them) : undefined}
+      week={data.week} matchupId={mid} meLabel={seedLabel('You', pg.me)} themLabel={pg.them ? seedLabel(firstName(pg.them.name ?? ''), pg.them) : undefined}
       proj={proj} odds={odds} final={final} badges={[]} />
   );
 }
@@ -778,7 +778,7 @@ const styles = StyleSheet.create({
   dim: { color: colors.muted },
   gap: { marginTop: 8 },
   vs: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 12 },
-  vsText: { color: colors.muted, fontWeight: '800' },
+  vsText: { color: colors.muted, fontWeight: '800', fontSize: 9, letterSpacing: 1 },
   vsMid: { alignItems: 'center', flex: 1 },
   odds: { width: 96, marginTop: 10 },
   oddsNums: { flexDirection: 'row', justifyContent: 'space-between' },
