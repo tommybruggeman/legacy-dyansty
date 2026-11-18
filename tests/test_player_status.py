@@ -106,7 +106,7 @@ class _Q:
     def select(self, *_):
         return self
 
-    def order(self, *_):
+    def order(self, *_, **__):
         return self
 
     def range(self, a, b):
@@ -192,3 +192,33 @@ def test_refresh_end_to_end(monkeypatch):
     assert ps.refresh(db, None, T0 + timedelta(minutes=2)) == [] and players["12"]["injury_status"] == "Out"
     got = ps.refresh(db, None, T0 + timedelta(minutes=4))
     assert [(c["from_status"], c["to_status"]) for c in got] == [("Out", "Healthy")] and players["12"]["injury_status"] is None
+
+
+def test_alert_always_has_a_second_line():
+    names = {"1": "Darren Waller"}
+    a = alerts.status_change(changes=[{"id": 1, "sleeper_id": "1", "from_status": "Healthy", "to_status": "Questionable", "body_part": ""}], names=names)
+    assert a.title == "Darren Waller: Questionable" and a.body == "Injury not listed yet."
+    a = alerts.status_change(changes=[{"id": 2, "sleeper_id": "1", "from_status": "Healthy", "to_status": "Sus"}], names=names)
+    assert a.body == "Suspended by the league."
+
+
+def test_merge_keeps_the_injury_from_either_source():
+    got = ps.merge({"e": {"status": "Questionable", "body_part": "Hip", "date": "1"}}, {"e": {"status": "Questionable", "body_part": "", "date": "2"}})
+    assert got["e"]["body_part"] == "Hip"
+    got = ps.merge({"e": {"status": "Out", "body_part": "", "date": "3"}}, {"e": {"status": "Q", "body_part": "Knee", "date": "2"}})
+    assert got["e"]["body_part"] == "Knee"
+
+
+def test_held_injury_used_when_feed_drops_it():
+    held = {"9": {"sleeper_id": "9", "status": "Questionable", "body_part": "Hip"}}
+    _, ch = ps.step(held, {"9": {"status": "Out", "body_part": ""}}, T0)
+    assert ch[0]["body_part"] == "Hip"
+
+
+def test_fill_body_parts_from_tables():
+    db = _DB()
+    db.db["nfl_injuries"] = [{"sleeper_id": "7", "injury_type": "", "location": "Hip", "detail": ""}]
+    db.db["nfl_practice_reports"] = [{"sleeper_id": "8", "season": 2026, "week": 11, "report_injury": "Knee", "practice_injury": ""}]
+    ch = [{"sleeper_id": "7", "to_status": "Questionable", "body_part": ""}, {"sleeper_id": "8", "to_status": "Out", "body_part": ""}]
+    ps.fill_body_parts(db, ch)
+    assert [c["body_part"] for c in ch] == ["Hip", "Knee"]

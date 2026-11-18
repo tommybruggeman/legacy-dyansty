@@ -170,6 +170,10 @@ def inactive(*, week: int, name: str, player_id: str, sub: Mapping[str, Any] | N
 
 STATUS_TITLE = {"Healthy": "back to healthy", "Questionable": "Questionable", "Doubtful": "Doubtful", "Out": "Out",
                 "IR": "placed on IR", "PUP": "on the PUP list", "NFI": "on the NFI list", "Sus": "suspended", "DTD": "day-to-day"}
+# the second line when no injury is listed (a suspension, or a report without one): never a title-only alert
+STATUS_NO_PART = {"Questionable": "Injury not listed yet.", "Doubtful": "Injury not listed yet.", "Out": "Injury not listed yet.",
+                  "DTD": "Injury not listed yet.", "IR": "Moved to injured reserve.", "PUP": "Can't play until he's activated.",
+                  "NFI": "Can't play until he's activated.", "Sus": "Suspended by the league."}
 STATUS_SHORT = {"Healthy": "healthy", "Questionable": "Q", "Doubtful": "D", "Out": "out", "IR": "IR", "PUP": "PUP", "NFI": "NFI",
                 "Sus": "suspended", "DTD": "day-to-day"}
 
@@ -180,10 +184,10 @@ def status_change(*, changes: list[Mapping[str, Any]], names: Mapping[str, str])
     ids = "-".join(str(c.get("id") or c["sleeper_id"]) for c in changes)
     if len(changes) == 1:
         c = changes[0]
-        name, new, old = names.get(c["sleeper_id"], "Your player"), c["to_status"], c["from_status"]
+        name, new = names.get(c["sleeper_id"], "Your player"), c["to_status"]
         title = f"{name}: {STATUS_TITLE.get(new, new)}" if new in ("Questionable", "Doubtful", "Out") else f"{name} {STATUS_TITLE.get(new, new)}"
         part = str(c.get("body_part") or "").strip()
-        body = "Off the injury report." if new == "Healthy" else (f"{part[:1].upper()}{part[1:]}." if part else "")
+        body = "Off the injury report." if new == "Healthy" else (f"{part[:1].upper()}{part[1:]}." if part else STATUS_NO_PART.get(new, "On the injury report."))
         return Alert("status", f"status:{ids}", title, body, health_url(c["sleeper_id"]))
     line = ", ".join(f"{names.get(c['sleeper_id'], 'Player')} {STATUS_SHORT.get(c['to_status'], c['to_status'])}" for c in changes[:4])
     more = f" and {len(changes) - 4} more" if len(changes) > 4 else ""
