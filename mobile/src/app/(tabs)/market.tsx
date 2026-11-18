@@ -35,8 +35,8 @@ const shortOwner = (name: string) => {
   return last ? `${first} ${last[0]}.` : first;
 };
 
-// One row: star, face, name with team and any tag, a line with age and position rank (owner and contract for rostered
-// players) plus his game, his last 6 weeks as bars, then one big number on the right that is always the stat the list
+// One row: star, face, name with team and any tag, line 1 = contract (owner · salary · years for rostered players,
+// age and position rank for free agents), line 2 = his game (kickoff, opponent, bye), his last 6 weeks as bars, then one big number on the right that is always the stat the list
 // is sorted by. Every number comes from the same league-scoring lines as the sort, so the order always matches.
 function PlayerRow({ p, line, sort }: { p: LeaguePlayer; line: string | null; sort: Sort }) {
   const { isTarget, toggle } = useTargets();
@@ -57,9 +57,8 @@ function PlayerRow({ p, line, sort }: { p: LeaguePlayer; line: string | null; so
           <Text style={styles.rowTeam}>{p.nfl_team === 'FA' ? '' : p.nfl_team}</Text>
           {tag ? <Pill label={tag.label} tone={tag.tone} /> : null}
         </View>
-        <Text style={styles.rowLine} numberOfLines={1}>
-          {facts}{facts && p.next ? ' · ' : ''}<GameText next={p.next} />
-        </Text>
+        {facts ? <Text style={styles.rowLine} numberOfLines={1}>{facts}</Text> : null}
+        {p.next ? <Text style={styles.rowLine} numberOfLines={1}><GameText next={p.next} /></Text> : null}
         <Bars bars={p.bars} />
       </View>
       <BigNumber p={p} sort={sort} />
