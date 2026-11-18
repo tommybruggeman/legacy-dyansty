@@ -1,6 +1,6 @@
 import { router, useFocusEffect } from 'expo-router';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
-import { Linking, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Dimensions, Modal, Pressable, ScrollView, StyleSheet, Text, View, type ScrollViewInstance } from 'react-native';
 
 import type { Pick, Player, TeamPage, TeamWeek, TeamWeekItem, WeekPlayer } from '../../lib/api';
 import { colors } from '../../lib/theme';
@@ -43,7 +43,7 @@ export function TeamView({ team, eyebrow, badge, top, onChange, onWeek }: { team
     return (
       <>
         {/* Same header as My Team (Tommy, 2026-11-17); the slim box is your head to head with them. */}
-        <MyHeader team={team} badge={badge} />
+        <MyHeader team={team} badge={badge} badgeOnCap />
         <HeadToHeadBar team={team} />
         {top}
         <RosterTab team={team} onChange={onChange} after={<><CapCard team={team} /><PicksCard team={team} /></>} />
@@ -70,7 +70,8 @@ export function TeamView({ team, eyebrow, badge, top, onChange, onWeek }: { team
   );
 }
 
-function MyHeader({ team, badge }: { team: TeamPage; badge?: ReactNode }) {
+// Other teams' Trade pill sits beside the cap left line, like Healthy on the player page (Tommy, 2026-11-17).
+function MyHeader({ team, badge, badgeOnCap }: { team: TeamPage; badge?: ReactNode; badgeOnCap?: boolean }) {
   const r = team.record;
   const now = team.cap.by_year.find((y) => y.season === team.season) ?? team.cap.by_year[0];
   const space = now?.space ?? team.cap.space;
@@ -79,10 +80,13 @@ function MyHeader({ team, badge }: { team: TeamPage; badge?: ReactNode }) {
       <View style={ui.flex}>
         <View style={styles.nameLine}>
           <Text style={styles.teamName} numberOfLines={1}>{team.team_name}</Text>
-          {badge}
+          {badgeOnCap ? null : badge}
         </View>
         <Text style={styles.hdrSub}>{record(r.wins, r.losses, r.ties)} · {r.standing_points} SP</Text>
-        <Text style={[styles.hdrSub, space < 0 ? styles.over : styles.capLeft]}>{space < 0 ? `${dollars(-space)} over the cap` : `${dollars(space)} cap left`}</Text>
+        <View style={styles.capLine}>
+          <Text style={[styles.hdrSub, space < 0 ? styles.over : styles.capLeft]}>{space < 0 ? `${dollars(-space)} over the cap` : `${dollars(space)} cap left`}</Text>
+          {badgeOnCap ? badge : null}
+        </View>
       </View>
       {r.rank ? (
         <View style={styles.rank}>
@@ -101,7 +105,8 @@ function MatchupBar({ team }: { team: TeamPage }) {
   const started = w.is_final || Object.values(w.players).some((p) => p.status === 'playing' || p.status === 'final');
   const mine = started ? w.score : w.projected;
   const theirs = started ? w.opponent.score : w.opponent.projected;
-  const pct = w.win_chance != null ? Math.round(w.win_chance * 100) : null;
+  // The server sends a whole percent (83), not a fraction.
+  const pct = w.win_chance != null ? Math.round(w.win_chance) : null;
   return (
     <View style={styles.mbar}>
       <Text style={styles.mbarLeft} numberOfLines={1}>Wk {w.week} vs <Text style={styles.mbarName}>{firstName(w.opponent.name)}</Text></Text>
@@ -115,13 +120,28 @@ function MatchupBar({ team }: { team: TeamPage }) {
 }
 
 // The quiet week button next to Starters and its menu: past results, this week (gold), later opponents, playoffs.
+// The menu is one fixed size (about six weeks tall) and scrolls inside, with no scroll bar, opening on the week
+// being shown (Tommy, 2026-11-17).
+const MENU_H = 300;
+const ITEM_H = 48;
+const MENU_PAD = 8;
 function WeekButton({ team, onWeek }: { team: TeamPage; onWeek: (week: number | null) => void }) {
   const [open, setOpen] = useState(false);
-  const [at, setAt] = useState({ top: 0, right: 16 });
+  const [at, setAt] = useState({ top: 0, right: 16, height: MENU_H });
   const ref = useRef<any>(null); // RN View instance (measureInWindow)
   const shown = team.week?.week ?? team.current_week ?? 1;
   const items = team.weeks ?? [];
-  const show = () => ref.current?.measureInWindow((_x: number, y: number, _w: number, h: number) => { setAt({ top: y + h + 6, right: 16 }); setOpen(true); });
+  // Never runs past the tab bar on a short screen.
+  const show = () => ref.current?.measureInWindow((_x: number, y: number, _w: number, h: number) => {
+    const top = y + h + 6;
+    setAt({ top, right: 16, height: Math.max(160, Math.min(MENU_H, Dimensions.get('window').height - top - 110)) });
+    setOpen(true);
+  });
+  const index = Math.max(0, items.findIndex((it) => it.week === shown));
+  const full = items.length * ITEM_H + MENU_PAD * 2;
+  // The shown week sits in the middle of the box when it opens.
+  const offset = Math.max(0, Math.min(full - at.height, MENU_PAD + index * ITEM_H - (at.height - ITEM_H) / 2));
+  const list = useRef<ScrollViewInstance>(null);
   return (
     <>
       <Pressable ref={ref} onPress={show} hitSlop={8} style={styles.wk}>
@@ -129,19 +149,28 @@ function WeekButton({ team, onWeek }: { team: TeamPage; onWeek: (week: number | 
       </Pressable>
       <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
         <Pressable style={StyleSheet.absoluteFill} onPress={() => setOpen(false)} />
-        <View style={[styles.menu, { top: at.top, right: at.right }]}>
-          {items.map((it: TeamWeekItem) => {
-            const now = it.week === team.current_week;
-            const sub = it.playoffs ? 'Playoffs'
-              : it.result && it.score ? `${it.result} ${it.score[0].toFixed(1)} – ${it.score[1].toFixed(1)}${it.opponent ? ` vs ${firstName(it.opponent)}` : ''}`
-              : it.opponent ? `vs ${firstName(it.opponent)}` : 'No game';
-            return (
-              <Pressable key={it.week} onPress={() => { setOpen(false); onWeek(now ? null : it.week); }} style={[styles.mi, now && styles.miNow]}>
-                <Text style={[styles.miWeek, now && styles.gold, it.playoffs && !now && styles.miPlayoff]}>Wk {it.week}</Text>
-                <Text style={styles.miSub}>{sub}</Text>
-              </Pressable>
-            );
-          })}
+        <View style={[styles.menu, { top: at.top, right: at.right, height: Math.min(at.height, full) }]}>
+          <ScrollView
+            ref={list}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.menuList}
+            contentOffset={{ x: 0, y: offset }}
+            onLayout={() => list.current?.scrollTo({ y: offset, animated: false })}
+          >
+            {items.map((it: TeamWeekItem) => {
+              const now = it.week === team.current_week;
+              const picked = it.week === shown && !now;
+              const sub = it.playoffs ? 'Playoffs'
+                : it.result && it.score ? `${it.result} ${it.score[0].toFixed(1)} – ${it.score[1].toFixed(1)}${it.opponent ? ` vs ${firstName(it.opponent)}` : ''}`
+                : it.opponent ? `vs ${firstName(it.opponent)}` : 'No game';
+              return (
+                <Pressable key={it.week} onPress={() => { setOpen(false); onWeek(now ? null : it.week); }} style={[styles.mi, now && styles.miNow, picked && styles.miPicked]}>
+                  <Text style={[styles.miWeek, now && styles.gold, it.playoffs && !now && styles.miPlayoff]}>Wk {it.week}</Text>
+                  <Text style={styles.miSub} numberOfLines={1}>{sub}</Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
         </View>
       </Modal>
     </>
@@ -206,6 +235,7 @@ function PlayerRow({ p, first, showSlot, chip, onEmpty, w, season }: { p: Player
               {tag}
             </View>
             <GameText p={p} w={w} season={season} />
+            {season != null && !kickedOff(w) && w?.status !== 'bye' ? <Text style={styles.deal} numberOfLines={1}>{contractText(p, season)}</Text> : null}
             {w?.line?.length ? (
               <Text style={styles.statLine}>
                 {w.line.map((s, i) => (
@@ -221,20 +251,20 @@ function PlayerRow({ p, first, showSlot, chip, onEmpty, w, season }: { p: Player
   );
 }
 
-// The game: kickoff time before, the clock and score (with a football when his team has the ball) during, the result after.
+// Line 1, the game: kickoff time before, the clock and score (with a football when his team has the ball) during,
+// the result after. The contract sits on its own second line until kickoff (Tommy, 2026-11-17).
+// On a bye the contract stays on the same line as BYE (Tommy, 2026-11-17).
 function GameText({ p, w, season }: { p: Player; w?: WeekPlayer; season?: number }) {
   const g = w?.game;
-  // The contract rides on the game line (Tommy, 2026-11-17: no separate bar under each player).
-  const deal = season != null ? <Text style={styles.deal}> · {contractText(p, season)}</Text> : null;
-  if (!w) return <Text style={ui.sub}>{p.nfl_team || 'FA'}{deal}</Text>;
-  if (w.status === 'bye') return <Text style={styles.game}><Text style={styles.byeWord}>BYE</Text>{deal}</Text>;
+  if (!w) return <Text style={ui.sub}>{p.nfl_team || 'FA'}</Text>;
+  if (w.status === 'bye') return <Text style={styles.game}><Text style={styles.byeWord}>BYE</Text>{season != null ? <Text style={styles.byeDeal}> · {contractText(p, season)}</Text> : null}</Text>;
   const vs = g ? `${g.home ? 'vs' : '@'} ${g.opp}` : p.nfl_team || '';
   if (g && (w.status === 'playing' || g.state === 'in')) {
     return (
       <View style={styles.gameRow}>
         <View style={styles.dot} />
         <Text style={[styles.game, styles.gameLive]} numberOfLines={1}>
-          <Text style={styles.clock}>{g.quarter > 4 ? 'OT' : `Q${g.quarter}`} {g.clock}</Text> {g.score}-{g.opp_score} {vs}{deal}
+          <Text style={styles.clock}>{g.quarter > 4 ? 'OT' : `Q${g.quarter}`} {g.clock}</Text> {g.score}-{g.opp_score} {vs}
         </Text>
         {g.possession ? <View style={styles.ball}><View style={styles.lace} /></View> : null}
       </View>
@@ -242,11 +272,14 @@ function GameText({ p, w, season }: { p: Player; w?: WeekPlayer; season?: number
   }
   if (g && (w.status === 'final' || g.state === 'post')) {
     const res = g.score > g.opp_score ? 'W' : g.score < g.opp_score ? 'L' : 'T';
-    return <Text style={styles.game} numberOfLines={2}><Text style={styles.finalWord}>Final</Text> {res} {g.score}-{g.opp_score} {vs}{deal}</Text>;
+    return <Text style={styles.game} numberOfLines={1}><Text style={styles.finalWord}>Final</Text> {res} {g.score}-{g.opp_score} {vs}</Text>;
   }
-  if (w.status === 'final') return <Text style={styles.game}>Final{deal}</Text>;
-  return <Text style={styles.game} numberOfLines={2}>{[w.kickoff ? kickoffText(w.kickoff) : null, vs].filter(Boolean).join(' ')}{deal}</Text>;
+  if (w.status === 'final') return <Text style={styles.game}>Final</Text>;
+  return <Text style={styles.game} numberOfLines={1}>{[w.kickoff ? kickoffText(w.kickoff) : null, vs].filter(Boolean).join(' ')}</Text>;
 }
+
+// Has his game kicked off? From then on the row shows only the game and his stats, no contract.
+const kickedOff = (w?: WeekPlayer) => !!w && (w.status === 'playing' || w.status === 'final' || w.game?.state === 'in' || w.game?.state === 'post');
 
 // Before kickoff his projection; during the game live points with the projection that follows the game;
 // after it his final points with the projection he started the day with.
@@ -278,12 +311,14 @@ function Points({ p, w }: { p: Player; w?: WeekPlayer }) {
   return (
     <View style={ui.right}>
       <Text style={[styles.big, styles.bigPre]}>{w.status === 'bye' ? '—' : w.proj != null ? w.proj.toFixed(1) : '—'}</Text>
+      {w.status !== 'bye' && w.proj != null ? <Text style={styles.projTag}>proj</Text> : null}
     </View>
   );
 }
 
 // "$48 · thru 2027" (or "No contract").
 function contractText(p: Player, season: number) {
+  if (p.gone) return 'Not on your team now';
   if (p.no_contract) return 'No contract';
   return `${dollars(p.contract_salary)} · thru ${season + Math.max(p.years_left, 1) - 1}`;
 }
@@ -328,7 +363,7 @@ function RosterTab({ team, onChange, after, onWeek }: { team: TeamPage; onChange
     <>
       {editing && lineup ? (
         <LineupSheet lineup={lineup} players={[...starters, ...bench]} picking={picking} onClose={() => setPicking(null)} onSaved={() => onChange?.()}
-          game={(p) => <GameText p={p} w={week[p.player_id]} season={team.season} />} points={(p) => <Points p={p} w={week[p.player_id]} />} />
+          game={(p) => <GameText p={p} w={week[p.player_id]} />} points={(p) => <Points p={p} w={week[p.player_id]} />} />
       ) : null}
       <Card title="Starters" right={onWeek && team.weeks?.length ? <WeekButton team={team} onWeek={onWeek} /> : pointsLabel(team.week)}>
         {starters.length ? starters.map((p, i) => (
@@ -376,11 +411,6 @@ function RosterTab({ team, onChange, after, onWeek }: { team: TeamPage; onChange
         </View>
         <Note>{team.roster.count} players under contract</Note>
         </>
-      ) : null}
-      {!team.is_me ? (
-        <Pressable style={styles.button} onPress={() => Linking.openURL(`https://sleeper.com/leagues/${team.sleeper_league_id}`)}>
-          <Text style={styles.buttonText}>Trade in Sleeper ↗</Text>
-        </Pressable>
       ) : null}
     </>
   );
@@ -582,7 +612,8 @@ function PicksCard({ team }: { team: TeamPage }) {
             {owned.filter((p) => p.year === year).map((p) => (
               <View key={`${p.year}-${p.round}-${p.original_owner}`} style={styles.chip}>
                 <Text style={styles.chipTop}>{ROUND[p.round] ?? `R${p.round}`}</Text>
-                <Text style={styles.chipSub}>{p.own ? 'own' : `from ${firstName(p.original_owner)}`}</Text>
+                {/* Every chip the same size: round over the original owner, no "from" (Tommy, 2026-11-17). */}
+                <Text style={styles.chipSub} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>{p.own ? 'Own' : firstName(p.original_owner)}</Text>
               </View>
             ))}
           </View>
@@ -620,6 +651,7 @@ const styles = StyleSheet.create({
   teamName: { color: colors.text, fontSize: 26, fontWeight: '900', flexShrink: 1 },
   hdrSub: { color: colors.muted, fontSize: 13, marginTop: 2 },
   capLeft: { color: colors.gold, fontWeight: '600' },
+  capLine: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   over: { color: '#EF7A7A', fontWeight: '700' },
   rank: { width: 52, height: 52, borderRadius: 26, borderWidth: 2, borderColor: colors.gold, alignItems: 'center', justifyContent: 'center' },
   rankNum: { color: colors.gold, fontSize: 17, fontWeight: '900' },
@@ -632,18 +664,21 @@ const styles = StyleSheet.create({
   mbarFinal: { color: colors.gold, fontWeight: '900' },
   h2h: { flexDirection: 'column', alignItems: 'stretch', gap: 0 },
   h2hLine: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  h2hLast: { borderTopWidth: 1, borderTopColor: '#22352B', marginTop: 6, paddingTop: 6 },
+  h2hLast: { marginTop: 6, paddingTop: 6 },
   h2hSub: { color: colors.muted, fontSize: 12 },
   wk: { borderWidth: 1, borderColor: '#2F4136', borderRadius: 8, paddingVertical: 3, paddingHorizontal: 9 },
   wkText: { color: '#A9A493', fontSize: 12, fontWeight: '700' },
-  menu: { position: 'absolute', width: 250, maxHeight: 460, backgroundColor: '#10291F', borderWidth: 1, borderColor: colors.gold, borderRadius: 16, padding: 8, shadowColor: '#000', shadowOpacity: 0.6, shadowRadius: 20, shadowOffset: { width: 0, height: 12 } },
-  mi: { paddingVertical: 7, paddingHorizontal: 8, borderRadius: 10 },
+  menu: { position: 'absolute', width: 250, backgroundColor: '#10291F', borderWidth: 1, borderColor: colors.gold, borderRadius: 16, overflow: 'hidden', shadowColor: '#000', shadowOpacity: 0.6, shadowRadius: 20, shadowOffset: { width: 0, height: 12 } },
+  menuList: { padding: MENU_PAD },
+  mi: { height: ITEM_H, justifyContent: 'center', paddingHorizontal: 8, borderRadius: 10 },
+  miPicked: { borderWidth: 1, borderColor: '#2F4136' },
   miNow: { backgroundColor: 'rgba(200,155,74,0.18)' },
   miWeek: { color: colors.text, fontSize: 13.5, fontWeight: '800' },
   miPlayoff: { color: colors.live },
   miSub: { color: colors.muted, fontSize: 11.5, marginTop: 1 },
   gold: { color: colors.gold },
-  deal: { color: colors.muted },
+  deal: { color: colors.muted, fontSize: 11.5, marginTop: 2 },
+  byeDeal: { color: colors.muted },
   byeWord: { color: '#EF7A7A', fontWeight: '800' },
   dots: { flexDirection: 'row', gap: 3, marginLeft: 2 },
   ydot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.gold },
@@ -670,10 +705,10 @@ const styles = StyleSheet.create({
   ringText: { color: colors.text, fontSize: 14, fontWeight: '800' },
   deadLine: { flexDirection: 'row', alignItems: 'center', borderTopWidth: 1, borderTopColor: '#22352B', marginTop: 10, paddingTop: 10 },
   deadValue: { color: colors.gold, fontSize: 13, fontWeight: '700' },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   pickYear: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, marginTop: 10 },
   pickYearLabel: { color: colors.gold, fontSize: 15, fontWeight: '900', width: 44, paddingTop: 8 },
-  chip: { backgroundColor: '#1A2E24', borderRadius: 10, paddingVertical: 7, paddingHorizontal: 10 },
+  chip: { width: '23%', backgroundColor: '#1A2E24', borderRadius: 10, paddingVertical: 7, paddingHorizontal: 4, alignItems: 'center' },
   chipTop: { color: colors.text, fontSize: 13, fontWeight: '800' },
   chipSub: { color: colors.muted, fontSize: 10, fontWeight: '600', marginTop: 1 },
   nameLine: { flexDirection: 'row', alignItems: 'center', gap: 6 },
@@ -706,6 +741,8 @@ const styles = StyleSheet.create({
   bigLive: { color: colors.live },
   bigPre: { color: '#CFC6B4' },
   under: { color: colors.muted, fontSize: 10, fontWeight: '700', marginTop: 2 },
+  // The small "proj" under a player's points before kickoff (Tommy, 2026-11-17).
+  projTag: { color: colors.muted, fontSize: 9, fontWeight: '600', marginTop: 1 },
   foot: { flexDirection: 'row', justifyContent: 'space-between', gap: 8, backgroundColor: '#0B1D15', borderRadius: 8, paddingVertical: 4, paddingHorizontal: 8, marginTop: 8 },
   footText: { color: colors.muted, fontSize: 10.5, flexShrink: 1 },
   footGold: { color: colors.gold, fontWeight: '800' },
@@ -718,8 +755,6 @@ const styles = StyleSheet.create({
   manage: { marginTop: 6, fontSize: 12 },
   year: { width: 44 },
   left: { width: 84, textAlign: 'right' },
-  button: { marginTop: 12, borderWidth: 1, borderColor: colors.gold, borderRadius: 14, padding: 14, alignItems: 'center' },
-  buttonText: { color: colors.gold, fontWeight: '800', fontSize: 15 },
   emptyFace: { width: 44, height: 44, borderRadius: 22, borderWidth: 1, borderStyle: 'dashed', borderColor: colors.muted, alignItems: 'center', justifyContent: 'center' },
   emptyPlus: { color: colors.muted, fontSize: 20, fontWeight: '700' },
   emptyName: { color: colors.muted },

@@ -302,6 +302,7 @@ export type Player = {
   years_left: number;
   total_years?: number; // every season on the deal (Contracts tab dots)
   no_contract?: boolean;
+  gone?: boolean; // a past week's starter who has since left the team
   designation: 'taxi' | 'ir' | null;
   is_rookie: boolean;
   ppg: number | null;
@@ -678,8 +679,12 @@ export type FrontOffice = {
 };
 // photos: screenshots sent with a question (the server keeps only their count and a text reading);
 // uris: their thumbnails, only in the chat they were sent from.
-export type ChatMessage = { role: 'user' | 'assistant'; content: string; photos?: number; uris?: string[] };
-export type ChatReply = { ok: boolean; text: string; conversation_id: string | null };
+// A move the GM proposed for the owner to confirm (api/gm_moves.py).
+export type MoveOption = { id: string; label: string; sub?: string; pick?: boolean };
+export type MoveCard = { id: string; kind: 'lineup' | 'trade' | 'bid' | 'add' | 'drop'; title: string; lines: string[];
+  options: MoveOption[]; status: 'pending' | 'done' | 'failed' | 'dismissed'; result?: string | null; chosen?: string | null };
+export type ChatMessage = { role: 'user' | 'assistant'; content: string; photos?: number; uris?: string[]; moves?: MoveCard[] };
+export type ChatReply = { ok: boolean; text: string; conversation_id: string | null; moves?: MoveCard[] };
 export type ChatEvent =
   | { e: 'status'; text: string }
   | { e: 'text'; d: string }

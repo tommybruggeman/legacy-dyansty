@@ -67,6 +67,9 @@ def load_crosswalk() -> Crosswalk:
 def sync_players(client: Any, crosswalk: Crosswalk) -> int:
     players = fetch_json(SLEEPER_PLAYERS_URL, timeout=180)
     rows = transform_players(players, crosswalk)
+    from api import player_status
+    if player_status.in_use(client):  # our own status (ESPN report, every 5 min on the VM) owns these columns now
+        rows = [{k: v for k, v in r.items() if k not in player_status.OWN_COLUMNS} for r in rows]
     moves: list[dict[str, Any]] = []
     try:
         recent = espn_rosters.recent_moves(client)

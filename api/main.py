@@ -19,6 +19,7 @@ from supabase import Client, create_client
 from api import box_score as box_score_mod
 from api import account, demo, usage_log
 from league_ai import screenshots
+from api import gm_moves
 from api import activity, alerts, cache, commissioner, owner_settings, profiles, front_office, home, league, lineups, live_activity, market, market_week, nfl_live, own_league, player, playoffs, projections, teams, trade_feed, trade_offers, waivers
 from season_engine import SeasonResolver
 from services.season_rollover_owner_ui import OwnerRolloverDecisionError, OwnerRolloverDecisionService
@@ -798,13 +799,21 @@ def _team_page(client: Client, ctx: dict[str, Any], team_id: str, week: int | No
         this_week = _team_week(client, ctx, summary["roster_id"], week)
     except Exception:
         this_week = None
+    current = _home_week(client, ctx["season"], datetime.now(home.HOME_TZ).date())
+    if week and this_week and this_week.get("is_final") and week < current and this_week.get("starter_ids"):
+        # A finished week from the week menu shows the lineup actually started that week, with that week's points;
+        # there's nothing to edit in the past.
+        past_ids = [p for p in this_week["starter_ids"] + this_week.get("bench_ids", []) if p and p != "0"]
+        detail["roster"] = teams.week_lineup(detail["roster"], this_week["starter_ids"], this_week.get("bench_ids", []),
+                                             ctx["slots"], teams.player_info(client, past_ids), teams.player_ppg(ctx["sleeper_id"], weeks))
+        detail["lineup"] = None
     try:
         weeks = _team_weeks(client, ctx, summary["roster_id"])
     except Exception as exc:
         print(f"APP_TEAM_WEEKS_ERROR {type(exc).__name__}", flush=True)
         weeks = None
     return {"season": ctx["season"], "salary_cap": cap, "sleeper_league_id": ctx["sleeper_id"], **detail, "week": this_week, "weeks": weeks,
-            "current_week": _home_week(client, ctx["season"], datetime.now(home.HOME_TZ).date())}
+            "current_week": current}
 
 
 def _add_contract_lengths(client: Client, state: dict[str, Any], team_id: str) -> None:
@@ -910,8 +919,15 @@ def _team_week(client: Client, ctx: dict[str, Any], roster_id: int | None, pick:
         me = sides[0]
         keys = ("points", "proj", "live_proj", "status", "game", "line", "kickoff")
         odds = nfl_live.win_chance(sides, final) if opp else None
+        # The lineup exactly as it was set that week (empty slots kept), for the week menu's past weeks.
+        starter_ids = [str(p or "") for p in mine.get("starters") or []]
+        try:
+            bench_ids = teams.bench_ids(ctx["sleeper_id"], mine, starter_ids)
+        except Exception:
+            bench_ids = [p["player_id"] for p in me.get("bench", [])]
         return {
             "week": week, "is_final": final, "score": me["score"], "projected": me.get("projected"),
+            "starter_ids": starter_ids, "bench_ids": bench_ids,
             "opponent": {"name": ctx["names"].get(opp.get("roster_id"), "Opponent"), "score": sides[1]["score"],
                          "projected": sides[1].get("projected")} if opp else None,
             "win_chance": odds[0] if odds else None,
@@ -1612,13 +1628,8 @@ def send_trade_offer(body: TradeOffer, owner: tuple[Client, Any] = Depends(owner
     pieces = [p for p in [*body.give, *body.get] if (p.contract_id and trade_offers.is_uuid(p.contract_id)) or (p.pick_id and trade_offers.is_uuid(p.pick_id))]
     if len(pieces) != len(body.give) + len(body.get) or not trade_offers.is_uuid(body.to_team_id):
         raise HTTPException(status_code=400, detail="Something in this offer isn't a player or pick.")
-    items = trade_offers.offer_items(ctx["team_id"], body.to_team_id, [p.model_dump() for p in body.give], [p.model_dump() for p in body.get])
-    request = {
-        "league_id": ctx["league_id"], "to_league_team_id": body.to_team_id,
-        "players": [i for i in items if i.get("contract_id")], "picks": [i for i in items if i.get("draft_pick_id")],
-        "cap": trade_offers.cap_items(ctx["team_id"], body.to_team_id, body.give_cap, body.get_cap),
-        "note": (body.note or "")[:280] or None, "parent_offer_id": body.parent_offer_id if body.parent_offer_id and trade_offers.is_uuid(body.parent_offer_id) else None,
-    }
+    request = trade_offers.offer_request(ctx["league_id"], ctx["team_id"], body.to_team_id, [p.model_dump() for p in body.give],
+                                         [p.model_dump() for p in body.get], body.give_cap, body.get_cap, body.note, body.parent_offer_id)
     try:
         result = client.rpc("propose_trade_offer_authenticated", {"p_request": request}).execute().data
     except Exception as exc:
@@ -1892,6 +1903,27 @@ def front_office_chat_resume(owner: tuple[Client, Any] = Depends(owner_client)) 
     session = _front_office(*owner)
     return StreamingResponse(front_office.resume_stream(session), media_type="application/x-ndjson",
                              headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+
+
+class MoveRequest(BaseModel):
+    conversation_id: str
+    option: str | None = None  # the button tapped; left out = the GM's pick
+
+
+@app.post("/front-office/moves/{move_id}/{action}")
+def front_office_move(move_id: str, action: str, body: MoveRequest, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """confirm (with the option tapped) | dismiss a move card the GM proposed. Confirm runs the same checked database call as the owner's own tap."""
+    if action not in {"confirm", "dismiss"} or not trade_offers.is_uuid(move_id) or not trade_offers.is_uuid(body.conversation_id):
+        raise HTTPException(status_code=400, detail="Unknown action.")
+    session = _front_office(*owner)
+    try:
+        card = front_office.settle_move(session, body.conversation_id, move_id, action, body.option)
+    except gm_moves.MoveError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if card["status"] == gm_moves.DONE:
+        for key in ("state", "activity"):
+            cache.forget(key, session.owner.league_id)
+    return {"ok": card["status"] == gm_moves.DONE, "move": card}
 
 
 @app.get("/front-office/conversations")

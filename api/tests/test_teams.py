@@ -191,3 +191,33 @@ def test_faab_left_from_sleeper(monkeypatch):
     monkeypatch.setattr(t.sleeper, "get", lambda path, ttl=0: {"settings": {"waiver_budget": 100}})
     assert t.faab("L", {"settings": {"waiver_budget_used": 58}}) == {"left": 42.0, "budget": 100.0}
     assert t.faab("L", {}) is None
+
+
+def test_week_lineup_shows_who_started_that_week():
+    def card(pid, pos, designation=None):
+        return {"player_id": pid, "name": pid.upper(), "pos": pos, "nfl_team": "KC", "injury": "questionable",
+                "salary": 5.0, "contract_salary": 5.0, "years_left": 1, "designation": designation, "is_rookie": False, "ppg": 10.0}
+    roster = {"starters": [card("a", "QB")], "bench": [card("b", "RB")], "taxi": [card("t", "WR", "taxi")], "ir": [], "count": 3}
+    info = {"gone": {"full_name": "Gone Guy", "position": "WR", "team": "NYJ"}}
+    out = teams.week_lineup(roster, ["b", "0", "gone"], ["a", "b"], ["QB", "RB", "FLEX", "BN"], info, {})
+    assert [p["player_id"] for p in out["starters"]] == ["b", "", "gone"]
+    assert [p["slot"] for p in out["starters"]] == ["QB", "RB", "FLX"]
+    assert out["starters"][1]["empty"]
+    assert out["starters"][2]["gone"]
+    assert out["starters"][2]["name"] == "Gone Guy"
+    assert out["starters"][0]["injury"] is None  # today's tag stays off an old week
+    assert [p["player_id"] for p in out["bench"]] == ["a"]
+    assert out["taxi"] == roster["taxi"]
+
+
+def test_ir_card_shows_the_cap_charge_after_the_ir_break():
+    state = {**STATE, "cap_adjustments": [{"league_team_id": T1, "sleeper_player_id": "13", "amount": -7, "adjustment_type": "ir_adjustment"}]}
+    roster = teams.roster_rows(state, T1, {}, [], {}, {})
+    adams = roster["ir"][0]
+    assert adams["salary"] == 7 and adams["contract_salary"] == 14
+    assert roster["taxi"][0]["salary"] == 2.67
+
+
+def test_ir_break_matches_by_name_when_the_row_has_no_player_id():
+    state = {**STATE, "cap_adjustments": [{"player_name": "Davante Adams", "amount": -7, "adjustment_type": "ir_adjustment"}]}
+    assert teams.roster_rows(state, T1, {}, [], {}, {})["ir"][0]["salary"] == 7

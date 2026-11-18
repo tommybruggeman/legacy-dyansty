@@ -30,6 +30,7 @@ from league_ai.page_glue import (
     render_tiles,
     render_moves,
     run_league_ai,
+    settle_move,
     app_numbers,
     number_tiles,
     start_new_conversation,
@@ -220,6 +221,37 @@ def _render_chat_markdown(text: str) -> None:
     st.markdown(str(text).replace("$", "\\$"))
 
 
+def _move_cards(msg: dict, index: int) -> None:
+    """Cards for moves the GM proposed: nothing happens until the owner confirms (same checks as the league's own screens)."""
+    for card in msg.get("moves") or []:
+        with st.container(border=True):
+            st.markdown(f"**{card.get('title')}**")
+            for line in card.get("lines") or []:
+                _render_chat_markdown(line)
+            status, options = card.get("status"), card.get("options") or []
+            if status == "pending":
+                cols = st.columns(max(1, len(options)))
+                pressed = None
+                for col, opt in zip(cols, options):
+                    if col.button(str(opt.get("label")), key=f"mv_{index}_{card['id']}_{opt.get('id')}", help=opt.get("sub") or None,
+                                  type="primary" if opt.get("pick") else "secondary", use_container_width=True):
+                        pressed = ("confirm", opt.get("id"))
+                    if opt.get("sub"):
+                        col.caption(str(opt["sub"]))
+                if not pressed and st.button("Not now", key=f"mv_no_{index}_{card['id']}"):
+                    pressed = ("dismiss", None)
+                if pressed:
+                    done = settle_move(request_context, team, str(card["id"]), pressed[0], pressed[1])
+                    card.update({k: done.get(k) for k in ("status", "result", "chosen")})
+                    st.rerun()
+            elif status == "done":
+                st.success(card.get("result") or "Done.")
+            elif status == "failed":
+                st.error(card.get("result") or "That didn't go through.")
+            else:
+                st.caption("Dismissed")
+
+
 def _photos_caption(count: Any) -> None:
     if count:
         st.caption(f"📎 {_screenshots.label(int(count))}")
@@ -229,6 +261,7 @@ for _i, msg in enumerate(gm_messages):
     with st.chat_message(msg["role"], avatar=(GM_AVATAR if msg["role"] == "assistant" else _me_avatar)):
         _photos_caption(msg.get("photos"))
         _render_chat_markdown(msg["content"])
+        _move_cards(msg, _i)
         if msg["role"] == "assistant" and _i > 0:
             _prev = gm_messages[_i - 1]
             render_report(f"{history_key}_{_i}", _prev.get("content") if _prev.get("role") == "user" else None, msg["content"],
@@ -266,7 +299,9 @@ if prompt:
         else:
             st.error(response)
         st.session_state.pop(pending_hash_key, None)
-    gm_messages.append({"role": "assistant", "content": response})
+    gm_messages.append({"role": "assistant", "content": response, **({"moves": result.moves} if getattr(result, "moves", None) else {})})
+    if getattr(result, "moves", None):
+        st.rerun()  # draw the confirm cards
 
 # ----------------------------
 # WEEKLY BRIEF (filled last so the page is usable immediately; cached per week)
