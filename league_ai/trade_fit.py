@@ -244,10 +244,43 @@ def _auc(real: float, fakes: list[float]) -> float | None:
     return sum(1.0 if real > f else 0.5 if real == f else 0.0 for f in fakes) / len(fakes)
 
 
-def evaluate(trades: list[Mapping[str, Any]], slots: list[str] | None = None, n: int = DECOYS) -> dict[str, Any]:
-    """Baseline (plain value, the old finder) and the fitted fit score, ranked against decoys. Leave-one-out: a trade
-    never grades weights it helped fit."""
+REVEALED_DAYS = 120
+
+
+def revealed_directions(trades: list[Mapping[str, Any]], slots: list[str] | None = None) -> list[dict[str, Any]]:
+    """Copies of the trades with each owner's direction taken from how they traded in the REVEALED_DAYS before (only earlier
+    trades): an owner who sold lineup points for picks or future value reads as rebuilding, one who paid picks or future
+    value for lineup points as contending (going all in), whatever the record says. No later trade ever leaks in."""
+    from datetime import date
+
     slots = slots or DEFAULT_SLOTS
+    day = lambda t: date.fromisoformat(str(t.get("date") or "1970-01-01")[:10])
+    ordered = sorted(trades, key=day)
+    moves: list[tuple[date, str, str]] = []  # (day, owner, 'selling' / 'all_in')
+    out = []
+    for t in ordered:
+        d0 = day(t)
+        dirs = dict(t.get("directions") or {})
+        for o in t["sides"]:
+            recent = [m for when, who, m in moves if who == o and 0 <= (d0 - when).days <= REVEALED_DAYS]
+            if recent:
+                dirs[o] = "rebuilding" if recent[-1] == "selling" else "contending"
+        out.append({**t, "directions": dirs})
+        if t.get("rosters") and all((t["rosters"] or {}).get(o) for o in t["sides"]):
+            for o, f in features(t, t["sides"], slots).items():
+                if f["lineup_gain"] < -0.5 and (f["picks_in"] or f["future"] > 0.1):
+                    moves.append((d0, o, "selling"))
+                elif f["lineup_gain"] > 0.5 and (f["picks_out"] or f["future"] < -0.1):
+                    moves.append((d0, o, "all_in"))
+    return out
+
+
+def evaluate(trades: list[Mapping[str, Any]], slots: list[str] | None = None, n: int = DECOYS, revealed: bool = False) -> dict[str, Any]:
+    """Baseline (plain value, the old finder) and the fitted fit score, ranked against decoys. Leave-one-out: a trade
+    never grades weights it helped fit. revealed: directions from each owner's recent trades (revealed_directions)."""
+    slots = slots or DEFAULT_SLOTS
+    if revealed:
+        trades = revealed_directions(trades, slots)
     usable = [t for t in trades if len(t["sides"]) == 2 and t.get("rosters") and all(t["rosters"].get(o) for o in t["sides"])]
     combos = [dict(V=v, L=l, C=c, F=f, lam=lam, R=r) for v, l, c, f, lam, r in product(GRID_V, GRID_L, GRID_C, GRID_F, GRID_LAM, GRID_R) if v or l or f]
     rows = []  # per trade: real features + decoy features by kind
@@ -527,6 +560,8 @@ def main() -> None:
     if pooled:
         print("all leagues together:", flush=True)
         print(json.dumps(evaluate(pooled), indent=1, default=str), flush=True)
+        print("all leagues, directions from recent trades (selling / all in):", flush=True)
+        print(json.dumps(evaluate(pooled, revealed=True), indent=1, default=str), flush=True)
 
 
 if __name__ == "__main__":
