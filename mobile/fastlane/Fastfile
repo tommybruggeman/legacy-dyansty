@@ -41,6 +41,13 @@ platform :ios do
       skip_binary_upload: true,
       skip_app_version_update: false,
       app_rating_config_path: "store/age_rating.json",
+      # Apple's reviewers' contact. The phone comes from the REVIEW_PHONE secret, so it never sits in this public repo.
+      app_review_information: {
+        first_name: "Tommy",
+        last_name: "Bruggeman",
+        email_address: "tommybruggeman1@gmail.com",
+        phone_number: ENV.fetch("REVIEW_PHONE", "").strip
+      },
       submit_for_review: submit,
       automatic_release: true,
       reject_if_possible: false,

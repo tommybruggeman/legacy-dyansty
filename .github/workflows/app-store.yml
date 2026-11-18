@@ -54,7 +54,9 @@ jobs:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          REVIEW_PHONE: ${{ secrets.REVIEW_PHONE }}
         run: |
+          if [ -z "$REVIEW_PHONE" ]; then echo "::error::Add the REVIEW_PHONE secret (+1 ...): Apple requires a review contact phone"; exit 1; fi
           echo "key id length: ${#ASC_KEY_ID}, issuer id length: ${#ASC_ISSUER_ID}, p8 length: ${#ASC_KEY_P8}"
           case "$ASC_KEY_P8" in *"BEGIN PRIVATE KEY"*) echo "p8 has the BEGIN line";; *) echo "p8 has no BEGIN line";; esac
           echo "p8 lines: $(printf '%s' "$ASC_KEY_P8" | wc -l)"
@@ -146,6 +148,8 @@ jobs:
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
           SUBMIT: ${{ inputs.submit }}
+          REVIEW_PHONE: ${{ secrets.REVIEW_PHONE }}
         run: |
+          if [ -z "$REVIEW_PHONE" ]; then echo "::error::Add the REVIEW_PHONE secret (+1 ...): Apple requires a review contact phone"; exit 1; fi
           mkdir -p store/screenshots
           fastlane listing
