@@ -137,6 +137,31 @@ UNIT
 sed -i 's|^ExecStart=/bin/systemctl restart legacy-watcher.service$|ExecStart=/bin/systemctl restart legacy-watcher.service legacy-live-activity.service|' \
   /etc/systemd/system/legacy-watcher-update.service
 
+# Player status watcher (Tommy, 2026-11-17: "a player ruled out on Friday should be updated the second it's
+# announced"): always on, reads ESPN's injury report every minute (rosters every 5) into our own player status and
+# alerts owners right away (scripts/status_watch.py). Same env file as the alerts; the daily update restarts it.
+cat > /etc/systemd/system/legacy-status.service <<UNIT
+[Unit]
+Description=Legacy Dynasty player status watcher
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/etc/legacy-alerts.env
+Environment=INTERVAL=60
+WorkingDirectory=$APP
+ExecStartPre=-/usr/bin/git -C $APP pull --ff-only --quiet
+ExecStart=$APP/.venv/bin/python scripts/status_watch.py
+Restart=always
+RestartSec=30
+MemoryMax=350M
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+sed -i 's|^ExecStart=/bin/systemctl restart legacy-watcher.service legacy-live-activity.service$|ExecStart=/bin/systemctl restart legacy-watcher.service legacy-live-activity.service legacy-status.service|' \
+  /etc/systemd/system/legacy-watcher-update.service
+
 # Sleeper sync every 15 minutes (Tommy, 2026-11-17): GitHub's "every 15 minutes" schedule only ran about every 6 hours,
 # so trades and pickups reached the app hours late. Same job as .github/workflows/sleeper-sync.yml (kept as a backup);
 # the sync is idempotent by key and flock keeps two passes on this VM from overlapping. Then the trade alerts.
@@ -178,5 +203,5 @@ WantedBy=timers.target
 UNIT
 
 systemctl daemon-reload
-systemctl enable --now legacy-watcher.service legacy-watcher-update.timer legacy-alerts.timer legacy-sleeper-sync.timer legacy-live-activity.service
-systemctl restart legacy-watcher.service legacy-live-activity.service
+systemctl enable --now legacy-watcher.service legacy-watcher-update.timer legacy-alerts.timer legacy-sleeper-sync.timer legacy-live-activity.service legacy-status.service
+systemctl restart legacy-watcher.service legacy-live-activity.service legacy-status.service

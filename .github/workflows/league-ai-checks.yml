@@ -11,7 +11,7 @@ on:
       check:
         description: Which check to run
         type: choice
-        options: [odds_backtest, odds_trial, odds_grade, start_sit_grade, practice_test, weekly_cards, shadow_scoring, live_projection_study, espn_feed_check, final_scores_check, projection_accuracy, projection_calibration, win_odds_study, trade_backtest, trade_fit, answer_eval, fd_check, own_scores_check, projection_by_stat, weather_study, projection_trace, seed_owner_profiles, save_scoring, speed_test, speed_test_smoke, gm_repro, live_gaps, app_usage]
+        options: [odds_backtest, odds_trial, odds_grade, start_sit_grade, practice_test, weekly_cards, shadow_scoring, live_projection_study, espn_feed_check, final_scores_check, projection_accuracy, projection_calibration, win_odds_study, trade_backtest, trade_fit, answer_eval, fd_check, own_scores_check, projection_by_stat, weather_study, projection_trace, seed_owner_profiles, save_scoring, speed_test, speed_test_smoke, gm_repro, live_gaps, app_usage, status_probe]
         default: odds_backtest
       minutes:
         description: speed_test - minutes to watch after kickoff (max 330); app_usage - days to look back (default 7)
@@ -46,6 +46,8 @@ jobs:
             live_gaps) python -m scoring.live_gaps && python -m scoring.fd_debug "$(date -u +%Y)" "${{ inputs.minutes || 0 }}" ;;
             speed_test_smoke) python -m scoring.speed_test --wait 0 --minutes 1 --every 3 --smoke ;;
             # where owners spend time in the app and website (numbers only, owners unnamed)
+            # our own player status feed (ESPN report) vs the app's nightly Sleeper status; saves nothing
+            status_probe) python -m scripts.status_probe ;;
             app_usage) python -m scripts.app_usage_report --days "${{ inputs.minutes == '230' && '7' || inputs.minutes }}" ;;
             odds_trial) python -m league_ai.odds_trial ;;
             # one time: today's team names and Sleeper pictures become each owner's default profile, stored by us
