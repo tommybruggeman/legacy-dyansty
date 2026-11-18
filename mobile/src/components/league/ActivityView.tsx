@@ -308,7 +308,7 @@ const styles = StyleSheet.create({
   card: { borderRadius: 18, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.card, padding: 14, marginBottom: 12 },
   cardMine: { borderColor: colors.gold },
   head: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
-  kind: { color: colors.gold, fontSize: 10, fontWeight: '900', letterSpacing: 1 },
+  kind: { color: colors.gold, fontSize: 12, fontWeight: '900', letterSpacing: 1 },
   when: { color: colors.muted, fontSize: 12, fontWeight: '700' },
   side: { paddingTop: 8 },
   sideNext: { borderTopWidth: 1, borderTopColor: colors.row, marginTop: 8 },
