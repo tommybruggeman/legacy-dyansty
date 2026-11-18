@@ -1,6 +1,6 @@
 import { router, useFocusEffect } from 'expo-router';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
-import { Dimensions, Linking, Modal, Pressable, ScrollView, StyleSheet, Text, View, type ScrollViewInstance } from 'react-native';
+import { Dimensions, Modal, Pressable, ScrollView, StyleSheet, Text, View, type ScrollViewInstance } from 'react-native';
 
 import type { Pick, Player, TeamPage, TeamWeek, TeamWeekItem, WeekPlayer } from '../../lib/api';
 import { colors } from '../../lib/theme';
@@ -43,7 +43,7 @@ export function TeamView({ team, eyebrow, badge, top, onChange, onWeek }: { team
     return (
       <>
         {/* Same header as My Team (Tommy, 2026-11-17); the slim box is your head to head with them. */}
-        <MyHeader team={team} badge={badge} />
+        <MyHeader team={team} badge={badge} badgeOnCap />
         <HeadToHeadBar team={team} />
         {top}
         <RosterTab team={team} onChange={onChange} after={<><CapCard team={team} /><PicksCard team={team} /></>} />
@@ -70,7 +70,8 @@ export function TeamView({ team, eyebrow, badge, top, onChange, onWeek }: { team
   );
 }
 
-function MyHeader({ team, badge }: { team: TeamPage; badge?: ReactNode }) {
+// Other teams' Trade pill sits beside the cap left line, like Healthy on the player page (Tommy, 2026-11-17).
+function MyHeader({ team, badge, badgeOnCap }: { team: TeamPage; badge?: ReactNode; badgeOnCap?: boolean }) {
   const r = team.record;
   const now = team.cap.by_year.find((y) => y.season === team.season) ?? team.cap.by_year[0];
   const space = now?.space ?? team.cap.space;
@@ -79,10 +80,13 @@ function MyHeader({ team, badge }: { team: TeamPage; badge?: ReactNode }) {
       <View style={ui.flex}>
         <View style={styles.nameLine}>
           <Text style={styles.teamName} numberOfLines={1}>{team.team_name}</Text>
-          {badge}
+          {badgeOnCap ? null : badge}
         </View>
         <Text style={styles.hdrSub}>{record(r.wins, r.losses, r.ties)} · {r.standing_points} SP</Text>
-        <Text style={[styles.hdrSub, space < 0 ? styles.over : styles.capLeft]}>{space < 0 ? `${dollars(-space)} over the cap` : `${dollars(space)} cap left`}</Text>
+        <View style={styles.capLine}>
+          <Text style={[styles.hdrSub, space < 0 ? styles.over : styles.capLeft]}>{space < 0 ? `${dollars(-space)} over the cap` : `${dollars(space)} cap left`}</Text>
+          {badgeOnCap ? badge : null}
+        </View>
       </View>
       {r.rank ? (
         <View style={styles.rank}>
@@ -408,11 +412,6 @@ function RosterTab({ team, onChange, after, onWeek }: { team: TeamPage; onChange
         <Note>{team.roster.count} players under contract</Note>
         </>
       ) : null}
-      {!team.is_me ? (
-        <Pressable style={styles.button} onPress={() => Linking.openURL(`https://sleeper.com/leagues/${team.sleeper_league_id}`)}>
-          <Text style={styles.buttonText}>Trade in Sleeper ↗</Text>
-        </Pressable>
-      ) : null}
     </>
   );
 }
@@ -613,7 +612,8 @@ function PicksCard({ team }: { team: TeamPage }) {
             {owned.filter((p) => p.year === year).map((p) => (
               <View key={`${p.year}-${p.round}-${p.original_owner}`} style={styles.chip}>
                 <Text style={styles.chipTop}>{ROUND[p.round] ?? `R${p.round}`}</Text>
-                <Text style={styles.chipSub}>{p.own ? 'own' : `from ${firstName(p.original_owner)}`}</Text>
+                {/* Every chip the same size: round over the original owner, no "from" (Tommy, 2026-11-17). */}
+                <Text style={styles.chipSub} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>{p.own ? 'Own' : firstName(p.original_owner)}</Text>
               </View>
             ))}
           </View>
@@ -651,6 +651,7 @@ const styles = StyleSheet.create({
   teamName: { color: colors.text, fontSize: 26, fontWeight: '900', flexShrink: 1 },
   hdrSub: { color: colors.muted, fontSize: 13, marginTop: 2 },
   capLeft: { color: colors.gold, fontWeight: '600' },
+  capLine: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   over: { color: '#EF7A7A', fontWeight: '700' },
   rank: { width: 52, height: 52, borderRadius: 26, borderWidth: 2, borderColor: colors.gold, alignItems: 'center', justifyContent: 'center' },
   rankNum: { color: colors.gold, fontSize: 17, fontWeight: '900' },
@@ -663,7 +664,7 @@ const styles = StyleSheet.create({
   mbarFinal: { color: colors.gold, fontWeight: '900' },
   h2h: { flexDirection: 'column', alignItems: 'stretch', gap: 0 },
   h2hLine: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  h2hLast: { borderTopWidth: 1, borderTopColor: '#22352B', marginTop: 6, paddingTop: 6 },
+  h2hLast: { marginTop: 6, paddingTop: 6 },
   h2hSub: { color: colors.muted, fontSize: 12 },
   wk: { borderWidth: 1, borderColor: '#2F4136', borderRadius: 8, paddingVertical: 3, paddingHorizontal: 9 },
   wkText: { color: '#A9A493', fontSize: 12, fontWeight: '700' },
@@ -704,10 +705,10 @@ const styles = StyleSheet.create({
   ringText: { color: colors.text, fontSize: 14, fontWeight: '800' },
   deadLine: { flexDirection: 'row', alignItems: 'center', borderTopWidth: 1, borderTopColor: '#22352B', marginTop: 10, paddingTop: 10 },
   deadValue: { color: colors.gold, fontSize: 13, fontWeight: '700' },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   pickYear: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, marginTop: 10 },
   pickYearLabel: { color: colors.gold, fontSize: 15, fontWeight: '900', width: 44, paddingTop: 8 },
-  chip: { backgroundColor: '#1A2E24', borderRadius: 10, paddingVertical: 7, paddingHorizontal: 10 },
+  chip: { width: '23%', backgroundColor: '#1A2E24', borderRadius: 10, paddingVertical: 7, paddingHorizontal: 4, alignItems: 'center' },
   chipTop: { color: colors.text, fontSize: 13, fontWeight: '800' },
   chipSub: { color: colors.muted, fontSize: 10, fontWeight: '600', marginTop: 1 },
   nameLine: { flexDirection: 'row', alignItems: 'center', gap: 6 },
@@ -754,8 +755,6 @@ const styles = StyleSheet.create({
   manage: { marginTop: 6, fontSize: 12 },
   year: { width: 44 },
   left: { width: 84, textAlign: 'right' },
-  button: { marginTop: 12, borderWidth: 1, borderColor: colors.gold, borderRadius: 14, padding: 14, alignItems: 'center' },
-  buttonText: { color: colors.gold, fontWeight: '800', fontSize: 15 },
   emptyFace: { width: 44, height: 44, borderRadius: 22, borderWidth: 1, borderStyle: 'dashed', borderColor: colors.muted, alignItems: 'center', justifyContent: 'center' },
   emptyPlus: { color: colors.muted, fontSize: 20, fontWeight: '700' },
   emptyName: { color: colors.muted },
