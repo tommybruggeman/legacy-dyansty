@@ -168,36 +168,50 @@ def inactive(*, week: int, name: str, player_id: str, sub: Mapping[str, Any] | N
                  "Kickoff in 30 minutes and he's in your lineup." + _sub(sub), health_url(player_id), urgent=True)
 
 
-# Sleeper-style status alerts (Tommy, 2026-11-18): an emoji per status + "Player Update", then one plain sentence.
+# Status alerts (Tommy, 2026-11-18): title says it all ("\U0001f6d1 Mike Evans is Out"), body is one sentence from the injury report.
 STATUS_EMOJI = {"Healthy": "\u2705", "Questionable": "\u26a0\ufe0f", "Doubtful": "\U0001f7e0", "Out": "\U0001f6d1", "DTD": "\u23f3",
                 "IR": "\U0001f3e5", "PUP": "\U0001fa7c", "NFI": "\U0001fa7c", "Sus": "\u26d4"}
 STATUS_NAME = {"Healthy": "Healthy", "Questionable": "Questionable", "Doubtful": "Doubtful", "Out": "Out", "DTD": "Day-to-day",
                "IR": "IR", "PUP": "PUP", "NFI": "NFI", "Sus": "Suspended"}
+_ON = {"IR", "PUP", "NFI"}  # "is on IR", not "is IR"
 
 
-def _status_line(name: str, c: Mapping[str, Any]) -> str:
-    old, new = STATUS_NAME.get(c["from_status"], c["from_status"]), STATUS_NAME.get(c["to_status"], c["to_status"])
-    part = str(c.get("body_part") or "").strip().lower()
-    tail = f" ({part})" if part and c["to_status"] != "Healthy" else ""
-    return f"{name}'s status has changed from {old} to {new}{tail}"
+def _is(status: str) -> str:
+    return ("on " if status in _ON else "") + STATUS_NAME.get(status, status)
+
+
+def _part(c: Mapping[str, Any]) -> str:
+    return str(c.get("body_part") or "").strip().lower()
+
+
+def _status_sentence(c: Mapping[str, Any]) -> str:
+    to, part = c["to_status"], _part(c)
+    if to == "Healthy":
+        return "He's off the injury report."
+    if to == "Sus":
+        return "He's suspended by the NFL."
+    return f"He's listed with a {part} injury." if part else "No injury listed yet."
 
 
 def status_change(*, changes: list[Mapping[str, Any]], names: Mapping[str, str]) -> Alert:
     """One owner's status changes from one check (usually one). changes: [{id, sleeper_id, from_status, to_status, body_part}].
-    One change: "\U0001f6d1 Player Update" / "Mike Evans's status has changed from Questionable to Out (hamstring)".
-    Several: "\U0001f4cb Player Updates" / one line per player."""
+    One change: "\U0001f6d1 Mike Evans is Out" / "He's listed with a hamstring injury."
+    Several: "\U0001f4cb 3 of your players changed status" / one line per player."""
     ids = "-".join(str(c.get("id") or c["sleeper_id"]) for c in changes)
     if len(changes) == 1:
         c = changes[0]
         name = names.get(c["sleeper_id"], "Your player")
         emoji = STATUS_EMOJI.get(c["to_status"], "\U0001fa79")
-        return Alert("status", f"status:{ids}", emoji + " Player Update \U0001f3c8",
-                     _status_line(name, c), health_url(c["sleeper_id"]))
-    lines = [f"{names.get(c['sleeper_id'], 'Player')}: {STATUS_NAME.get(c['from_status'], c['from_status'])} to "
-             f"{STATUS_NAME.get(c['to_status'], c['to_status'])}" for c in changes[:4]]
+        return Alert("status", f"status:{ids}", f"{emoji} {name} is {_is(c['to_status'])}",
+                     _status_sentence(c), health_url(c["sleeper_id"]))
+    lines = []
+    for c in changes[:4]:
+        part = _part(c) if c["to_status"] not in ("Healthy", "Sus") else ""
+        lines.append(f"{STATUS_EMOJI.get(c['to_status'], chr(0x1fa79))} {names.get(c['sleeper_id'], 'Player')}: "
+                     f"{STATUS_NAME.get(c['to_status'], c['to_status'])}" + (f" ({part})" if part else ""))
     if len(changes) > 4:
         lines.append(f"and {len(changes) - 4} more")
-    return Alert("status", f"status:{ids}", "\U0001f4cb Player Updates \U0001f3c8", "\n".join(lines), LINEUP_URL)
+    return Alert("status", f"status:{ids}", f"\U0001f4cb {len(changes)} of your players changed status", "\n".join(lines), LINEUP_URL)
 
 
 TRASH_TALK = (

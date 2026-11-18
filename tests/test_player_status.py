@@ -81,13 +81,13 @@ def test_short_feed_is_skipped():
 def test_alert_wording():
     names = {"1": "Darren Waller", "2": "Mike Evans"}
     a = alerts.status_change(changes=[{"id": 4, "sleeper_id": "1", "from_status": "Healthy", "to_status": "Questionable", "body_part": "Hip"}], names=names)
-    assert (a.kind, a.title, a.url) == ("status", "\u26a0\ufe0f Player Update \U0001f3c8", "/player/1?section=health")
-    assert a.body == "Darren Waller's status has changed from Healthy to Questionable (hip)"
+    assert (a.kind, a.title, a.url) == ("status", "\u26a0\ufe0f Darren Waller is Questionable", "/player/1?section=health")
+    assert a.body == "He's listed with a hip injury."
     a = alerts.status_change(changes=[{"id": 5, "sleeper_id": "2", "from_status": "IR", "to_status": "Healthy", "body_part": "Knee"}], names=names)
-    assert a.body == "Mike Evans's status has changed from IR to Healthy"
+    assert (a.title, a.body) == ("\u2705 Mike Evans is Healthy", "He's off the injury report.")
     a = alerts.status_change(changes=[{"id": 6, "sleeper_id": "1", "from_status": "Out", "to_status": "IR"},
                                       {"id": 7, "sleeper_id": "2", "from_status": "Healthy", "to_status": "Out"}], names=names)
-    assert a.title.startswith("\U0001f4cb Player Updates") and a.body == "Darren Waller: Out to IR\nMike Evans: Healthy to Out" and a.key == "status:6-7"
+    assert a.title == "\U0001f4cb 2 of your players changed status" and a.body == "\U0001f3e5 Darren Waller: IR\n\U0001f6d1 Mike Evans: Out" and a.key == "status:6-7"
     assert "status" in alerts.KINDS and "status" in alerts.NOT_LIMITED
 
 
@@ -197,7 +197,9 @@ def test_refresh_end_to_end(monkeypatch):
 
 def test_alert_without_injury_is_still_a_full_sentence():
     a = alerts.status_change(changes=[{"id": 1, "sleeper_id": "1", "from_status": "Healthy", "to_status": "Sus", "body_part": ""}], names={"1": "Darren Waller"})
-    assert a.body == "Darren Waller's status has changed from Healthy to Suspended"
+    assert (a.title, a.body) == ("\u26d4 Darren Waller is Suspended", "He's suspended by the NFL.")
+    a = alerts.status_change(changes=[{"id": 2, "sleeper_id": "1", "from_status": "Out", "to_status": "IR", "body_part": ""}], names={"1": "Darren Waller"})
+    assert (a.title, a.body) == ("\U0001f3e5 Darren Waller is on IR", "No injury listed yet.")
 
 
 def test_merge_keeps_the_injury_from_either_source():
