@@ -1,6 +1,6 @@
 import { router, useLocalSearchParams, useNavigation } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Modal, PanResponder, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { PlayerFace } from '../../components/PlayerFace';
@@ -153,7 +153,12 @@ function GameText({ next }: { next?: NextGame | null }) {
 }
 
 const STATUSES = ['Free agents', 'Rostered', '★ Saved', 'All'] as const;
-const SALARY = ['Under $5', 'Under $10', 'Under $20', '$20+'] as const;
+// Salary is a range: the slider runs $1 to $45, and the top stop means $45 and up.
+const SAL_MIN = 1;
+const SAL_MAX = 45;
+const SAL_BIN = 4; // histogram bars of $4 each, the last one is $45+
+// "FA now" sits before the seasons on the Contract ends timeline: players with no team today.
+const FA_NOW = 'FA';
 const TYPES = ['Rookie deal', 'Taxi', 'IR'] as const;
 const SORTS = ['Points', 'PPG', 'Last 3 games', 'This week', 'Value per $', 'Salary', 'Youngest'] as const;
 type Sort = (typeof SORTS)[number];
@@ -161,18 +166,21 @@ const SORT_HEAD: Record<Sort, string> = {
   Points: 'POINTS', PPG: 'PPG', 'Last 3 games': 'LAST 3', 'This week': 'THIS WK', 'Value per $': 'PPG/$', Salary: 'SALARY', Youngest: 'AGE',
 };
 // Every group but Sort can hold several picks (QB and RB, Chase and Chasen); none picked means everyone.
-type Filters = { pos: string[]; owner: string[]; salary: string[]; ends: string[]; type: string[]; sort: Sort };
+// salary is [] (any) or [low, high].
+type Filters = { pos: string[]; owner: string[]; salary: number[]; ends: string[]; type: string[]; sort: Sort };
 type Group = Exclude<keyof Filters, 'sort'>;
 const NO_FILTERS: Filters = { pos: [], owner: [], salary: [], ends: [], type: [], sort: 'Points' };
 // Only rostered players have an owner, salary or contract, so these show rostered results even from Free agents.
 const ROSTERED_ONLY: Group[] = ['owner', 'salary', 'ends', 'type'];
 
-const salaryOk = (p: LeaguePlayer, s: string) => {
+const salaryOk = (p: LeaguePlayer, [lo, hi]: number[]) => {
+  if (lo == null) return true;
   if (p.salary == null) return false;
-  return s === '$20+' ? p.salary >= 20 : p.salary < Number(s.replace(/\D/g, ''));
+  return p.salary >= lo && (hi >= SAL_MAX || p.salary <= hi);
 };
 // Contract ends after `ends`: after this season means 1 year left or fewer, later seasons an exact count.
 const endsOk = (p: LeaguePlayer, ends: string, season: number) => {
+  if (ends === FA_NOW) return !p.team_id;
   if (p.years_left == null) return false;
   const left = Number(ends) - season + 1;
   return left <= 1 ? p.years_left <= 1 : p.years_left === left;
@@ -219,18 +227,26 @@ function PlayersList({ query }: { query?: string }) {
   }, [query]);
 
   const needle = search.trim();
-  const rows = useMemo(() => {
+  const { rows, countFor, salaries } = useMemo(() => {
     const season = data?.season ?? 0;
     const inStatus = (p: LeaguePlayer) =>
       status === 'All' ? true : status === '★ Saved' ? saved.includes(p.player_id) : (status === 'Rostered') === !!p.team_id;
-    const out = (data?.players ?? []).filter((p) =>
-      (needle ? nameMatches(p.name, needle) : inStatus(p))
-      && anyOf(filters.pos, (v) => p.pos === v)
-      && anyOf(filters.owner, (v) => p.team_id === v)
-      && anyOf(filters.salary, (v) => salaryOk(p, v))
-      && anyOf(filters.ends, (v) => endsOk(p, v, season))
-      && anyOf(filters.type, (v) => typeOk(p, v)));
-    return [...out].sort(SORTERS[filters.sort]);
+    // passes(p, g): every filter group but g (for the counts in the sheet), or all of them.
+    const passes = (p: LeaguePlayer, skip?: Group) =>
+      (skip === 'pos' || anyOf(filters.pos, (v) => p.pos === v))
+      && (skip === 'owner' || anyOf(filters.owner, (v) => p.team_id === v))
+      && (skip === 'salary' || salaryOk(p, filters.salary))
+      && (skip === 'ends' || anyOf(filters.ends, (v) => endsOk(p, v, season)))
+      && (skip === 'type' || anyOf(filters.type, (v) => typeOk(p, v)));
+    const pool = (data?.players ?? []).filter((p) => (needle ? nameMatches(p.name, needle) : true));
+    const inView = pool.filter((p) => needle || inStatus(p));
+    const out = inView.filter((p) => passes(p));
+    // How many players a tap would show. "FA now" looks past the status row, since tapping it brings free agents in.
+    const countFor = (g: Group, v: string) => (g === 'ends' && v === FA_NOW ? pool : inView)
+      .filter((p) => passes(p, g) && (g === 'pos' ? p.pos === v : g === 'owner' ? p.team_id === v
+        : g === 'ends' ? endsOk(p, v, season) : g === 'type' ? typeOk(p, v) : true)).length;
+    const salaries = inView.filter((p) => p.salary != null && passes(p, 'salary')).map((p) => p.salary as number);
+    return { rows: [...out].sort(SORTERS[filters.sort]), countFor, salaries };
   }, [data, needle, status, filters, saved]);
 
   if (loading && !data) return <Loading />;
@@ -244,7 +260,11 @@ function PlayersList({ query }: { query?: string }) {
   const change = (f: Filters) => {
     setFilters(f);
     setShown(PAGE);
-    if (status === 'Free agents' && ROSTERED_ONLY.some((k) => f[k].length)) setStatus('Rostered');
+    // Rostered-only picks move Free agents to Rostered; "FA now" needs free agents in view, so it moves to All.
+    const fa = f.ends.includes(FA_NOW);
+    const rosteredPick = ROSTERED_ONLY.some((k) => (k === 'ends' ? f.ends.some((v) => v !== FA_NOW) : f[k].length));
+    if (fa && (status === 'Rostered' || (status === 'Free agents' && rosteredPick))) setStatus('All');
+    else if (!fa && status === 'Free agents' && rosteredPick) setStatus('Rostered');
   };
   const savedView = !needle && status === '★ Saved';
 
@@ -330,6 +350,8 @@ function PlayersList({ query }: { query?: string }) {
         positions={data.positions ?? POSITIONS}
         season={data.season}
         count={rows.length}
+        countFor={countFor}
+        salaries={salaries}
         onChange={change}
         onReset={reset}
       />
@@ -337,35 +359,143 @@ function PlayersList({ query }: { query?: string }) {
   );
 }
 
-// One group of bubbles. multi: tap to add, tap again to remove. Sort is single: tap picks it.
-function SheetChips({ label, options, picked, onTap, names }: {
-  label: string; options: readonly string[]; picked: (o: string) => boolean; onTap: (o: string) => void; names?: Record<string, string>;
+// A label with an optional note on the right (e.g. the salary range picked).
+function SheetLabel({ label, note }: { label: string; note?: string }) {
+  return (
+    <View style={styles.labelRow}>
+      <Text style={[styles.sheetLabel, { marginTop: 0, marginBottom: 0 }]}>{label}</Text>
+      {note ? <Text style={styles.labelNote}>{note}</Text> : null}
+    </View>
+  );
+}
+
+// Owner and Type bubbles. Tap to add, tap again to remove.
+function SheetChips({ options, picked, onTap, names }: {
+  options: readonly string[]; picked: (o: string) => boolean; onTap: (o: string) => void; names?: Record<string, string>;
 }) {
   return (
-    <>
-      <Text style={styles.sheetLabel}>{label}</Text>
-      <View style={styles.chips}>
-        {options.map((o) => (
-          <Pressable key={o} onPress={() => onTap(o)} style={[styles.chip, picked(o) && styles.chipOn]}>
-            <Text style={[styles.chipText, picked(o) && styles.chipTextOn]}>{names?.[o] ?? o}</Text>
+    <View style={styles.sheetChips}>
+      {options.map((o) => (
+        <Pressable key={o} onPress={() => onTap(o)} style={[styles.sheetChip, picked(o) && styles.sheetChipOn]}>
+          <Text style={[styles.sheetChipText, picked(o) && styles.sheetChipTextOn]}>{names?.[o] ?? o}</Text>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
+// Position as scoreboard tabs: big letters, the count under each, a gold underline on the picked ones.
+function PositionTabs({ options, picked, onTap, count }: {
+  options: readonly string[]; picked: (o: string) => boolean; onTap: (o: string) => void; count: (o: string) => number;
+}) {
+  return (
+    <View style={styles.tabs}>
+      {options.map((o) => {
+        const on = picked(o);
+        return (
+          <Pressable key={o} onPress={() => onTap(o)} hitSlop={6} style={styles.tab}>
+            <Text style={[styles.tabPos, on && styles.tabPosOn]}>{o}</Text>
+            <Text style={[styles.tabCount, on && styles.tabCountOn]}>{count(o)}</Text>
+            {on ? <View style={styles.tabLine} /> : null}
           </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+// Contract ends as a timeline: "FA now" (green square, dotted link), then this season and the next three.
+function EndsTimeline({ options, picked, onTap, count }: {
+  options: string[]; picked: (o: string) => boolean; onTap: (o: string) => void; count: (o: string) => number;
+}) {
+  return (
+    <View style={styles.timeline}>
+      {options.map((o, i) => {
+        const fa = o === FA_NOW;
+        const on = picked(o);
+        const next = options[i + 1];
+        return (
+          <View key={o} style={{ flexDirection: 'row', flex: next ? 1 : 0 }}>
+            <Pressable onPress={() => onTap(o)} hitSlop={8} style={styles.stop}>
+              <View style={[styles.dot, fa && styles.dotFa, on && (fa ? styles.dotFaOn : styles.dotOn)]} />
+              <Text style={styles.stopYear}>{fa ? 'FA now' : o}</Text>
+              <Text style={styles.stopCount}>{count(o)}</Text>
+            </Pressable>
+            {next ? <View style={[styles.link, fa && styles.linkFa, !fa && on && picked(next) && styles.linkOn]} /> : null}
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+// Salary: a histogram of who's paid what, with a two-knob range slider under it. Snaps to whole dollars.
+function SalaryRange({ value, salaries, onChange }: { value: number[]; salaries: number[]; onChange: (v: number[]) => void }) {
+  const [lo, hi] = value.length ? value : [SAL_MIN, SAL_MAX];
+  const [width, setWidth] = useState(0);
+  const live = useRef({ lo, hi, width, onChange });
+  const start = useRef(0);
+  live.current = { lo, hi, width, onChange };
+  const toX = (v: number) => ((v - SAL_MIN) / (SAL_MAX - SAL_MIN)) * width;
+  const responder = (knob: 'lo' | 'hi') => PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: () => true,
+    onPanResponderTerminationRequest: () => false,
+    onPanResponderGrant: () => { start.current = live.current[knob]; },
+    onPanResponderMove: (_, g) => {
+      const c = live.current;
+      if (!c.width) return;
+      const v = Math.round(start.current + (g.dx / c.width) * (SAL_MAX - SAL_MIN));
+      const nlo = knob === 'lo' ? Math.max(SAL_MIN, Math.min(v, c.hi - 1)) : c.lo;
+      const nhi = knob === 'hi' ? Math.min(SAL_MAX, Math.max(v, c.lo + 1)) : c.hi;
+      if (nlo === c.lo && nhi === c.hi) return;
+      c.onChange(nlo === SAL_MIN && nhi === SAL_MAX ? [] : [nlo, nhi]);
+    },
+  });
+  const loPan = useMemo(() => responder('lo'), []); // eslint-disable-line react-hooks/exhaustive-deps
+  const hiPan = useMemo(() => responder('hi'), []); // eslint-disable-line react-hooks/exhaustive-deps
+  const bins = Array.from({ length: Math.ceil((SAL_MAX - SAL_MIN) / SAL_BIN) }, (_, i) => SAL_MIN + i * SAL_BIN);
+  const heights = bins.map((b, i) => salaries.filter((s) => s >= b && (i === bins.length - 1 || s < b + SAL_BIN)).length);
+  const tallest = Math.max(1, ...heights);
+  return (
+    <>
+      <View style={styles.hist}>
+        {bins.map((b, i) => (
+          <View
+            key={b}
+            style={[styles.histBar, { height: `${Math.max(6, (heights[i] / tallest) * 100)}%` },
+              b + SAL_BIN > lo && b <= hi && styles.histBarIn]}
+          />
         ))}
+      </View>
+      <View style={styles.slider} onLayout={(e) => setWidth(e.nativeEvent.layout.width)}>
+        <View style={styles.track} />
+        <View style={[styles.trackFill, { left: toX(lo), width: toX(hi) - toX(lo) }]} />
+        <View {...loPan.panHandlers} hitSlop={12} style={[styles.knob, { left: toX(lo) }]} />
+        <View {...hiPan.panHandlers} hitSlop={12} style={[styles.knob, { left: toX(hi) }]} />
+      </View>
+      <View style={styles.scale}>
+        {['$1', '$15', '$30', '$45+'].map((t) => <Text key={t} style={styles.scaleText}>{t}</Text>)}
       </View>
     </>
   );
 }
 
-function FilterSheet({ open, onClose, filters, owners, positions, season, count, onChange, onReset }: {
+function FilterSheet({ open, onClose, filters, owners, positions, season, count, countFor, salaries, onChange, onReset }: {
   open: boolean; onClose: () => void; filters: Filters; owners: LeagueOwner[]; positions: readonly string[]; season: number; count: number;
-  onChange: (f: Filters) => void; onReset: () => void;
+  countFor: (g: Group, v: string) => number; salaries: number[]; onChange: (f: Filters) => void; onReset: () => void;
 }) {
   const insets = useSafeAreaInsets();
-  const multi = (k: Group) => ({
+  const multi = (k: Exclude<Group, 'salary'>) => ({
     picked: (o: string) => filters[k].includes(o),
     onTap: (o: string) => onChange({ ...filters, [k]: filters[k].includes(o) ? filters[k].filter((v) => v !== o) : [...filters[k], o] }),
+    count: (o: string) => countFor(k, o),
   });
   const ownerNames = Object.fromEntries(owners.map((o) => [o.team_id, o.is_mine ? 'You' : shortOwner(o.owner_name)]));
-  const ends = [0, 1, 2].map((i) => String(season + i));
+  // Contracts and picks run three seasons past this one.
+  const ends = [FA_NOW, ...[0, 1, 2, 3].map((i) => String(season + i))];
+  const [lo, hi] = filters.salary;
+  const salaryNote = lo != null ? `${money(lo)} – ${hi >= SAL_MAX ? `${money(SAL_MAX)}+` : money(hi)}` : 'Any';
   return (
     // iOS page sheet: swipe down (or tap Done) to close. Picks apply as you tap, so there's nothing to save.
     <Modal visible={open} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
@@ -373,16 +503,26 @@ function FilterSheet({ open, onClose, filters, owners, positions, season, count,
         <View style={styles.grab} />
         <View style={styles.sheetHead}>
           <Pressable onPress={onReset} hitSlop={10}><Text style={ui.link}>Reset</Text></Pressable>
-          <Text style={styles.sectionTitle}>Filters · {count}</Text>
+          <Text style={styles.sectionTitle}>Filters</Text>
           <Pressable onPress={onClose} hitSlop={10}><Text style={ui.link}>Done</Text></Pressable>
         </View>
-        <ScrollView style={styles.sheetBody}>
-          <SheetChips label="POSITION" options={positions} {...multi('pos')} />
-          <SheetChips label="OWNER" options={owners.map((o) => o.team_id)} names={ownerNames} {...multi('owner')} />
-          <SheetChips label="CONTRACT ENDS" options={ends} {...multi('ends')} />
-          <SheetChips label="TYPE" options={TYPES} {...multi('type')} />
-          <SheetChips label="SALARY" options={SALARY} {...multi('salary')} />
+        <ScrollView style={styles.sheetBody} contentContainerStyle={{ paddingBottom: 16 }}>
+          <SheetLabel label="POSITION" />
+          <PositionTabs options={positions} {...multi('pos')} />
+          <SheetLabel label="CONTRACT ENDS" note="after season" />
+          <EndsTimeline options={ends} {...multi('ends')} />
+          <SheetLabel label="SALARY" note={salaryNote} />
+          <SalaryRange value={filters.salary} salaries={salaries} onChange={(salary) => onChange({ ...filters, salary })} />
+          <SheetLabel label="OWNER" />
+          <SheetChips options={owners.map((o) => o.team_id)} names={ownerNames} {...multi('owner')} />
+          <SheetLabel label="TYPE" />
+          <SheetChips options={TYPES} {...multi('type')} />
         </ScrollView>
+        <View style={styles.sheetFoot}>
+          <Pressable onPress={onClose} style={styles.showBtn}>
+            <Text style={styles.showText}>{`Show ${count} player${count === 1 ? '' : 's'}`}</Text>
+          </Pressable>
+        </View>
       </View>
     </Modal>
   );
@@ -401,6 +541,43 @@ const styles = StyleSheet.create({
   chipOn: { borderColor: colors.gold },
   chipText: { color: colors.muted, fontSize: 12, fontWeight: '700' },
   chipTextOn: { color: colors.gold },
+  sheetChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
+  sheetChip: { borderWidth: 1, borderColor: colors.line, borderRadius: 18, paddingHorizontal: 13, paddingVertical: 7 },
+  sheetChipOn: { backgroundColor: colors.gold, borderColor: colors.gold },
+  sheetChipText: { color: colors.text, fontSize: 14, fontWeight: '600' },
+  sheetChipTextOn: { color: colors.bg },
+  labelRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 18, marginBottom: 10 },
+  labelNote: { color: colors.muted, fontSize: 12, opacity: 0.75 },
+  tabs: { flexDirection: 'row', justifyContent: 'space-around', borderBottomWidth: 1, borderBottomColor: '#22362B' },
+  tab: { alignItems: 'center', paddingHorizontal: 8, paddingBottom: 9 },
+  tabPos: { color: '#6F6A5C', fontSize: 28, fontWeight: '900', letterSpacing: -0.5 },
+  tabPosOn: { color: colors.text },
+  tabCount: { color: '#6F6A5C', fontSize: 12, fontWeight: '600', marginTop: 1 },
+  tabCountOn: { color: colors.gold },
+  tabLine: { position: 'absolute', left: 4, right: 4, bottom: -1, height: 3, borderRadius: 2, backgroundColor: colors.gold },
+  timeline: { flexDirection: 'row', alignItems: 'flex-start' },
+  stop: { width: 54, alignItems: 'center' },
+  dot: { width: 18, height: 18, borderRadius: 9, borderWidth: 2, borderColor: colors.line, backgroundColor: '#0C2419' },
+  dotOn: { backgroundColor: colors.gold, borderColor: colors.gold },
+  dotFa: { borderRadius: 5, borderColor: colors.green },
+  dotFaOn: { backgroundColor: colors.green },
+  link: { flex: 1, height: 2, marginTop: 8, backgroundColor: colors.line },
+  linkOn: { backgroundColor: colors.gold },
+  linkFa: { height: 0, borderTopWidth: 2, borderStyle: 'dotted', borderColor: colors.line, backgroundColor: 'transparent' },
+  stopYear: { color: colors.text, fontSize: 14, fontWeight: '700', marginTop: 6 },
+  stopCount: { color: colors.muted, fontSize: 11, opacity: 0.75, marginTop: 1 },
+  hist: { flexDirection: 'row', alignItems: 'flex-end', gap: 3, height: 44, marginHorizontal: 11 },
+  histBar: { flex: 1, borderTopLeftRadius: 2, borderTopRightRadius: 2, backgroundColor: '#22362B' },
+  histBarIn: { backgroundColor: '#7D6430' },
+  slider: { height: 34, justifyContent: 'center', marginHorizontal: 11, marginTop: -10 },
+  track: { height: 4, borderRadius: 2, backgroundColor: '#22362B' },
+  trackFill: { position: 'absolute', top: 15, height: 4, borderRadius: 2, backgroundColor: colors.gold },
+  knob: { position: 'absolute', top: 5, width: 24, height: 24, marginLeft: -12, borderRadius: 12, backgroundColor: colors.text, borderWidth: 3, borderColor: colors.gold },
+  scale: { flexDirection: 'row', justifyContent: 'space-between', marginHorizontal: 2 },
+  scaleText: { color: colors.muted, fontSize: 12, opacity: 0.75 },
+  sheetFoot: { borderTopWidth: 1, borderTopColor: '#22362B', paddingTop: 12 },
+  showBtn: { backgroundColor: colors.gold, borderRadius: 14, paddingVertical: 14, alignItems: 'center' },
+  showText: { color: colors.bg, fontSize: 16, fontWeight: '800' },
   sheet: { flex: 1, backgroundColor: '#0C2419', paddingHorizontal: 18, paddingTop: 10 },
   grab: { alignSelf: 'center', width: 40, height: 5, borderRadius: 3, backgroundColor: colors.line, marginBottom: 10 },
   sheetHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
