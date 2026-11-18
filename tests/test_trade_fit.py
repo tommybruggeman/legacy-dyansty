@@ -70,3 +70,10 @@ def test_best_lineup_and_directions():
     recs = {f"o{i}": [(2025, w, i < 3, 100 - i) for w in range(1, 6)] for i in range(10)}
     d = directions_at(recs, 2025, 6)
     assert d["o0"] == "contending" and d["o9"] == "rebuilding" and d["o5"] == "middle"
+
+
+def test_describe_side_never_names_a_winner():
+    from league_ai.trade_fit import describe_side
+    text = describe_side({"lineup_gain": 2.1, "by_pos": {"QB": 5.0, "RB": -2.9}, "future": 0.14, "cap_freed": 8})
+    assert text.startswith("starting lineup +2.1 pts a week (QB +5.0, RB -2.9)") and "$8 more cap room" in text
+    assert "win" not in text.lower()
