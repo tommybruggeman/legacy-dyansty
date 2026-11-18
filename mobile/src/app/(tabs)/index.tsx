@@ -778,7 +778,7 @@ const styles = StyleSheet.create({
   dim: { color: colors.muted },
   gap: { marginTop: 8 },
   vs: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 12 },
-  vsText: { color: colors.muted, fontWeight: '800', fontSize: 11, letterSpacing: 1 },
+  vsText: { color: colors.muted, fontWeight: '800', fontSize: 9, letterSpacing: 1 },
   vsMid: { alignItems: 'center', flex: 1 },
   odds: { width: 96, marginTop: 10 },
   oddsNums: { flexDirection: 'row', justifyContent: 'space-between' },
