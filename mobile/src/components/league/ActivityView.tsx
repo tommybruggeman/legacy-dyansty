@@ -186,10 +186,10 @@ function TradeSideView({ side, me, first, played }: { side: TradeSide; me: strin
       {side.picks.map((pk) => (
         <View key={pk.label + (pk.original_owner ?? '')} style={styles.row}>
           <View style={styles.dot}><Text style={styles.dotText}>PICK</Text></View>
-          <Text style={ui.name}>{`${pk.label}${pk.original_owner && pk.original_owner !== side.owner ? ` (${shortOwner(pk.original_owner)}'s)` : ''}`}</Text>
+          <Text style={styles.name}>{`${pk.label}${pk.original_owner && pk.original_owner !== side.owner ? ` (${shortOwner(pk.original_owner)}'s)` : ''}`}</Text>
         </View>
       ))}
-      {side.faab > 0 ? <Text style={[ui.sub, styles.faab]}>{`+${money(side.faab)} cap space`}</Text> : null}
+      {side.faab > 0 ? <Text style={[styles.sub, styles.faab]}>{`+${money(side.faab)} cap space`}</Text> : null}
     </View>
   );
 }
@@ -258,8 +258,8 @@ function DraftCard({ draft, me }: { draft: Draft; me: string | null }) {
           <Text style={styles.slot}>{p.round && p.slot ? `${p.round}.${String(p.slot).padStart(2, '0')}` : ''}</Text>
           <PlayerFace name={p.name} team={p.nfl_team} pos={p.pos} size={32} />
           <View style={ui.flex}>
-            <Text style={ui.name} numberOfLines={1}>{p.name}</Text>
-            <Text style={[ui.sub, p.owner === me && styles.mineText]} numberOfLines={1}>{p.owner === me ? 'You' : p.owner}</Text>
+            <Text style={styles.name} numberOfLines={1}>{p.name}</Text>
+            <Text style={[styles.sub, p.owner === me && styles.mineText]} numberOfLines={1}>{p.owner === me ? 'You' : p.owner}</Text>
           </View>
         </Pressable>
       ))}
@@ -279,8 +279,8 @@ function PlayerLine({ p, tag, right, rightLabel, extra, bids, bidCount }: {
     <Pressable onPress={() => router.push(`/player/${p.player_id}`)} style={styles.row}>
       <PlayerFace name={p.name} team={p.nfl_team} pos={p.pos} size={36} />
       <View style={ui.flex}>
-        <Text style={ui.name} numberOfLines={1}>{p.name}</Text>
-        <Text style={ui.sub} numberOfLines={1}>
+        <Text style={styles.name} numberOfLines={1}>{p.name}</Text>
+        <Text style={styles.sub} numberOfLines={1}>
           {[tag, p.pos, p.salary != null ? money(p.salary) : null, p.years ? `${p.years} yr${p.years === 1 ? '' : 's'}` : null, extra].filter(Boolean).join(' · ')}
         </Text>
       </View>
@@ -308,24 +308,27 @@ const styles = StyleSheet.create({
   card: { borderRadius: 18, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.card, padding: 14, marginBottom: 12 },
   cardMine: { borderColor: colors.gold },
   head: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
-  kind: { color: colors.gold, fontSize: 10, fontWeight: '900', letterSpacing: 1 },
-  when: { color: colors.muted, fontSize: 12, fontWeight: '700' },
+  kind: { color: colors.gold, fontSize: 13, fontWeight: '900', letterSpacing: 1 },
+  when: { color: colors.muted, fontSize: 10, fontWeight: '700' },
   side: { paddingTop: 8 },
   sideNext: { borderTopWidth: 1, borderTopColor: colors.row, marginTop: 8 },
   sideHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 },
-  owner: { color: colors.gold, fontSize: 14, fontWeight: '800' },
-  meta: { color: colors.muted, fontSize: 11 },
+  owner: { color: colors.gold, fontSize: 12, fontWeight: '800' },
+  meta: { color: colors.muted, fontSize: 9 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 5 },
   right: { alignItems: 'flex-end' },
-  rightText: { color: colors.text, fontSize: 15, fontWeight: '800' },
-  rightLabel: { color: colors.muted, fontSize: 9, fontWeight: '800', letterSpacing: 0.5 },
+  rightText: { color: colors.text, fontSize: 13, fontWeight: '800' },
+  rightLabel: { color: colors.muted, fontSize: 8, fontWeight: '800', letterSpacing: 0.5 },
   dot: { width: 36, height: 36, borderRadius: 18, borderWidth: 1, borderColor: colors.gold, alignItems: 'center', justifyContent: 'center' },
-  dotText: { color: colors.gold, fontSize: 9, fontWeight: '800' },
-  slot: { color: colors.muted, fontSize: 12, fontWeight: '800', width: 34 },
+  dotText: { color: colors.gold, fontSize: 8, fontWeight: '800' },
+  slot: { color: colors.muted, fontSize: 10, fontWeight: '800', width: 34 },
   mineText: { color: colors.gold },
+  // card text runs 2pt under the shared ui.name / ui.sub sizes
+  name: { color: colors.text, fontSize: 13, fontWeight: '700' },
+  sub: { color: colors.muted, fontSize: 10, marginTop: 1 },
   faab: { marginTop: 2 },
   valueRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12 },
-  valueLabel: { color: colors.muted, fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
+  valueLabel: { color: colors.muted, fontSize: 8, fontWeight: '800', letterSpacing: 0.5 },
   valueBar: { flex: 1, flexDirection: 'row', height: 6, borderRadius: 3, overflow: 'hidden', gap: 2 },
   valuePart: { height: 6 },
   more: { alignItems: 'center', paddingVertical: 8, marginBottom: 4 },
@@ -336,7 +339,7 @@ const styles = StyleSheet.create({
   icon: { width: 30, height: 30, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
   iconText: { fontSize: 10, fontWeight: '900' },
   bidChip: { marginTop: 4, borderWidth: 1, borderColor: '#2C4A6E', borderRadius: 9, paddingHorizontal: 8, paddingVertical: 2 },
-  bidChipText: { color: '#7FB6FF', fontSize: 11, fontWeight: '800' },
+  bidChipText: { color: '#7FB6FF', fontSize: 9, fontWeight: '800' },
   shade: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', padding: 24 },
   modal: { backgroundColor: colors.card, borderRadius: 20, borderWidth: 1, borderColor: colors.gold, padding: 18 },
   modalName: { color: colors.text, fontSize: 18, fontWeight: '800', marginTop: 6, marginBottom: 8 },

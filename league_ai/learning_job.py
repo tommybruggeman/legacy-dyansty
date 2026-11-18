@@ -363,7 +363,31 @@ def run_trade_backtests(client: Any, *, now: datetime, dry_run: bool = False) ->
             save_styles(client, lid, result, now)
             if shares:
                 save_accepted(client, lid, by_owner, now)
+    try:
+        out["trade_fit"] = refit_trade_fit(client, sorted(leagues), now=now, dry_run=dry_run)
+    except Exception as exc:
+        print(f"[learning] trade fit refit skipped: {type(exc).__name__}", flush=True)
     return out
+
+
+def refit_trade_fit(client: Any, leagues: list[str], *, now: datetime, dry_run: bool = False) -> dict[str, Any]:
+    """Refit what makes a trade read well for both teams (league_ai.trade_fit) on every completed trade, ranked against decoys,
+    and save the weights the trade finder uses. Each season of a league lives under its own league row, so the trades are pooled;
+    the fit is saved under every row. Also counts how logged trade ideas settled by their fit. No model calls."""
+    from league_ai import idea_log
+    from league_ai.trade_backtest import load_trades
+    from league_ai.trade_fit import MIN_TRADES, evaluate, save, settled_by_fit, slots_for
+
+    trades = [t for lid in leagues for t in load_trades(client, lid, with_rosters=True)]
+    if not trades:
+        return {"graded": 0}
+    result = evaluate(trades, slots_for(client, leagues[-1]))
+    settled = settled_by_fit([r for lid in leagues for r in idea_log.load(client, lid)])
+    print(f"[learning] trade fit: {result['graded']} trades graded, AUC {result['auc']}, weights {result['weights']}, ideas settled by fit {settled}", flush=True)
+    if not dry_run and result["graded"] >= MIN_TRADES:
+        for lid in leagues:
+            save(client, lid, result, now)
+    return {"graded": result["graded"], "auc": result["auc"], "weights": result["weights"], "ideas_by_fit": settled}
 
 
 NOT_MADE_AFTER_DAYS = 10
