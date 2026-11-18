@@ -30,7 +30,7 @@ from __future__ import annotations
 import dataclasses
 import os
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 from typing import Any, Callable, Iterable, Mapping
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -458,7 +458,7 @@ def claims_over_cap(lg: League, won: list[dict[str, Any]]) -> None:
         team_id = str(r.get("league_team_id"))
         if team_id in over and r.get("run_key"):
             player = _text((names.get(str(r["player_id"])) or {}).get("full_name")) or "a player"
-            lg.send(alerts.over_cap_claim(run_key=r["run_key"], team_id=team_id, player=player, over=over[team_id]),
+            lg.send(alerts.went_over(key=went_over_key(lg, team_id), over=over[team_id], player=player, in_season=lg.in_season()),
                     lg.team_users(team_id), expires_at=lg.now + timedelta(days=4))
 
 
@@ -563,32 +563,57 @@ def over_by(cap: float, used: Mapping[str, float]) -> dict[str, float]:
     return {t: round(u - cap, 2) for t, u in used.items() if u > cap + 0.004}
 
 
+SUNDAY_LEAD = timedelta(minutes=90)
+
+
+def over_episode(lg: League, team_id: str) -> int:
+    """Which time this season the team has gone over the cap (1 the first time). A 'cap-under' mark is saved each
+    time a team that was alerted gets back under, so the next move that puts it over is a new alert."""
+    rows = (lg.client.table("push_sent").select("key").eq("league_id", lg.id)
+            .like("key", f"cap-under:{lg.season}:{team_id}:%").execute().data or [])
+    return len(rows) + 1
+
+
+def went_over_key(lg: League, team_id: str) -> str:
+    return f"cap-over:{lg.season}:{team_id}:{over_episode(lg, team_id)}"
+
+
 def over_the_cap(lg: League) -> None:
+    """Over the cap (Tommy, 2026-11-18): an alert when the move that puts a team over goes through (checked every
+    run, so trades, adds and claims all count), Friday 9 AM and Sunday morning while still over, and the forfeit at
+    Sunday's first kickoff. Nothing on the other days."""
     today = lg.now.astimezone(alerts.LEAGUE_TZ).date()
     cap, used = cap_status(lg)
     over = over_by(cap, used)
-    end_of_day = datetime.combine(today + timedelta(days=1), datetime.min.time(), alerts.LEAGUE_TZ).astimezone(timezone.utc)
-    morning = alerts.next_morning(datetime.combine(today, datetime.min.time(), alerts.LEAGUE_TZ))
     starts = lg.kickoffs(lg.week)
     kickoff = main_kickoff(starts)
-    for team_id, amount in over.items():
+    in_season = lg.in_season()
+    for team_id in lg.roster_of:
         users = lg.team_users(team_id)
         if not users:
             continue
-        if today.weekday() == 4 and kickoff and kickoff > lg.now:  # Friday 9 AM MT: the get-under-by-Sunday reminder
+        key = went_over_key(lg, team_id)
+        if team_id not in over:
+            sent = lg.client.table("push_outbox").select("key").eq("key", key).in_("user_id", users).limit(1).execute().data
+            if sent:  # was alerted, now back under: the next time over is a new alert
+                lg.client.table("push_sent").upsert({"league_id": lg.id, "key": key.replace("cap-over:", "cap-under:", 1)},
+                                                    on_conflict="league_id,key").execute()
+            continue
+        amount = over[team_id]
+        lg.send(alerts.went_over(key=key, over=amount, player=None, in_season=in_season), users, expires_at=lg.now + timedelta(days=4))
+        if not in_season or not kickoff or lg.now >= kickoff:
+            continue
+        if today.weekday() == 4:  # Friday 9 AM MT
+            morning = alerts.next_morning(datetime.combine(today, datetime.min.time(), alerts.LEAGUE_TZ))
             lg.send(alerts.over_cap_friday(season=lg.season, week=lg.week, over=amount, kickoff=kickoff, tz=alerts.LEAGUE_TZ.key),
                     users, not_before=morning, expires_at=kickoff)
-            continue
-        before = (lg.client.table("push_outbox").select("key").in_("user_id", users).like("key", f"cap:{lg.season}:%")
-                  .execute().data or [])
-        days = []
-        for r in before:
-            try:
-                days.append(datetime.fromisoformat(r["key"].rsplit(":", 1)[1]).date())
-            except ValueError:
-                pass
-        alert = alerts.over_cap(season=lg.season, day=today, used=used[team_id], cap=cap, day_number=alerts.cap_streak(today, days))
-        lg.send(alert, users, not_before=morning, expires_at=end_of_day)
+        if kickoff.astimezone(alerts.LEAGUE_TZ).date() == today:  # Sunday morning, before the first game
+            at = min(alerts.next_morning(datetime.combine(today, datetime.min.time(), alerts.LEAGUE_TZ), at=time(8, 0)),
+                     kickoff - SUNDAY_LEAD)
+            alert = alerts.over_cap_sunday(season=lg.season, week=lg.week, over=amount, kickoff=kickoff, tz=alerts.LEAGUE_TZ.key)
+            if at.astimezone(alerts.LEAGUE_TZ).time() < alerts.QUIET_END:  # an early (London) kickoff: don't hold it for quiet hours
+                alert = dataclasses.replace(alert, urgent=True)
+            lg.send(alert, users, not_before=at, expires_at=kickoff)
     auto_losses(lg, kickoff, over)
 
 

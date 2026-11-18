@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 from typing import Any, Iterable, Mapping
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -48,7 +48,7 @@ KIND_NOTES: dict[str, str] = {
     "stat_fix": "A stat correction changed your score.",
     "waivers": "Wednesday and Sunday mornings, after waivers run.",
     "deadlines": "Taxi, team option and trade deadline reminders.",
-    "cap": "Every morning while you're over the cap, after a claim puts you over, and the auto-loss on Sunday.",
+    "cap": "When a move puts you over the cap, Friday and Sunday mornings while you're still over, and the forfeit at Sunday's kickoff.",
     "trade_offers": "Offers sent to you, and answers to yours.",
     "trades": "A trade was completed in the league.",
     "playoffs": "You clinched a spot, and when the bracket is set.",
@@ -293,42 +293,40 @@ def trade_deadline(*, season: int, left: str, deadline: datetime, tz: str | None
                  f"Trades lock at {clock(deadline, tz)}.", "/front-office")
 
 
-def over_cap(*, season: int, day: date, used: float, cap: float, day_number: int) -> Alert:
-    over = used - cap
-    money = f"${over:,.0f}" if float(over).is_integer() else f"${over:,.2f}"
-    used_s = f"${used:,.0f}" if float(used).is_integer() else f"${used:,.2f}"
-    if day_number <= 1:
-        return Alert("cap", f"cap:{season}:{day.isoformat()}", f"You're {money} over the cap",
-                     f"You're at {used_s} of ${cap:,.0f}. Cut, trade or IR someone to get under. "
-                     "This alert repeats daily until you're under.", "/my-team")
-    return Alert("cap", f"cap:{season}:{day.isoformat()}", f"Still {money} over the cap (day {day_number})",
-                 f"You're at {used_s} of ${cap:,.0f}.", "/my-team")
-
-
 def _money(n: float) -> str:
     return f"${n:,.0f}" if float(n).is_integer() else f"${n:,.2f}"
 
 
-# Over-the-cap rule (Tommy, 2026-11-17): a team over the cap at Sunday's first kickoff takes an automatic loss.
-def over_cap_claim(*, run_key: str, team_id: str, player: str, over: float) -> Alert:
-    """Personal, right after the waiver run (wording approved 2026-11-17)."""
-    return Alert("cap", f"cap-claim:{run_key}:{team_id}", f"You're {_money(over)} over the cap",
-                 f"Your claim for {player} puts you over the cap. Get under before Sunday's first kickoff to avoid an auto-loss.",
-                 "/my-team")
+# Over-the-cap rule (Tommy, 2026-11-17): a team over the cap at Sunday's first kickoff forfeits that week.
+# Alerts (Tommy, 2026-11-18): when the move that puts you over goes through, Friday morning, Sunday morning, and the
+# forfeit once Sunday's games start. Nothing on the other days.
+def _deadline(in_season: bool) -> str:
+    return "Get under before Sunday's first kickoff or you forfeit that week." if in_season else "Get under before Week 1 kicks off."
+
+
+def went_over(*, key: str, over: float, player: str | None, in_season: bool) -> Alert:
+    """The move that put you over just went through (a waiver claim names the player)."""
+    first = f"Your claim for {player} puts you over the cap." if player else f"Your latest move puts you {_money(over)} over the cap."
+    return Alert("cap", key, f"You're {_money(over)} over the cap", f"{first} {_deadline(in_season)}", "/my-team")
 
 
 def over_cap_friday(*, season: int, week: int, over: float, kickoff: datetime | None, tz: str | None) -> Alert:
-    """Friday 9 AM reminder (instead of that day's daily cap alert)."""
+    """Friday 9 AM, while still over."""
     when = f" ({short_date(kickoff, tz)}, {clock(kickoff, tz)})" if kickoff else ""
     return Alert("cap", f"cap-fri:{season}:{week}", "Get under the cap by Sunday",
-                 f"You're {_money(over)} over. Get under before Sunday's first kickoff{when} or Week {week} is an automatic loss.",
-                 "/my-team")
+                 f"You're {_money(over)} over. Get under before Sunday's first kickoff{when} or you forfeit Week {week}.", "/my-team")
+
+
+def over_cap_sunday(*, season: int, week: int, over: float, kickoff: datetime, tz: str | None) -> Alert:
+    """Sunday morning, while still over."""
+    return Alert("cap", f"cap-sun:{season}:{week}", f"Last chance: {_money(over)} over the cap",
+                 f"Get under before today's first kickoff at {clock(kickoff, tz)} or you forfeit Week {week}.", "/my-team")
 
 
 def auto_loss(*, season: int, week: int, over: float) -> Alert:
     """Sunday, once the first game kicks off with the team still over."""
-    return Alert("cap", f"auto-loss:{season}:{week}", f"Week {week}: automatic loss",
-                 f"You started Sunday {_money(over)} over the cap, so this week is an automatic loss and you can't earn a top 5 point.",
+    return Alert("cap", f"auto-loss:{season}:{week}", f"You forfeited Week {week}",
+                 f"You were {_money(over)} over the cap when Sunday's games started, so you forfeit this matchup and can't earn a top 5 point.",
                  "/my-team")
 
 
@@ -357,7 +355,7 @@ def bracket_set(*, season: int, seed: int, opp: str | None, week: int) -> Alert:
 
 
 def rollover_done(*, season: int) -> Alert:
-    return Alert("rollover", f"rollover:{season}", "Rollover is done",
+    return Alert("rollover", f"rollover:{season}", f"{season - 1} → {season}",
                  "A new season has started in Legacy. Take a look at your team.", "/my-team")
 
 
@@ -415,14 +413,6 @@ def best_sub(slot: str, bench: Iterable[Mapping[str, Any]], fits) -> dict[str, A
         return None
     top = max(options, key=lambda b: float(b.get("proj") or 0))
     return {"name": top["name"], "proj": round(float(top.get("proj") or 0), 1), "player_id": top.get("player_id")}
-
-
-def cap_streak(today: date, sent_days: Iterable[date]) -> int:
-    """Which day of being over the cap today is: 1 + the unbroken run of earlier daily alerts."""
-    days, n, d = set(sent_days), 1, today - timedelta(days=1)
-    while d in days:
-        n, d = n + 1, d - timedelta(days=1)
-    return n
 
 
 def parse_deadline(value: str | None, week_kickoff) -> datetime | None:

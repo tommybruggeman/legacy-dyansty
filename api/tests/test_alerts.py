@@ -1,5 +1,5 @@
 import unittest
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest import mock
 from zoneinfo import ZoneInfo
@@ -79,6 +79,7 @@ class WordingTests(unittest.TestCase):
         self.assertEqual(alerts.trade_offer_answered(offer_id="o", partner="Grady", accepted=False).body, "Grady declined your trade offer.")
         self.assertEqual(alerts.bracket_set(season=2026, seed=2, opp="Dylan", week=15).body, "You're the 2 seed. You play Dylan in Week 15.")
         self.assertEqual(alerts.rollover_done(season=2027).body, "A new season has started in Legacy. Take a look at your team.")
+        self.assertEqual(alerts.rollover_done(season=2027).title, "2026 → 2027")
         self.assertEqual(alerts.trade_completed(trade_id="t", league_name="Legacy Dynasty").body, "A trade was completed in Legacy Dynasty")
 
     def test_deadlines_and_cap(self):
@@ -92,10 +93,8 @@ class WordingTests(unittest.TestCase):
         dl = at(2026, 11, 24, 23, 59)
         self.assertEqual(alerts.trade_deadline(season=2026, left="7d", deadline=dl, tz="America/New_York").body,
                          "Trades lock Tue, Nov 24 at 11:59 PM.")
-        a = alerts.over_cap(season=2027, day=date(2027, 7, 4), used=231, cap=225, day_number=1)
-        self.assertEqual(a.title, "You're $6 over the cap")
-        a = alerts.over_cap(season=2027, day=date(2027, 7, 7), used=231, cap=225, day_number=4)
-        self.assertEqual((a.title, a.body), ("Still $6 over the cap (day 4)", "You're at $231 of $225."))
+        a = alerts.went_over(key="cap-over:2027:t:1", over=6, player=None, in_season=False)
+        self.assertEqual((a.title, a.body), ("You're $6 over the cap", "Your latest move puts you $6 over the cap. Get under before Week 1 kicks off."))
 
 
 class RuleTests(unittest.TestCase):
@@ -126,11 +125,6 @@ class RuleTests(unittest.TestCase):
         self.assertEqual(alerts.clinched_teams(pts, weeks_left=2, spots=4), {1, 2})
         self.assertEqual(alerts.clinched_teams(pts, weeks_left=0, spots=4), {1, 2, 3, 4})
         self.assertEqual(alerts.clinched_teams({1: 10, 2: 10, 3: 10}, weeks_left=0, spots=2), set())  # tied: points for decides
-
-    def test_cap_streak(self):
-        today = date(2027, 7, 7)
-        self.assertEqual(alerts.cap_streak(today, []), 1)
-        self.assertEqual(alerts.cap_streak(today, [date(2027, 7, 6), date(2027, 7, 5), date(2027, 7, 4), date(2027, 7, 1)]), 4)
 
     def test_trade_deadline_setting(self):
         week = lambda n: at(2026, 11, 26, 20, 15) if n == 12 else None
@@ -366,7 +360,15 @@ class ShotgunTests(unittest.TestCase):
 
 def test_over_cap_rule_wording():
     from api import alerts as a
-    claim = a.over_cap_claim(run_key="2026-11-18", team_id="t1", player="Tank Bigsby", over=4.5)
-    assert claim.body == "Your claim for Tank Bigsby puts you over the cap. Get under before Sunday's first kickoff to avoid an auto-loss."
-    assert a.auto_loss(season=2026, week=12, over=3).title == "Week 12: automatic loss"
-    assert "Week 12 is an automatic loss" in a.over_cap_friday(season=2026, week=12, over=3, kickoff=None, tz=None).body
+    claim = a.went_over(key="cap-over:2026:t1:1", over=4.5, player="Tank Bigsby", in_season=True)
+    assert claim.body == "Your claim for Tank Bigsby puts you over the cap. Get under before Sunday's first kickoff or you forfeit that week."
+    move = a.went_over(key="cap-over:2026:t1:1", over=4.5, player=None, in_season=True)
+    assert (move.title, move.body) == ("You're $4.50 over the cap",
+                                       "Your latest move puts you $4.50 over the cap. Get under before Sunday's first kickoff or you forfeit that week.")
+    assert a.over_cap_friday(season=2026, week=12, over=3, kickoff=None, tz=None).body == \
+        "You're $3 over. Get under before Sunday's first kickoff or you forfeit Week 12."
+    sun = a.over_cap_sunday(season=2026, week=12, over=3, kickoff=at(2026, 11, 22, 13, 0), tz="America/Denver")
+    assert (sun.title, sun.body) == ("Last chance: $3 over the cap", "Get under before today's first kickoff at 11:00 AM or you forfeit Week 12.")
+    loss = a.auto_loss(season=2026, week=12, over=3)
+    assert (loss.title, loss.body) == ("You forfeited Week 12",
+                                       "You were $3 over the cap when Sunday's games started, so you forfeit this matchup and can't earn a top 5 point.")
