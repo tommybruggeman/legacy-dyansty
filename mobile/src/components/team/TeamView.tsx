@@ -322,11 +322,11 @@ function Points({ p, w }: { p: Player; w?: WeekPlayer }) {
   );
 }
 
-// "$48 · thru 2027" (or "No contract").
+// "$48 · thru 2027" (or "No contract"), the salary in white (Tommy, 2026-11-20). Nest it inside a styled Text.
 function contractText(p: Player, season: number) {
   if (p.gone) return 'Not on your team now';
   if (p.no_contract) return 'No contract';
-  return `${dollars(p.contract_salary)} · thru ${season + Math.max(p.years_left, 1) - 1}`;
+  return <><Text style={styles.salaryWhite}>{dollars(p.contract_salary)}</Text> · thru {season + Math.max(p.years_left, 1) - 1}</>;
 }
 
 // "$48" for whole dollars, "$12.5" otherwise.
@@ -753,6 +753,7 @@ const styles = StyleSheet.create({
   big: { color: colors.text, fontSize: 21, fontWeight: '800' },
   bigLive: { color: colors.live },
   bigPre: { color: '#CFC6B4' },
+  salaryWhite: { color: colors.text },
   under: { color: colors.muted, fontSize: 10, fontWeight: '700', marginTop: 2 },
   expiring: { color: '#E8A25C', letterSpacing: 0.4 },
   option: { color: '#7FC3E8', letterSpacing: 0.4 },
