@@ -29,7 +29,7 @@ def test_points_view_ranks_and_weeks():
 
 
 def test_rookie_option_ids_reads_every_draft():
-    from api.teams import rookie_option_ids
+    from api.teams import rookie_draft_ids
 
     class Q:
         def __init__(self, rows): self.rows = rows
@@ -42,4 +42,4 @@ def test_rookie_option_ids_reads_every_draft():
         {"player_id": "coleman", "option_consumed": False, "rookie_contract_provenance": True},  # 2026 draft
         {"player_id": "used", "option_consumed": True, "rookie_contract_provenance": True},
     ]
-    assert rookie_option_ids(Q(rows)) == {"golden", "coleman"}
+    assert rookie_draft_ids(Q(rows)) == ({"golden", "coleman", "used"}, {"golden", "coleman"})

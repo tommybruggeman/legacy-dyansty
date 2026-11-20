@@ -481,13 +481,15 @@ def faab(sleeper_id: str, lineup: dict[str, Any]) -> dict[str, Any] | None:
     return {"left": round(budget - used, 2), "budget": budget}
 
 
-def rookie_option_ids(client: Any) -> set[str]:
-    """Players taken in any of the league's rookie drafts whose one-time team option is still open (Tommy,
-    2026-11-20: count the first rookie draft, 2025, under the old league id, as well as the latest one).
-    Read from our own rookie draft board, which row-level security limits to the reader's leagues."""
+def rookie_draft_ids(client: Any) -> tuple[set[str], set[str]]:
+    """(every player taken in any of the league's rookie drafts, those whose one-time team option is still open).
+    Tommy, 2026-11-20: count the first rookie draft (2025, under the old league id) as well as the latest one,
+    and keep the rookie tag on that rookie contract until it expires. Read from our own rookie draft board,
+    which row-level security limits to the reader's leagues."""
     rows = (client.table("rookie_draft_board_assignments")
             .select("player_id,option_consumed,rookie_contract_provenance").execute().data or [])
-    return {_text(r.get("player_id")) for r in rows if r.get("rookie_contract_provenance") and not r.get("option_consumed")}
+    drafted = {_text(r.get("player_id")) for r in rows if r.get("rookie_contract_provenance")}
+    return drafted, {_text(r.get("player_id")) for r in rows if r.get("rookie_contract_provenance") and not r.get("option_consumed")}
 
 
 def points_view(standing: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -513,7 +515,7 @@ def team_detail(
     weeks: int = 0,
     power: dict[str, Any] | None = None,
     app_lineup: Callable[[set[str], list[str]], tuple[list[tuple[str, str | None]], dict[str, Any]]] | None = None,
-    option_ids: set[str] | None = None,
+    rookie_ids: tuple[set[str], set[str]] | None = None,
 ) -> dict[str, Any]:
     lineup = _sleeper_roster(sleeper_id, team["roster_id"])
     roster = roster_rows(state, team["team_id"], lineup, slots, info, ppg)
@@ -523,9 +525,12 @@ def team_detail(
         pairs, lineup_view = app_lineup(active, [_text(p) for p in lineup.get("starters") or []])
         roster = roster_rows(state, team["team_id"], {**lineup, "app_lineup": pairs}, slots, info, ppg)
     everyone = roster["starters"] + roster["bench"] + roster["taxi"] + roster["ir"]
-    if option_ids is not None:  # drafted in any of our rookie drafts with the team option still unused
+    if rookie_ids is not None:  # drafted in any of our rookie drafts: R tag until the deal ends; option still unused
+        drafted, open_option = rookie_ids
         for p in everyone:
-            p["rookie_option"] = p.get("player_id") in option_ids
+            if p.get("player_id") in drafted and not p.get("no_contract"):
+                p["is_rookie"] = True
+            p["rookie_option"] = p.get("player_id") in open_option
     return {
         **team,
         "is_me": summary["is_me"],
@@ -673,6 +678,7 @@ def player_detail(
     meta: dict[str, Any],
     weeks: list[dict[str, Any]],
     my_team_id: str | None,
+    drafted: set[str] | None = None,
 ) -> dict[str, Any] | None:
     contract = next((r for r in state.get("roster", []) if _text(r.get("sleeper_player_id")) == player_id), None)
     if contract is None and not meta:
@@ -698,7 +704,7 @@ def player_detail(
             "years_left": years,
             "through": season + max(years, 1) - 1,
             "designation": roster_designation(contract),
-            "is_rookie": bool(contract.get("is_rookie")),
+            "is_rookie": bool(contract.get("is_rookie")) or player_id in (drafted or set()),
         },
         "is_mine": bool(contract) and _text(contract.get("league_team_id")) == _text(my_team_id),
     }
