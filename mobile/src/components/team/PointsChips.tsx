@@ -85,9 +85,9 @@ const one = (n: number | null | undefined) => (n == null ? '—' : n.toFixed(1))
 const fmt = (n: number | null | undefined) => (n == null ? '—' : n.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 }));
 
 const styles = StyleSheet.create({
-  chip: { borderWidth: 1, borderColor: '#2F4738', borderRadius: 8, paddingVertical: 2, paddingHorizontal: 7 },
+  chip: { borderWidth: 1, borderColor: '#2F4738', borderRadius: 6, paddingVertical: 0, paddingHorizontal: 5, marginVertical: 1 },
   pressed: { opacity: 0.6 },
-  chipKey: { color: colors.muted, fontSize: 12 },
+  chipKey: { color: colors.muted, fontSize: 11, lineHeight: 15 },
   chipRank: { color: colors.gold, fontWeight: '700' },
   dim: { backgroundColor: 'rgba(0,0,0,0.55)' },
   card: {
