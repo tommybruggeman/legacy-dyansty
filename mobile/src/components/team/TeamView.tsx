@@ -426,6 +426,13 @@ const POS_ORDER = ['QB', 'RB', 'WR', 'TE'];
 const posRank = (pos: string) => (POS_ORDER.includes(pos) ? POS_ORDER.indexOf(pos) : POS_ORDER.length);
 
 // Every contract by position (QB, RB, WR, TE, then anyone else), biggest salary first within each, with its value (PPG per cap dollar).
+// Under the salary on the Contracts tab (Tommy, 2026-11-20): a deal ending this season says EXPIRING, a rookie deal
+// in its last year says TEAM OPTION, and anything longer keeps "thru YEAR".
+function ContractEnd({ through, season, rookie }: { through: number; season: number; rookie?: boolean }) {
+  if (through > season) return <Text style={styles.under}>thru {through}</Text>;
+  return rookie ? <Text style={[styles.under, styles.option]}>TEAM OPTION</Text> : <Text style={[styles.under, styles.expiring]}>EXPIRING</Text>;
+}
+
 function ContractsTab({ team }: { team: TeamPage }) {
   const { dead_cap } = team.contracts;
   const all = [...(team.contracts.all ?? [])].sort((a, b) => posRank(a.pos) - posRank(b.pos) || b.contract_salary - a.contract_salary);
@@ -457,7 +464,7 @@ function ContractsTab({ team }: { team: TeamPage }) {
               </View>
               <View style={ui.right}>
                 <Text style={styles.cSalary}>{dollars(p.contract_salary)}</Text>
-                <Text style={styles.under}>thru {p.through}</Text>
+                <ContractEnd through={p.through} season={team.season} rookie={p.is_rookie} />
               </View>
             </Row>
           );
@@ -747,6 +754,8 @@ const styles = StyleSheet.create({
   bigLive: { color: colors.live },
   bigPre: { color: '#CFC6B4' },
   under: { color: colors.muted, fontSize: 10, fontWeight: '700', marginTop: 2 },
+  expiring: { color: '#E8A25C', letterSpacing: 0.4 },
+  option: { color: '#7FC3E8', letterSpacing: 0.4 },
   // The small "proj" under a player's points before kickoff (Tommy, 2026-11-17).
   projTag: { color: colors.muted, fontSize: 9, fontWeight: '600', marginTop: 1 },
   foot: { flexDirection: 'row', justifyContent: 'space-between', gap: 8, backgroundColor: '#0B1D15', borderRadius: 8, paddingVertical: 4, paddingHorizontal: 8, marginTop: 8 },
