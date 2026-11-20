@@ -6,6 +6,7 @@
     python -m pipeline.nfl_data.run --only stats,games  # several loaders
     python -m pipeline.nfl_data.run --game-night    # stats + scores, current season only (game-night refresh)
     python -m pipeline.nfl_data.run --practice      # this week's practice reports (injuries + practice days, current season)
+    NFL_PRACTICE_STATE=/var/lib/x python -m pipeline.nfl_data.run --practice  # same, but skips when neither report changed (VM, every 10 min)
     python -m pipeline.nfl_data.run --only rosters  # hourly: NFL team moves (trades, signings) from ESPN's rosters
 """
 from __future__ import annotations
@@ -142,9 +143,9 @@ def sync_values(client: Any, crosswalk: Crosswalk) -> int:
 def sync_injuries(client: Any, crosswalk: Crosswalk, seasons: list[int]) -> int:
     written = 0
     try:
-        payload = None
+        payload = (_RUN_ROWS.get("espn_prefetched") or [None])[0]
         last_exc: Exception | None = None
-        for url in ESPN_INJURIES_URLS:
+        for url in ([] if payload is not None else ESPN_INJURIES_URLS):
             try:
                 payload = fetch_json(url, timeout=60)
                 break
@@ -161,7 +162,8 @@ def sync_injuries(client: Any, crosswalk: Crosswalk, seasons: list[int]) -> int:
         print(f"[nfl_data] espn injuries unavailable ({type(exc).__name__}: {exc})", flush=True)
     for season in seasons:
         try:
-            text, headers = fetch_text_meta(NFLVERSE_INJURIES_URL.format(season=season), timeout=120)
+            pre = next((x for x in _RUN_ROWS.get("nflverse_prefetched", []) if x["season"] == season), None)
+            text, headers = (pre["text"], pre["headers"]) if pre else fetch_text_meta(NFLVERSE_INJURIES_URL.format(season=season), timeout=120)
             frame = read_injuries_csv(text)
         except Exception as exc:
             print(f"[nfl_data] practice reports {season}: unavailable ({type(exc).__name__})", flush=True)
@@ -189,7 +191,8 @@ def sync_practice_days(client: Any, crosswalk: Crosswalk, season: int) -> int:
     built = next((b["last_modified"] for b in _RUN_ROWS.get("nflverse_built", []) if b["season"] == season), None)
     if not records:
         try:
-            text, headers = fetch_text_meta(NFLVERSE_INJURIES_URL.format(season=season), timeout=120)
+            pre = next((x for x in _RUN_ROWS.get("nflverse_prefetched", []) if x["season"] == season), None)
+            text, headers = (pre["text"], pre["headers"]) if pre else fetch_text_meta(NFLVERSE_INJURIES_URL.format(season=season), timeout=120)
             records = read_injuries_csv(text).to_dict("records")
             built = headers.get("Last-Modified") or headers.get("last-modified")
         except Exception as exc:
@@ -199,7 +202,7 @@ def sync_practice_days(client: Any, crosswalk: Crosswalk, season: int) -> int:
         official = practice_days.from_nflverse(records, crosswalk, schedule, season, built_at)
         rows += official
         print(f"[nfl_data] practice days: official report for {practice_days.report_day(built_at)} (file rebuilt {built}): {len(official)} players", flush=True)
-    payload = (_RUN_ROWS.get("espn_payload") or [None])[0]
+    payload = (_RUN_ROWS.get("espn_payload") or _RUN_ROWS.get("espn_prefetched") or [None])[0]
     if payload is None:
         for url in ESPN_INJURIES_URLS:
             try:
@@ -329,6 +332,41 @@ def sync_prospects(client: Any, crosswalk: Crosswalk, seasons: list[int]) -> int
 LOADERS = ("players", "rosters", "stats", "games", "values", "injuries", "practice", "injury_history", "prospects", "situational")
 
 
+def practice_sources_unchanged(state_path: str, season: int) -> tuple[bool, str]:
+    """Fetch ESPN's injury report and the official report file once, keep them for this run, and say whether either
+    changed since the last run that wrote them (fingerprints in ``state_path``). Lets the VM check every few minutes
+    and only write when there is something new. Returns (unchanged, fingerprint)."""
+    import hashlib
+    import json
+
+    payload = None
+    for url in ESPN_INJURIES_URLS:
+        try:
+            payload = fetch_json(url, timeout=60)
+            break
+        except Exception:
+            continue
+    if payload is not None:
+        _RUN_ROWS["espn_prefetched"] = [payload]
+    built = None
+    try:
+        text, headers = fetch_text_meta(NFLVERSE_INJURIES_URL.format(season=season), timeout=120)
+        _RUN_ROWS["nflverse_prefetched"] = [{"season": season, "text": text, "headers": headers}]
+        built = headers.get("Last-Modified") or headers.get("last-modified") or hashlib.sha256(text.encode()).hexdigest()
+    except Exception:
+        pass
+    espn = hashlib.sha256(json.dumps((payload or {}).get("injuries") or [], sort_keys=True).encode()).hexdigest() if payload else None
+    fingerprint = f"{espn}|{built}"
+    try:
+        with open(state_path) as fh:
+            previous = fh.read().strip()
+    except OSError:
+        previous = ""
+    if payload is None or built is None:  # a source didn't answer: run anyway with what we have
+        return False, ""
+    return previous == fingerprint, fingerprint
+
+
 def _loaders(value: str) -> set[str]:
     names = {v.strip() for v in value.split(",") if v.strip()}
     bad = names - set(LOADERS)
@@ -353,6 +391,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.game_night:
         args.only = args.only or {"stats", "games"}
         args.seasons = args.seasons or [current_nfl_season()]
+
+    import os
+
+    state_path = os.environ.get("NFL_PRACTICE_STATE", "").strip() if args.practice else ""
+    fingerprint = ""
+    if state_path:  # the VM's frequent check: skip quietly when neither report changed
+        unchanged, fingerprint = practice_sources_unchanged(state_path, current_nfl_season())
+        if unchanged:
+            print("[nfl_data] practice: no new report lines since the last check", flush=True)
+            return 0
 
     client = service_client()
     crosswalk = load_crosswalk()
@@ -381,6 +429,12 @@ def main(argv: list[str] | None = None) -> int:
         ok &= _run(client, "situational_splits", lambda: sync_situational(client, seasons, crosswalk))
     if picked("prospects"):
         ok &= _run(client, "cfbd_prospects", lambda: sync_prospects(client, crosswalk, seasons))
+    if ok and state_path and fingerprint:
+        try:
+            with open(state_path, "w") as fh:
+                fh.write(fingerprint)
+        except OSError:
+            pass
     return 0 if ok else 1
 
 

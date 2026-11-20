@@ -13,6 +13,7 @@ on:
     - cron: "43 5 * * 0,1,2,5"  # night games (Sat, Sun, Mon, Thu)
     - cron: "13 7 * * 1,2,5"    # night games, second try
     # Practice reports, Sep-Jan only: injury report + day-by-day practice for this week (about 30s each).
+    # Backup only: the watcher VM checks every 10 minutes (legacy-practice.timer); GitHub skips most of these.
     # Teams post after practice (4-6pm ET); ESPN's notes land that evening, nflverse rebuilds the
     # official report overnight or the next morning.
     - cron: "47 22 * 9-12,1 *"  # ~5:45pm ET

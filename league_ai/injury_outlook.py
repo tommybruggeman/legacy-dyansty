@@ -432,20 +432,41 @@ PRACTICE_SOURCE_LABEL = {"nflverse": "official report", "espn_news": "ESPN news"
 def practice_week(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """One line per practice day, oldest first, official report preferred over the news."""
     best: dict[str, Mapping[str, Any]] = {}
+    status: dict[str, Mapping[str, Any]] = {}
+    rank = lambda r: PRACTICE_SOURCE_RANK.get(str(r.get("source")), 9)  # noqa: E731
     for r in rows:
         key = str(r.get("practice_date"))
-        cur = best.get(key)
-        if cur is None or PRACTICE_SOURCE_RANK.get(str(r.get("source")), 9) < PRACTICE_SOURCE_RANK.get(str(cur.get("source")), 9):
-            best[key] = r
-    return [
-        {k: v for k, v in {"day": r.get("day"), "date": str(r.get("practice_date")), "practice": r.get("practice_status"),
-                            "source": PRACTICE_SOURCE_LABEL.get(str(r.get("source")), r.get("source")), "game_status": r.get("game_status")}.items() if v}
-        for _, r in sorted(best.items())
-    ]
+        if r.get("practice_status"):
+            cur = best.get(key)
+            if cur is None or rank(r) < rank(cur):
+                best[key] = r
+        if r.get("game_status"):  # a game status from either source; the official one wins on the same day
+            cur = status.get(key)
+            if cur is None or rank(r) < rank(cur):
+                status[key] = r
+    out = []
+    for key in sorted(set(best) | set(status)):
+        r, g = best.get(key) or {}, status.get(key) or {}
+        line = {"day": r.get("day") or g.get("day"), "date": key, "practice": r.get("practice_status"),
+                "source": PRACTICE_SOURCE_LABEL.get(str(r.get("source") or g.get("source")), r.get("source") or g.get("source")),
+                "game_status": g.get("game_status")}
+        out.append({k: v for k, v in line.items() if v})
+    return out
+
+
+def practice_days_only(lines: Iterable[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    """The lines that carry a practice (a game-status-only line has none)."""
+    return [d for d in lines if d.get("practice")]
+
+
+def latest_game_status(lines: Iterable[Mapping[str, Any]]) -> str | None:
+    """The newest game status on this week's lines (Out / Doubtful / Questionable), or None before the final report."""
+    return next((d["game_status"] for d in reversed(list(lines)) if d.get("game_status")), None)
 
 
 def practice_trend(days: list[Mapping[str, Any]]) -> str | None:
     """'Wed DNP -> Thu Limited -> Fri Full'."""
+    days = practice_days_only(days or [])
     if not days:
         return None
     return " -> ".join(f"{d.get('day')} {d.get('practice')}" for d in days)

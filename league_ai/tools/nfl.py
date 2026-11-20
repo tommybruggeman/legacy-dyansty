@@ -366,7 +366,7 @@ class NflData:
                 return []
             return io.practice_week(rows)
 
-        return _cached(("practice_days", p["gsis_id"], season, week), load)
+        return _cached(("practice_days", p["gsis_id"], season, week), load, ttl=600)  # new report lines land all day
 
     def practice_this_week(self, p: Mapping[str, Any]) -> dict[str, Any]:
         """What the GM says about this week's practice: each day, the trend, or why there is nothing yet."""
@@ -403,7 +403,9 @@ class NflData:
         if official:
             report_injury = official.get("report_injury") or official.get("practice_injury")
         days = self.practice_days(p, season, week)
-        latest_day = days[-1] if days else {}
+        practiced = io.practice_days_only(days)
+        latest_day = dict(practiced[-1]) if practiced else {}
+        latest_day["game_status"] = io.latest_game_status(days)
         injury = io.injury_key(report_injury or (raw or {}).get("injury_type") or p.get("injury_body_part"))
         open_ep = absence if absence is not None else self.open_absence(p)
         injury = injury or (open_ep or {}).get("injury")
