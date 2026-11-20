@@ -154,7 +154,38 @@ def standings(sleeper_id: str, names: dict[int, str], my_roster_id: int | None) 
             "pa_per_game": round(float(rec["PA"]) / games, 1),
             "games": int(rec["Games"]),
         })
+    add_points_view(rows, big)
     return {"weeks_played": int(last_week), "playoff_teams": PLAYOFF_TEAMS, "rows": rows}
+
+
+def _ranks(rows: list[dict[str, Any]], key: str) -> dict[int, int]:
+    """roster_id -> league rank on `key`, 1 = the most (ties share the better rank)."""
+    values = sorted((r[key] for r in rows), reverse=True)
+    return {r["roster_id"]: values.index(r[key]) + 1 for r in rows}
+
+
+def add_points_view(rows: list[dict[str, Any]], weeks: pd.DataFrame) -> None:
+    """The My Team PF / PA pop-up (Tommy, 2026-11-20): season points for and against, per week, top-5 weeks,
+    record against the league average each week, best and worst week, each with its league rank (1 = most)."""
+    if not rows or weeks.empty:
+        return
+    avg = weeks.groupby("week")["score"].transform("mean")
+    weeks = weeks.assign(above=(weeks["score"] > avg).astype(int), below=(weeks["score"] < avg).astype(int))
+    by_team = {str(t): g for t, g in weeks.groupby("team")}
+    for r in rows:
+        g = by_team.get(str(r["roster_id"]))
+        if g is None or g.empty:
+            continue
+        best, worst = g.loc[g["score"].idxmax()], g.loc[g["score"].idxmin()]
+        r["vs_avg_wins"], r["vs_avg_losses"] = int(g["above"].sum()), int(g["below"].sum())
+        r["best_week"] = {"week": int(best["week"]), "score": round(float(best["score"]), 2)}
+        r["worst_week"] = {"week": int(worst["week"]), "score": round(float(worst["score"]), 2)}
+    for r in rows:
+        r.setdefault("vs_avg_wins", 0)
+        r.setdefault("vs_avg_losses", 0)
+    ranks = {k: _ranks(rows, k) for k in ("pf", "pa", "pf_per_game", "pa_per_game", "top5", "vs_avg_wins")}
+    for r in rows:
+        r["points_ranks"] = {k: v[r["roster_id"]] for k, v in ranks.items()}
 
 
 def matchups(sleeper_id: str, names: dict[int, str], week: int, my_roster_id: int | None) -> dict[str, Any]:

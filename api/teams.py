@@ -481,6 +481,14 @@ def faab(sleeper_id: str, lineup: dict[str, Any]) -> dict[str, Any] | None:
     return {"left": round(budget - used, 2), "budget": budget}
 
 
+def points_view(standing: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Season points for the My Team PF / PA chips and their pop-up (ranks: 1 = the most in the league)."""
+    if not standing or "points_ranks" not in standing:
+        return None
+    keys = ("pf", "pa", "pf_per_game", "pa_per_game", "top5", "games", "vs_avg_wins", "vs_avg_losses", "best_week", "worst_week")
+    return {**{k: standing.get(k) for k in keys}, "ranks": standing["points_ranks"]}
+
+
 def team_detail(
     *,
     team: dict[str, Any],
@@ -514,6 +522,7 @@ def team_detail(
             "rank": summary["rank"], "standing_points": summary["standing_points"],
             "pf_per_game": (standing or {}).get("pf_per_game"),
         },
+        "points": points_view(standing),
         "cap": {"space": summary["cap_space"], "by_year": summary["cap_by_year"]},
         "roster": roster,
         "contracts": contracts_view(everyone, state, team["team_id"], later, league_value_cuts(state, ppg)),
