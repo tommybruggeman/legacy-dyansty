@@ -6,6 +6,7 @@ import type { Pick, Player, TeamPage, TeamWeek, TeamWeekItem, WeekPlayer } from 
 import { colors } from '../../lib/theme';
 import { PlayerFace } from '../PlayerFace';
 import { LineupSheet, type Picking, SlotChip } from './LineupSheet';
+import { PointsChip } from './PointsChips';
 import { Card, Note, Pill, Row, SwipeTabs, firstName, money, ordinal, record, ui } from '../ui';
 
 const TABS = ['Roster', 'Contracts', 'Picks'] as const;
@@ -82,9 +83,14 @@ function MyHeader({ team, badge, badgeOnCap }: { team: TeamPage; badge?: ReactNo
           <Text style={styles.teamName} numberOfLines={1}>{team.team_name}</Text>
           {badgeOnCap ? null : badge}
         </View>
-        <Text style={styles.hdrSub}>{record(r.wins, r.losses, r.ties)} · {r.standing_points} SP</Text>
+        {/* PF rank at the end of the record line, PA rank at the end of the cap line; tap for the season points pop-up. */}
+        <View style={styles.capLine}>
+          <Text style={styles.hdrSub}>{record(r.wins, r.losses, r.ties)} · {r.standing_points} SP</Text>
+          {team.points ? <PointsChip kind="pf" points={team.points} /> : null}
+        </View>
         <View style={styles.capLine}>
           <Text style={[styles.hdrSub, space < 0 ? styles.over : styles.capLeft]}>{space < 0 ? `${dollars(-space)} over the cap` : `${dollars(space)} cap left`}</Text>
+          {team.points ? <PointsChip kind="pa" points={team.points} /> : null}
           {badgeOnCap ? badge : null}
         </View>
       </View>

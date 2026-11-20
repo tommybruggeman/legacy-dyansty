@@ -325,6 +325,14 @@ export type Pick = { year: number; round: number; original_owner: string; curren
 // One week in the My Team week menu: the result once it's played, the opponent before, or a playoff week.
 export type TeamWeekItem = { week: number; opponent?: string | null; result?: 'W' | 'L' | 'T'; score?: [number, number]; playoffs?: boolean };
 
+// Season points on a team page (PF / PA chips and their pop-up). ranks: 1 = the most in the league.
+export type TeamPoints = {
+  pf: number; pa: number; pf_per_game: number; pa_per_game: number; top5: number; games: number;
+  vs_avg_wins: number; vs_avg_losses: number;
+  best_week?: { week: number; score: number } | null; worst_week?: { week: number; score: number } | null;
+  ranks: { pf: number; pa: number; pf_per_game: number; pa_per_game: number; top5: number; vs_avg_wins: number };
+};
+
 export type TeamPage = {
   season: number;
   salary_cap: number;
@@ -337,6 +345,7 @@ export type TeamPage = {
   lean: Lean;
   record: { wins: number; losses: number; ties: number; rank: number | null; standing_points: number; pf_per_game: number | null };
   cap: { space: number; by_year: CapYear[] };
+  points?: TeamPoints | null;
   roster: { starters: Player[]; bench: Player[]; taxi: Player[]; ir: Player[]; count: number };
   contracts: { biggest: Player[]; expiring: Player[]; all?: ValuedContract[]; dead_cap: { player: string; amount: number; years_left?: number; through?: number; more?: boolean; player_id?: string | null; source?: 'drop' | 'trade' }[] };
   picks: { owned: Pick[]; traded_away: Pick[] };
