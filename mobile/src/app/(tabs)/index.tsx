@@ -785,7 +785,7 @@ const styles = StyleSheet.create({
   vs: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 12 },
   vsText: { color: colors.muted, fontWeight: '800', fontSize: 9, letterSpacing: 1 },
   vsMid: { alignItems: 'center', flex: 1 },
-  vsSub: { color: colors.muted, opacity: 0.75, fontSize: 10.5, fontWeight: '600', marginTop: 5 },
+  vsSub: { color: colors.muted, opacity: 0.75, fontSize: 15.5, fontWeight: '600', marginTop: 7 },
   odds: { width: 96, marginTop: 10 },
   oddsNums: { flexDirection: 'row', justifyContent: 'space-between' },
   oddsMine: { color: colors.gold, fontSize: 13, fontWeight: '800' },
