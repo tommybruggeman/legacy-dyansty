@@ -481,6 +481,15 @@ def faab(sleeper_id: str, lineup: dict[str, Any]) -> dict[str, Any] | None:
     return {"left": round(budget - used, 2), "budget": budget}
 
 
+def rookie_option_ids(client: Any) -> set[str]:
+    """Players taken in any of the league's rookie drafts whose one-time team option is still open (Tommy,
+    2026-11-20: count the first rookie draft, 2025, under the old league id, as well as the latest one).
+    Read from our own rookie draft board, which row-level security limits to the reader's leagues."""
+    rows = (client.table("rookie_draft_board_assignments")
+            .select("player_id,option_consumed,rookie_contract_provenance").execute().data or [])
+    return {_text(r.get("player_id")) for r in rows if r.get("rookie_contract_provenance") and not r.get("option_consumed")}
+
+
 def points_view(standing: dict[str, Any] | None) -> dict[str, Any] | None:
     """Season points for the My Team PF / PA chips and their pop-up (ranks: 1 = the most in the league)."""
     if not standing or "points_ranks" not in standing:
@@ -504,6 +513,7 @@ def team_detail(
     weeks: int = 0,
     power: dict[str, Any] | None = None,
     app_lineup: Callable[[set[str], list[str]], tuple[list[tuple[str, str | None]], dict[str, Any]]] | None = None,
+    option_ids: set[str] | None = None,
 ) -> dict[str, Any]:
     lineup = _sleeper_roster(sleeper_id, team["roster_id"])
     roster = roster_rows(state, team["team_id"], lineup, slots, info, ppg)
@@ -513,6 +523,9 @@ def team_detail(
         pairs, lineup_view = app_lineup(active, [_text(p) for p in lineup.get("starters") or []])
         roster = roster_rows(state, team["team_id"], {**lineup, "app_lineup": pairs}, slots, info, ppg)
     everyone = roster["starters"] + roster["bench"] + roster["taxi"] + roster["ir"]
+    if option_ids is not None:  # drafted in any of our rookie drafts with the team option still unused
+        for p in everyone:
+            p["rookie_option"] = p.get("player_id") in option_ids
     return {
         **team,
         "is_me": summary["is_me"],

@@ -26,3 +26,20 @@ def test_points_view_ranks_and_weeks():
     # week 1 avg 103.3 (team 1 above), week 2 avg 106.7 (team 1 below)
     assert (one["vs_avg_wins"], one["vs_avg_losses"]) == (1, 1)
     assert points_view(None) is None and points_view({"pf": 1}) is None
+
+
+def test_rookie_option_ids_reads_every_draft():
+    from api.teams import rookie_option_ids
+
+    class Q:
+        def __init__(self, rows): self.rows = rows
+        def table(self, name): assert name == "rookie_draft_board_assignments"; return self
+        def select(self, *_): return self
+        def execute(self): return type("R", (), {"data": self.rows})()
+
+    rows = [
+        {"player_id": "golden", "option_consumed": False, "rookie_contract_provenance": True},  # 2025 draft, old league
+        {"player_id": "coleman", "option_consumed": False, "rookie_contract_provenance": True},  # 2026 draft
+        {"player_id": "used", "option_consumed": True, "rookie_contract_provenance": True},
+    ]
+    assert rookie_option_ids(Q(rows)) == {"golden", "coleman"}
