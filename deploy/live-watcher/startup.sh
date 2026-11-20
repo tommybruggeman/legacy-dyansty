@@ -202,6 +202,40 @@ AccuracySec=30s
 WantedBy=timers.target
 UNIT
 
+# Practice reports every 10 minutes, Sep-Jan (Tommy, 2026-11-20: "take every day into account"). GitHub's three daily
+# practice runs were mostly skipped or hours late, so Thursday's line could miss the app until Friday afternoon.
+# Each pass fetches ESPN's injury notes and the official report file and stops right there when neither changed
+# (fingerprint in /var/lib/legacy-practice.state), so a pass with nothing new is one small download and no writes.
+# Same job as the practice slots in .github/workflows/nfl-data-sync.yml (kept as a backup).
+cat > /etc/systemd/system/legacy-practice.service <<UNIT
+[Unit]
+Description=Legacy Dynasty practice reports (one pass)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/legacy-sync.env
+Environment=NFL_PRACTICE_STATE=/var/lib/legacy-practice.state
+WorkingDirectory=$APP
+ExecStartPre=-/usr/bin/git -C $APP pull --ff-only --quiet
+ExecStart=/usr/bin/flock -n /run/legacy-practice.lock $APP/.venv/bin/python -m pipeline.nfl_data.run --practice
+TimeoutStartSec=600
+MemoryMax=400M
+UNIT
+cat > /etc/systemd/system/legacy-practice.timer <<UNIT
+[Unit]
+Description=Practice reports every 10 minutes, September to January
+
+[Timer]
+OnCalendar=*-01,09..12-* *:04/10:00
+AccuracySec=30s
+Persistent=false
+
+[Install]
+WantedBy=timers.target
+UNIT
+
 systemctl daemon-reload
-systemctl enable --now legacy-watcher.service legacy-watcher-update.timer legacy-alerts.timer legacy-sleeper-sync.timer legacy-live-activity.service legacy-status.service
+systemctl enable --now legacy-watcher.service legacy-watcher-update.timer legacy-alerts.timer legacy-sleeper-sync.timer legacy-live-activity.service legacy-status.service legacy-practice.timer
 systemctl restart legacy-watcher.service legacy-live-activity.service legacy-status.service

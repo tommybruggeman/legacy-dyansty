@@ -74,4 +74,4 @@ jobs:
             if echo "$out" | grep -q "startup-script exit status"; then break; fi
             sleep 30
           done
-          echo "$out" | grep -oE "startup-script exit status [0-9]+|live watcher \((main|backup)\) started|Started legacy-watcher.service[^ ]*|Started legacy-alerts.timer[^ ]*|Started legacy-sleeper-sync.timer[^ ]*|Started legacy-live-activity.service[^ ]*" | sort | uniq -c
+          echo "$out" | grep -oE "startup-script exit status [0-9]+|live watcher \((main|backup)\) started|Started legacy-watcher.service[^ ]*|Started legacy-alerts.timer[^ ]*|Started legacy-sleeper-sync.timer[^ ]*|Started legacy-live-activity.service[^ ]*|Started legacy-practice.timer[^ ]*" | sort | uniq -c
