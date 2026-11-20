@@ -125,10 +125,10 @@ function SplitOdds({ odds }: { odds: [number, number] }) {
 }
 
 // final: the matchup is over, so a gold WINNER tag sits under the winning score (the losing score is already dimmed).
-function Hero({ title, pill, me, them, week, matchupId, meLabel, themLabel, badges, showScores = true, proj, odds, final = false }: {
+function Hero({ title, pill, me, them, week, matchupId, meLabel, themLabel, badges, showScores = true, proj, odds, final = false, vsSub }: {
   title: string; pill?: ReactNode; me: HomeSide; them?: HomeSide | null; week: number; matchupId?: number;
   meLabel?: string; themLabel?: string; badges: Badge[]; showScores?: boolean; proj?: [number, number] | null;
-  odds?: [number, number] | null; final?: boolean;
+  odds?: [number, number] | null; final?: boolean; vsSub?: string | null;
 }) {
   const total = me.score + (them?.score ?? 0);
   const ahead = me.score >= (them?.score ?? 0);
@@ -151,6 +151,7 @@ function Hero({ title, pill, me, them, week, matchupId, meLabel, themLabel, badg
           <Side s={me} label={meLabel ?? 'You'} lead={!total || ahead} projected={proj?.[0]} />
           <View style={styles.vsMid}>
             <Text style={styles.vsText}>VS</Text>
+            {vsSub ? <Text style={styles.vsSub} numberOfLines={1}>{vsSub}</Text> : null}
             {odds ? <SplitOdds odds={odds} /> : null}
           </View>
           <Side s={them} label={themLabel ?? (them ? firstName(them.name ?? '') : 'Bye')} lead={!total || !ahead} projected={them ? proj?.[1] : undefined} />
@@ -457,10 +458,13 @@ function GameDay({ data }: { data: HomeData }) {
   );
 }
 
-// Before kickoff: your week score on the left, theirs on the right, both projected totals in the middle.
+// Before kickoff: your week score on the left, theirs on the right, the projected top-5 line in the middle
+// (the 5th-best projected total in the league; a top-5 week is worth a standings point) and both projected
+// totals in small print under VS.
 function PreGameHero({ data, title }: { data: HomeData; title: string }) {
   const g = data.game!;
   const { proj } = useMatchupProj(data);
+  const line = data.top5_line;
   const them = g.them ? firstName(g.them.name).toUpperCase() : 'BYE';
   return (
     <Hero
@@ -470,9 +474,10 @@ function PreGameHero({ data, title }: { data: HomeData; title: string }) {
       week={data.week}
       matchupId={g.matchup_id}
       showScores={false}
+      vsSub={proj ? `${proj[0].toFixed(1)} – ${proj[1].toFixed(1)}` : null}
       badges={[
         [pts(g.me!.score), 'YOU'],
-        [proj ? `${proj[0].toFixed(1)} – ${proj[1].toFixed(1)}` : '—', 'PROJECTED', 'proj'],
+        [line && !line.final ? line.line.toFixed(1) : '—', 'PROJ TOP 5'],
         [g.them ? pts(g.them.score) : '—', them],
       ]}
     />
@@ -780,6 +785,7 @@ const styles = StyleSheet.create({
   vs: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 12 },
   vsText: { color: colors.muted, fontWeight: '800', fontSize: 9, letterSpacing: 1 },
   vsMid: { alignItems: 'center', flex: 1 },
+  vsSub: { color: colors.muted, opacity: 0.75, fontSize: 10.5, fontWeight: '600', marginTop: 5 },
   odds: { width: 96, marginTop: 10 },
   oddsNums: { flexDirection: 'row', justifyContent: 'space-between' },
   oddsMine: { color: colors.gold, fontSize: 13, fontWeight: '800' },
