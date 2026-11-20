@@ -305,6 +305,7 @@ export type Player = {
   gone?: boolean; // a past week's starter who has since left the team
   designation: 'taxi' | 'ir' | null;
   is_rookie: boolean;
+  rookie_option?: boolean; // taken in one of our rookie drafts, team option still open (team pages only)
   ppg: number | null;
   slot?: string;
   through?: number;

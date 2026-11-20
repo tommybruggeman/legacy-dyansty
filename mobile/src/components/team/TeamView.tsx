@@ -427,7 +427,7 @@ const posRank = (pos: string) => (POS_ORDER.includes(pos) ? POS_ORDER.indexOf(po
 
 // Every contract by position (QB, RB, WR, TE, then anyone else), biggest salary first within each, with its value (PPG per cap dollar).
 // Under the salary on the Contracts tab (Tommy, 2026-11-20): a deal ending this season says EXPIRING, a rookie deal
-// in its last year says TEAM OPTION, and anything longer keeps "thru YEAR".
+// in its last year says TEAM OPTION (any of our rookie drafts with the option unused: rookie_option from the server), and anything longer keeps "thru YEAR".
 function ContractEnd({ through, season, rookie }: { through: number; season: number; rookie?: boolean }) {
   if (through > season) return <Text style={styles.under}>thru {through}</Text>;
   return rookie ? <Text style={[styles.under, styles.option]}>TEAM OPTION</Text> : <Text style={[styles.under, styles.expiring]}>EXPIRING</Text>;
@@ -464,7 +464,7 @@ function ContractsTab({ team }: { team: TeamPage }) {
               </View>
               <View style={ui.right}>
                 <Text style={styles.cSalary}>{dollars(p.contract_salary)}</Text>
-                <ContractEnd through={p.through} season={team.season} rookie={p.is_rookie} />
+                <ContractEnd through={p.through} season={team.season} rookie={p.rookie_option ?? p.is_rookie} />
               </View>
             </Row>
           );
