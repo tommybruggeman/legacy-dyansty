@@ -496,6 +496,8 @@ def rookie_deals(client: Any, league_id: str) -> dict[str, dict[str, Any]]:
             "option_salary": _f(r.get("option_salary")),
             "option_consumed": bool(r.get("option_consumed")),
             "taxi_seasons": int(r.get("taxi_seasons") or 0),
+            # Where he went on our own board (Sleeper's draft room can list a different slot): 1.02 etc.
+            "draft_year": r.get("draft_year"), "draft_round": r.get("draft_round"), "overall_pick": r.get("overall_pick"),
         } for r in rows if r.get("player_id")}
     except Exception as exc:
         print(f"APP_ROOKIE_DEALS_RPC {type(exc).__name__}", flush=True)

@@ -1250,7 +1250,7 @@ def player_page(player_id: str, owner: tuple[Client, Any] = Depends(owner_client
         client, league_id=ctx["league_id"], sleeper_id=ctx["sleeper_id"], season=ctx["season"], player_id=player_id,
         meta=meta, pos=result["pos"], league_weeks=league_weeks, last_week=weeks,
         years_left={c["team_id"]: c["years_left"]} if c else {}, salary=c["salary"] if c else None,
-        player_info=teams.player_info, finished=finished, playoff_weeks=_playoff_weeks(ctx["sleeper_id"]),
+        player_info=teams.player_info, finished=finished, playoff_weeks=_playoff_weeks(ctx["sleeper_id"]), board_pick=deal,
     )
     if c is None:
         # No contract row, but Sleeper may still have him on a roster (a new rookie pick, a pickup not synced yet).

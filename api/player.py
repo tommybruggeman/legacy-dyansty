@@ -399,7 +399,19 @@ SAME_AS = {"draft_pick": ("signed", "imported"), "add": ("signed", "imported"), 
            "trade": ("traded",), "drop": ("released",), "commissioner": ("signed", "released")}
 
 
-def lifetime_history(contracts: list[dict[str, Any]], events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def board_label(pick: dict[str, Any] | None, season: Any) -> str | None:
+    """"1.02" from our own rookie draft board (10 picks a round), for the draft that season; None if not on it."""
+    try:
+        rnd, overall = int(pick["draft_round"]), int(pick["overall_pick"])  # type: ignore[index]
+        if season is not None and int(pick["draft_year"]) != int(season):  # type: ignore[index]
+            return None
+    except (TypeError, KeyError, ValueError):
+        return None
+    return f"{rnd}.{overall - (rnd - 1) * 10:02d}"
+
+
+def lifetime_history(contracts: list[dict[str, Any]], events: list[dict[str, Any]],
+                     board_pick: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """His whole life in the league, newest first: contract rows plus every draft, trade, pickup and drop from
     league history (all seasons), with a league move dropped when a contract row within 3 days already covers it."""
     out = list(contracts)
@@ -415,7 +427,9 @@ def lifetime_history(contracts: list[dict[str, Any]], events: list[dict[str, Any
         d = e.get("details") or {}
         if kind == "draft_pick":
             rnd, slot = d.get("round"), d.get("slot")
-            title = f"Drafted {rnd}.{int(slot):02d}" if rnd and slot else "Drafted"
+            # Our board is the record (Tommy, 2026-11-21: Hampton went 1.02, Sleeper's draft room said 1.04).
+            label = board_label(board_pick, season) or (f"{rnd}.{int(slot):02d}" if rnd and slot else None)
+            title = f"Drafted {label}" if label else "Drafted"
             if d.get("draft_type") == "auction" or d.get("auction_amount"):
                 title = "Won at auction"
         else:
@@ -795,6 +809,7 @@ def page_extras(
     player_info: Any,
     finished: dict[int, dict[str, Any]] | None = None,
     playoff_weeks: Iterable[int] = player_cards.PLAYOFF_WEEKS,
+    board_pick: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Everything beyond the basic contract card, read side by side.
 
@@ -887,7 +902,7 @@ def page_extras(
         "live": bool(live),
         "next_game": upcoming,
         "health": h,
-        "history": lifetime_history(contract_history(got["history"] or [], years_left), got["league_events"] or []),
+        "history": lifetime_history(contract_history(got["history"] or [], years_left), got["league_events"] or [], board_pick),
         "writeups": got["writeups"] or [],
         "role": _safe(lambda: player_cards.role_on_team(got["team_rows"] or [], player_id, pos, got["team_hurt"] or []), None),
         "rest_of_season": _safe(lambda: player_cards.rest_of_season(games, team, pos, got["dvp"] or {}, (upcoming or {}).get("week"), playoff_weeks), None),
