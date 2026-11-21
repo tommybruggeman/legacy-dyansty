@@ -696,7 +696,7 @@ const styles = StyleSheet.create({
   dots: { flexDirection: 'row', gap: 3, marginLeft: 2 },
   ydot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.gold },
   ydotOff: { backgroundColor: '#2F4136' },
-  cSalary: { color: colors.gold, fontSize: 18, fontWeight: '900' },
+  cSalary: { color: colors.text, fontSize: 18, fontWeight: '900' },
   yr: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 6 },
   yrLabel: { color: colors.text, fontSize: 13, fontWeight: '800', width: 40 },
   track: { flex: 1, height: 6, borderRadius: 3, backgroundColor: '#22352B', overflow: 'hidden' },
