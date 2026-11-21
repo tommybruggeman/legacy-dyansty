@@ -28,18 +28,50 @@ def test_points_view_ranks_and_weeks():
     assert points_view(None) is None and points_view({"pf": 1}) is None
 
 
-def test_rookie_option_ids_reads_every_draft():
-    from api.teams import rookie_draft_ids
+class _Q:
+    def __init__(self, rows, rpc_ok=True): self.rows, self.rpc_ok, self.calls = rows, rpc_ok, []
+    def rpc(self, name, args):
+        self.calls.append((name, args))
+        if not self.rpc_ok:
+            raise RuntimeError("missing function")
+        return self
+    def table(self, name): assert name == "rookie_draft_board_assignments"; return self
+    def select(self, *_): return self
+    def execute(self): return type("R", (), {"data": self.rows})()
 
-    class Q:
-        def __init__(self, rows): self.rows = rows
-        def table(self, name): assert name == "rookie_draft_board_assignments"; return self
-        def select(self, *_): return self
-        def execute(self): return type("R", (), {"data": self.rows})()
 
+def test_rookie_deals_reads_every_draft_through_the_rpc():
+    from api.teams import rookie_deals
     rows = [
-        {"player_id": "golden", "option_consumed": False, "rookie_contract_provenance": True},  # 2025 draft, old league
-        {"player_id": "coleman", "option_consumed": False, "rookie_contract_provenance": True},  # 2026 draft
-        {"player_id": "used", "option_consumed": True, "rookie_contract_provenance": True},
+        {"player_id": "golden", "rookie_deal": True, "expected_end": 2026, "option_salary": 25, "option_consumed": False, "taxi_seasons": 0},
+        {"player_id": "mendoza", "rookie_deal": True, "expected_end": 2028, "option_salary": 25, "option_consumed": False, "taxi_seasons": 1},
     ]
-    assert rookie_draft_ids(Q(rows)) == ({"golden", "coleman", "used"}, {"golden", "coleman"})
+    q = _Q(rows)
+    deals = rookie_deals(q, "L")
+    assert q.calls == [("read_rookie_deals_authenticated", {"p_league_id": "L"})]
+    assert deals["mendoza"]["expected_end"] == 2028 and deals["golden"]["option_salary"] == 25.0
+
+
+def test_rookie_deals_falls_back_to_the_board():
+    from api.teams import rookie_deals
+    q = _Q([{"player_id": "golden", "option_consumed": False, "one_time_option_salary": 25, "rookie_contract_provenance": True}], rpc_ok=False)
+    assert rookie_deals(q, "L")["golden"] == {"rookie_deal": True, "expected_end": None, "option_salary": 25.0, "option_consumed": False, "taxi_seasons": 0}
+
+
+def test_apply_rookie_deal():
+    from api.teams import apply_rookie_deal
+    deal = lambda **k: {"rookie_deal": True, "expected_end": 2026, "option_salary": 25.0, "option_consumed": False, **k}
+    golden = {"player_id": "golden", "years_left": 1, "total_years": 2}
+    apply_rookie_deal(golden, deal(), 2026)
+    assert golden["is_rookie"] and golden["rookie_option"] and golden["option_salary"] == 25.0 and golden["years_left"] == 1
+    # taxi in 2026: contract row still ends 2027, rookie deal really runs through 2028
+    mendoza = {"player_id": "mendoza", "years_left": 2, "total_years": 2}
+    apply_rookie_deal(mendoza, deal(expected_end=2028), 2026)
+    assert (mendoza["years_left"], mendoza["total_years"]) == (3, 3)
+    # re-signed (not the rookie deal any more): no R tag, no option
+    beck = {"player_id": "beck", "years_left": 1, "is_rookie": False}
+    apply_rookie_deal(beck, deal(rookie_deal=False), 2026)
+    assert not beck["is_rookie"] and not beck["rookie_option"]
+    used = {"player_id": "judkins", "years_left": 1}
+    apply_rookie_deal(used, deal(option_consumed=True), 2026)
+    assert used["is_rookie"] and not used["rookie_option"]
