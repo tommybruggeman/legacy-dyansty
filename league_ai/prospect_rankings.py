@@ -32,6 +32,8 @@ POSITIONS = ("QB", "RB", "WR", "TE")
 BOARD_SIZE = 20
 PER_POSITION = 30          # candidates sent per position (by production)
 MAX_SEARCHES = 8
+# Tommy (2026-11-22): the first edition comes out in playoff week 1, Tuesday of NFL week 15. Earlier runs skip.
+FIRST_EDITION = date.fromisoformat(os.getenv("PROSPECT_FIRST_EDITION", "2026-12-15"))
 HEADSHOT = "https://a.espncdn.com/i/headshots/college-football/players/full/{id}.png"
 COLUMNS = ("cfbd_athlete_id, season, name, search_name, position, college, conference, class_year, draft_eligible, height, weight, "
            "usage_overall, pass_att, pass_yds, pass_td, pass_int, rush_att, rush_yds, rush_td, receptions, rec_yds, rec_td, scrimmage_yds")
@@ -230,8 +232,10 @@ def assemble(raw: dict[str, Any], rows: list[dict[str, Any]], prev: dict[str, An
             "lede": str(raw.get("lede") or ""), "players": players, "sources": sources}
 
 
-def run(client: Any, ai: Any, *, dry_run: bool = False, today: date | None = None) -> dict[str, Any]:
+def run(client: Any, ai: Any, *, dry_run: bool = False, today: date | None = None, force: bool = False) -> dict[str, Any]:
     today = today or datetime.now(timezone.utc).date()
+    if today < FIRST_EDITION and not force and not dry_run:
+        return {"skipped": f"first edition is {FIRST_EDITION.isoformat()}"}
     season = latest_season(client)
     if season is None:
         return {"skipped": "no college prospects loaded"}
@@ -263,6 +267,7 @@ def run(client: Any, ai: Any, *, dry_run: bool = False, today: date | None = Non
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--force", action="store_true", help="write an edition before the first-edition date")
     args = ap.parse_args(argv)
     from supabase import create_client
 
@@ -273,7 +278,7 @@ def main(argv: list[str] | None = None) -> int:
         from league_ai.config import api_key
 
         ai = anthropic.Anthropic(api_key=api_key() or None, max_retries=3)
-    print(run(client, ai, dry_run=args.dry_run))
+    print(run(client, ai, dry_run=args.dry_run, force=args.force))
     return 0
 
 
