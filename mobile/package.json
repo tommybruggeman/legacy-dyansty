@@ -26,7 +26,8 @@
     "react-native-safe-area-context": "~5.10.1",
     "react-native-screens": "~4.30.0",
     "react-native-url-polyfill": "^4.0.0",
-    "react-native-view-shot": "^6.2.1"
+    "react-native-view-shot": "6.1.1",
+    "react-native-webview": "14.0.1"
   },
   "devDependencies": {
     "@types/react": "~19.3.0",
