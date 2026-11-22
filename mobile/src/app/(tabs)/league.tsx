@@ -14,7 +14,18 @@ export default function League() {
   const { at, tab } = useLocalSearchParams<{ at?: string; tab?: string }>();
   // Opening League from the tab bar starts on Matchups; Home's standings card opens Standings (its bracket, Matchups);
   // coming back from a game or team page keeps the view you were on.
-  useEffect(() => navigation.addListener('tabPress' as never, () => setView('Matchups')), [navigation]);
+  // The reset happens while League is hidden (another tab was picked), not on the tap itself, so the tab
+  // never opens on the old view and then swaps to Matchups in front of you. Opening a game or team page on
+  // top doesn't change tabs, so the view you were on is kept for the trip back.
+  useEffect(
+    () =>
+      navigation.addListener('state' as never, (e: any) => {
+        const state = e?.data?.state;
+        const current = state?.routes?.[state.index]?.name;
+        if (current && current !== 'league') setView('Matchups');
+      }),
+    [navigation],
+  );
   useEffect(() => {
     if (at) setView(tab === 'Matchups' ? 'Matchups' : 'Standings');
   }, [at, tab]);

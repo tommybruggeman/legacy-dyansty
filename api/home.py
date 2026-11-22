@@ -159,6 +159,100 @@ def playoff_game(view: dict[str, Any] | None) -> dict[str, Any] | None:
             "matchup_id": game.get("matchup_id"), "state": game.get("state"), "me": side(me), "them": side(them)}
 
 
+def playoff_bye(view: dict[str, Any] | None, my_roster_id: int | None) -> dict[str, Any] | None:
+    """A consolation bye week (Tommy, 2026-11-22): both bye teams' scores and projections (they still count for
+    Shotgun Watch and the top 5) and who I play next, or the game whose winner I play."""
+    if not view or my_roster_id is None:
+        return None
+    byes = view.get("byes") or []
+    me = next((t for t in byes if t.get("roster_id") == my_roster_id), None)
+    if not me:
+        return None
+    them = next((t for t in byes if t is not me), None)
+    tree = view.get("loser_tree") or []
+
+    def side(t: dict[str, Any] | None) -> dict[str, Any] | None:
+        return {k: t.get(k) for k in ("roster_id", "name", "avatar", "score", "proj")} if t else None
+
+    nxt = next((g for g in tree if g.get("mine") and g.get("weeks") and min(g["weeks"]) > view["week"]), None)
+    vs, feeder = None, None
+    for k, t in enumerate((nxt or {}).get("teams") or []):
+        if t.get("roster_id") and t["roster_id"] != my_roster_id:
+            vs = t["name"]
+        elif not t.get("roster_id"):
+            for kind, m in ((nxt.get("feeds") or [None, None])[k] or {}).items():
+                g = next((x for x in tree if x.get("m") == int(m)), None)
+                if g:
+                    feeder = {"kind": kind, "names": [x["name"] for x in g["teams"] if x.get("roster_id")]}
+    return {"me": side(me), "them": side(them), "next_week": min(nxt["weeks"]) if nxt else None, "next_vs": vs, "feeder": feeder}
+
+
+def champion(view: dict[str, Any] | None, my_roster_id: int | None) -> dict[str, Any] | None:
+    """The champion once the title game is final: who, and the final score over whom."""
+    if not view or not view.get("champion"):
+        return None
+    final = next((g for g in view.get("tree") or [] if g.get("place") == 1 and g.get("state") == "final"), None)
+    if not final:
+        return None
+    win = view["champion"]
+    sides = [t for t in final["teams"] if t.get("roster_id")]
+    opp = next((t for t in sides if t["roster_id"] != win["roster_id"]), None)
+    mine = next((t for t in sides if t["roster_id"] == win["roster_id"]), win)
+    return {"roster_id": win["roster_id"], "name": win["name"], "avatar": win.get("avatar"), "is_me": win["roster_id"] == my_roster_id,
+            "score": mine.get("score"), "opponent": {"roster_id": opp["roster_id"], "name": opp["name"], "score": opp.get("score")} if opp else None}
+
+
+def draft_board(standings: list[dict[str, Any]], playoff_teams: int, odds: dict[int, list[float]] | None,
+                picks: list[dict[str, Any]], team_of: dict[int, str], names: dict[int, str], pics: dict[int, str | None],
+                year: int, my_roster_id: int | None, rounds: int = 3) -> dict[str, Any]:
+    """The next rookie draft's board for Tuesday/Wednesday playoff Home (Tommy, 2026-11-22): straight reverse of the
+    final finish, the same order every round. Teams that missed the playoffs are locked in reverse standings order;
+    the playoff teams' picks move with the bracket until their finish is decided, shown as the most likely owner with
+    odds and the other possible teams. Traded picks show their current owner "via" the original team."""
+    order = [int(r["roster_id"]) for r in standings]
+    n = len(order)
+    roster_of = {tid: rid for rid, tid in team_of.items()}
+    owner: dict[tuple[int, int], int] = {}  # (round, original roster) -> current roster
+    for p in picks:
+        if int(p.get("draft_year") or 0) != year:
+            continue
+        if _text(p.get("asset_status")) not in {"", "tradable", "active", "available", "owned"}:
+            continue
+        orig = roster_of.get(_text(p.get("original_league_team_id")))
+        cur = roster_of.get(_text(p.get("current_owner_league_team_id")))
+        if orig is not None and cur is not None:
+            owner[(int(p.get("round_number") or 0), orig)] = cur
+
+    def who(rid: int, rnd: int, pct: float | None = None) -> dict[str, Any]:
+        cur = owner.get((rnd, rid), rid)
+        out = {"roster_id": cur, "name": names.get(cur, f"Roster {cur}"), "avatar": pics.get(cur), "is_me": cur == my_roster_id,
+               "via": names.get(rid) if cur != rid else None}
+        if pct is not None:
+            out["pct"] = round(pct * 100)
+        return out
+
+    out_rounds = []
+    for rnd in range(1, rounds + 1):
+        rows = []
+        for slot in range(1, n + 1):
+            place = n + 1 - slot  # 1.01 goes to last place
+            label = f"{rnd}.{slot:02d}"
+            if place > playoff_teams or not odds:
+                rows.append({"pick": label, "locked": True, "owner": who(order[place - 1], rnd)})
+                continue
+            ranked = sorted(((rid, o[place - 1]) for rid, o in odds.items() if o[place - 1] > 0.0005), key=lambda x: -x[1])
+            if len(ranked) == 1 or (ranked and ranked[0][1] > 0.9995):
+                rows.append({"pick": label, "locked": True, "owner": who(ranked[0][0], rnd)})
+            elif ranked:
+                rows.append({"pick": label, "locked": False, "owner": who(ranked[0][0], rnd, ranked[0][1]),
+                             "others": [who(rid, rnd, pct) for rid, pct in ranked[1:]]})
+        out_rounds.append({"round": rnd, "picks": rows})
+    return {"year": year, "locked": sum(r["locked"] for r in out_rounds[0]["picks"]) if out_rounds else 0, "rounds": out_rounds}
+
+
+CHAMPION_DAYS = 10  # the champion card stays on Home this long after the title game (Tommy, 2026-11-22)
+
+
 def rookie_decisions(decisions: list[dict[str, Any]], roster: Iterable[dict[str, Any]], ppg: dict[str, float]) -> list[dict[str, Any]]:
     """My rollover decisions with the player's name, position, salary and PPG."""
     by_id = {_text(r.get("sleeper_player_id")): r for r in roster}

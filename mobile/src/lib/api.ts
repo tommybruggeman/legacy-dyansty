@@ -148,13 +148,18 @@ export function useApi<T>(path: string, refreshEvery = 0) {
   const [data, setData] = useState<T | null>(() => (memory.get(path) as T | undefined) ?? null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(!memory.has(path));
+  const shown = useRef<T | null>(data); // what is on screen now, to skip redraws that change nothing
+  shown.current = data;
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
     try {
       const value = await apiGet<T>(path);
+      // A refresh that brings back the same thing changes nothing on screen, so skip the redraw (live pages
+      // poll every few seconds, and a whole bracket or roster redrawing mid-scroll or mid-tab-switch stutters).
+      const same = shown.current != null && JSON.stringify(shown.current) === JSON.stringify(value);
       remember(path, value);
-      setData(value);
+      if (!same) setData(value);
       setError(null);
     } catch (e: any) {
       if (!quiet) setError(e?.message ?? 'Something went wrong.');
@@ -192,7 +197,8 @@ export function useApi<T>(path: string, refreshEvery = 0) {
   useFocusEffect(
     useCallback(() => {
       if (!refreshEvery) return undefined;
-      if (seen.current === path) load(true);
+      // Wait until the tab has finished appearing before catching up, so the refresh can't land mid-switch.
+      const catchUp = seen.current === path ? setTimeout(() => load(true), 400) : null;
       seen.current = path;
       const timer = setInterval(() => {
         if (AppState.currentState === 'active') load(true);
@@ -201,6 +207,7 @@ export function useApi<T>(path: string, refreshEvery = 0) {
         if (state === 'active') load(true);
       });
       return () => {
+        if (catchUp) clearTimeout(catchUp);
         clearInterval(timer);
         wake.remove();
       };
@@ -257,11 +264,13 @@ export type Matchups = {
 export type PlayoffTeam = {
   roster_id: number; name: string; seed: number | null; record: string | null; avatar?: string | null;
   is_me: boolean; score: number; legs: (number | null)[];
+  proj?: number | null; // projected game total (kickoff projection once final)
 };
 export type PlayoffSlot = PlayoffTeam | { placeholder: string | null };
 export type PlayoffGame = {
   bracket: 'winners' | 'losers'; round: number; m: number; label: string; place: number | null; weeks: number[];
   state: 'pre' | 'live' | 'final'; teams: [PlayoffSlot, PlayoffSlot]; winner: number | null; matchup_id: number | null; mine: boolean;
+  stakes?: { win: string; lose: string } | null; // consolation games: where the winner and loser go next
 };
 export type PlayoffWeek = {
   week: number; round: number; rounds: number; leg: number; legs: number; round_name: string; projected: boolean;
@@ -725,6 +734,12 @@ export type HomeGame = { matchup_id?: number; me?: HomeSide; them?: HomeSide | n
 export type BracketSide = { roster_id: number; name: string; score: number | null; avatar?: string | null; seed?: number | null } | null;
 export type PlayoffSide = { roster_id: number; name: string; score: number; avatar?: string | null; seed?: number | null; carry: number };
 // My game this playoff round from our own bracket: round totals, and points banked in earlier weeks of the round (carry).
+export type DraftPickOwner = { roster_id: number; name: string; avatar?: string | null; is_me: boolean; via: string | null; pct?: number };
+export type DraftBoardData = {
+  year: number; locked: number;
+  rounds: { round: number; picks: { pick: string; locked: boolean; owner: DraftPickOwner; others?: DraftPickOwner[] }[] }[];
+};
+export type ByeSide = { roster_id: number; name: string; avatar?: string | null; score: number; proj?: number | null };
 export type HomePlayoffGame = {
   label: string; bracket: 'winners' | 'losers'; leg: number; legs: number; matchup_id: number | null;
   state: 'pre' | 'live' | 'final'; me: PlayoffSide; them: PlayoffSide | null;
@@ -761,7 +776,11 @@ export type HomeData = {
   playoff_teams: number;
   front_office: { line: string; prompts: string[] };
   game?: HomeGame & { week: number; is_final: boolean };
-  recap?: { week: number; game: HomeGame | null; summary: { high: HomeSide; cut: HomeSide } | null; top_scorers: LivePlayer[]; standing_points: number };
+  recap?: {
+    week: number; game: HomeGame | null; summary: { high: HomeSide; cut: HomeSide } | null; top_scorers: LivePlayer[]; standing_points: number;
+    // Tuesday in the playoffs, when last week was a playoff week: my game from our bracket (round totals).
+    playoff_game?: HomePlayoffGame | null;
+  };
   weekday?: number;
   standings?: TableRow[];
   players?: { me: LivePlayer[]; them: LivePlayer[] };
@@ -776,6 +795,17 @@ export type HomeData = {
     games: { a: BracketSide; b: BracketSide; winner: number | null; state?: string; placeholders?: (string | null)[] }[];
   }[];
   playoff_game?: HomePlayoffGame | null;
+  // A consolation bye week: both bye teams (their scores still count) and who I play next.
+  playoff_bye?: {
+    me: ByeSide; them: ByeSide | null; next_week: number | null; next_vs: string | null;
+    feeder: { kind: 'w' | 'l'; names: string[] } | null;
+  } | null;
+  // The champion once the title game is final (stays on Home for 10 days).
+  champion?: {
+    roster_id: number; name: string; team_name?: string; avatar?: string | null; is_me: boolean; score: number;
+    opponent: { roster_id: number; name: string; score: number } | null;
+  } | null;
+  draft_board?: DraftBoardData | null;
   decisions?: { window_open: boolean; deadline: string; players: RookieDeal[] };
   picks?: { year: number | null; picks: Pick[] };
   who_has_money?: { name: string; space: number; is_me: boolean; team_id: string | null; open_spots: number | null }[];
@@ -850,3 +880,14 @@ export type ScoringRow = { group: string; rule: string; key: string; points: num
 export type CommishRules = { fields: CommishField[]; scoring: ScoringRow[] };
 export type DropPreview = { player_id: string; team_name: string; salary: number; years_left: number; dead_cap: number; dead_cap_pct: number };
 export type ContractFix = { contract_id: string; team_id: string; end_season: number; seasons: { season: number; salary: number }[] };
+
+// Prospect Power Rankings (/prospects/rankings): the weekly GM article on the next rookie class.
+export type Prospect = {
+  rank: number; athlete_id: string; name: string; pos: 'QB' | 'RB' | 'WR' | 'TE'; school: string; size: string; line: string;
+  role: string; tags: string[]; mock: string; boards: string; text: string; photo: string; move: 'up' | 'down' | 'new' | 'same'; was: number | null;
+};
+export type ProspectEdition = {
+  date: string; season: number; number: number; headline: string; dek: string; lede: string; players: Prospect[];
+  sources: { title: string; url: string }[];
+};
+export type ProspectPage = { edition: ProspectEdition | null; starred: string[] };

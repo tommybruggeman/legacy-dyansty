@@ -144,6 +144,8 @@ def player_facts(rows: list[dict[str, Any]], week: int, *, rank: int | None, gam
         facts["this_week"] = {"did_not_play": True, "team_game": game_result(games, week, team)}
     if injury and str(injury.get("status") or "").lower() not in ("", "active", "healthy"):
         facts["injury_report"] = {k: injury.get(k) for k in ("status", "injury_type", "detail", "short_comment", "return_date") if injury.get(k)}
+    if this is None and facts.get("injury_report"):
+        return None  # sat out hurt: the player page's injury report already covers it, so no recap (and no AI call)
     return facts
 
 

@@ -759,6 +759,14 @@ def load_writeups(client: Any, player_id: str, season: int) -> list[dict[str, An
             for r in rows if r.get("text")]
 
 
+def skip_missed_recaps(writeups: list[dict[str, Any]], nfl_rows: list[dict[str, Any]], h: dict[str, Any]) -> list[dict[str, Any]]:
+    """While he's hurt the injury report card is on the page, so recaps of weeks he didn't play only repeat it."""
+    if h.get("healthy"):
+        return writeups
+    played = {int(r["week"]) for r in nfl_rows if r.get("week") is not None}
+    return [w for w in writeups if w["week"] in played]
+
+
 def load_history(client: Any, league_id: str, player_id: str) -> list[dict[str, Any]]:
     return _safe(lambda: client.rpc("read_player_contract_history_authenticated", {"p_league_id": league_id, "p_player_id": player_id}).execute().data or [], [])
 
@@ -888,7 +896,7 @@ def page_extras(
         "next_game": upcoming,
         "health": h,
         "history": lifetime_history(contract_history(got["history"] or [], years_left), got["league_events"] or []),
-        "writeups": got["writeups"] or [],
+        "writeups": skip_missed_recaps(got["writeups"] or [], nfl_rows, h),
         "role": _safe(lambda: player_cards.role_on_team(got["team_rows"] or [], player_id, pos, got["team_hurt"] or []), None),
         "rest_of_season": _safe(lambda: player_cards.rest_of_season(games, team, pos, got["dvp"] or {}, (upcoming or {}).get("week"), playoff_weeks), None),
         "past_seasons": _safe(lambda: player_cards.past_seasons(career, pos, ranks), None),
