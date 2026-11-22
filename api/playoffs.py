@@ -124,12 +124,13 @@ def build(
     loser_seeds = order[cfg["teams"]:]
     win_bracket = own_league.build_bracket(playoff_seeds, points, done, weeks, auto_loss=forfeits) if len(playoff_seeds) == cfg["teams"] else []
     loser_bracket = own_league.build_bracket(
-        loser_seeds, points, loser_done, lweeks, own_league.loser_layout(len(loser_seeds)), auto_loss=forfeits) if cfg["loser_bracket"] else []
+        loser_seeds, points, loser_done, lweeks, own_league.loser_layout(len(loser_seeds)), auto_loss=forfeits,
+        spans=own_league.loser_spans(len(loser_seeds))) if cfg["loser_bracket"] else []
 
-    def team(rid: int | None, r: int, when: Mapping[int, list[int]] = weeks) -> dict[str, Any] | None:
+    def team(rid: int | None, r: int, when: Mapping[int, list[int]] = weeks, game_weeks: list[int] | None = None) -> dict[str, Any] | None:
         if not rid:
             return None
-        legs = [points.get((w, rid)) if w <= current_week else None for w in when[r]]
+        legs = [points.get((w, rid)) if w <= current_week else None for w in (game_weeks or when[r])]
         return {
             "roster_id": rid, "name": str(names.get(rid) or f"Roster {rid}"), "seed": seed.get(rid),
             "record": record.get(rid), "avatar": (avatars or {}).get(rid), "is_me": rid == my_roster_id,
@@ -152,21 +153,22 @@ def build(
         when, is_done = (weeks, done) if kind == "winners" else (lweeks, loser_done)
         if r not in when:
             r = max(when)
-        t1, t2 = team(game.get("t1"), r, when), team(game.get("t2"), r, when)
-        final = bool(is_done(r) and t1 and t2)
-        started = min(when[r]) <= current_week and any(
+        gw = list(game.get("weeks") or when[r])  # a game can span rounds (the two-week 9th place game)
+        t1, t2 = team(game.get("t1"), r, when, gw), team(game.get("t2"), r, when, gw)
+        final = bool(is_done(int(game.get("last_r") or r)) and t1 and t2)
+        started = min(gw) <= current_week and any(
             leg for t in (t1, t2) if t for leg in t["legs"] if leg)
         winner = game.get("w") if final else None
         if final and not winner and t1 and t2:
             winner = t1["roster_id"] if t1["score"] >= t2["score"] else t2["roster_id"]
         mid = None
-        if t1 and t2 and week in when[r]:
+        if t1 and t2 and week in gw:
             a, b = row_mid.get((week, t1["roster_id"])), row_mid.get((week, t2["roster_id"]))
             mid = a if a is not None and a == b else None
         return {
             "bracket": kind, "round": r, "m": int(game.get("m") or 0),
             "label": round_name(r, cfg["rounds"], game.get("p")) if kind == "winners" else loser_name(r, game.get("p"), cfg["teams"]),
-            "place": game.get("p"), "weeks": when[r], "state": "final" if final else "live" if started else "pre",
+            "place": game.get("p"), "weeks": gw, "state": "final" if final else "live" if started else "pre",
             "teams": [t1 or {"placeholder": placeholder(game, "t1", bracket)}, t2 or {"placeholder": placeholder(game, "t2", bracket)}],
             "winner": winner, "matchup_id": mid,
             "mine": bool(my_roster_id and my_roster_id in (game.get("t1"), game.get("t2"))),
@@ -177,7 +179,8 @@ def build(
     this_round = [g for g in tree if g["round"] == rnd]
     # The title game first, then your game, then the rest in bracket order.
     this_round.sort(key=lambda g: (g["place"] != 1, not g["mine"], g["m"]))
-    losers_now = [g for g in loser_games if week in g["weeks"]]
+    # Consolation games before placement games, then 5th, 7th, 9th place (a game spanning two rounds sorts by place).
+    losers_now = sorted((g for g in loser_games if week in g["weeks"]), key=lambda g: (g["place"] is not None, g["place"] or 0, g["m"]))
     playing = {t.get("roster_id") for g in losers_now for t in g["teams"]}
     lrnd = next((r for r, ws in lweeks.items() if week in ws), None)
     byes = [team(rid, lrnd, lweeks) for rid in loser_seeds if rid not in playing and losers_now and lrnd]

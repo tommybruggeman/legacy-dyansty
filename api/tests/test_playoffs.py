@@ -46,11 +46,15 @@ def test_two_week_rounds_add_up_and_name_the_winner():
     assert [t["roster_id"] for t in final["teams"]] == [4, 2] and final["label"] == "Championship"
     assert v["games"][0] is final  # the title game always comes first
     assert final["state"] == "live"
-    # Loser bracket, one week per round: week 15 7v10 and 8v9, week 16 5 v 8, 6 v 7 and 10 v 9, week 17 placement games.
+    # Loser bracket: week 15 7v10 and 8v9, week 16 5 v 8 and 6 v 7 (and 10 v 9 starts the 9th place game), week 17 5th/7th.
     week16 = [tuple(t.get("roster_id") for t in g["teams"]) for g in view(16, 16, 15)["losers"]]
     assert week16 == [(5, 8), (6, 7), (10, 9)]
     week17 = [(g["label"], tuple(t.get("roster_id") for t in g["teams"])) for g in v["losers"]]
     assert week17 == [("5th place", (5, 6)), ("7th place", (8, 7)), ("9th place", (10, 9))]
+    # The week-15 losers play one two-week 9th place game (weeks 16-17), scored over both weeks.
+    ninth = next(g for g in v["losers"] if g["label"] == "9th place")
+    assert ninth["weeks"] == [16, 17] and all(len(t["legs"]) == 2 for t in ninth["teams"])
+    assert next(g for g in view(16, 16, 15)["losers"] if g["teams"][0].get("roster_id") == 10)["label"] == "9th place"
 
 
 def test_format_is_ours_from_settings():
