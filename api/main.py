@@ -2146,7 +2146,7 @@ def _home_raw(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, An
             out["players"] = players
             out["lineup_issues"] = home.lineup_issues(players["me"])
             out["race"] = home.race(current["games"], my_roster, pics)
-        if phase == "game_day":
+        if phase in ("game_day", "playoffs"):
             try:  # the projected 5th-best final score this week (1 standings point for a top-5 week)
                 now_mt = datetime.now(front_office.LEAGUE_TZ)
                 live_all = _league_live(client, ctx, week, home.kickoffs(_nfl_week(client, ctx["season"], week)), now_mt)
@@ -2164,15 +2164,18 @@ def _home_raw(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, An
             them = (mine_now or {}).get("them")
             if them:
                 out["series"] = teams.head_to_head(sid, weeks, my_roster, them["roster_id"])
-    if phase == "recap" and week > 1:
-        last = league.matchups(sid, names, week - 1, my_roster)
+    def recap(wk: int) -> dict[str, Any]:
+        last = league.matchups(sid, names, wk, my_roster)
         game = home.my_game(last["games"], my_roster)
-        recap_players = lineups(week - 1, game, True)["me"]
-        out["recap"] = {
-            "week": week - 1, "game": game_view(game), "summary": last["summary"],
+        recap_players = lineups(wk, game, True)["me"]
+        return {
+            "week": wk, "game": game_view(game), "summary": last["summary"],
             "top_scorers": sorted((p for p in recap_players if p["player_id"]), key=lambda p: -p["points"])[:3],
             "standing_points": home.standing_points_earned(game),
         }
+
+    if phase == "recap" and week > 1:
+        out["recap"] = recap(week - 1)
         them = (mine_now or {}).get("them")
         if them:
             out["series"] = teams.head_to_head(sid, weeks, my_roster, them["roster_id"])
@@ -2186,6 +2189,16 @@ def _home_raw(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, An
             view = None
         out["bracket"] = home.bracket_from_view(view)
         out["playoff_game"] = home.playoff_game(view)
+        # Tuesday in the playoffs is last week's final, the same as the regular season (Tommy, 2026-11-22):
+        # the week before the playoffs is a normal recap; a playoff week also carries last week's playoff game.
+        if today.weekday() == 1 and week > 1:
+            try:
+                out["recap"] = recap(week - 1)
+                if week - 1 >= playoff_start and rules:
+                    prev = league.playoff_view(sid, names, week - 1, my_roster, rules, pics)
+                    out["recap"]["playoff_game"] = home.playoff_game(prev)
+            except Exception as exc:
+                print(f"APP_HOME_PLAYOFF_RECAP_ERROR {type(exc).__name__}", flush=True)
     if phase == "decisions":
         ppg = teams.player_ppg(sid, weeks)
         try:

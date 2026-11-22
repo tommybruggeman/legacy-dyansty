@@ -761,7 +761,11 @@ export type HomeData = {
   playoff_teams: number;
   front_office: { line: string; prompts: string[] };
   game?: HomeGame & { week: number; is_final: boolean };
-  recap?: { week: number; game: HomeGame | null; summary: { high: HomeSide; cut: HomeSide } | null; top_scorers: LivePlayer[]; standing_points: number };
+  recap?: {
+    week: number; game: HomeGame | null; summary: { high: HomeSide; cut: HomeSide } | null; top_scorers: LivePlayer[]; standing_points: number;
+    // Tuesday in the playoffs, when last week was a playoff week: my game from our bracket (round totals).
+    playoff_game?: HomePlayoffGame | null;
+  };
   weekday?: number;
   standings?: TableRow[];
   players?: { me: LivePlayer[]; them: LivePlayer[] };

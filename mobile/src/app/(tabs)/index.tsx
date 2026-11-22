@@ -125,10 +125,10 @@ function SplitOdds({ odds }: { odds: [number, number] }) {
 }
 
 // final: the matchup is over, so a gold WINNER tag sits under the winning score (the losing score is already dimmed).
-function Hero({ title, pill, me, them, week, matchupId, meLabel, themLabel, badges, showScores = true, proj, odds, final = false, vsSub }: {
+function Hero({ title, pill, me, them, week, matchupId, meLabel, themLabel, badges, showScores = true, proj, odds, final = false, vsSub, note }: {
   title: string; pill?: ReactNode; me: HomeSide; them?: HomeSide | null; week: number; matchupId?: number;
   meLabel?: string; themLabel?: string; badges: Badge[]; showScores?: boolean; proj?: [number, number] | null;
-  odds?: [number, number] | null; final?: boolean; vsSub?: string | null;
+  odds?: [number, number] | null; final?: boolean; vsSub?: string | null; note?: string | null;
 }) {
   const total = me.score + (them?.score ?? 0);
   const ahead = me.score >= (them?.score ?? 0);
@@ -158,6 +158,7 @@ function Hero({ title, pill, me, them, week, matchupId, meLabel, themLabel, badg
         </View>
         <View style={styles.bar}><Bar fraction={total ? me.score / total : 0.5} /></View>
         {badges.length ? <Badges items={badges} /> : null}
+        {note ? <Text style={styles.heroNote}>{note}</Text> : null}
       </Card>
     </Pressable>
   );
@@ -370,27 +371,35 @@ function LivePill({ data, label = 'LIVE', waiting }: { data: HomeData; label?: s
 
 function Recap({ data }: { data: HomeData }) {
   const r = data.recap;
-  const game = r?.game;
   const next = data.game?.them;
-  const won = game?.me && game.me.score > (game.them?.score ?? 0);
   return (
     <>
-      {game?.me ? (
-        <Hero
-          title={`WEEK ${r!.week} FINAL${game.them ? ` · VS ${firstName(game.them.name ?? '').toUpperCase()}` : ''}`}
-          pill={<Pill label={won ? 'WIN' : game.me.score === game.them?.score ? 'TIE' : 'LOSS'} tone={won ? 'live' : 'out'} />}
-          me={game.me}
-          them={game.them}
-          week={r!.week}
-          matchupId={game.matchup_id}
-          badges={[[ordinal(game.me.rank), 'HIGH SCORE'], [game.me.top5 ? '✓' : '✗', 'TOP 5'], [`+${r!.standing_points}`, 'STANDING PTS']]}
-        />
-      ) : null}
+      <RecapHero data={data} />
       <PlayerHeads title="YOUR TOP SCORERS" right={`Week ${r?.week ?? data.week - 1}`} players={r?.top_scorers ?? []} />
       <AskBar placeholder={`Ask your GM about week ${data.week}…`} />
       {data.standings?.length ? <Standings rows={data.standings} playoffTeams={data.playoff_teams} /> : null}
       {next ? <UpNext them={next} week={data.week} series={data.series} /> : null}
     </>
+  );
+}
+
+// Last week's final, on Tuesdays. After a playoff week it's that playoff game instead (see PlayoffRecapHero).
+function RecapHero({ data }: { data: HomeData }) {
+  const r = data.recap;
+  const game = r?.game;
+  if (!r || !game?.me) return null;
+  if (r.playoff_game) return <PlayoffRecapHero data={data} pg={r.playoff_game} week={r.week} weekScore={game.me.score} rank={game.me.rank} />;
+  const won = game.me.score > (game.them?.score ?? 0);
+  return (
+    <Hero
+      title={`WEEK ${r.week} FINAL${game.them ? ` · VS ${firstName(game.them.name ?? '').toUpperCase()}` : ''}`}
+      pill={<Pill label={won ? 'WIN' : game.me.score === game.them?.score ? 'TIE' : 'LOSS'} tone={won ? 'live' : 'out'} />}
+      me={game.me}
+      them={game.them}
+      week={r.week}
+      matchupId={game.matchup_id}
+      badges={[[ordinal(game.me.rank), 'HIGH SCORE'], [game.me.top5 ? '✓' : '✗', 'TOP 5'], [`+${r.standing_points}`, 'STANDING PTS']]}
+    />
   );
 }
 
@@ -515,11 +524,14 @@ function LineupCheck({ issues }: { issues: LivePlayer[] }) {
 function Playoffs({ data }: { data: HomeData }) {
   const mine = data.players?.me ?? [];
   const pg = data.playoff_game;
+  const tuesday = data.weekday === 1 && !!data.recap?.game?.me;
   return (
     <>
-      {pg ? <PlayoffHero data={data} pg={pg} /> : null}
+      {tuesday ? <RecapHero data={data} /> : pg ? <PlayoffHero data={data} pg={pg} /> : null}
       {data.bracket?.length ? <BracketCard rounds={data.bracket} playoffTeams={data.playoff_teams} /> : null}
-      <PlayerHeads title="YOUR PLAYERS RIGHT NOW" players={mine.filter((p) => p.player_id).sort((a, b) => order(a) - order(b) || b.points - a.points).slice(0, 3)} sub={statusLine} />
+      {tuesday
+        ? <PlayerHeads title="YOUR TOP SCORERS" right={`Week ${data.recap!.week}`} players={data.recap!.top_scorers ?? []} />
+        : <PlayerHeads title="YOUR PLAYERS RIGHT NOW" players={mine.filter((p) => p.player_id).sort((a, b) => order(a) - order(b) || b.points - a.points).slice(0, 3)} sub={statusLine} />}
       {/* Shotgun watch stays live all through the playoffs: every team still scores and last place still shotguns. */}
       {data.bottom ? <GameDayBottom bottom={data.bottom} week={data.week} /> : null}
       <AskBar placeholder="Who should I start this week?" />
@@ -528,25 +540,35 @@ function Playoffs({ data }: { data: HomeData }) {
   );
 }
 
-const seedLabel = (base: string, s?: { seed?: number | null } | null) => (s?.seed ? `${base} · ${s.seed}` : base);
 const asSide = (s: PlayoffSide, score?: number): HomeSide => ({ roster_id: s.roster_id, name: s.name, score: score ?? s.score, avatar: s.avatar });
+const signed = (n: number) => `${n >= 0 ? '+' : '−'}${Math.abs(n).toFixed(1)}`;
+// What the next game is called, short enough for a badge.
+const nextLabel = (label?: string | null) =>
+  !label ? '—' : label === 'Championship' ? 'Title game' : label.startsWith('Consolation') ? 'Consolation' : label;
 
-// The playoff matchup: the weekend card with seeds and no bottom box (only the score matters now).
+// My playoff game, drawn exactly like the regular-season card for the same day (Tommy, 2026-11-22):
+// before kickoff the projections under VS and YOU / PROJ TOP 5 / THEM; once games start each side's score and
+// projection, win odds under VS and the projected top-5 line; once over, FINAL and WINNER.
 // Scores are round totals; in week 2 of a two-week round the projections and win odds count week 1 too.
+// The box score (projections, win odds, round totals) when the game has a matchup; without one the card still draws.
+function WithBox({ path, every, children }: { path: string; every: number; children: (box: BoxScore | null) => ReactNode }) {
+  const { data } = useApi<BoxScore>(path, every);
+  return <>{children(data)}</>;
+}
+
 function PlayoffHero({ data, pg }: { data: HomeData; pg: HomePlayoffGame }) {
-  const title = `${pg.label.toUpperCase()}${pg.them ? ` · VS ${firstName(pg.them.name ?? '').toUpperCase()}` : ''}`;
-  const props = { data, pg, title };
-  return pg.matchup_id != null && pg.state !== 'pre' ? <PlayoffHeroLive {...props} mid={pg.matchup_id} /> : (
-    <Hero title={title} pill={<LivePill data={data} />} me={asSide(pg.me)} them={pg.them ? asSide(pg.them) : null} week={data.week}
-      meLabel={seedLabel('You', pg.me)} themLabel={pg.them ? seedLabel(firstName(pg.them.name ?? ''), pg.them) : undefined}
-      showScores={pg.state !== 'pre'} final={pg.state === 'final'} badges={[]} />
+  const carry = pg.leg > 1 && pg.them ? `?carry=${pg.me.roster_id}:${pg.me.carry},${pg.them.roster_id}:${pg.them.carry}` : '';
+  if (pg.matchup_id == null) return <PlayoffHeroCard data={data} pg={pg} box={null} carry={!!carry} />;
+  return (
+    <WithBox path={`/matchups/${data.week}/${pg.matchup_id}${carry}`} every={pg.state === 'final' ? 0 : LIVE_POLL_MS}>
+      {(box) => <PlayoffHeroCard data={data} pg={pg} box={box} carry={!!carry} />}
+    </WithBox>
   );
 }
 
-function PlayoffHeroLive({ data, pg, title, mid }: { data: HomeData; pg: HomePlayoffGame; title: string; mid: number }) {
-  const final = pg.state === 'final';
-  const carry = pg.leg > 1 && pg.them ? `?carry=${pg.me.roster_id}:${pg.me.carry},${pg.them.roster_id}:${pg.them.carry}` : '';
-  const { data: box } = useApi<BoxScore>(`/matchups/${data.week}/${mid}${carry}`, final ? 0 : LIVE_POLL_MS);
+function PlayoffHeroCard({ data, pg, box, carry }: { data: HomeData; pg: HomePlayoffGame; box: BoxScore | null; carry: boolean }) {
+  const final = pg.state === 'final', pre = pg.state === 'pre';
+  const mid = pg.matchup_id;
   const sides = box?.teams ?? [];
   const i = box && sides.length === 2 ? sides.findIndex((t) => t.roster_id === pg.me.roster_id) : -1;
   const pick = <T,>(pair?: [T, T] | null): [T, T] | null => (pair && i >= 0 ? [pair[i], pair[1 - i]] : null);
@@ -554,11 +576,70 @@ function PlayoffHeroLive({ data, pg, title, mid }: { data: HomeData; pg: HomePla
   const score = round ? pick(round.score) : null;
   const proj = final ? null : round ? pick(round.projected)
     : i >= 0 ? [sides[i].projected ?? sides[i].score, sides[1 - i].projected ?? sides[1 - i].score] as [number, number] : null;
-  const odds = final || !pg.them ? null : pick(round ? round.win_chance : box?.win_chance);
+  const odds = final || pre || !pg.them ? null : pick(round ? round.win_chance : box?.win_chance);
+  const line = data.top5_line;
+  const them = pg.them ? firstName(pg.them.name ?? '') : null;
+  const me = asSide(pg.me, score?.[0]);
+  const badges: Badge[] = pre
+    ? [[pts(me.score), 'YOU'], [line && !line.final ? line.line.toFixed(1) : '—', 'PROJ TOP 5'], [pg.them ? pts(asSide(pg.them, score?.[1]).score) : '—', them ? them.toUpperCase() : 'BYE']]
+    : !final && line && !line.final ? [[line.line.toFixed(1), 'PROJ. TOP-5 LINE']] : [];
+  const note = pg.legs > 1 ? (final ? 'Final · round total, both weeks' : `Week ${pg.leg} of ${pg.legs} · round total`) : null;
   return (
-    <Hero title={title} pill={<LivePill data={data} />} me={asSide(pg.me, score?.[0])} them={pg.them ? asSide(pg.them, score?.[1]) : null}
-      week={data.week} matchupId={mid} meLabel={seedLabel('You', pg.me)} themLabel={pg.them ? seedLabel(firstName(pg.them.name ?? ''), pg.them) : undefined}
-      proj={proj} odds={odds} final={final} badges={[]} />
+    <Hero
+      title={`WEEK ${data.week}${them ? ` · VS ${them.toUpperCase()}` : ''}`}
+      pill={<LivePill data={data} />}
+      me={me}
+      them={pg.them ? asSide(pg.them, score?.[1]) : null}
+      week={data.week}
+      matchupId={mid ?? undefined}
+      showScores={!pre}
+      vsSub={pre && proj ? `${proj[0].toFixed(1)} – ${proj[1].toFixed(1)}` : null}
+      proj={pre ? null : proj}
+      odds={odds}
+      final={final}
+      badges={badges}
+      note={note}
+    />
+  );
+}
+
+// Tuesday after a playoff week: that game's final (or the score so far after week 1 of a two-week round), with
+// HIGH SCORE / VS PROJ / UP NEXT, or HIGH SCORE / ROUND LEAD / VS PROJ halfway through a two-week round.
+// VS PROJ = last week's score against my starters' projections frozen at kickoff (from the box score).
+function PlayoffRecapHero(props: { data: HomeData; pg: HomePlayoffGame; week: number; weekScore: number; rank?: number }) {
+  const mid = props.pg.matchup_id;
+  if (mid == null) return <PlayoffRecapCard {...props} box={null} />;
+  return <WithBox path={`/matchups/${props.week}/${mid}`} every={0}>{(box) => <PlayoffRecapCard {...props} box={box} />}</WithBox>;
+}
+
+function PlayoffRecapCard({ data, pg, week, weekScore, rank, box }: {
+  data: HomeData; pg: HomePlayoffGame; week: number; weekScore: number; rank?: number; box: BoxScore | null;
+}) {
+  const midRound = pg.state !== 'final';
+  const mid = pg.matchup_id;
+  const mine = box?.teams.find((t) => t.roster_id === pg.me.roster_id);
+  const kick = mine ? mine.players.reduce((sum, p) => sum + (p.proj ?? 0), 0) : null;
+  const vsProj = kick != null && kick > 0 ? signed(weekScore - kick) : '—';
+  const them = pg.them ? firstName(pg.them.name ?? '') : null;
+  const lead = pg.me.score - (pg.them?.score ?? 0);
+  const won = pg.them ? lead > 0 : true;
+  const pill = midRound
+    ? <Pill label={lead >= 0 ? 'LEADING' : 'TRAILING'} tone={lead >= 0 ? 'live' : 'out'} />
+    : <Pill label={won ? 'WIN' : lead === 0 ? 'TIE' : 'LOSS'} tone={won ? 'live' : 'out'} />;
+  const badges: Badge[] = midRound
+    ? [[ordinal(rank), 'HIGH SCORE'], [signed(lead), lead >= 0 ? 'ROUND LEAD' : 'ROUND DEFICIT'], [vsProj, 'VS PROJ']]
+    : [[ordinal(rank), 'HIGH SCORE'], [vsProj, 'VS PROJ'], [nextLabel(data.playoff_game?.label), 'UP NEXT']];
+  return (
+    <Hero
+      title={`WEEK ${week}${midRound ? '' : ' FINAL'}${them ? ` · VS ${them.toUpperCase()}` : ''}`}
+      pill={pill}
+      me={asSide(pg.me)}
+      them={pg.them ? asSide(pg.them) : null}
+      week={week}
+      matchupId={mid ?? undefined}
+      badges={badges}
+      note={pg.legs > 1 ? (midRound ? `Week ${pg.leg} of ${pg.legs} · round total` : 'Final · round total, both weeks') : null}
+    />
   );
 }
 
@@ -803,6 +884,7 @@ const styles = StyleSheet.create({
   hidden: { opacity: 0 },
   bar: { marginTop: 12 },
   badges: { flexDirection: 'row', gap: 8, marginTop: 12 },
+  heroNote: { color: colors.muted, fontSize: 11, textAlign: 'center', marginTop: 8, opacity: 0.8 },
   badge: { flex: 1, backgroundColor: colors.row, borderRadius: 12, paddingVertical: 8, paddingHorizontal: 4, alignItems: 'center' },
   badgeValue: { color: colors.text, fontSize: 17, fontWeight: '800' },
   badgeProj: { color: colors.muted, opacity: 0.75, fontSize: 13, fontWeight: '600', lineHeight: 21 },
