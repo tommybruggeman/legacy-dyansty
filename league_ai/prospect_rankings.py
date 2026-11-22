@@ -239,6 +239,10 @@ def run(client: Any, ai: Any, *, dry_run: bool = False, today: date | None = Non
     prev = last_edition(client)
     keep = {str(p.get("athlete_id")) for p in ((prev or {}).get("data") or {}).get("players", [])}
     cands = candidates(rows, keep)
+    try:  # no table yet (migration not run): stop before spending anything
+        client.table("prospect_rankings").select("edition_date").limit(1).execute()
+    except Exception:
+        return {"skipped": "run supabase/migrations/20261227_prospect_rankings.sql first"}
     if dry_run or ai is None:
         return {"season": season, "candidates": len(cands), "previous": (prev or {}).get("edition_date")}
     raw, tokens, latency = write(ai, prompt(cands, prev, today, season))
