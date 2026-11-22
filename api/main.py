@@ -2215,6 +2215,13 @@ def _home_raw(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, An
             view = None
         out["bracket"] = home.bracket_from_view(view)
         out["playoff_game"] = home.playoff_game(view)
+        if view and not out["playoff_game"] and any(t.get("roster_id") == my_roster for t in view.get("byes") or []):
+            try:  # my consolation bye: both bye teams' scores still count, so they get projections too
+                playoffs.add_projections(view, _week_projections(client, user, view["week"]), week_final=bool(current["is_final"]))
+            except Exception as exc:
+                print(f"APP_HOME_BYE_PROJ_ERROR {type(exc).__name__}", flush=True)
+            out["playoff_bye"] = home.playoff_bye(view, my_roster)
+        out["champion"] = home.champion(view, my_roster)
         # Tuesday in the playoffs is last week's final, the same as the regular season (Tommy, 2026-11-22):
         # the week before the playoffs is a normal recap; a playoff week also carries last week's playoff game.
         if today.weekday() == 1 and week > 1:
@@ -2225,6 +2232,17 @@ def _home_raw(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, An
                     out["recap"]["playoff_game"] = home.playoff_game(prev)
             except Exception as exc:
                 print(f"APP_HOME_PLAYOFF_RECAP_ERROR {type(exc).__name__}", flush=True)
+    if phase in ("decisions", "draft_prep") and rules:
+        # The champion card stays on Home for CHAMPION_DAYS after the title game's last kickoff day.
+        try:
+            last = playoffs.last_week(rules)
+            starts = home.kickoffs(_nfl_week(client, ctx["season"], last))
+            ended = max(starts.values()).astimezone(home.HOME_TZ).date() if starts else None
+            if ended and (today - ended).days <= home.CHAMPION_DAYS:
+                pics = pics or _pictures(client, ctx["league_id"], sid)
+                out["champion"] = home.champion(league.playoff_view(sid, names, last, my_roster, rules, pics), my_roster)
+        except Exception as exc:
+            print(f"APP_HOME_CHAMPION_ERROR {type(exc).__name__}", flush=True)
     if phase == "decisions":
         ppg = teams.player_ppg(sid, weeks)
         try:

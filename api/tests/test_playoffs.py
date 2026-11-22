@@ -144,3 +144,22 @@ def test_projections_add_banked_weeks_and_byes():
     playoffs.add_projections(v16, proj)
     ninth = next(g for g in v16["losers"] if g["label"] == "9th place")
     assert all(t["proj"] == 100.0 for t in ninth["teams"])
+
+
+def test_bye_card_names_my_bye_partner_and_next_game():
+    from api import home
+    v = view(15, 15, 14, me=5)
+    playoffs.add_projections(v, {rid: {"projected": 110.0, "kickoff": 100.0} for rid in range(1, 11)})
+    bye = home.playoff_bye(v, 5)
+    assert bye["me"]["roster_id"] == 5 and bye["them"]["roster_id"] == 6 and bye["me"]["proj"] == 110.0
+    assert bye["next_week"] == 16 and bye["next_vs"] is None
+    assert bye["feeder"] == {"kind": "w", "names": ["Owner 8", "Owner 9"]}  # 5 plays the 8/9 winner
+    assert home.playoff_bye(v, 2) is None
+
+
+def test_champion_once_the_title_game_is_final():
+    from api import home
+    assert home.champion(view(17, 17, 16), 4) is None
+    done = view(18, 18, 18)
+    champ = home.champion(done, 4)
+    assert champ and champ["is_me"] == (champ["roster_id"] == 4) and champ["opponent"]["roster_id"] != champ["roster_id"]

@@ -171,6 +171,7 @@ def build(
             "place": game.get("p"), "weeks": gw, "state": "final" if final else "live" if started else "pre",
             "teams": [t1 or {"placeholder": placeholder(game, "t1", bracket)}, t2 or {"placeholder": placeholder(game, "t2", bracket)}],
             "winner": winner, "matchup_id": mid,
+            "feeds": [game.get("t1_from"), game.get("t2_from")],  # {"w"|"l": match} a slot is waiting on
             "mine": bool(my_roster_id and my_roster_id in (game.get("t1"), game.get("t2"))),
         }
 
@@ -226,7 +227,7 @@ def build(
         "legs": len(weeks[rnd]),
         "round_name": round_name(rnd, cfg["rounds"], None if rnd < cfg["rounds"] else 1),
         "projected": projected, "start": cfg["start"], "last_week": cfg["last_week"],
-        "tree": tree, "games": this_round, "losers": losers_now, "byes": [b for b in byes if b],
+        "tree": tree, "games": this_round, "losers": losers_now, "byes": [b for b in byes if b], "loser_tree": loser_games,
         "champion": team(champion, rnd) if champion else None,
     }
 
