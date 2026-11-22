@@ -6,6 +6,7 @@ import type { Pick, Player, TeamPage, TeamWeek, TeamWeekItem, WeekPlayer } from 
 import { colors } from '../../lib/theme';
 import { PlayerFace } from '../PlayerFace';
 import { LineupSheet, type Picking, SlotChip } from './LineupSheet';
+import { PointsChip } from './PointsChips';
 import { Card, Note, Pill, Row, SwipeTabs, firstName, money, ordinal, record, ui } from '../ui';
 
 const TABS = ['Roster', 'Contracts', 'Picks'] as const;
@@ -82,9 +83,14 @@ function MyHeader({ team, badge, badgeOnCap }: { team: TeamPage; badge?: ReactNo
           <Text style={styles.teamName} numberOfLines={1}>{team.team_name}</Text>
           {badgeOnCap ? null : badge}
         </View>
-        <Text style={styles.hdrSub}>{record(r.wins, r.losses, r.ties)} · {r.standing_points} SP</Text>
+        {/* PF rank at the end of the record line, PA rank at the end of the cap line; tap for the season points pop-up. */}
+        <View style={styles.capLine}>
+          <Text style={styles.hdrSub}>{record(r.wins, r.losses, r.ties)} · {r.standing_points} SP</Text>
+          {team.points ? <PointsChip kind="pf" points={team.points} /> : null}
+        </View>
         <View style={styles.capLine}>
           <Text style={[styles.hdrSub, space < 0 ? styles.over : styles.capLeft]}>{space < 0 ? `${dollars(-space)} over the cap` : `${dollars(space)} cap left`}</Text>
+          {team.points ? <PointsChip kind="pa" points={team.points} /> : null}
           {badgeOnCap ? badge : null}
         </View>
       </View>
@@ -316,11 +322,11 @@ function Points({ p, w }: { p: Player; w?: WeekPlayer }) {
   );
 }
 
-// "$48 · thru 2027" (or "No contract").
+// "$48 · thru 2027" (or "No contract"), the salary in white (Tommy, 2026-11-20). Nest it inside a styled Text.
 function contractText(p: Player, season: number) {
   if (p.gone) return 'Not on your team now';
   if (p.no_contract) return 'No contract';
-  return `${dollars(p.contract_salary)} · thru ${season + Math.max(p.years_left, 1) - 1}`;
+  return <><Text style={styles.salaryWhite}>{dollars(p.contract_salary)}</Text> · thru {season + Math.max(p.years_left, 1) - 1}</>;
 }
 
 // "$48" for whole dollars, "$12.5" otherwise.
@@ -420,6 +426,16 @@ const POS_ORDER = ['QB', 'RB', 'WR', 'TE'];
 const posRank = (pos: string) => (POS_ORDER.includes(pos) ? POS_ORDER.indexOf(pos) : POS_ORDER.length);
 
 // Every contract by position (QB, RB, WR, TE, then anyone else), biggest salary first within each, with its value (PPG per cap dollar).
+// Under the salary on the Contracts tab (Tommy, 2026-11-20): a deal ending this season says EXPIRING, a rookie deal
+// in its last year says TEAM OPTION (any of our rookie drafts with the option unused: rookie_option from the server), and anything longer keeps "thru YEAR".
+// The option shows its price (R1 $25, R2 $15, R3 $7); taxi seasons already push `through` out a year each.
+function ContractEnd({ through, season, rookie, price }: { through: number; season: number; rookie?: boolean; price?: number }) {
+  if (through > season) return <Text style={styles.under}>thru {through}</Text>;
+  return rookie
+    ? <Text style={[styles.under, styles.option]}>TEAM OPTION{price ? ` ${dollars(price)}` : ''}</Text>
+    : <Text style={[styles.under, styles.expiring]}>EXPIRING</Text>;
+}
+
 function ContractsTab({ team }: { team: TeamPage }) {
   const { dead_cap } = team.contracts;
   const all = [...(team.contracts.all ?? [])].sort((a, b) => posRank(a.pos) - posRank(b.pos) || b.contract_salary - a.contract_salary);
@@ -451,7 +467,7 @@ function ContractsTab({ team }: { team: TeamPage }) {
               </View>
               <View style={ui.right}>
                 <Text style={styles.cSalary}>{dollars(p.contract_salary)}</Text>
-                <Text style={styles.under}>thru {p.through}</Text>
+                <ContractEnd through={p.through} season={team.season} rookie={p.rookie_option ?? p.is_rookie} price={p.option_salary} />
               </View>
             </Row>
           );
@@ -683,7 +699,7 @@ const styles = StyleSheet.create({
   dots: { flexDirection: 'row', gap: 3, marginLeft: 2 },
   ydot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.gold },
   ydotOff: { backgroundColor: '#2F4136' },
-  cSalary: { color: colors.gold, fontSize: 18, fontWeight: '900' },
+  cSalary: { color: colors.text, fontSize: 18, fontWeight: '900' },
   yr: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 6 },
   yrLabel: { color: colors.text, fontSize: 13, fontWeight: '800', width: 40 },
   track: { flex: 1, height: 6, borderRadius: 3, backgroundColor: '#22352B', overflow: 'hidden' },
@@ -740,7 +756,10 @@ const styles = StyleSheet.create({
   big: { color: colors.text, fontSize: 21, fontWeight: '800' },
   bigLive: { color: colors.live },
   bigPre: { color: '#CFC6B4' },
+  salaryWhite: { color: colors.text },
   under: { color: colors.muted, fontSize: 10, fontWeight: '700', marginTop: 2 },
+  expiring: { color: '#E8A25C', letterSpacing: 0.4 },
+  option: { color: '#7FC3E8', letterSpacing: 0.4 },
   // The small "proj" under a player's points before kickoff (Tommy, 2026-11-17).
   projTag: { color: colors.muted, fontSize: 9, fontWeight: '600', marginTop: 1 },
   foot: { flexDirection: 'row', justifyContent: 'space-between', gap: 8, backgroundColor: '#0B1D15', borderRadius: 8, paddingVertical: 4, paddingHorizontal: 8, marginTop: 8 },

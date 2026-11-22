@@ -713,6 +713,15 @@ def _seasons_state(client: Client, league_id: str, season: int) -> list[dict[str
     return cache.cached(("state", league_id, season), 60, lambda: teams.seasons_state(client, league_id, season))
 
 
+def _rookie_deals(client: Client, league_id: str) -> dict[str, dict[str, Any]] | None:
+    """Rookie deals from every one of our rookie drafts (end year with taxi seasons, option price); None if unreadable."""
+    try:
+        return cache.cached(("rookie_deals", league_id), 600, lambda: teams.rookie_deals(client, league_id))
+    except Exception as exc:
+        print(f"APP_ROOKIE_DRAFTS_ERROR {type(exc).__name__}", flush=True)
+        return None
+
+
 def _league_teams(client: Client, ctx: dict[str, Any]) -> tuple[list[dict], list[dict], list[dict], float]:
     lid = ctx["league_id"]
     # These reads don't depend on each other, so they run side by side.
@@ -793,6 +802,7 @@ def _team_page(client: Client, ctx: dict[str, Any], team_id: str, week: int | No
         weeks=league.current_week(),
         power=_saved_power_rank(client, ctx, team_id),
         app_lineup=_app_lineup(client, ctx, team_id, week) if _transactions_on(client, ctx["league_id"]) else None,
+        rookie_deals=_rookie_deals(client, ctx["league_id"]),
     )
     _add_pick_slots(detail["picks"], rows, standings_rows, ctx["season"])
     try:
@@ -1231,7 +1241,8 @@ def player_page(player_id: str, owner: tuple[Client, Any] = Depends(owner_client
         except Exception:
             pass
     live = player.live_weeks(finished)
-    result = teams.player_detail(player_id, state, meta, [w for w in league_weeks if w["week"] not in live], ctx["team_id"])
+    deal = (_rookie_deals(client, ctx["league_id"]) or {}).get(player_id)
+    result = teams.player_detail(player_id, state, meta, [w for w in league_weeks if w["week"] not in live], ctx["team_id"], deal)
     if result is None:
         raise HTTPException(status_code=404, detail="Player not found.")
     c = result.get("contract")

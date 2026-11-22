@@ -87,8 +87,55 @@ class EspnNoteTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual((rows[0]["practice_date"], rows[0]["practice_status"], rows[0]["source"], rows[0]["week"]), ("2026-11-04", "Limited", "espn_news", 9))
 
+    def test_weekday_carries_to_the_next_clause_of_the_sentence(self):
+        note = ("Evans joined the team on Wednesday as it began prepping for Sunday, but the wideout was merely a spectator for "
+                "the first practice. He looks as though he could see some involvement in drills Thursday.")
+        self.assertEqual(pd_.practice_mentions(note, date(2026, 11, 5)), [(date(2026, 11, 4), "DNP")])
+
+    def test_a_guess_about_a_coming_practice_is_skipped(self):
+        self.assertEqual(pd_.practice_mentions("Robinson is expected to be limited at Thursday's practice.", date(2026, 11, 4)), [])
+        self.assertEqual(pd_.practice_mentions("Robinson could practice fully Friday.", date(2026, 11, 5)), [])
+
+    def test_game_status_from_the_note(self):
+        self.assertEqual(pd_.game_status_mention("He practiced fully Friday and is listed as questionable for Sunday."), "Questionable")
+        self.assertEqual(pd_.game_status_mention("Robinson has been ruled out for Sunday's game against the Saints."), "Out")
+        self.assertIsNone(pd_.game_status_mention("He could be ruled out if he doesn't practice Friday."))
+        self.assertIsNone(pd_.game_status_mention("He is questionable to return to Sunday's game."))
+
+    def test_friday_game_status_rides_on_fridays_line(self):
+        cw = Crosswalk.from_csv(CROSSWALK_CSV)
+        payload = {"injuries": [{"abbreviation": "ATL", "injuries": [{
+            "athlete": {"id": "4430807", "displayName": "Bijan Robinson", "position": {"abbreviation": "RB"}, "team": {"abbreviation": "ATL"}},
+            "date": "2026-11-06T21:40Z", "status": "Questionable", "details": {"type": "Ankle"},
+            "shortComment": "Robinson (ankle) was limited at Friday's practice and is listed as questionable for Sunday."}]}]}
+        rows = pd_.from_espn(payload, cw, SCHEDULE, 2026)
+        self.assertEqual([(r["day"], r["practice_status"], r["game_status"]) for r in rows], [("Fri", "Limited", "Questionable")])
+
+    def test_saturday_ruling_counts_for_fridays_report(self):
+        cw = Crosswalk.from_csv(CROSSWALK_CSV)
+        payload = {"injuries": [{"abbreviation": "ATL", "injuries": [{
+            "athlete": {"id": "4430807", "displayName": "Bijan Robinson", "position": {"abbreviation": "RB"}, "team": {"abbreviation": "ATL"}},
+            "date": "2026-11-07T17:00Z", "status": "Out", "details": {"type": "Ankle"},
+            "shortComment": "Robinson (ankle) has been ruled out for Sunday's game."}]}]}
+        rows = pd_.from_espn(payload, cw, SCHEDULE, 2026)
+        self.assertEqual([(r["practice_date"], r["practice_status"], r["game_status"]) for r in rows], [("2026-11-06", None, "Out")])
+
 
 class ReaderTests(unittest.TestCase):
+    def test_game_status_only_line_adds_no_practice_day(self):
+        rows = [
+            {"practice_date": "2026-11-04", "day": "Wed", "source": "nflverse", "practice_status": "DNP"},
+            {"practice_date": "2026-11-05", "day": "Thu", "source": "nflverse", "practice_status": "Limited"},
+            {"practice_date": "2026-11-06", "day": "Fri", "source": "espn_news", "practice_status": None, "game_status": "Questionable"},
+        ]
+        days = io.practice_week(rows)
+        self.assertEqual(io.practice_trend(days), "Wed DNP -> Thu Limited")
+        self.assertEqual(io.latest_game_status(days), "Questionable")
+        from api.player import health
+        h = health({"injury_status": "Questionable"}, None, [], [], 2026, None, [dict(r, season=2026, week=9) for r in rows])
+        self.assertEqual(h["this_week"]["days"], [{"day": "Wed", "practice": "DNP"}, {"day": "Thu", "practice": "Limited"}])
+        self.assertEqual(h["this_week"]["game_status"], "Questionable")
+
     def test_official_line_wins_and_days_are_ordered(self):
         rows = [
             {"practice_date": "2026-11-05", "day": "Thu", "source": "espn_news", "practice_status": "Limited"},
@@ -108,6 +155,29 @@ class ReaderTests(unittest.TestCase):
         self.assertEqual(h["this_week"]["practice"], "Limited practice")
         self.assertEqual(h["this_week"]["days"], [{"day": "Wed", "practice": "Limited"}])
         self.assertIsNone(h["this_week"]["game_status"])  # last week's Out doesn't carry over
+
+
+class FrequentCheckTests(unittest.TestCase):
+    def test_skips_only_when_neither_report_changed(self):
+        import os
+        import tempfile
+        from unittest import mock
+        from pipeline.nfl_data import run
+
+        state = os.path.join(tempfile.mkdtemp(), "state")
+        espn = {"injuries": [{"abbreviation": "ATL", "injuries": []}], "timestamp": "a"}
+        built = {"Last-Modified": "Fri, 20 Nov 2026 16:04:51 GMT"}
+        with mock.patch.object(run, "fetch_json", return_value=espn), mock.patch.object(run, "fetch_text_meta", return_value=("x", built)):
+            unchanged, fp = run.practice_sources_unchanged(state, 2026)
+            self.assertFalse(unchanged)  # first check always runs
+            with open(state, "w") as fh:
+                fh.write(fp)
+            self.assertTrue(run.practice_sources_unchanged(state, 2026)[0])
+            espn["timestamp"] = "b"  # only the feed's clock moved
+            self.assertTrue(run.practice_sources_unchanged(state, 2026)[0])
+        with mock.patch.object(run, "fetch_json", return_value=espn), \
+                mock.patch.object(run, "fetch_text_meta", return_value=("x", {"Last-Modified": "Fri, 20 Nov 2026 22:04:51 GMT"})):
+            self.assertFalse(run.practice_sources_unchanged(state, 2026)[0])  # official file rebuilt
 
 
 if __name__ == "__main__":

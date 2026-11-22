@@ -481,6 +481,58 @@ def faab(sleeper_id: str, lineup: dict[str, Any]) -> dict[str, Any] | None:
     return {"left": round(budget - used, 2), "budget": budget}
 
 
+def rookie_deals(client: Any, league_id: str) -> dict[str, dict[str, Any]]:
+    """Every player taken in any of the league's rookie drafts (2025 under the old league id, 2026 and on under this one),
+    with where his rookie deal really ends and his one-time team option (Tommy, 2026-11-20):
+      R1 2 seasons then a $25 option year, R2 2 seasons then $15, R3 1 season then $7;
+      each season on taxi adds a season to the rookie deal (Mendoza, taxi 2026: rookie deal runs through 2028).
+    read_rookie_deals_authenticated follows league_lineage back to earlier leagues and checks the player's current
+    contract is still that rookie deal (same salary, not re-signed). Older databases without it fall back to the board."""
+    try:
+        rows = client.rpc("read_rookie_deals_authenticated", {"p_league_id": league_id}).execute().data or []
+        return {_text(r.get("player_id")): {
+            "rookie_deal": bool(r.get("rookie_deal")),
+            "expected_end": int(r["expected_end"]) if r.get("expected_end") is not None else None,
+            "option_salary": _f(r.get("option_salary")),
+            "option_consumed": bool(r.get("option_consumed")),
+            "taxi_seasons": int(r.get("taxi_seasons") or 0),
+        } for r in rows if r.get("player_id")}
+    except Exception as exc:
+        print(f"APP_ROOKIE_DEALS_RPC {type(exc).__name__}", flush=True)
+    rows = (client.table("rookie_draft_board_assignments")
+            .select("player_id,option_consumed,one_time_option_salary,rookie_contract_provenance").execute().data or [])
+    return {_text(r.get("player_id")): {
+        "rookie_deal": True, "expected_end": None, "option_salary": _f(r.get("one_time_option_salary")),
+        "option_consumed": bool(r.get("option_consumed")), "taxi_seasons": 0,
+    } for r in rows if r.get("rookie_contract_provenance")}
+
+
+def apply_rookie_deal(p: dict[str, Any], deal: dict[str, Any] | None, season: int) -> None:
+    """Mark a roster/contract row that is still on its rookie deal: R tag, the deal's real end year
+    (taxi seasons added), and the team option price for when it ends."""
+    p["rookie_option"] = False
+    if not deal or not deal.get("rookie_deal") or p.get("no_contract"):
+        return
+    p["is_rookie"] = True
+    end = deal.get("expected_end")
+    if end is not None and end >= season:
+        left = end - season + 1
+        if left > int(p.get("years_left") or 0):
+            p["total_years"] = int(p.get("total_years") or 0) + left - int(p.get("years_left") or 0)
+            p["years_left"] = left
+    if not deal.get("option_consumed") and (deal.get("option_salary") or 0) > 0:
+        p["rookie_option"] = True
+        p["option_salary"] = deal["option_salary"]
+
+
+def points_view(standing: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Season points for the My Team PF / PA chips and their pop-up (ranks: 1 = the most in the league)."""
+    if not standing or "points_ranks" not in standing:
+        return None
+    keys = ("pf", "pa", "pf_per_game", "pa_per_game", "top5", "games", "vs_avg_wins", "vs_avg_losses", "best_week", "worst_week")
+    return {**{k: standing.get(k) for k in keys}, "ranks": standing["points_ranks"]}
+
+
 def team_detail(
     *,
     team: dict[str, Any],
@@ -496,6 +548,7 @@ def team_detail(
     weeks: int = 0,
     power: dict[str, Any] | None = None,
     app_lineup: Callable[[set[str], list[str]], tuple[list[tuple[str, str | None]], dict[str, Any]]] | None = None,
+    rookie_deals: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     lineup = _sleeper_roster(sleeper_id, team["roster_id"])
     roster = roster_rows(state, team["team_id"], lineup, slots, info, ppg)
@@ -505,6 +558,9 @@ def team_detail(
         pairs, lineup_view = app_lineup(active, [_text(p) for p in lineup.get("starters") or []])
         roster = roster_rows(state, team["team_id"], {**lineup, "app_lineup": pairs}, slots, info, ppg)
     everyone = roster["starters"] + roster["bench"] + roster["taxi"] + roster["ir"]
+    if rookie_deals is not None:  # still on a rookie deal from any of our drafts: R tag, real end year, option price
+        for p in everyone:
+            apply_rookie_deal(p, rookie_deals.get(p.get("player_id")), int(state["season"]))
     return {
         **team,
         "is_me": summary["is_me"],
@@ -514,6 +570,7 @@ def team_detail(
             "rank": summary["rank"], "standing_points": summary["standing_points"],
             "pf_per_game": (standing or {}).get("pf_per_game"),
         },
+        "points": points_view(standing),
         "cap": {"space": summary["cap_space"], "by_year": summary["cap_by_year"]},
         "roster": roster,
         "contracts": contracts_view(everyone, state, team["team_id"], later, league_value_cuts(state, ppg)),
@@ -651,6 +708,7 @@ def player_detail(
     meta: dict[str, Any],
     weeks: list[dict[str, Any]],
     my_team_id: str | None,
+    deal: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     contract = next((r for r in state.get("roster", []) if _text(r.get("sleeper_player_id")) == player_id), None)
     if contract is None and not meta:
@@ -658,6 +716,9 @@ def player_detail(
     scored = [w["points"] for w in weeks if w["points"]]
     years = int((contract or {}).get("contract_years_left") or 0)
     season = int(state.get("season") or 0)
+    if contract is not None and deal and deal.get("rookie_deal") and deal.get("expected_end") is not None:
+        years = max(years, int(deal["expected_end"]) - season + 1)  # taxi seasons extend the rookie deal
+    on_rookie_deal = contract is not None and bool(deal and deal.get("rookie_deal"))
     return {
         "player_id": player_id,
         "name": _text((contract or {}).get("player_name")) or _text(meta.get("full_name")) or player_id,
@@ -676,7 +737,9 @@ def player_detail(
             "years_left": years,
             "through": season + max(years, 1) - 1,
             "designation": roster_designation(contract),
-            "is_rookie": bool(contract.get("is_rookie")),
+            "is_rookie": bool(contract.get("is_rookie")) or on_rookie_deal,
+            "rookie_option": on_rookie_deal and not deal.get("option_consumed") and (deal.get("option_salary") or 0) > 0,
+            "option_salary": deal.get("option_salary") if on_rookie_deal else None,
         },
         "is_mine": bool(contract) and _text(contract.get("league_team_id")) == _text(my_team_id),
     }

@@ -536,14 +536,15 @@ def health(
         week = max(int(d["week"]) for d in days)
         if not this_week or week >= this_week["week"]:
             lines = injury_outlook.practice_week([d for d in days if int(d["week"]) == week])
-            last = lines[-1] if lines else {}
+            practiced = injury_outlook.practice_days_only(lines)
+            last = practiced[-1] if practiced else {}
             same = this_week if this_week and this_week["week"] == week else {}
             this_week = {
                 "week": week,
                 "practice": DAY_PRACTICE.get(_text(last.get("practice"))) or same.get("practice"),
-                "game_status": _text(last.get("game_status")) or same.get("game_status"),
+                "game_status": same.get("game_status") or _text(injury_outlook.latest_game_status(lines)) or None,
                 "injury": same.get("injury"),
-                "days": [{"day": d.get("day"), "practice": d.get("practice")} for d in lines],
+                "days": [{"day": d.get("day"), "practice": d.get("practice")} for d in practiced],
             }
     missed = []
     for e in episodes[:4]:
