@@ -75,3 +75,14 @@ def test_apply_rookie_deal():
     used = {"player_id": "judkins", "years_left": 1}
     apply_rookie_deal(used, deal(option_consumed=True), 2026)
     assert used["is_rookie"] and not used["rookie_option"]
+
+
+def test_draft_label_comes_from_our_board():
+    from api.player import lifetime_history
+    event = {"kind": "draft_pick", "season": 2025, "occurred_at": "2025-05-01T00:00:00+00:00", "owner_name": "x",
+             "details": {"round": 1, "slot": 4, "overall": 4, "draft_type": "linear"}}
+    board = {"draft_year": 2025, "draft_round": 1, "overall_pick": 2}
+    assert lifetime_history([], [event], board)[0]["title"] == "Drafted 1.02"
+    assert lifetime_history([], [event], {**board, "draft_round": 3, "overall_pick": 27})[0]["title"] == "Drafted 3.07"
+    assert lifetime_history([], [event], {**board, "draft_year": 2026})[0]["title"] == "Drafted 1.04"  # other draft: Sleeper's
+    assert lifetime_history([], [event])[0]["title"] == "Drafted 1.04"
