@@ -17,6 +17,15 @@ from typing import Any, Callable, Mapping
 from api import own_league
 from services.matchups_view import _team_points
 
+# Settings > "Weeks per playoff round": 1 = one week each, 2 = two weeks each, 3 = one-week rounds and a two-week
+# final (Legacy, Tommy 2026-11-18: semis week 15, title game weeks 16-17, the season ends week 17).
+ROUND_FORMATS = {1: "One week each", 2: "Two weeks each", 3: "Two-week final only"}
+
+
+def round_type(rules: Mapping[str, Any]) -> int:
+    """own_league.round_weeks' round_type for our setting: 0 one week each, 1 a two-week final, 2 two weeks each."""
+    return {1: 0, 2: 2, 3: 1}.get(int(rules.get("playoff_round_weeks") or 2), 2)
+
 
 def rules_of(settings: Any) -> dict[str, Any]:
     """Our playoff format from league_ai_settings (a LeagueAISettings or a plain dict)."""
@@ -24,7 +33,7 @@ def rules_of(settings: Any) -> dict[str, Any]:
     teams = int(get("playoff_teams", 4) or 4)
     return {"playoff_teams": teams if teams in own_league.LAYOUTS else 4,
             "playoff_week_start": int(get("playoff_week_start", 15) or 15),
-            "playoff_round_weeks": max(1, min(2, int(get("playoff_round_weeks", 2) or 2))),
+            "playoff_round_weeks": max(1, min(3, int(get("playoff_round_weeks", 2) or 2))),
             "loser_bracket": bool(get("loser_bracket", True))}
 
 
@@ -33,7 +42,7 @@ def settings_of(rules: Mapping[str, Any], league_size: int | None = None) -> dic
     longest (three one-week rounds) so the last week is never cut short."""
     start, teams = int(rules["playoff_week_start"]), int(rules["playoff_teams"])
     rounds = max(r for r, *_ in own_league.LAYOUTS[teams])
-    weeks = own_league.round_weeks(start, rounds, 2 if int(rules["playoff_round_weeks"]) == 2 else 0)
+    weeks = own_league.round_weeks(start, rounds, round_type(rules))
     losers = bool(rules["loser_bracket"])
     lweeks = own_league.loser_weeks(start, league_size - teams) if losers and league_size else {}
     last = max(w for ws in weeks.values() for w in ws)
@@ -115,12 +124,13 @@ def build(
     loser_seeds = order[cfg["teams"]:]
     win_bracket = own_league.build_bracket(playoff_seeds, points, done, weeks, auto_loss=forfeits) if len(playoff_seeds) == cfg["teams"] else []
     loser_bracket = own_league.build_bracket(
-        loser_seeds, points, loser_done, lweeks, own_league.loser_layout(len(loser_seeds)), auto_loss=forfeits) if cfg["loser_bracket"] else []
+        loser_seeds, points, loser_done, lweeks, own_league.loser_layout(len(loser_seeds)), auto_loss=forfeits,
+        spans=own_league.loser_spans(len(loser_seeds))) if cfg["loser_bracket"] else []
 
-    def team(rid: int | None, r: int, when: Mapping[int, list[int]] = weeks) -> dict[str, Any] | None:
+    def team(rid: int | None, r: int, when: Mapping[int, list[int]] = weeks, game_weeks: list[int] | None = None) -> dict[str, Any] | None:
         if not rid:
             return None
-        legs = [points.get((w, rid)) if w <= current_week else None for w in when[r]]
+        legs = [points.get((w, rid)) if w <= current_week else None for w in (game_weeks or when[r])]
         return {
             "roster_id": rid, "name": str(names.get(rid) or f"Roster {rid}"), "seed": seed.get(rid),
             "record": record.get(rid), "avatar": (avatars or {}).get(rid), "is_me": rid == my_roster_id,
@@ -143,32 +153,71 @@ def build(
         when, is_done = (weeks, done) if kind == "winners" else (lweeks, loser_done)
         if r not in when:
             r = max(when)
-        t1, t2 = team(game.get("t1"), r, when), team(game.get("t2"), r, when)
-        final = bool(is_done(r) and t1 and t2)
-        started = min(when[r]) <= current_week and any(
+        gw = list(game.get("weeks") or when[r])  # a game can span rounds (the two-week 9th place game)
+        t1, t2 = team(game.get("t1"), r, when, gw), team(game.get("t2"), r, when, gw)
+        final = bool(is_done(int(game.get("last_r") or r)) and t1 and t2)
+        started = min(gw) <= current_week and any(
             leg for t in (t1, t2) if t for leg in t["legs"] if leg)
         winner = game.get("w") if final else None
         if final and not winner and t1 and t2:
             winner = t1["roster_id"] if t1["score"] >= t2["score"] else t2["roster_id"]
         mid = None
-        if t1 and t2 and week in when[r]:
+        if t1 and t2 and week in gw:
             a, b = row_mid.get((week, t1["roster_id"])), row_mid.get((week, t2["roster_id"]))
             mid = a if a is not None and a == b else None
         return {
             "bracket": kind, "round": r, "m": int(game.get("m") or 0),
             "label": round_name(r, cfg["rounds"], game.get("p")) if kind == "winners" else loser_name(r, game.get("p"), cfg["teams"]),
-            "place": game.get("p"), "weeks": when[r], "state": "final" if final else "live" if started else "pre",
+            "place": game.get("p"), "weeks": gw, "state": "final" if final else "live" if started else "pre",
             "teams": [t1 or {"placeholder": placeholder(game, "t1", bracket)}, t2 or {"placeholder": placeholder(game, "t2", bracket)}],
             "winner": winner, "matchup_id": mid,
+            "feeds": [game.get("t1_from"), game.get("t2_from")],  # {"w"|"l": match} a slot is waiting on
             "mine": bool(my_roster_id and my_roster_id in (game.get("t1"), game.get("t2"))),
         }
 
+    def places(m: int, seen: frozenset = frozenset()) -> list[int]:
+        """Every final place (counted league-wide) a team in loser game m can still reach."""
+        game = next((g for g in loser_bracket if int(g.get("m") or 0) == m), None)
+        if not game or m in seen:
+            return []
+        if game.get("p"):
+            return [cfg["teams"] + int(game["p"]), cfg["teams"] + int(game["p"]) + 1]
+        out: list[int] = []
+        for g in loser_bracket:
+            if m in {*(g.get("t1_from") or {}).values(), *(g.get("t2_from") or {}).values()}:
+                out += places(int(g.get("m") or 0), seen | {m})
+        return out
+
+    def stakes(game: Mapping[str, Any]) -> dict[str, str] | None:
+        """What a consolation game decides: where its winner and its loser go next (Tommy, 2026-11-22)."""
+        if game.get("p"):
+            return None
+        m = int(game.get("m") or 0)
+        nxt: dict[str, Any] = {}
+        for g in loser_bracket:
+            for src in (g.get("t1_from") or {}, g.get("t2_from") or {}):
+                for kind, mm in src.items():
+                    if int(mm) == m:
+                        nxt[kind] = g
+        if "w" not in nxt or "l" not in nxt:
+            return None
+
+        def say(g: Mapping[str, Any]) -> str:
+            if g.get("p"):
+                return f"{loser_name(0, g['p'], cfg['teams'])} game"
+            reach = places(int(g.get("m") or 0))
+            return f"play for {_ord(min(reach))}–{_ord(max(reach))}" if reach else "next round"
+
+        return {"win": f"Win: {say(nxt['w'])}", "lose": f"Lose: {say(nxt['l'])}"}
+
     tree = [shape(g, "winners", win_bracket) for g in sorted(win_bracket, key=lambda g: (int(g.get("r") or 0), int(g.get("m") or 0)))]
-    loser_games = [shape(g, "losers", loser_bracket) for g in sorted(loser_bracket, key=lambda g: (int(g.get("r") or 0), int(g.get("m") or 0)))]
+    loser_games = [{**shape(g, "losers", loser_bracket), "stakes": stakes(g)}
+                   for g in sorted(loser_bracket, key=lambda g: (int(g.get("r") or 0), int(g.get("m") or 0)))]
     this_round = [g for g in tree if g["round"] == rnd]
     # The title game first, then your game, then the rest in bracket order.
     this_round.sort(key=lambda g: (g["place"] != 1, not g["mine"], g["m"]))
-    losers_now = [g for g in loser_games if week in g["weeks"]]
+    # Consolation games before placement games, then 5th, 7th, 9th place (a game spanning two rounds sorts by place).
+    losers_now = sorted((g for g in loser_games if week in g["weeks"]), key=lambda g: (g["place"] is not None, g["place"] or 0, g["m"]))
     playing = {t.get("roster_id") for g in losers_now for t in g["teams"]}
     lrnd = next((r for r, ws in lweeks.items() if week in ws), None)
     byes = [team(rid, lrnd, lweeks) for rid in loser_seeds if rid not in playing and losers_now and lrnd]
@@ -178,9 +227,38 @@ def build(
         "legs": len(weeks[rnd]),
         "round_name": round_name(rnd, cfg["rounds"], None if rnd < cfg["rounds"] else 1),
         "projected": projected, "start": cfg["start"], "last_week": cfg["last_week"],
-        "tree": tree, "games": this_round, "losers": losers_now, "byes": [b for b in byes if b],
+        "tree": tree, "games": this_round, "losers": losers_now, "byes": [b for b in byes if b], "loser_tree": loser_games,
         "champion": team(champion, rnd) if champion else None,
     }
+
+
+def _ord(n: int) -> str:
+    return f"{n}{'th' if 10 <= n % 100 <= 20 else {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')}"
+
+
+def add_projections(view: dict[str, Any], week_proj: Mapping[int, Mapping[str, float]], week_final: bool = False) -> None:
+    """Each team's projected total for every game played this week (Tommy, 2026-11-22: every matchup shows
+    projections). week_proj: roster_id -> {"projected": live projected week total, "kickoff": the projection frozen
+    at kickoff}. A game's projection is its earlier weeks' points plus this week's projection; once the game is
+    final it's the kickoff projection instead, so final rows still show what was expected."""
+    week = view["week"]
+    for g in [*view.get("tree", []), *view.get("games", []), *view.get("losers", [])]:
+        if week not in g["weeks"]:
+            continue
+        i = g["weeks"].index(week)
+        for t in g["teams"]:
+            p = week_proj.get(t.get("roster_id") or -1)
+            if not p:
+                continue
+            banked = sum(x for x in t["legs"][:i] if x is not None)
+            this = p.get("kickoff") if g["state"] == "final" else p.get("projected")
+            if this is not None:
+                t["proj"] = round(banked + float(this), 1)
+    for t in view.get("byes", []):
+        p = week_proj.get(t.get("roster_id") or -1) or {}
+        this = p.get("kickoff") if week_final else p.get("projected")
+        if this is not None:
+            t["proj"] = round(float(this), 1)
 
 
 def legacy_games(view: Mapping[str, Any]) -> list[dict[str, Any]]:

@@ -46,11 +46,15 @@ def test_two_week_rounds_add_up_and_name_the_winner():
     assert [t["roster_id"] for t in final["teams"]] == [4, 2] and final["label"] == "Championship"
     assert v["games"][0] is final  # the title game always comes first
     assert final["state"] == "live"
-    # Loser bracket, one week per round: week 15 7v10 and 8v9, week 16 5 v 8, 6 v 7 and 10 v 9, week 17 placement games.
+    # Loser bracket: week 15 7v10 and 8v9, week 16 5 v 8 and 6 v 7 (and 10 v 9 starts the 9th place game), week 17 5th/7th.
     week16 = [tuple(t.get("roster_id") for t in g["teams"]) for g in view(16, 16, 15)["losers"]]
     assert week16 == [(5, 8), (6, 7), (10, 9)]
     week17 = [(g["label"], tuple(t.get("roster_id") for t in g["teams"])) for g in v["losers"]]
     assert week17 == [("5th place", (5, 6)), ("7th place", (8, 7)), ("9th place", (10, 9))]
+    # The week-15 losers play one two-week 9th place game (weeks 16-17), scored over both weeks.
+    ninth = next(g for g in v["losers"] if g["label"] == "9th place")
+    assert ninth["weeks"] == [16, 17] and all(len(t["legs"]) == 2 for t in ninth["teams"])
+    assert next(g for g in view(16, 16, 15)["losers"] if g["teams"][0].get("roster_id") == 10)["label"] == "9th place"
 
 
 def test_format_is_ours_from_settings():
@@ -58,6 +62,18 @@ def test_format_is_ours_from_settings():
     assert playoffs.last_week(one_week) == 16 and playoffs.last_week(RULES) == 18
     v = view(16, 9, 8, rules=one_week)
     assert v["round_name"] == "Championship" and v["legs"] == 1 and v["losers"] == [] and v["byes"] == []
+
+
+def test_two_week_final_ends_week_17():
+    # Legacy (Tommy, 2026-11-18): semis week 15, title game and 3rd place weeks 16-17, loser bracket weeks 15-17.
+    final_two = playoffs.rules_of({"playoff_teams": 4, "playoff_week_start": 15, "playoff_round_weeks": 3, "loser_bracket": True})
+    cfg = playoffs.settings_of(final_two, league_size=10)
+    assert cfg["weeks"] == {1: [15], 2: [16, 17]} and cfg["last_week"] == 17
+    semis = view(15, 15, 14, rules=final_two)
+    assert semis["round_name"] == "Semifinal" and semis["legs"] == 1
+    title = view(17, 17, 16, rules=final_two)
+    assert title["round_name"] == "Championship" and title["legs"] == 2 and title["leg"] == 2
+    assert playoffs.round_type(final_two) == 1 and playoffs.ROUND_FORMATS[3] == "Two-week final only"
 
 
 def test_settings_object_defaults():
@@ -108,3 +124,42 @@ def test_mark_auto_losses_flags_only_that_team():
     rows = [{"roster_id": 1, "points": 120, "matchup_id": 1}, {"roster_id": 2, "points": 90, "matchup_id": 1}]
     out = own_league.mark_auto_losses(rows, {1})
     assert out[0]["auto_loss"] is True and "auto_loss" not in out[1] and "auto_loss" not in rows[0]
+
+
+def test_consolation_games_say_what_they_decide():
+    week15 = {tuple(t.get("roster_id") for t in g["teams"]): g["stakes"] for g in view(15, 15, 14)["losers"]}
+    assert week15[(7, 10)] == {"win": "Win: play for 5th–8th", "lose": "Lose: 9th place game"}
+    week16 = view(16, 16, 15)["losers"]
+    assert week16[0]["stakes"] == {"win": "Win: 5th place game", "lose": "Lose: 7th place game"}
+    assert next(g for g in week16 if g["label"] == "9th place")["stakes"] is None
+
+
+def test_projections_add_banked_weeks_and_byes():
+    proj = {rid: {"projected": 100.0, "kickoff": 90.0} for rid in range(1, 11)}
+    v = view(18, 18, 17)  # week 2 of the two-week final (weeks 17-18 in this fixture)
+    playoffs.add_projections(v, proj)
+    t = next(g for g in v["games"] if g["place"] == 1)["teams"][0]
+    assert t["proj"] == round(t["legs"][0] + 100.0, 1)  # week 17 points banked + week 18 projection
+    v16 = view(16, 16, 15)
+    playoffs.add_projections(v16, proj)
+    ninth = next(g for g in v16["losers"] if g["label"] == "9th place")
+    assert all(t["proj"] == 100.0 for t in ninth["teams"])
+
+
+def test_bye_card_names_my_bye_partner_and_next_game():
+    from api import home
+    v = view(15, 15, 14, me=5)
+    playoffs.add_projections(v, {rid: {"projected": 110.0, "kickoff": 100.0} for rid in range(1, 11)})
+    bye = home.playoff_bye(v, 5)
+    assert bye["me"]["roster_id"] == 5 and bye["them"]["roster_id"] == 6 and bye["me"]["proj"] == 110.0
+    assert bye["next_week"] == 16 and bye["next_vs"] is None
+    assert bye["feeder"] == {"kind": "w", "names": ["Owner 8", "Owner 9"]}  # 5 plays the 8/9 winner
+    assert home.playoff_bye(v, 2) is None
+
+
+def test_champion_once_the_title_game_is_final():
+    from api import home
+    assert home.champion(view(17, 17, 16), 4) is None
+    done = view(18, 18, 18)
+    champ = home.champion(done, 4)
+    assert champ and champ["is_me"] == (champ["roster_id"] == 4) and champ["opponent"]["roster_id"] != champ["roster_id"]

@@ -38,15 +38,19 @@ LAYOUTS: dict[int, list[tuple[int, int, Any, Any, int | None]]] = {
 LOSER_LAYOUTS: dict[int, list[tuple[int, int, Any, Any, int | None]]] = {
     2: [(1, 1, 1, 2, 1)],
     4: [(1, 1, 1, 4, None), (1, 2, 2, 3, None), (2, 3, ("w", 1), ("w", 2), 1), (2, 4, ("l", 1), ("l", 2), 3)],
-    # Legacy (teams 5-10, Tommy 2026-11-17): week 1 7v10 and 8v9 with 5 and 6 on a bye; week 2 5 v the 8/9 winner,
-    # 6 v the 7/10 winner, and the two week-1 losers; week 3 the 5th, 7th and 9th place games.
+    # Legacy (teams 5-10): week 1 7v10 and 8v9 with 5 and 6 on a bye; week 2 5 v the 8/9 winner and 6 v the 7/10
+    # winner, while the two week-1 losers start ONE two-week 9th place game (weeks 2-3, see LOSER_SPANS: Tommy,
+    # 2026-11-22, so nobody plays a dead game or a rematch); week 3 the 5th and 7th place games.
     6: [(1, 1, 3, 6, None), (1, 2, 4, 5, None),
-        (2, 3, 1, ("w", 2), None), (2, 4, 2, ("w", 1), None), (2, 5, ("l", 1), ("l", 2), None),
-        (3, 6, ("w", 3), ("w", 4), 1), (3, 7, ("l", 3), ("l", 4), 3), (3, 8, ("l", 1), ("l", 2), 5)],
+        (2, 3, 1, ("w", 2), None), (2, 4, 2, ("w", 1), None), (2, 5, ("l", 1), ("l", 2), 5),
+        (3, 6, ("w", 3), ("w", 4), 1), (3, 7, ("l", 3), ("l", 4), 3)],
     8: [(1, 1, 1, 8, None), (1, 2, 4, 5, None), (1, 3, 3, 6, None), (1, 4, 2, 7, None),
         (2, 5, ("w", 1), ("w", 2), None), (2, 6, ("w", 3), ("w", 4), None), (2, 7, ("l", 1), ("l", 2), None), (2, 8, ("l", 3), ("l", 4), None),
         (3, 9, ("w", 5), ("w", 6), 1), (3, 10, ("l", 5), ("l", 6), 3), (3, 11, ("w", 7), ("w", 8), 5), (3, 12, ("l", 7), ("l", 8), 7)],
 }
+
+# Loser-bracket games that last more than one round: {teams: {match: rounds}}. Its score is the total over its weeks.
+LOSER_SPANS: dict[int, dict[int, int]] = {6: {5: 2}}
 
 # App matchup ids for loser-bracket games sit above the winners bracket's, so the two never share one.
 LOSER_MATCHUP_OFFSET = 100
@@ -54,6 +58,15 @@ LOSER_MATCHUP_OFFSET = 100
 
 def loser_layout(count: int) -> list[tuple[int, int, Any, Any, int | None]]:
     return list(LOSER_LAYOUTS.get(count, []))
+
+
+def loser_spans(count: int) -> dict[int, int]:
+    return dict(LOSER_SPANS.get(count, {}))
+
+
+def game_weeks(weeks: Mapping[int, list[int]], rnd: int, span: int = 1) -> list[int]:
+    """The weeks one game is played: its round's weeks, plus the next rounds' for a game that spans several."""
+    return [w for r in range(rnd, rnd + span) for w in weeks.get(r, [])]
 
 
 def loser_weeks(start: int, count: int) -> dict[int, list[int]]:
@@ -75,11 +88,13 @@ def round_weeks(start: int, rounds: int, round_type: int) -> dict[int, list[int]
 
 def build_bracket(seeds: list[int], points: Mapping[tuple[int, int], float], done: Callable[[int], bool],
                   weeks: Mapping[int, list[int]], layout: list[tuple[int, int, Any, Any, int | None]] | None = None,
-                  auto_loss: Iterable[tuple[int, int]] = (),
+                  auto_loss: Iterable[tuple[int, int]] = (), spans: Mapping[int, int] | None = None,
                   ) -> list[dict[str, Any]]:
     """Sleeper-shaped bracket (winners by default). seeds: roster ids, best first. points: (week, roster_id) -> score.
     done(round) says whether that round's weeks are final, so a winner can be named. auto_loss: (week, roster_id)
-    pairs for teams that started a Sunday over the cap; such a team loses that round unless both teams did."""
+    pairs for teams that started a Sunday over the cap; such a team loses that round unless both teams did.
+    spans: match -> rounds it lasts (default 1); such a game is scored over all its weeks and decided after its last
+    round. Each game carries its weeks ("weeks") and its last round ("last_r")."""
     forfeit = set(auto_loss)
     layout = layout if layout is not None else (LAYOUTS.get(len(seeds)) or LAYOUTS[4])
     seed_of = {rid: i + 1 for i, rid in enumerate(seeds)}
@@ -102,11 +117,15 @@ def build_bracket(seeds: list[int], points: Mapping[tuple[int, int], float], don
             game["t2_from"] = {bottom[0]: bottom[1]}
         if rnd not in weeks:
             continue
-        if t1 and t2 and done(rnd):
-            s1 = sum(points.get((w, t1), 0.0) for w in weeks[rnd])
-            s2 = sum(points.get((w, t2), 0.0) for w in weeks[rnd])
-            f1 = any((w, t1) in forfeit for w in weeks[rnd])
-            f2 = any((w, t2) in forfeit for w in weeks[rnd])
+        span = int((spans or {}).get(m, 1))
+        last_r = min(rnd + span - 1, max(weeks))
+        gw = game_weeks(weeks, rnd, span)
+        game["weeks"], game["last_r"] = gw, last_r
+        if t1 and t2 and done(last_r):
+            s1 = sum(points.get((w, t1), 0.0) for w in gw)
+            s2 = sum(points.get((w, t2), 0.0) for w in gw)
+            f1 = any((w, t1) in forfeit for w in gw)
+            f2 = any((w, t2) in forfeit for w in gw)
             if f1 != f2:
                 win = t2 if f1 else t1
             else:
@@ -120,7 +139,7 @@ def week_pairs(bracket: Iterable[Mapping[str, Any]], week: int, weeks: Mapping[i
     """roster_id -> matchup id for one playoff week (teams not playing that week are left out)."""
     out: dict[int, int] = {}
     for g in bracket:
-        if week in weeks.get(int(g["r"]), []):
+        if week in (g.get("weeks") or weeks.get(int(g["r"]), [])):
             for rid in (g.get("t1"), g.get("t2")):
                 if rid:
                     out[int(rid)] = int(g["m"])
@@ -186,7 +205,8 @@ def build(*, season: int, own_from: int, current_week: int, league: Mapping[str,
         if not layout:
             return []
         lweeks = loser_weeks(playoff_start, len(losers))
-        return build_bracket(losers, points, lambda r: max(lweeks[r]) < before, lweeks, layout, auto_loss=auto_loss)
+        return build_bracket(losers, points, lambda r: max(lweeks[r]) < before, lweeks, layout, auto_loss=auto_loss,
+                             spans=loser_spans(len(losers)))
 
     def seed_all(own: dict[int, list[dict[str, Any]]]) -> list[int]:
         nonlocal losers
@@ -317,7 +337,7 @@ def sync(client: Any, league_id: str, sleeper_id: str, season: int) -> None:
         rules = playoffs.rules_of(settings)  # our playoff format (Settings), not Sleeper's
         start = rules["playoff_week_start"]
         info = {"settings": {"playoff_week_start": start, "playoff_teams": rules["playoff_teams"],
-                             "playoff_round_type": 2 if rules["playoff_round_weeks"] == 2 else 0,
+                             "playoff_round_type": playoffs.round_type(rules),
                              "loser_bracket": rules["loser_bracket"]}}
         own_from = int(switch.get("own_from_week") or start)
         current = league.current_week()

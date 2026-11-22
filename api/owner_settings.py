@@ -234,7 +234,7 @@ def rules_view(client: Any, league_id: str) -> dict[str, Any]:
                 ["Teams in one trade (max)", str(ai.max_trade_teams)],
                 ["Playoff teams", str(ai.playoff_teams)],
                 ["Playoffs start", f"Week {ai.playoff_week_start}"],
-                ["Weeks per round", str(ai.playoff_round_weeks)],
+                ["Playoff rounds", _round_formats().get(int(ai.playoff_round_weeks), str(ai.playoff_round_weeks))],
             ]},
         ]
         scoring = dict(ai.scoring_settings or {})
@@ -248,3 +248,8 @@ def rules_view(client: Any, league_id: str) -> dict[str, Any]:
         return {"groups": groups, "house_rules": (ai.house_rules or "").strip() or None}
 
     return cache.cached(("rules_view", league_id), 300, load)
+
+
+def _round_formats() -> dict[int, str]:
+    from api import playoffs  # imported here: playoffs pulls in the matchups view
+    return playoffs.ROUND_FORMATS

@@ -80,7 +80,7 @@ RULE_FIELDS: list[tuple[str, str, str, str]] = [
     ("max_trade_teams", "Teams in one trade (max)", "ai", "int"),
     ("playoff_teams", "Playoff teams", "ai", "int"),
     ("playoff_week_start", "First playoff week", "ai", "int"),
-    ("playoff_round_weeks", "Weeks per playoff round", "ai", "int"),
+    ("playoff_round_weeks", "Playoff rounds (1 = one week, 2 = two weeks, 3 = two-week final)", "ai", "int"),
 ]
 
 

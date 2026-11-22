@@ -137,7 +137,7 @@ def apply_sleeper_scoring(settings: LeagueAISettings, sleeper_payload: dict[str,
         settings.playoff_teams = int(league_settings["playoff_teams"])
     if league_settings.get("playoff_week_start"):  # a one-time copy; the app's own value is what everything reads
         settings.playoff_week_start = int(league_settings["playoff_week_start"])
-        settings.playoff_round_weeks = 2 if int(league_settings.get("playoff_round_type") or 0) == 2 else 1
+        settings.playoff_round_weeks = {2: 2, 1: 3}.get(int(league_settings.get("playoff_round_type") or 0), 1)
     if league_settings.get("trade_deadline") not in (None, "", 99):
         settings.trade_deadline = f"week {league_settings['trade_deadline']}"
     return settings
