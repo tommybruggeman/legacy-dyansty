@@ -148,13 +148,18 @@ export function useApi<T>(path: string, refreshEvery = 0) {
   const [data, setData] = useState<T | null>(() => (memory.get(path) as T | undefined) ?? null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(!memory.has(path));
+  const shown = useRef<T | null>(data); // what is on screen now, to skip redraws that change nothing
+  shown.current = data;
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
     try {
       const value = await apiGet<T>(path);
+      // A refresh that brings back the same thing changes nothing on screen, so skip the redraw (live pages
+      // poll every few seconds, and a whole bracket or roster redrawing mid-scroll or mid-tab-switch stutters).
+      const same = shown.current != null && JSON.stringify(shown.current) === JSON.stringify(value);
       remember(path, value);
-      setData(value);
+      if (!same) setData(value);
       setError(null);
     } catch (e: any) {
       if (!quiet) setError(e?.message ?? 'Something went wrong.');
@@ -192,7 +197,8 @@ export function useApi<T>(path: string, refreshEvery = 0) {
   useFocusEffect(
     useCallback(() => {
       if (!refreshEvery) return undefined;
-      if (seen.current === path) load(true);
+      // Wait until the tab has finished appearing before catching up, so the refresh can't land mid-switch.
+      const catchUp = seen.current === path ? setTimeout(() => load(true), 400) : null;
       seen.current = path;
       const timer = setInterval(() => {
         if (AppState.currentState === 'active') load(true);
@@ -201,6 +207,7 @@ export function useApi<T>(path: string, refreshEvery = 0) {
         if (state === 'active') load(true);
       });
       return () => {
+        if (catchUp) clearTimeout(catchUp);
         clearInterval(timer);
         wake.remove();
       };
@@ -727,6 +734,11 @@ export type HomeGame = { matchup_id?: number; me?: HomeSide; them?: HomeSide | n
 export type BracketSide = { roster_id: number; name: string; score: number | null; avatar?: string | null; seed?: number | null } | null;
 export type PlayoffSide = { roster_id: number; name: string; score: number; avatar?: string | null; seed?: number | null; carry: number };
 // My game this playoff round from our own bracket: round totals, and points banked in earlier weeks of the round (carry).
+export type DraftPickOwner = { roster_id: number; name: string; avatar?: string | null; is_me: boolean; via: string | null; pct?: number };
+export type DraftBoardData = {
+  year: number; locked: number;
+  rounds: { round: number; picks: { pick: string; locked: boolean; owner: DraftPickOwner; others?: DraftPickOwner[] }[] }[];
+};
 export type ByeSide = { roster_id: number; name: string; avatar?: string | null; score: number; proj?: number | null };
 export type HomePlayoffGame = {
   label: string; bracket: 'winners' | 'losers'; leg: number; legs: number; matchup_id: number | null;
@@ -793,6 +805,7 @@ export type HomeData = {
     roster_id: number; name: string; team_name?: string; avatar?: string | null; is_me: boolean; score: number;
     opponent: { roster_id: number; name: string; score: number } | null;
   } | null;
+  draft_board?: DraftBoardData | null;
   decisions?: { window_open: boolean; deadline: string; players: RookieDeal[] };
   picks?: { year: number | null; picks: Pick[] };
   who_has_money?: { name: string; space: number; is_me: boolean; team_id: string | null; open_spots: number | null }[];

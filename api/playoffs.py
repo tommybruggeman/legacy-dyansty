@@ -261,6 +261,57 @@ def add_projections(view: dict[str, Any], week_proj: Mapping[int, Mapping[str, f
             t["proj"] = round(float(this), 1)
 
 
+def _p_beats(a: Mapping[str, Any] | None, b: Mapping[str, Any] | None, strength: Mapping[int, float], weeks: int) -> float:
+    """Chance team a beats team b: projected game totals (score so far + projection) when the game is set, else each
+    team's weekly projection times the weeks, through a logistic (sd about 30 points)."""
+    import math
+
+    def total(t: Mapping[str, Any]) -> float:
+        if t.get("proj") is not None:
+            return float(t["proj"])
+        return float(strength.get(int(t["roster_id"]), 100.0)) * weeks
+
+    pa, pb = total(a), total(b)
+    return 1 / (1 + math.exp(-((pa - pb) / 30) * 1.7))
+
+
+def finish_odds(view: Mapping[str, Any] | None, strength: Mapping[int, float]) -> dict[int, list[float]] | None:
+    """roster_id -> chance (0-1) of finishing 1st, 2nd, 3rd, 4th, for a 4-team bracket (semis, final, 3rd place).
+    Finished games are decided; set games use projected totals; games whose teams aren't known yet use each team's
+    weekly projection (strength). Every path is walked, so a team in the 3rd place game can't finish 1st or 2nd."""
+    if not view:
+        return None
+    tree = view.get("tree") or []
+    semis = sorted((g for g in tree if g["round"] == 1), key=lambda g: g["m"])
+    final = next((g for g in tree if g.get("place") == 1), None)
+    third = next((g for g in tree if g.get("place") == 3), None)
+    if len(semis) != 2 or not final or not all(all(t.get("roster_id") for t in g["teams"]) for g in semis):
+        return None
+    by_id = {int(t["roster_id"]): t for g in tree for t in g["teams"] if t.get("roster_id")}
+
+    def beats(a: int, b: int, game: Mapping[str, Any] | None) -> float:
+        ids = {int(t["roster_id"]) for t in (game or {}).get("teams", []) if t.get("roster_id")}
+        if game and ids == {a, b}:
+            if game["state"] == "final" and game.get("winner"):
+                return 1.0 if game["winner"] == a else 0.0
+            return _p_beats(by_id[a], by_id[b], strength, len(game["weeks"]))
+        weeks = len((game or {}).get("weeks") or [1])
+        return _p_beats({"roster_id": a}, {"roster_id": b}, strength, weeks)
+
+    out = {rid: [0.0, 0.0, 0.0, 0.0] for g in semis for rid in (int(t["roster_id"]) for t in g["teams"])}
+    (a1, b1), (a2, b2) = ([int(t["roster_id"]) for t in g["teams"]] for g in semis)
+    s1, s2 = beats(a1, b1, semis[0]), beats(a2, b2, semis[1])
+    for w1, l1, p1 in ((a1, b1, s1), (b1, a1, 1 - s1)):
+        for w2, l2, p2 in ((a2, b2, s2), (b2, a2, 1 - s2)):
+            p = p1 * p2
+            if not p:
+                continue
+            pf, p3 = beats(w1, w2, final), beats(l1, l2, third)
+            out[w1][0] += p * pf; out[w2][1] += p * pf; out[w2][0] += p * (1 - pf); out[w1][1] += p * (1 - pf)
+            out[l1][2] += p * p3; out[l2][3] += p * p3; out[l2][2] += p * (1 - p3); out[l1][3] += p * (1 - p3)
+    return out
+
+
 def legacy_games(view: Mapping[str, Any]) -> list[dict[str, Any]]:
     """This week's playoff games as plain Matchups cards, for app builds that predate the playoff view."""
     out = []

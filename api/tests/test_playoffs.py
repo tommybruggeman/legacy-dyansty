@@ -163,3 +163,30 @@ def test_champion_once_the_title_game_is_final():
     done = view(18, 18, 18)
     champ = home.champion(done, 4)
     assert champ and champ["is_me"] == (champ["roster_id"] == 4) and champ["opponent"]["roster_id"] != champ["roster_id"]
+
+
+def test_finish_odds_follow_the_bracket():
+    strength = {rid: 100.0 for rid in range(1, 11)}
+    pre = playoffs.finish_odds(view(15, 15, 14), strength)
+    assert all(abs(sum(o) - 1) < 1e-9 for o in pre.values())
+    # After the semis (week 16 scored), the semifinal losers can only finish 3rd or 4th.
+    after = playoffs.finish_odds(view(17, 17, 16), strength)
+    semi = {g["m"]: g for g in view(17, 17, 16)["tree"] if g["round"] == 1}
+    for g in semi.values():
+        loser = next(t["roster_id"] for t in g["teams"] if t["roster_id"] != g["winner"])
+        assert after[loser][0] == 0 and after[loser][1] == 0
+
+
+def test_draft_board_locks_non_playoff_teams_and_moves_playoff_picks():
+    from api import home
+    strength = {rid: 100.0 for rid in range(1, 11)}
+    odds = playoffs.finish_odds(view(15, 15, 14), strength)
+    team_of = {rid: f"t{rid}" for rid in range(1, 11)}
+    picks = [{"draft_year": 2027, "round_number": 1, "original_league_team_id": "t10", "current_owner_league_team_id": "t2", "asset_status": "owned"}]
+    board = home.draft_board(STANDINGS, 4, odds, picks, team_of, NAMES, {}, 2027, 2)
+    r1 = board["rounds"][0]["picks"]
+    assert [p["pick"] for p in r1][:2] == ["1.01", "1.02"] and len(r1) == 10
+    assert r1[0]["locked"] and r1[0]["owner"]["roster_id"] == 2 and r1[0]["owner"]["via"] == "Owner 10"
+    assert all(p["locked"] for p in r1[:6]) and not any(p["locked"] for p in r1[6:])
+    assert board["rounds"][1]["picks"][0]["owner"]["roster_id"] == 10  # only round 1 was traded
+    assert all(sum([p["owner"]["pct"], *[o["pct"] for o in p["others"]]]) in range(98, 103) for p in r1[6:])
