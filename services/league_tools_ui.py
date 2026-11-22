@@ -27,6 +27,7 @@ TOOLS: tuple[tuple[str, str, str, str], ...] = (
     ("sync", "🔄", "Sleeper sync", "Pause, resume and check the 15-minute sync"),
     ("rollover", "📅", "Season rollover", "Move the league to next season"),
     ("ai", "🧠", "League AI", "Scoring sync, house rules and weekly report"),
+    ("activity", "📈", "Owner activity", "Pages, flows, sessions and replays (only you)"),
 )
 TITLES = {key: title for key, _, title, _ in TOOLS}
 ALL = "All tools"
@@ -156,20 +157,22 @@ def _chip_changed() -> None:
     st.session_state["lm_tool"] = match
 
 
-def render_tool_picker() -> str | None:
+def render_tool_picker(hide: tuple[str, ...] = ()) -> str | None:
     """Tool cards when no tool is open, a chip bar when one is.
 
     Returns the open tool's key, or None while the cards are showing.
     """
     st.markdown(_CSS, unsafe_allow_html=True)
+    tools = tuple(t for t in TOOLS if t[0] not in hide)
+    titles = {key: title for key, _, title, _ in tools}
     tool = st.session_state.get("lm_tool")
-    if tool not in TITLES:
+    if tool not in titles:
         tool = None
 
     if tool is None:
-        for row_start in range(0, len(TOOLS), 2):
+        for row_start in range(0, len(tools), 2):
             cols = st.columns(2)
-            for col, (key, icon, title, desc) in zip(cols, TOOLS[row_start:row_start + 2]):
+            for col, (key, icon, title, desc) in zip(cols, tools[row_start:row_start + 2]):
                 with col:
                     with st.container(key=f"lmcard_{key}"):
                         st.markdown(
@@ -181,11 +184,11 @@ def render_tool_picker() -> str | None:
                         st.button(title, key=f"lmcard_btn_{key}", on_click=_select, args=(key,))
         return None
 
-    if st.session_state.get("lm_tool_chip") != TITLES[tool]:
-        st.session_state["lm_tool_chip"] = TITLES[tool]
+    if st.session_state.get("lm_tool_chip") != titles[tool]:
+        st.session_state["lm_tool_chip"] = titles[tool]
     st.segmented_control(
         "Tools",
-        [ALL, *TITLES.values()],
+        [ALL, *titles.values()],
         key="lm_tool_chip",
         on_change=_chip_changed,
         label_visibility="collapsed",

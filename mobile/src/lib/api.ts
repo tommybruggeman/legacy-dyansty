@@ -874,12 +874,39 @@ export type CommishTeam = {
   people: { user_id: string; email: string | null; role: string }[];
   invites: { id: string; email: string; role: string }[];
 };
-export type CommishHome = { season: number; teams: CommishTeam[]; switch: { enabled: boolean; own_from_week: number | null } };
+export type CommishHome = { season: number; activity?: boolean; teams: CommishTeam[]; switch: { enabled: boolean; own_from_week: number | null } };
 export type CommishField = { key: string; label: string; kind: 'money' | 'int' | 'pct' | 'bool' | 'text'; value: number | string | boolean | null };
 export type ScoringRow = { group: string; rule: string; key: string; points: number };
 export type CommishRules = { fields: CommishField[]; scoring: ScoringRow[] };
 export type DropPreview = { player_id: string; team_name: string; salary: number; years_left: number; dead_cap: number; dead_cap_pct: number };
 export type ContractFix = { contract_id: string; team_id: string; end_season: number; seasons: { season: number; salary: number }[] };
+
+// Owner activity (/commissioner/activity): only for the league owner's account.
+export type ActStep = { at: string; t: string; name: string; kind: string; secs: number; detail?: { x?: number; y?: number; dir?: string; to_x?: number; to_y?: number } };
+export type ActSession = { owner: string; user_id: string; source: string; start: string; minutes: number; steps: ActStep[]; frames: { at: string; path: string }[] };
+export type ActOwner = {
+  user_id: string; name: string; team: string | null; last_seen: string | null; days_since: number | null; days_active: number; sessions: number;
+  minutes: number; app_share: number | null; build: string | null; actions: number; gm_questions: number; gm_cost: number;
+  favorite_first_move: string | null; taps: number; app_opens: number; push_opens: number;
+  device: { os?: string; idiom?: string; version?: string; build?: string; tz?: string; width?: number; height?: number; font_scale?: number } | null;
+};
+export type ActCount = { name: string; count: number };
+export type ActPeriod = { period: string; owners: number; sessions: number; minutes: number; page_visits: number; actions: number;
+  visits: ActCount[]; top_actions: ActCount[]; top_flows: { path: string; count: number }[] };
+export type Activity = {
+  days: number; tz: string; by: 'day' | 'week' | 'month'; periods: ActPeriod[];
+  totals: { owners: number; active_today: number; active_7d: number; active_30d: number; sessions: number; median_session_min: number; minutes: number;
+    sessions_per_owner_day: number; actions: number; gm_questions: number; gm_cost: number; errors: number; push_opens: number; taps: number; swipes: number; app_opens: number };
+  daily: { date: string; owners: number; sessions: number; minutes: number }[];
+  screens: { name: string; opens: number; minutes: number; owners: number; avg_secs: number; app: number; web: number }[];
+  actions: { name: string; count: number; owners: number }[];
+  unused: { screens: string[]; actions: string[]; rare_screens: string[] };
+  paths: { pairs: { path: string; count: number }[]; starts: { path: string; count: number }[] };
+  first_moves: ActCount[]; heatmap: number[][]; hours: number[];
+  weekdays: { day: string; events: number; avg_owners: number; top_screens: string[]; top_actions: string[] }[];
+  owners: ActOwner[]; quiet: string[]; builds: { build: string; owners: number }[]; gm_topics: { topic: string; count: number }[];
+  errors: ActCount[]; sessions: ActSession[]; taps: { name: string; count: number; spots: number[][] }[]; platforms: Record<string, number>;
+};
 
 // Prospect Power Rankings (/prospects/rankings): the weekly GM article on the next rookie class.
 export type Prospect = {

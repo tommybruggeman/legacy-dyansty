@@ -44,16 +44,19 @@ def delete_account() -> str | None:
 
 
 def log_page_view(page_file: str) -> None:
-    """One row per page per browser session in app_screen_views (source 'website'). Never breaks the page."""
+    """A row in app_screen_views (source 'website') each time the owner moves to another page, or comes back to
+    the same one after 30 minutes. Time on a page is worked out later from the gap to the next one. Never breaks the page."""
     try:
+        import time
+
         name = "web/" + os.path.splitext(os.path.basename(page_file))[0]
-        seen = st.session_state.setdefault("_pages_logged", set())
-        if name in seen:
+        last = st.session_state.get("_page_logged") or ("", 0.0)
+        if last[0] == name and time.time() - last[1] < 30 * 60:
             return
         client, user_id, email = _client_and_user()
         if not user_id or email.lower() == "applereview@legacydynasty.app":
             return
-        seen.add(name)
+        st.session_state["_page_logged"] = (name, time.time())
         usage_log.save(client, user_id=user_id, league_id=st.session_state.get("active_league_id"),
                        views=[{"screen": name, "seconds": 0}], build=None, source="website")
     except Exception:

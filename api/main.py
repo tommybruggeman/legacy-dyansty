@@ -53,7 +53,29 @@ def owner_client(request: Request, authorization: str = Header(default="")) -> t
     if demo.blocked(user, request.method, request.url.path):
         raise HTTPException(status_code=403, detail=demo.MESSAGE)
     client.postgrest.auth(token)
+    request.state.owner = (client, user)  # lets the activity log below record what the owner did
     return client, user
+
+
+@app.middleware("http")
+async def log_owner_actions(request: Request, call_next):
+    """After a successful POST/DELETE, one 'action' row in our own activity table (never slows or breaks the reply)."""
+    response = await call_next(request)
+    owner = getattr(request.state, "owner", None)
+    if owner and response.status_code < 400 and usage_log.action_name(request.method, request.url.path):
+        client, user = owner
+        if not demo.is_demo(user):
+            import asyncio
+
+            def save() -> None:
+                try:
+                    league_id = resolve_team(client, user).get("league_id")
+                except Exception:
+                    league_id = None
+                usage_log.save_action(client, user_id=str(user.id), league_id=league_id, method=request.method, path=request.url.path)
+
+            asyncio.get_running_loop().run_in_executor(None, save)
+    return response
 
 
 def _first(rows: list[dict] | None) -> dict | None:
@@ -245,8 +267,14 @@ class CrashReport(BaseModel):
 @app.post("/me/crash")
 def crash_report(body: CrashReport, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
     """A crash or screen error from someone's phone, written to the server log (free, no extra service)."""
-    _, user = owner
+    client, user = owner
     print(account.crash_line(str(user.id), body.model_dump()), flush=True)
+    if not demo.is_demo(user):
+        try:
+            league_id = resolve_team(client, user).get("league_id")
+        except HTTPException:
+            league_id = None
+        usage_log.save_error(client, user_id=str(user.id), league_id=league_id, screen=body.screen, build=body.build)
     return {"ok": True}
 
 
@@ -254,6 +282,8 @@ class ScreenTime(BaseModel):
     screen: str
     seconds: int
     at: str | None = None
+    kind: str | None = None  # screen (default), tap, swipe, push_open, app_open, app_close
+    detail: dict[str, Any] | None = None
 
 
 class ActivityBatch(BaseModel):
@@ -1137,7 +1167,78 @@ def _after_commish_change(league_id: str) -> None:
 def commissioner_home(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
     client, user = owner
     ctx = _commissioner_ctx(client, user)
-    return {"season": ctx["season"], **_commish_call(commissioner.overview, client, ctx["league_id"])}
+    try:
+        viewer = bool(client.table("app_activity_viewers").select("user_id").eq("user_id", str(user.id)).limit(1).execute().data)
+    except Exception:
+        viewer = False
+    return {"season": ctx["season"], "activity": viewer, **_commish_call(commissioner.overview, client, ctx["league_id"])}
+
+
+def _activity_viewer(client: Client, user: Any) -> dict[str, Any]:
+    """Activity is only for the accounts in app_activity_viewers (the league owner), not every commissioner."""
+    ctx = _commissioner_ctx(client, user)
+    try:
+        ok = bool(client.table("app_activity_viewers").select("user_id").eq("user_id", str(user.id)).limit(1).execute().data)
+    except Exception:
+        ok = False
+    if not ok:
+        raise HTTPException(status_code=403, detail="Owner activity is private to the league owner's account.")
+    return ctx
+
+
+def _activity_data(client: Client, league_id: str, days: int) -> tuple[list[dict], list[dict], dict[str, dict]]:
+    from api import usage_stats
+    def load() -> tuple[list[dict], list[dict], dict[str, dict]]:
+        rows, ai = usage_stats.load(client, league_id, days=days)
+        owners = usage_stats.owners_from_teams(commissioner.overview(client, league_id)["teams"])
+        return rows, ai, owners
+    return cache.cached(("activity", league_id, days), 60, load)
+
+
+@app.get("/commissioner/activity")
+def commissioner_activity(days: int = Query(30, ge=1, le=365), by: str = "day", tz: str | None = None, owner: str | None = None,
+                          owner_auth: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """How owners use the app and website: pages, flows, sessions, timelines, by day/week/month (commissioner only)."""
+    from api import usage_stats
+    client, user = owner_auth
+    ctx = _activity_viewer(client, user)
+    rows, ai, owners = _activity_data(client, ctx["league_id"], days)
+    return usage_stats.build(rows, owners=owners, ai_rows=ai, days=days, tz=tz, owner=owner, by=by)
+
+
+class ActivityQuestion(BaseModel):
+    question: str
+    days: int = 30
+    tz: str | None = None
+    deep: bool = False
+    history: list[dict[str, str]] = []
+
+
+@app.post("/commissioner/activity/ask")
+def commissioner_activity_ask(body: ActivityQuestion, owner_auth: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """The Activity analyst: Claude answers usage questions from our own activity rows."""
+    from api import usage_ai
+    from league_ai import usage
+    client, user = owner_auth
+    ctx = _activity_viewer(client, user)
+    question = body.question.strip()[:1000]
+    if not question:
+        raise HTTPException(status_code=400, detail="Ask a question first.")
+    days = max(1, min(int(body.days or 30), 365))
+    rows, ai, owners = _activity_data(client, ctx["league_id"], days)
+    try:
+        out = usage_ai.ask(question, rows=rows, owners=owners, ai_rows=ai, days=days, tz=body.tz, deep=body.deep, history=body.history)
+    except Exception as exc:
+        print(f"USAGE_ANALYST_FAILED {type(exc).__name__}", flush=True)
+        raise HTTPException(status_code=502, detail="The analyst couldn't answer just now. Try again in a minute.")
+    u = out["usage"]
+    usage.record(client, usage.usage_row(league_id=ctx["league_id"], user_id=str(user.id), feature="usage_analyst", model=out["model"],
+                                         input_tokens=u.get("input_tokens", 0), output_tokens=u.get("output_tokens", 0),
+                                         cache_read_tokens=u.get("cache_read_tokens", 0), cache_write_tokens=u.get("cache_write_tokens", 0),
+                                         tool_calls=out["tools"], latency_ms=out["latency_ms"]))
+    cost = usage.cost_usd(out["model"], input_tokens=u.get("input_tokens", 0), output_tokens=u.get("output_tokens", 0),
+                          cache_read_tokens=u.get("cache_read_tokens", 0), cache_write_tokens=u.get("cache_write_tokens", 0))
+    return {"answer": out["answer"], "model": out["model"], "cost": cost}
 
 
 @app.post("/commissioner/add")

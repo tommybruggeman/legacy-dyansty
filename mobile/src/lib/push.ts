@@ -1,3 +1,4 @@
+import { track } from './telemetry';
 import * as Notifications from 'expo-notifications';
 import { router } from 'expo-router';
 import { Platform } from 'react-native';
@@ -70,10 +71,16 @@ function urlOf(response: Notifications.NotificationResponse | null): string | nu
   return typeof raw === 'string' && raw ? raw : null;
 }
 
+const seenResponses = new Set<string>();
+
 // Tapping an alert opens the page it's about (lineup, box score, Activity, Transactions...).
 export function listenForTaps(): () => void {
   const open = (response: Notifications.NotificationResponse | null) => {
     const url = urlOf(response);
+    if (response && !seenResponses.has(response.notification.request.identifier)) {
+      seenResponses.add(response.notification.request.identifier);
+      track('push_open', { to: url ?? null }, url ?? '/');
+    }
     if (url) router.push(url as never);
   };
   Notifications.getLastNotificationResponseAsync().then(open).catch(() => {});
