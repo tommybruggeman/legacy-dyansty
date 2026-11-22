@@ -44,6 +44,7 @@ function RootStack() {
         <Stack.Screen name="delete-account" />
         <Stack.Screen name="profile" />
         <Stack.Screen name="league-rules" />
+        <Stack.Screen name="prospects" />
         <Stack.Screen name="commissioner" />
         <Stack.Screen name="commish-team" />
         <Stack.Screen name="commish-add" />

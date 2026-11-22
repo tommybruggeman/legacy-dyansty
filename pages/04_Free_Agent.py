@@ -638,12 +638,13 @@ for warning in results.warnings:
     st.warning(warning)
 
 
-open_market_tab, league_players_tab, expiring_tab, rookie_tab = st.tabs(
+open_market_tab, league_players_tab, expiring_tab, rookie_tab, prospects_tab = st.tabs(
     [
         "Open Market",
         "League Players",
         "Expiring Contracts",
         "Rookie Class",
+        "Prospect Rankings",
     ]
 )
 
@@ -1110,3 +1111,9 @@ with rookie_tab:
             f"No eligible {active_season} rookies "
             f"match this position filter."
         )
+
+
+with prospects_tab:
+    from services.prospect_rankings_ui import render as render_prospect_rankings
+
+    render_prospect_rankings(service_client(), user_id)
