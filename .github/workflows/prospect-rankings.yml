@@ -1,0 +1,36 @@
+name: Prospect Power Rankings
+
+on:
+  schedule:
+    # Tuesdays 15:30 UTC (~10:30am ET): after Saturday's college stats reach cfbfastR-data and the Monday data sync.
+    - cron: "30 15 * * 2"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Only build the candidate list, call nothing"
+        type: boolean
+        default: false
+
+jobs:
+  write:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: pip install supabase anthropic
+
+      - name: Write and save this week's rankings
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          ARGS=""
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then ARGS="--dry-run"; fi
+          python -m league_ai.prospect_rankings $ARGS

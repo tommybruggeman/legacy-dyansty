@@ -880,3 +880,14 @@ export type ScoringRow = { group: string; rule: string; key: string; points: num
 export type CommishRules = { fields: CommishField[]; scoring: ScoringRow[] };
 export type DropPreview = { player_id: string; team_name: string; salary: number; years_left: number; dead_cap: number; dead_cap_pct: number };
 export type ContractFix = { contract_id: string; team_id: string; end_season: number; seasons: { season: number; salary: number }[] };
+
+// Prospect Power Rankings (/prospects/rankings): the weekly GM article on the next rookie class.
+export type Prospect = {
+  rank: number; athlete_id: string; name: string; pos: 'QB' | 'RB' | 'WR' | 'TE'; school: string; size: string; line: string;
+  role: string; tags: string[]; mock: string; boards: string; text: string; photo: string; move: 'up' | 'down' | 'new' | 'same'; was: number | null;
+};
+export type ProspectEdition = {
+  date: string; season: number; number: number; headline: string; dek: string; lede: string; players: Prospect[];
+  sources: { title: string; url: string }[];
+};
+export type ProspectPage = { edition: ProspectEdition | null; starred: string[] };

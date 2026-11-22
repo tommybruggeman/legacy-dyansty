@@ -5,6 +5,7 @@ import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-nativ
 
 import { AlertsCard } from '../../components/home/AlertsCard';
 import { DraftBoard } from '../../components/home/DraftBoard';
+import { ProspectCard } from '../../components/home/ProspectCard';
 import { GameDayBottom, Scoreboard } from '../../components/home/GameDayBottom';
 import { Avatar, Headshot, type Ring } from '../../components/Pictures';
 import { ErrorState, Loading } from '../../components/ScreenState';
@@ -537,6 +538,8 @@ function Playoffs({ data }: { data: HomeData }) {
         : <PlayerHeads title="YOUR PLAYERS RIGHT NOW" players={mine.filter((p) => p.player_id).sort((a, b) => order(a) - order(b) || b.points - a.points).slice(0, 3)} sub={statusLine} />}
       {/* Shotgun watch stays live all through the playoffs: every team still scores and last place still shotguns. */}
       {data.draft_board ? <DraftBoard board={data.draft_board} /> : null}
+      {/* Prospect Power Rankings come out Tuesday; the card shows Tuesday through Saturday, off the game days. */}
+      {data.weekday != null && data.weekday >= 1 && data.weekday <= 5 ? <ProspectCard /> : null}
       {data.bottom ? <GameDayBottom bottom={data.bottom} week={data.week} /> : null}
       <AskBar placeholder="Who should I start this week?" />
       {!pg && data.standings?.length ? <Standings rows={data.standings} playoffTeams={data.playoff_teams} /> : null}
@@ -903,6 +906,7 @@ function DraftPrep({ data }: { data: HomeData }) {
         </Card>
       ) : null}
       <AskBar placeholder="Plan my draft" />
+      <ProspectCard />
     </>
   );
 }

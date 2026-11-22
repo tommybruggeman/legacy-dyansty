@@ -12,7 +12,7 @@ import { useSlow } from './ScreenState';
 
 // Every page refreshes on a gentle pull (the gold football), and opens search only on a much longer pull (PullDown).
 // scrollTo: a y offset inside the page (its children) to glide to once, e.g. a card the page was opened for.
-export function Screen({ children, loading, scrollTo }: { children: ReactNode; loading?: boolean; scrollTo?: number | null }) {
+export function Screen({ children, loading, scrollTo, jumpTo }: { children: ReactNode; loading?: boolean; scrollTo?: number | null; jumpTo?: { y: number; n: number } | null }) {
   const insets = useSafeAreaInsets();
   const scroll = useRef<ScrollViewInstance>(null);
   useScrollTopOnTab(scroll);
@@ -22,6 +22,10 @@ export function Screen({ children, loading, scrollTo }: { children: ReactNode; l
     scrolled.current = true;
     scroll.current?.scrollTo({ y: Math.max(0, scrollTo - 8), animated: true });
   }, [scrollTo]);
+  // jumpTo scrolls every time its n changes (a tap on an index row, say); scrollTo only ever scrolls once.
+  useEffect(() => {
+    if (jumpTo) scroll.current?.scrollTo({ y: Math.max(0, jumpTo.y - 8), animated: true });
+  }, [jumpTo?.n]); // eslint-disable-line react-hooks/exhaustive-deps
   const pull = usePullDown({ top: insets.top + 8 });
   const slow = useSlow(!!loading || pull.refreshing);
   return (

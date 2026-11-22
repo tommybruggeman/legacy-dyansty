@@ -20,7 +20,7 @@ from api import box_score as box_score_mod
 from api import account, demo, usage_log
 from league_ai import screenshots
 from api import gm_moves
-from api import activity, alerts, cache, commissioner, owner_settings, profiles, front_office, home, league, lineups, live_activity, market, market_week, nfl_live, own_league, player, playoffs, projections, teams, trade_feed, trade_offers, waivers
+from api import activity, alerts, cache, commissioner, owner_settings, profiles, prospects, front_office, home, league, lineups, live_activity, market, market_week, nfl_live, own_league, player, playoffs, projections, teams, trade_feed, trade_offers, waivers
 from season_engine import SeasonResolver
 from services.season_rollover_owner_ui import OwnerRolloverDecisionError, OwnerRolloverDecisionService
 
@@ -413,6 +413,26 @@ def save_my_gm_prefs(body: GmPrefsBody, owner: tuple[Client, Any] = Depends(owne
     client, user = owner
     try:
         return owner_settings.save_gm_prefs(client, user.id, body.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+class StarBody(BaseModel):
+    athlete_id: str
+    on: bool = True
+
+
+@app.get("/prospects/rankings")
+def prospect_rankings(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    return prospects.page(client, str(user.id))
+
+
+@app.post("/prospects/star")
+def star_prospect(body: StarBody, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner
+    try:
+        return {"starred": prospects.set_star(client, str(user.id), body.athlete_id, body.on)}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
