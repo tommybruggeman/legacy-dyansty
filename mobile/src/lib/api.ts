@@ -148,13 +148,18 @@ export function useApi<T>(path: string, refreshEvery = 0) {
   const [data, setData] = useState<T | null>(() => (memory.get(path) as T | undefined) ?? null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(!memory.has(path));
+  const shown = useRef<T | null>(data); // what is on screen now, to skip redraws that change nothing
+  shown.current = data;
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
     try {
       const value = await apiGet<T>(path);
+      // A refresh that brings back the same thing changes nothing on screen, so skip the redraw (live pages
+      // poll every few seconds, and a whole bracket or roster redrawing mid-scroll or mid-tab-switch stutters).
+      const same = shown.current != null && JSON.stringify(shown.current) === JSON.stringify(value);
       remember(path, value);
-      setData(value);
+      if (!same) setData(value);
       setError(null);
     } catch (e: any) {
       if (!quiet) setError(e?.message ?? 'Something went wrong.');
@@ -192,7 +197,8 @@ export function useApi<T>(path: string, refreshEvery = 0) {
   useFocusEffect(
     useCallback(() => {
       if (!refreshEvery) return undefined;
-      if (seen.current === path) load(true);
+      // Wait until the tab has finished appearing before catching up, so the refresh can't land mid-switch.
+      const catchUp = seen.current === path ? setTimeout(() => load(true), 400) : null;
       seen.current = path;
       const timer = setInterval(() => {
         if (AppState.currentState === 'active') load(true);
@@ -201,6 +207,7 @@ export function useApi<T>(path: string, refreshEvery = 0) {
         if (state === 'active') load(true);
       });
       return () => {
+        if (catchUp) clearTimeout(catchUp);
         clearInterval(timer);
         wake.remove();
       };
