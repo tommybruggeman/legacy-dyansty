@@ -124,3 +124,42 @@ def test_mark_auto_losses_flags_only_that_team():
     rows = [{"roster_id": 1, "points": 120, "matchup_id": 1}, {"roster_id": 2, "points": 90, "matchup_id": 1}]
     out = own_league.mark_auto_losses(rows, {1})
     assert out[0]["auto_loss"] is True and "auto_loss" not in out[1] and "auto_loss" not in rows[0]
+
+
+def test_consolation_games_say_what_they_decide():
+    week15 = {tuple(t.get("roster_id") for t in g["teams"]): g["stakes"] for g in view(15, 15, 14)["losers"]}
+    assert week15[(7, 10)] == {"win": "Win: play for 5th–8th", "lose": "Lose: 9th place game"}
+    week16 = view(16, 16, 15)["losers"]
+    assert week16[0]["stakes"] == {"win": "Win: 5th place game", "lose": "Lose: 7th place game"}
+    assert next(g for g in week16 if g["label"] == "9th place")["stakes"] is None
+
+
+def test_projections_add_banked_weeks_and_byes():
+    proj = {rid: {"projected": 100.0, "kickoff": 90.0} for rid in range(1, 11)}
+    v = view(18, 18, 17)  # week 2 of the two-week final (weeks 17-18 in this fixture)
+    playoffs.add_projections(v, proj)
+    t = next(g for g in v["games"] if g["place"] == 1)["teams"][0]
+    assert t["proj"] == round(t["legs"][0] + 100.0, 1)  # week 17 points banked + week 18 projection
+    v16 = view(16, 16, 15)
+    playoffs.add_projections(v16, proj)
+    ninth = next(g for g in v16["losers"] if g["label"] == "9th place")
+    assert all(t["proj"] == 100.0 for t in ninth["teams"])
+
+
+def test_bye_card_names_my_bye_partner_and_next_game():
+    from api import home
+    v = view(15, 15, 14, me=5)
+    playoffs.add_projections(v, {rid: {"projected": 110.0, "kickoff": 100.0} for rid in range(1, 11)})
+    bye = home.playoff_bye(v, 5)
+    assert bye["me"]["roster_id"] == 5 and bye["them"]["roster_id"] == 6 and bye["me"]["proj"] == 110.0
+    assert bye["next_week"] == 16 and bye["next_vs"] is None
+    assert bye["feeder"] == {"kind": "w", "names": ["Owner 8", "Owner 9"]}  # 5 plays the 8/9 winner
+    assert home.playoff_bye(v, 2) is None
+
+
+def test_champion_once_the_title_game_is_final():
+    from api import home
+    assert home.champion(view(17, 17, 16), 4) is None
+    done = view(18, 18, 18)
+    champ = home.champion(done, 4)
+    assert champ and champ["is_me"] == (champ["roster_id"] == 4) and champ["opponent"]["roster_id"] != champ["roster_id"]

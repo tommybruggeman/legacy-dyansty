@@ -608,6 +608,11 @@ def _matchups_raw(
         print(f"APP_PLAYOFFS_ERROR {type(exc).__name__}", flush=True)
         view = None
     if view is not None:
+        if shown <= result["current_week"]:
+            try:  # every playoff and consolation game shows projected scores (Tommy, 2026-11-22)
+                playoffs.add_projections(view, _week_projections(*owner, shown), week_final=bool(result.get("is_final")))
+            except Exception as exc:
+                print(f"APP_PLAYOFF_PROJ_ERROR {type(exc).__name__}", flush=True)
         result["playoffs"] = view
         result["games"] = playoffs.legacy_games(view)
         result["summary"] = None
@@ -645,6 +650,27 @@ def _add_card_owners(client: Client, league_id: str, sleeper_id: str, names: dic
 
 
 CARD_PROJ_TTL = 15
+
+
+def _week_projections(client: Client, user: Any, week: int) -> dict[int, dict[str, float]]:
+    """roster_id -> {"projected": live projected week total, "kickoff": starters' projections frozen at kickoff},
+    league-wide and shared by every owner (one scoring pass per refresh window)."""
+    ctx = _season_context(client, user)
+
+    def load() -> dict[int, dict[str, float]]:
+        rows = league.sleeper.get(f"league/{ctx['sleeper_id']}/matchups/{week}", ttl=league.LIVE_TTL) or []
+        sides = []
+        for row in rows:
+            points = row.get("players_points") or {}
+            starters = [str(pid) for pid in row.get("starters") or [] if pid and str(pid) != "0"]
+            sides.append({"roster_id": row.get("roster_id"), "players": [{"player_id": pid, "points": float(points.get(pid) or 0)} for pid in starters]})
+        info = teams.player_info(client, [p["player_id"] for side in sides for p in side["players"]])
+        box_score_mod.add_projections(client, ctx, week, False, {"teams": sides}, info)
+        return {int(side["roster_id"]): {"projected": side.get("projected"),
+                                          "kickoff": round(sum(p.get("proj") or 0.0 for p in side["players"]), 1)}
+                for side in sides if side.get("roster_id") is not None}
+
+    return cache.cached(("week_proj", ctx["sleeper_id"], ctx["season"], week), CARD_PROJ_TTL, load)
 
 
 def _add_card_projections(client: Client, user: Any, result: dict[str, Any]) -> None:
@@ -2189,6 +2215,13 @@ def _home_raw(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, An
             view = None
         out["bracket"] = home.bracket_from_view(view)
         out["playoff_game"] = home.playoff_game(view)
+        if view and not out["playoff_game"] and any(t.get("roster_id") == my_roster for t in view.get("byes") or []):
+            try:  # my consolation bye: both bye teams' scores still count, so they get projections too
+                playoffs.add_projections(view, _week_projections(client, user, view["week"]), week_final=bool(current["is_final"]))
+            except Exception as exc:
+                print(f"APP_HOME_BYE_PROJ_ERROR {type(exc).__name__}", flush=True)
+            out["playoff_bye"] = home.playoff_bye(view, my_roster)
+        out["champion"] = home.champion(view, my_roster)
         # Tuesday in the playoffs is last week's final, the same as the regular season (Tommy, 2026-11-22):
         # the week before the playoffs is a normal recap; a playoff week also carries last week's playoff game.
         if today.weekday() == 1 and week > 1:
@@ -2199,6 +2232,17 @@ def _home_raw(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, An
                     out["recap"]["playoff_game"] = home.playoff_game(prev)
             except Exception as exc:
                 print(f"APP_HOME_PLAYOFF_RECAP_ERROR {type(exc).__name__}", flush=True)
+    if phase in ("decisions", "draft_prep") and rules:
+        # The champion card stays on Home for CHAMPION_DAYS after the title game's last kickoff day.
+        try:
+            last = playoffs.last_week(rules)
+            starts = home.kickoffs(_nfl_week(client, ctx["season"], last))
+            ended = max(starts.values()).astimezone(home.HOME_TZ).date() if starts else None
+            if ended and (today - ended).days <= home.CHAMPION_DAYS:
+                pics = pics or _pictures(client, ctx["league_id"], sid)
+                out["champion"] = home.champion(league.playoff_view(sid, names, last, my_roster, rules, pics), my_roster)
+        except Exception as exc:
+            print(f"APP_HOME_CHAMPION_ERROR {type(exc).__name__}", flush=True)
     if phase == "decisions":
         ppg = teams.player_ppg(sid, weeks)
         try:

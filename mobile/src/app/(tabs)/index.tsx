@@ -1,3 +1,4 @@
+import { LinearGradient } from 'expo-linear-gradient';
 import { router, useFocusEffect } from 'expo-router';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
@@ -7,7 +8,7 @@ import { GameDayBottom, Scoreboard } from '../../components/home/GameDayBottom';
 import { Avatar, Headshot, type Ring } from '../../components/Pictures';
 import { ErrorState, Loading } from '../../components/ScreenState';
 import { Bar, Card, Pill, Screen, firstName, money, teamLabel, ordinal, record, ui } from '../../components/ui';
-import { type BoxScore, type HomeData, type HomeSide, type LivePlayer, type HomePlayoffGame, type PlayoffSide, type RaceRow, type RookieDeal, type TableRow, apiSend, LIVE_POLL_MS, prefetch, useApi } from '../../lib/api';
+import { type BoxScore, type ByeSide, type HomeData, type HomeSide, type LivePlayer, type HomePlayoffGame, type PlayoffSide, type RaceRow, type RookieDeal, type TableRow, apiSend, LIVE_POLL_MS, prefetch, useApi } from '../../lib/api';
 import { syncLiveActivity } from '../../lib/liveActivity';
 import { colors } from '../../lib/theme';
 
@@ -72,6 +73,7 @@ export default function Home() {
       {data.phase === 'recap' ? <Recap data={data} /> : null}
       {data.phase === 'game_day' ? <GameDay data={data} /> : null}
       {data.phase === 'playoffs' ? <Playoffs data={data} /> : null}
+      {(data.phase === 'decisions' || data.phase === 'draft_prep') && data.champion ? <ChampionCard c={data.champion} season={data.season} /> : null}
       {data.phase === 'decisions' ? <Decisions data={data} onChange={reload} /> : null}
       {data.phase === 'draft_prep' ? <DraftPrep data={data} /> : null}
     </Screen>
@@ -527,9 +529,9 @@ function Playoffs({ data }: { data: HomeData }) {
   const tuesday = data.weekday === 1 && !!data.recap?.game?.me;
   return (
     <>
-      {tuesday ? <RecapHero data={data} /> : pg ? <PlayoffHero data={data} pg={pg} /> : null}
+      {tuesday ? <RecapHero data={data} /> : pg ? <PlayoffHero data={data} pg={pg} /> : data.playoff_bye ? <ByeHero data={data} /> : null}
       {data.bracket?.length ? <BracketCard rounds={data.bracket} playoffTeams={data.playoff_teams} /> : null}
-      {tuesday
+      {data.champion ? <ChampionCard c={data.champion} season={data.season} /> : tuesday
         ? <PlayerHeads title="YOUR TOP SCORERS" right={`Week ${data.recap!.week}`} players={data.recap!.top_scorers ?? []} />
         : <PlayerHeads title="YOUR PLAYERS RIGHT NOW" players={mine.filter((p) => p.player_id).sort((a, b) => order(a) - order(b) || b.points - a.points).slice(0, 3)} sub={statusLine} />}
       {/* Shotgun watch stays live all through the playoffs: every team still scores and last place still shotguns. */}
@@ -640,6 +642,55 @@ function PlayoffRecapCard({ data, pg, week, weekScore, rank, box }: {
       badges={badges}
       note={pg.legs > 1 ? (midRound ? `Week ${pg.leg} of ${pg.legs} · round total` : 'Final · round total, both weeks') : null}
     />
+  );
+}
+
+// A consolation bye week (Tommy, 2026-11-22): styled like the matchup card, both bye teams' scores and projections
+// (they still count for Shotgun Watch and the top 5), NO WINNER under VS, a nudge to set a lineup and the next game.
+function ByeHero({ data }: { data: HomeData }) {
+  const b = data.playoff_bye!;
+  const pre = b.me.score === 0 && (b.them?.score ?? 0) === 0;
+  const side = (s: ByeSide | null, label: string) => (
+    <View style={styles.side}>
+      <Avatar uri={s?.avatar} name={s?.name ?? 'Bye'} size={54} me={label === 'You'} />
+      <Text style={styles.sideName} numberOfLines={1}>{label}</Text>
+      {!pre && s ? <Text style={styles.score}>{pts(s.score)}</Text> : null}
+      {!pre && s?.proj != null ? <Text style={styles.proj}>proj {s.proj.toFixed(1)}</Text> : null}
+    </View>
+  );
+  const them = b.them ? firstName(b.them.name) : 'Bye';
+  const next = b.next_week ? (b.next_vs ? `Week ${b.next_week}: you play ${firstName(b.next_vs)}`
+    : b.feeder?.names.length === 2 ? `Week ${b.next_week}: you play the ${b.feeder.names.map(firstName).join('–')} ${b.feeder.kind === 'w' ? 'winner' : 'loser'}` : '') : '';
+  return (
+    <Card gold>
+      <Eyebrow right={<LivePill data={data} />}>{`BYE WEEK · WITH ${them.toUpperCase()}`}</Eyebrow>
+      <View style={styles.vs}>
+        {side(b.me, 'You')}
+        <View style={styles.vsMid}>
+          <Text style={styles.vsText}>VS</Text>
+          {pre && b.me.proj != null ? <Text style={styles.vsSub}>{`${b.me.proj.toFixed(1)} – ${(b.them?.proj ?? 0).toFixed(1)}`}</Text> : null}
+          <Text style={styles.byeTag}>NO WINNER</Text>
+        </View>
+        {side(b.them, them)}
+      </View>
+      <Text style={styles.heroNote}>{pre ? 'Set your lineup: your score still counts for Shotgun Watch' : 'Your score counts for Shotgun Watch'}{next ? `\n${next}` : ''}</Text>
+    </Card>
+  );
+}
+
+// The champion (Tommy picked the trophy banner, 2026-11-22): replaces "Your players" once the title game is final
+// and stays on Home for 10 days.
+function ChampionCard({ c, season }: { c: NonNullable<HomeData['champion']>; season: number }) {
+  const line = c.opponent ? `${pts(c.score)} – ${pts(c.opponent.score)} over ${firstName(c.opponent.name)}` : '';
+  return (
+    <Card gold style={styles.champ}>
+      <LinearGradient colors={['rgba(200,155,74,0.35)', 'rgba(200,155,74,0)']} style={StyleSheet.absoluteFill} pointerEvents="none" />
+      <Text style={[styles.cardEyebrow, styles.champEyebrow]}>{`LEGACY DYNASTY · ${season} CHAMPION`}</Text>
+      <Text style={styles.champCup}>🏆</Text>
+      <Text style={styles.champName}>{c.is_me ? 'You' : firstName(c.name)}</Text>
+      {c.team_name ? <Text style={styles.champTeam}>{c.team_name}</Text> : null}
+      {line ? <Text style={styles.champLine}>{line}</Text> : null}
+    </Card>
   );
 }
 
@@ -884,6 +935,13 @@ const styles = StyleSheet.create({
   hidden: { opacity: 0 },
   bar: { marginTop: 12 },
   badges: { flexDirection: 'row', gap: 8, marginTop: 12 },
+  byeTag: { marginTop: 8, fontSize: 9.5, fontWeight: '800', letterSpacing: 1, color: colors.gold, borderWidth: 1, borderColor: 'rgba(200,155,74,0.5)', borderRadius: 6, paddingHorizontal: 7, paddingVertical: 3, overflow: 'hidden' },
+  champ: { alignItems: 'center', paddingVertical: 18, overflow: 'hidden' },
+  champEyebrow: { letterSpacing: 2, textAlign: 'center' },
+  champCup: { fontSize: 64, lineHeight: 74, marginTop: 10, marginBottom: 2 },
+  champName: { color: colors.text, fontSize: 28, fontWeight: '900' },
+  champTeam: { color: colors.muted, fontSize: 13, fontWeight: '700', letterSpacing: 0.5 },
+  champLine: { color: '#E2BC5B', fontSize: 14, fontWeight: '800', marginTop: 10 },
   heroNote: { color: colors.muted, fontSize: 11, textAlign: 'center', marginTop: 8, opacity: 0.8 },
   badge: { flex: 1, backgroundColor: colors.row, borderRadius: 12, paddingVertical: 8, paddingHorizontal: 4, alignItems: 'center' },
   badgeValue: { color: colors.text, fontSize: 17, fontWeight: '800' },

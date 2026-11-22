@@ -257,11 +257,13 @@ export type Matchups = {
 export type PlayoffTeam = {
   roster_id: number; name: string; seed: number | null; record: string | null; avatar?: string | null;
   is_me: boolean; score: number; legs: (number | null)[];
+  proj?: number | null; // projected game total (kickoff projection once final)
 };
 export type PlayoffSlot = PlayoffTeam | { placeholder: string | null };
 export type PlayoffGame = {
   bracket: 'winners' | 'losers'; round: number; m: number; label: string; place: number | null; weeks: number[];
   state: 'pre' | 'live' | 'final'; teams: [PlayoffSlot, PlayoffSlot]; winner: number | null; matchup_id: number | null; mine: boolean;
+  stakes?: { win: string; lose: string } | null; // consolation games: where the winner and loser go next
 };
 export type PlayoffWeek = {
   week: number; round: number; rounds: number; leg: number; legs: number; round_name: string; projected: boolean;
@@ -725,6 +727,7 @@ export type HomeGame = { matchup_id?: number; me?: HomeSide; them?: HomeSide | n
 export type BracketSide = { roster_id: number; name: string; score: number | null; avatar?: string | null; seed?: number | null } | null;
 export type PlayoffSide = { roster_id: number; name: string; score: number; avatar?: string | null; seed?: number | null; carry: number };
 // My game this playoff round from our own bracket: round totals, and points banked in earlier weeks of the round (carry).
+export type ByeSide = { roster_id: number; name: string; avatar?: string | null; score: number; proj?: number | null };
 export type HomePlayoffGame = {
   label: string; bracket: 'winners' | 'losers'; leg: number; legs: number; matchup_id: number | null;
   state: 'pre' | 'live' | 'final'; me: PlayoffSide; them: PlayoffSide | null;
@@ -780,6 +783,16 @@ export type HomeData = {
     games: { a: BracketSide; b: BracketSide; winner: number | null; state?: string; placeholders?: (string | null)[] }[];
   }[];
   playoff_game?: HomePlayoffGame | null;
+  // A consolation bye week: both bye teams (their scores still count) and who I play next.
+  playoff_bye?: {
+    me: ByeSide; them: ByeSide | null; next_week: number | null; next_vs: string | null;
+    feeder: { kind: 'w' | 'l'; names: string[] } | null;
+  } | null;
+  // The champion once the title game is final (stays on Home for 10 days).
+  champion?: {
+    roster_id: number; name: string; team_name?: string; avatar?: string | null; is_me: boolean; score: number;
+    opponent: { roster_id: number; name: string; score: number } | null;
+  } | null;
   decisions?: { window_open: boolean; deadline: string; players: RookieDeal[] };
   picks?: { year: number | null; picks: Pick[] };
   who_has_money?: { name: string; space: number; is_me: boolean; team_id: string | null; open_spots: number | null }[];
