@@ -159,6 +159,52 @@ def playoff_game(view: dict[str, Any] | None) -> dict[str, Any] | None:
             "matchup_id": game.get("matchup_id"), "state": game.get("state"), "me": side(me), "them": side(them)}
 
 
+def playoff_bye(view: dict[str, Any] | None, my_roster_id: int | None) -> dict[str, Any] | None:
+    """A consolation bye week (Tommy, 2026-11-22): both bye teams' scores and projections (they still count for
+    Shotgun Watch and the top 5) and who I play next, or the game whose winner I play."""
+    if not view or my_roster_id is None:
+        return None
+    byes = view.get("byes") or []
+    me = next((t for t in byes if t.get("roster_id") == my_roster_id), None)
+    if not me:
+        return None
+    them = next((t for t in byes if t is not me), None)
+    tree = view.get("loser_tree") or []
+
+    def side(t: dict[str, Any] | None) -> dict[str, Any] | None:
+        return {k: t.get(k) for k in ("roster_id", "name", "avatar", "score", "proj")} if t else None
+
+    nxt = next((g for g in tree if g.get("mine") and g.get("weeks") and min(g["weeks"]) > view["week"]), None)
+    vs, feeder = None, None
+    for k, t in enumerate((nxt or {}).get("teams") or []):
+        if t.get("roster_id") and t["roster_id"] != my_roster_id:
+            vs = t["name"]
+        elif not t.get("roster_id"):
+            for kind, m in ((nxt.get("feeds") or [None, None])[k] or {}).items():
+                g = next((x for x in tree if x.get("m") == int(m)), None)
+                if g:
+                    feeder = {"kind": kind, "names": [x["name"] for x in g["teams"] if x.get("roster_id")]}
+    return {"me": side(me), "them": side(them), "next_week": min(nxt["weeks"]) if nxt else None, "next_vs": vs, "feeder": feeder}
+
+
+def champion(view: dict[str, Any] | None, my_roster_id: int | None) -> dict[str, Any] | None:
+    """The champion once the title game is final: who, and the final score over whom."""
+    if not view or not view.get("champion"):
+        return None
+    final = next((g for g in view.get("tree") or [] if g.get("place") == 1 and g.get("state") == "final"), None)
+    if not final:
+        return None
+    win = view["champion"]
+    sides = [t for t in final["teams"] if t.get("roster_id")]
+    opp = next((t for t in sides if t["roster_id"] != win["roster_id"]), None)
+    mine = next((t for t in sides if t["roster_id"] == win["roster_id"]), win)
+    return {"roster_id": win["roster_id"], "name": win["name"], "avatar": win.get("avatar"), "is_me": win["roster_id"] == my_roster_id,
+            "score": mine.get("score"), "opponent": {"roster_id": opp["roster_id"], "name": opp["name"], "score": opp.get("score")} if opp else None}
+
+
+CHAMPION_DAYS = 10  # the champion card stays on Home this long after the title game (Tommy, 2026-11-22)
+
+
 def rookie_decisions(decisions: list[dict[str, Any]], roster: Iterable[dict[str, Any]], ppg: dict[str, float]) -> list[dict[str, Any]]:
     """My rollover decisions with the player's name, position, salary and PPG."""
     by_id = {_text(r.get("sleeper_player_id")): r for r in roster}
