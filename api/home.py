@@ -202,6 +202,54 @@ def champion(view: dict[str, Any] | None, my_roster_id: int | None) -> dict[str,
             "score": mine.get("score"), "opponent": {"roster_id": opp["roster_id"], "name": opp["name"], "score": opp.get("score")} if opp else None}
 
 
+def draft_board(standings: list[dict[str, Any]], playoff_teams: int, odds: dict[int, list[float]] | None,
+                picks: list[dict[str, Any]], team_of: dict[int, str], names: dict[int, str], pics: dict[int, str | None],
+                year: int, my_roster_id: int | None, rounds: int = 3) -> dict[str, Any]:
+    """The next rookie draft's board for Tuesday/Wednesday playoff Home (Tommy, 2026-11-22): straight reverse of the
+    final finish, the same order every round. Teams that missed the playoffs are locked in reverse standings order;
+    the playoff teams' picks move with the bracket until their finish is decided, shown as the most likely owner with
+    odds and the other possible teams. Traded picks show their current owner "via" the original team."""
+    order = [int(r["roster_id"]) for r in standings]
+    n = len(order)
+    roster_of = {tid: rid for rid, tid in team_of.items()}
+    owner: dict[tuple[int, int], int] = {}  # (round, original roster) -> current roster
+    for p in picks:
+        if int(p.get("draft_year") or 0) != year:
+            continue
+        if _text(p.get("asset_status")) not in {"", "tradable", "active", "available", "owned"}:
+            continue
+        orig = roster_of.get(_text(p.get("original_league_team_id")))
+        cur = roster_of.get(_text(p.get("current_owner_league_team_id")))
+        if orig is not None and cur is not None:
+            owner[(int(p.get("round_number") or 0), orig)] = cur
+
+    def who(rid: int, rnd: int, pct: float | None = None) -> dict[str, Any]:
+        cur = owner.get((rnd, rid), rid)
+        out = {"roster_id": cur, "name": names.get(cur, f"Roster {cur}"), "avatar": pics.get(cur), "is_me": cur == my_roster_id,
+               "via": names.get(rid) if cur != rid else None}
+        if pct is not None:
+            out["pct"] = round(pct * 100)
+        return out
+
+    out_rounds = []
+    for rnd in range(1, rounds + 1):
+        rows = []
+        for slot in range(1, n + 1):
+            place = n + 1 - slot  # 1.01 goes to last place
+            label = f"{rnd}.{slot:02d}"
+            if place > playoff_teams or not odds:
+                rows.append({"pick": label, "locked": True, "owner": who(order[place - 1], rnd)})
+                continue
+            ranked = sorted(((rid, o[place - 1]) for rid, o in odds.items() if o[place - 1] > 0.0005), key=lambda x: -x[1])
+            if len(ranked) == 1 or (ranked and ranked[0][1] > 0.9995):
+                rows.append({"pick": label, "locked": True, "owner": who(ranked[0][0], rnd)})
+            elif ranked:
+                rows.append({"pick": label, "locked": False, "owner": who(ranked[0][0], rnd, ranked[0][1]),
+                             "others": [who(rid, rnd, pct) for rid, pct in ranked[1:]]})
+        out_rounds.append({"round": rnd, "picks": rows})
+    return {"year": year, "locked": sum(r["locked"] for r in out_rounds[0]["picks"]) if out_rounds else 0, "rounds": out_rounds}
+
+
 CHAMPION_DAYS = 10  # the champion card stays on Home this long after the title game (Tommy, 2026-11-22)
 
 

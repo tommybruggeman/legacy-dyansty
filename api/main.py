@@ -2225,6 +2225,17 @@ def _home_raw(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, An
                 print(f"APP_HOME_BYE_PROJ_ERROR {type(exc).__name__}", flush=True)
             out["playoff_bye"] = home.playoff_bye(view, my_roster)
         out["champion"] = home.champion(view, my_roster)
+        if view and today.weekday() in (1, 2):
+            # Tuesday/Wednesday: the next rookie draft's board, with the playoff teams' picks still moving.
+            try:
+                wp = _week_projections(client, user, view["week"])
+                playoffs.add_projections(view, wp)
+                strength = {rid: float(v.get("projected") or 0.0) for rid, v in wp.items()}
+                out["draft_board"] = home.draft_board(
+                    standings_rows, int(rules["playoff_teams"]) if rules else league.PLAYOFF_TEAMS, playoffs.finish_odds(view, strength),
+                    state.get("draft_picks", []), team_ids, names, pics, int(ctx["season"]) + 1, my_roster)
+            except Exception as exc:
+                print(f"APP_HOME_DRAFT_BOARD_ERROR {type(exc).__name__}", flush=True)
         # Tuesday in the playoffs is last week's final, the same as the regular season (Tommy, 2026-11-22):
         # the week before the playoffs is a normal recap; a playoff week also carries last week's playoff game.
         if today.weekday() == 1 and week > 1:
