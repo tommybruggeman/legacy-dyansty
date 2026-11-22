@@ -608,6 +608,11 @@ def _matchups_raw(
         print(f"APP_PLAYOFFS_ERROR {type(exc).__name__}", flush=True)
         view = None
     if view is not None:
+        if shown <= result["current_week"]:
+            try:  # every playoff and consolation game shows projected scores (Tommy, 2026-11-22)
+                playoffs.add_projections(view, _week_projections(*owner, shown), week_final=bool(result.get("is_final")))
+            except Exception as exc:
+                print(f"APP_PLAYOFF_PROJ_ERROR {type(exc).__name__}", flush=True)
         result["playoffs"] = view
         result["games"] = playoffs.legacy_games(view)
         result["summary"] = None
@@ -645,6 +650,27 @@ def _add_card_owners(client: Client, league_id: str, sleeper_id: str, names: dic
 
 
 CARD_PROJ_TTL = 15
+
+
+def _week_projections(client: Client, user: Any, week: int) -> dict[int, dict[str, float]]:
+    """roster_id -> {"projected": live projected week total, "kickoff": starters' projections frozen at kickoff},
+    league-wide and shared by every owner (one scoring pass per refresh window)."""
+    ctx = _season_context(client, user)
+
+    def load() -> dict[int, dict[str, float]]:
+        rows = league.sleeper.get(f"league/{ctx['sleeper_id']}/matchups/{week}", ttl=league.LIVE_TTL) or []
+        sides = []
+        for row in rows:
+            points = row.get("players_points") or {}
+            starters = [str(pid) for pid in row.get("starters") or [] if pid and str(pid) != "0"]
+            sides.append({"roster_id": row.get("roster_id"), "players": [{"player_id": pid, "points": float(points.get(pid) or 0)} for pid in starters]})
+        info = teams.player_info(client, [p["player_id"] for side in sides for p in side["players"]])
+        box_score_mod.add_projections(client, ctx, week, False, {"teams": sides}, info)
+        return {int(side["roster_id"]): {"projected": side.get("projected"),
+                                          "kickoff": round(sum(p.get("proj") or 0.0 for p in side["players"]), 1)}
+                for side in sides if side.get("roster_id") is not None}
+
+    return cache.cached(("week_proj", ctx["sleeper_id"], ctx["season"], week), CARD_PROJ_TTL, load)
 
 
 def _add_card_projections(client: Client, user: Any, result: dict[str, Any]) -> None:

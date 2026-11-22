@@ -257,11 +257,13 @@ export type Matchups = {
 export type PlayoffTeam = {
   roster_id: number; name: string; seed: number | null; record: string | null; avatar?: string | null;
   is_me: boolean; score: number; legs: (number | null)[];
+  proj?: number | null; // projected game total (kickoff projection once final)
 };
 export type PlayoffSlot = PlayoffTeam | { placeholder: string | null };
 export type PlayoffGame = {
   bracket: 'winners' | 'losers'; round: number; m: number; label: string; place: number | null; weeks: number[];
   state: 'pre' | 'live' | 'final'; teams: [PlayoffSlot, PlayoffSlot]; winner: number | null; matchup_id: number | null; mine: boolean;
+  stakes?: { win: string; lose: string } | null; // consolation games: where the winner and loser go next
 };
 export type PlayoffWeek = {
   week: number; round: number; rounds: number; leg: number; legs: number; round_name: string; projected: boolean;

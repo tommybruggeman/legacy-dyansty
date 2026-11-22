@@ -22,7 +22,8 @@ export function PlayoffsView({ view }: { view: PlayoffWeek }) {
         <Text style={styles.note}>If the season ended today. Seeds lock after week {view.start - 1}.</Text>
       ) : null}
       <Tree view={view} />
-      {view.games.map((g) => {
+      {/* The first round lives only in the bracket above (tap a game there); cards start with the final. */}
+      {view.round > 1 && view.games.map((g) => {
         // Gold for the title game and for your game on the road to it (a 3rd-place game just gets the gold border).
         const big = g.place === 1 || (g.mine && g.place == null);
         const title = g.place === 1 ? `🏆 ${g.label.toUpperCase()}` : g.mine ? `YOUR ${g.label.toUpperCase()}` : g.label.toUpperCase();
@@ -52,9 +53,11 @@ function Tree({ view }: { view: PlayoffWeek }) {
             <View style={styles.treeCol}>
               <Text style={styles.treeHead}>{r === last ? 'FINAL' : games[0]?.label.toUpperCase() + 'S'} · {weeksText(games[0]?.weeks ?? [])}</Text>
               {games.map((g) => (
-                <View key={g.m} style={[styles.treeGame, g.mine && styles.treeLit, g.place === 1 && styles.treeCup]}>
+                <Pressable key={g.m} disabled={g.matchup_id == null || g.state === 'pre'}
+                  onPress={() => router.push(`/game/${view.week}/${g.matchup_id}`)}
+                  style={[styles.treeGame, g.mine && styles.treeLit, g.place === 1 && styles.treeCup]}>
                   {g.teams.map((t, k) => <TreeSlot key={k} slot={t} game={g} />)}
-                </View>
+                </Pressable>
               ))}
             </View>
           </View>
@@ -73,7 +76,12 @@ function TreeSlot({ slot, game }: { slot: PlayoffSlot; game: PlayoffGame }) {
     <View style={[styles.treeSlot, lost && styles.lost]}>
       <Seed n={slot.seed} small />
       <Text style={[styles.treeName, slot.is_me && styles.treeMe]} numberOfLines={1}>{teamLabel(slot, true)}{champ ? ' 🏆' : ''}</Text>
-      {game.state !== 'pre' ? <Text style={styles.treeScore}>{slot.score.toFixed(0)}</Text> : null}
+      {game.state !== 'pre' || slot.proj != null ? (
+        <View style={styles.treeSc}>
+          <Text style={[styles.treeScore, game.state === 'pre' && styles.scPre]}>{slot.score.toFixed(1)}</Text>
+          {slot.proj != null ? <Text style={styles.treePj}>{slot.proj.toFixed(1)}</Text> : null}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -104,9 +112,10 @@ function TeamRow({ slot, game, big }: { slot: PlayoffSlot; game: PlayoffGame; bi
     );
   }
   const lost = game.winner != null && game.winner !== slot.roster_id;
-  const legs = game.weeks.length > 1 && game.state !== 'pre'
+  const weeks = game.weeks.length > 1 && game.state !== 'pre'
     ? game.weeks.map((w, i) => `Wk ${w} ${slot.legs[i] == null ? '–' : (slot.legs[i] as number).toFixed(1)}`).join(' · ')
     : null;
+  const legs = [weeks, game.state !== 'final' && slot.proj != null ? `proj ${slot.proj.toFixed(1)}` : null].filter(Boolean).join(' · ') || null;
   return (
     <View style={[styles.teamRow, big && styles.bigRow, lost && styles.lost]}>
       <Seed n={slot.seed} />
@@ -115,7 +124,6 @@ function TeamRow({ slot, game, big }: { slot: PlayoffSlot; game: PlayoffGame; bi
         <View style={styles.nameLine}>
           <Text style={styles.teamName} numberOfLines={1}>{teamLabel(slot, true)}</Text>
           {slot.is_me ? <Text style={styles.you}>YOU</Text> : null}
-          {slot.record ? <Text style={styles.record}>{slot.record}</Text> : null}
         </View>
         {legs ? <Text style={styles.legs}>{legs}</Text> : null}
       </View>
@@ -127,39 +135,100 @@ function TeamRow({ slot, game, big }: { slot: PlayoffSlot; game: PlayoffGame; bi
   );
 }
 
+// Seeds 5-10 (Tommy, 2026-11-22): one row per game this week, owner names with the score and a faint projection
+// under it, "vs" in the middle. Games that decide where both teams go next sit together in a faded box headed by
+// what's at stake; placement games name their place; the two bye teams get a "BYE WEEK · No winner" row since
+// their scores still count (Shotgun Watch, top 5).
 function Losers({ view }: { view: PlayoffWeek }) {
+  const allPlace = view.losers.every((g) => g.place != null);
+  const sub = view.byes.length ? `${view.byes.map((t) => first(t.name)).join(' and ')} on a bye` : '';
+  const groups: { stakes: NonNullable<PlayoffGame['stakes']>; games: PlayoffGame[] }[] = [];
+  for (const g of view.losers) {
+    if (!g.stakes) continue;
+    const same = groups.find((x) => x.stakes.win === g.stakes!.win && x.stakes.lose === g.stakes!.lose);
+    if (same) same.games.push(g); else groups.push({ stakes: g.stakes, games: [g] });
+  }
+  const rest = view.losers.filter((g) => !g.stakes);
   return (
-    <View style={styles.losers}>
+    <View style={styles.cons}>
       <View style={styles.losersHead}>
-        <Text style={styles.losersTitle}>LOSER BRACKET</Text>
-        <Text style={styles.losersCount}>Round {view.round}</Text>
+        <Text style={styles.consTitle}>CONSOLATION BRACKET</Text>
+        <Text style={styles.losersCount}>Seeds {view.losers.length ? Math.min(...view.losers.flatMap((g) => g.teams.filter(isTeam).map((t) => t.seed ?? 99)), ...view.byes.map((t) => t.seed ?? 99)) : ''}–{Math.max(0, ...view.losers.flatMap((g) => g.teams.filter(isTeam).map((t) => t.seed ?? 0)), ...view.byes.map((t) => t.seed ?? 0))}</Text>
       </View>
-      {view.losers.map((g) => {
-        const [a, b] = g.teams;
-        const open = g.matchup_id != null ? () => router.push(`/game/${view.week}/${g.matchup_id}`) : undefined;
-        return (
-          <Pressable key={g.m} style={styles.mini} onPress={open} disabled={!open}>
-            <MiniSide slot={a} game={g} />
-            <Text style={styles.dash}>–</Text>
-            <MiniSide slot={b} game={g} right />
-          </Pressable>
-        );
-      })}
-      {view.byes.length ? <Text style={styles.bye}>Bye: {view.byes.map((t) => teamLabel(t, true)).join(', ')}</Text> : null}
+      <View style={styles.cHead}>
+        <Text style={styles.cHeadMain}>WEEK {view.week} · {allPlace ? 'PLACE GAMES' : `ROUND ${view.week - view.start + 1}`}</Text>
+        {sub ? <Text style={styles.cHeadSub}>{sub}</Text> : null}
+      </View>
+      {groups.map((grp, i) => (
+        <View key={i} style={styles.cBox}>
+          <View style={styles.cGrp}>
+            <Text style={styles.cGrpWin}>{grp.stakes.win.toUpperCase()}</Text>
+            <Text style={styles.cGrpLose}>{grp.stakes.lose}</Text>
+          </View>
+          {grp.games.map((g) => <ConsRow key={g.m} game={g} week={view.week} />)}
+        </View>
+      ))}
+      {rest.map((g) => <ConsRow key={g.m} game={g} week={view.week} />)}
+      {view.byes.length === 2 ? <ByeRow teams={view.byes} week={view.week} final={view.losers.length > 0 && view.losers.every((g) => g.state === 'final')} /> : null}
     </View>
   );
 }
 
-function MiniSide({ slot, game, right }: { slot: PlayoffSlot; game: PlayoffGame; right?: boolean }) {
-  if (!isTeam(slot)) {
-    return <Text style={[styles.miniName, styles.placeholder, right && styles.right]} numberOfLines={1}>{slot.placeholder ?? 'TBD'}</Text>;
-  }
-  const lost = game.winner != null && game.winner !== slot.roster_id;
-  const score = game.state === 'pre' ? null : <Text style={styles.miniScore}>{slot.score.toFixed(1)}</Text>;
-  const name = <Text style={[styles.miniName, slot.is_me && styles.treeMe, right && styles.right]} numberOfLines={1}>{teamLabel(slot, true)}</Text>;
+// A score with its projection faint underneath (before kickoff the score is a grey 0.0).
+function ScoreBox({ score, proj, state, lead, right }: { score: number; proj?: number | null; state: PlayoffGame['state']; lead: boolean; right?: boolean }) {
   return (
-    <View style={[styles.miniSide, right && styles.miniRight, lost && styles.lost]}>
-      {right ? <>{score}{name}<Seed n={slot.seed} small /></> : <><Seed n={slot.seed} small />{name}{score}</>}
+    <View style={[styles.scBox, right && styles.scBoxRight]}>
+      <Text style={[styles.sbSc, lead && styles.sbWin, state === 'pre' && styles.scPre]}>{score.toFixed(1)}</Text>
+      {proj != null ? <Text style={styles.pj}>{proj.toFixed(1)}</Text> : null}
+    </View>
+  );
+}
+
+function ConsRow({ game, week }: { game: PlayoffGame; week: number }) {
+  const [a, b] = game.teams;
+  const open = game.matchup_id != null && game.state !== 'pre' ? () => router.push(`/game/${week}/${game.matchup_id}`) : undefined;
+  const side = (slot: PlayoffSlot, i: number) => {
+    const right = i === 1;
+    if (!isTeam(slot)) return <View style={[styles.sbSide, right && styles.sbRight]} />;
+    const other = game.teams[1 - i];
+    const won = game.state === 'final' && game.winner === slot.roster_id;
+    const lead = won || (game.state === 'live' && isTeam(other) && slot.score > other.score);
+    const lost = game.state === 'final' && !won;
+    const name = <Text key="n" style={[styles.nm, won && styles.nmWin, slot.is_me && styles.nmMe]} numberOfLines={1}>{first(slot.name)}</Text>;
+    const box = <ScoreBox key="s" score={slot.score} proj={slot.proj} state={game.state} lead={lead} right={right} />;
+    return <View style={[styles.sbSide, right && styles.sbRight, lost && styles.lost]}>{right ? [box, name] : [name, box]}</View>;
+  };
+  const status = game.state === 'final' ? <Text style={styles.st}>FINAL</Text> : game.state === 'live' ? <Text style={[styles.st, styles.stLive]}>● LIVE</Text> : null;
+  return (
+    <Pressable onPress={open} disabled={!open} style={[styles.sb, game.mine && styles.mineRow]}>
+      {side(a, 0)}
+      <View style={styles.sbMid}>
+        {game.place != null ? <Text style={styles.stk}>{game.label.toUpperCase()}</Text> : null}
+        <Text style={styles.sbVs}>vs</Text>
+        {status}
+      </View>
+      {side(b, 1)}
+    </Pressable>
+  );
+}
+
+function ByeRow({ teams, week, final }: { teams: PlayoffTeam[]; week: number; final: boolean }) {
+  const mine = teams.some((t) => t.is_me);
+  const state: PlayoffGame['state'] = final ? 'final' : teams.some((t) => t.score > 0) ? 'live' : 'pre';
+  return (
+    <View style={[styles.sb, styles.byeRow, mine && styles.mineRow]}>
+      {teams.map((t, i) => {
+        const right = i === 1;
+        const name = <Text key="n" style={[styles.nm, t.is_me && styles.nmMe]} numberOfLines={1}>{first(t.name)}</Text>;
+        const box = <ScoreBox key="s" score={t.score} proj={t.proj} state={state} lead={false} right={right} />;
+        const side = <View key={t.roster_id} style={[styles.sbSide, right && styles.sbRight]}>{right ? [box, name] : [name, box]}</View>;
+        return i === 0 ? [side, (
+          <View key="mid" style={styles.sbMid}>
+            <Text style={styles.stk}>BYE WEEK</Text>
+            <Text style={styles.stkP}>No winner</Text>
+          </View>
+        )] : side;
+      })}
     </View>
   );
 }
@@ -171,6 +240,8 @@ function Seed({ n, small }: { n: number | null; small?: boolean }) {
     </View>
   );
 }
+
+const PJ = '#6F8478'; // the faint projection under a score
 
 const styles = StyleSheet.create({
   wrap: { gap: 10 },
@@ -222,5 +293,36 @@ const styles = StyleSheet.create({
   right: { textAlign: 'right' },
   miniScore: { color: colors.text, fontSize: 12.5, fontWeight: '800', marginHorizontal: 4 },
   dash: { color: colors.muted, opacity: 0.5 },
+  treeSc: { marginLeft: 'auto', alignItems: 'flex-end', minWidth: 30 },
+  treePj: { color: PJ, fontSize: 7.5, fontWeight: '600' },
+  scPre: { color: PJ },
+  cons: { backgroundColor: colors.row, borderWidth: 1, borderColor: colors.line, borderRadius: 16, padding: 12, marginTop: 2 },
+  consTitle: { color: colors.gold, fontSize: 11, fontWeight: '800', letterSpacing: 1.2 },
+  cHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 10, marginBottom: 4 },
+  cHeadMain: { color: colors.text, fontSize: 10.5, fontWeight: '800', letterSpacing: 1 },
+  cHeadSub: { color: colors.muted, opacity: 0.7, fontSize: 10.5 },
+  cBox: { backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: 12, paddingHorizontal: 8, paddingTop: 8, paddingBottom: 2, marginVertical: 6 },
+  cGrp: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 2 },
+  cGrpWin: { color: colors.gold, fontSize: 9.5, fontWeight: '800', letterSpacing: 0.8 },
+  cGrpLose: { color: colors.muted, opacity: 0.7, fontSize: 10 },
+  sb: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 9, paddingHorizontal: 2, borderTopWidth: 1, borderTopColor: colors.card },
+  mineRow: { backgroundColor: 'rgba(200,155,74,0.08)', borderWidth: 1, borderColor: colors.gold, borderRadius: 12, paddingHorizontal: 8, marginVertical: 4 },
+  byeRow: { borderStyle: 'dashed', borderTopColor: '#2B3A2F' },
+  sbSide: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6, minWidth: 0 },
+  sbRight: { justifyContent: 'flex-end' },
+  nm: { color: colors.muted, fontSize: 12.5, fontWeight: '700', flexShrink: 1 },
+  nmWin: { color: colors.text },
+  nmMe: { color: '#E2BC5B' },
+  scBox: { marginLeft: 'auto', marginRight: 10, alignItems: 'flex-end' },
+  scBoxRight: { marginLeft: 10, marginRight: 'auto', alignItems: 'flex-start' },
+  sbSc: { color: colors.text, fontSize: 13, fontWeight: '800' },
+  sbWin: { color: '#E2BC5B' },
+  pj: { color: PJ, fontSize: 8.5, fontWeight: '600' },
+  sbMid: { width: 64, alignItems: 'center', gap: 1 },
+  sbVs: { color: colors.muted, fontSize: 11, fontWeight: '800', letterSpacing: 0.8 },
+  stk: { color: colors.gold, fontSize: 9, fontWeight: '800', letterSpacing: 0.8 },
+  stkP: { color: colors.muted, opacity: 0.7, fontSize: 9.5 },
+  st: { color: colors.muted, fontSize: 8.5, fontWeight: '800', letterSpacing: 0.8 },
+  stLive: { color: colors.live },
   bye: { color: colors.muted, opacity: 0.6, fontSize: 11, marginTop: 6 },
 });

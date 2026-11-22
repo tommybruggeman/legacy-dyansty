@@ -124,3 +124,23 @@ def test_mark_auto_losses_flags_only_that_team():
     rows = [{"roster_id": 1, "points": 120, "matchup_id": 1}, {"roster_id": 2, "points": 90, "matchup_id": 1}]
     out = own_league.mark_auto_losses(rows, {1})
     assert out[0]["auto_loss"] is True and "auto_loss" not in out[1] and "auto_loss" not in rows[0]
+
+
+def test_consolation_games_say_what_they_decide():
+    week15 = {tuple(t.get("roster_id") for t in g["teams"]): g["stakes"] for g in view(15, 15, 14)["losers"]}
+    assert week15[(7, 10)] == {"win": "Win: play for 5th–8th", "lose": "Lose: 9th place game"}
+    week16 = view(16, 16, 15)["losers"]
+    assert week16[0]["stakes"] == {"win": "Win: 5th place game", "lose": "Lose: 7th place game"}
+    assert next(g for g in week16 if g["label"] == "9th place")["stakes"] is None
+
+
+def test_projections_add_banked_weeks_and_byes():
+    proj = {rid: {"projected": 100.0, "kickoff": 90.0} for rid in range(1, 11)}
+    v = view(18, 18, 17)  # week 2 of the two-week final (weeks 17-18 in this fixture)
+    playoffs.add_projections(v, proj)
+    t = next(g for g in v["games"] if g["place"] == 1)["teams"][0]
+    assert t["proj"] == round(t["legs"][0] + 100.0, 1)  # week 17 points banked + week 18 projection
+    v16 = view(16, 16, 15)
+    playoffs.add_projections(v16, proj)
+    ninth = next(g for g in v16["losers"] if g["label"] == "9th place")
+    assert all(t["proj"] == 100.0 for t in ninth["teams"])
