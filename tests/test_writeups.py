@@ -66,11 +66,16 @@ class WriteupsTest(unittest.TestCase):
         self.assertIn("1 rush TD", f["this_week"]["box_score"])
         self.assertIn("4 catches on 5 targets", f["this_week"]["box_score"])
 
-    def test_injured_regular_gets_writeup_bit_player_does_not(self):
+    def test_injured_regular_who_sat_gets_no_writeup_bit_player_does_not(self):
         regular = [row(1), row(2), row(3)]
-        f = w.player_facts(regular, 4, rank=None, games={}, injury={"status": "Out", "injury_type": "Knee"})
+        # Sat out hurt: the injury report covers it, so no recap.
+        self.assertIsNone(w.player_facts(regular, 4, rank=None, games={}, injury={"status": "Out", "injury_type": "Knee"}))
+        # Sat out with no injury listed: still a recap.
+        f = w.player_facts(regular, 4, rank=None, games={}, injury=None)
         self.assertTrue(f["this_week"]["did_not_play"])
-        self.assertEqual(f["injury_report"]["status"], "Out")
+        # Played through a listed injury: recap keeps the injury.
+        f = w.player_facts(regular, 3, rank=None, games={}, injury={"status": "Questionable", "injury_type": "Knee"})
+        self.assertEqual(f["injury_report"]["status"], "Questionable")
         self.assertIsNone(w.player_facts([row(4, 0.10)], 4, rank=None, games={}, injury=None))
 
     def test_run_writes_once_and_skips_saved(self):

@@ -161,3 +161,10 @@ def test_live_game_shows_in_log_but_not_in_season_numbers(monkeypatch):
     assert out["live"] is True and top["live"] and top["week"] == 8 and top["opp"] == "vs BAL · 3rd 4:12"
     assert top["line"]["pass_yds"] == 120 and top["points"] == 9.5
     assert out["league_season"]["ppg"] == 20.0 and out["league_season"]["started"] == 1  # the live week 8 start counts once final
+
+
+def test_hurt_player_drops_recaps_of_weeks_he_sat():
+    recaps = [{"week": 11, "text": "Sat"}, {"week": 10, "text": "Sat"}, {"week": 9, "text": "Played"}]
+    rows = [{"week": 8}, {"week": 9}]
+    assert [r["week"] for r in player.skip_missed_recaps(recaps, rows, {"healthy": False})] == [9]
+    assert len(player.skip_missed_recaps(recaps, rows, {"healthy": True})) == 3
