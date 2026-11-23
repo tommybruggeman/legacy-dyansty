@@ -1,7 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { Keyboard, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Keyboard, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable } from '../components/Pressable';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { PlayerFace } from '../components/PlayerFace';
@@ -9,6 +10,7 @@ import { ErrorState, Loading } from '../components/ScreenState';
 import { money, ui } from '../components/ui';
 import { type LeagueOwner, type LeaguePlayer, type LeaguePlayers, useApi } from '../lib/api';
 import { nameMatches } from '../lib/players';
+import { track } from '../lib/telemetry';
 import { colors } from '../lib/theme';
 
 export { ScreenError as ErrorBoundary } from '../components/ScreenState';
@@ -41,6 +43,13 @@ export default function Search() {
     () => (needle ? (data?.owners ?? []).filter((o) => nameMatches(`${o.owner_name} ${o.team_name}`, needle)) : []),
     [data, needle],
   );
+
+  // What owners look up, and what finds nothing (logged once they stop typing).
+  useEffect(() => {
+    if (needle.length < 2 || !data) return;
+    const t = setTimeout(() => track('search', { q: needle.slice(0, 60), players: players.length, teams: teams.length, found: players.length + teams.length }), 1500);
+    return () => clearTimeout(t);
+  }, [needle, data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const open = (item: Recent) => {
     const next = [item, ...recent.filter((r) => !(r.kind === item.kind && r.id === item.id))].slice(0, MAX_RECENT);

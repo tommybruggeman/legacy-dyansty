@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
+import { Pressable } from '../Pressable';
 
 import { canAskForAlerts, registerForPush } from '../../lib/push';
 import { colors } from '../../lib/theme';

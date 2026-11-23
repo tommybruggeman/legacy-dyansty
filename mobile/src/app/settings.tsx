@@ -1,8 +1,10 @@
 import Constants from 'expo-constants';
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { Alert, Linking, Pressable, Share, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { Alert, Linking, Share, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { Pressable } from '../components/Pressable';
 
+import { FeedbackSheet } from '../components/Feedback';
 import { Avatar } from '../components/Pictures';
 import { ErrorState, Loading } from '../components/ScreenState';
 import { Back, Card, Note, Row, Screen, Segmented, Title, ui } from '../components/ui';
@@ -19,6 +21,7 @@ const PLANS = ['Auto', 'Contend', 'Rebuild'] as const;
 // League rules are here to read. Every owner gets every alert, so there are no alert switches.
 export default function Settings() {
   const { data, error, loading, reload, refresh } = useApi<MySettings>('/me/settings');
+  const [feedback, setFeedback] = useState(false);
   if (loading && !data) return <Loading />;
   if (error && !data) return <ErrorState message={error} onRetry={reload} />;
   if (!data) return null;
@@ -53,7 +56,14 @@ export default function Settings() {
         <Note>Rookie drafts, the free agent auction and season rollover live on the website.</Note>
       </Card>
       <Card title="Help">
-        <Row first onPress={() => Linking.openURL(SUPPORT_URL)}>
+        <Row first onPress={() => setFeedback(true)}>
+          <View style={ui.flex}>
+            <Text style={ui.value}>Send feedback</Text>
+            <Text style={ui.sub}>A bug or an idea, straight to the commissioner</Text>
+          </View>
+          <Text style={ui.link}>›</Text>
+        </Row>
+        <Row onPress={() => Linking.openURL(SUPPORT_URL)}>
           <Text style={[ui.value, ui.flex]}>Help and support</Text>
           <Text style={ui.link}>↗</Text>
         </Row>
@@ -67,6 +77,7 @@ export default function Settings() {
         <Text style={styles.signOutText}>Sign out</Text>
       </Pressable>
       <Text style={styles.version}>Version {Constants.expoConfig?.version ?? ''}</Text>
+      <FeedbackSheet open={feedback} kind="button" onClose={() => setFeedback(false)} />
     </Screen>
   );
 }

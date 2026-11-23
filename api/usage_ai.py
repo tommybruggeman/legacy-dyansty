@@ -35,6 +35,10 @@ What is recorded, per signed-in owner (names are real; everyone is signed in):
 - push_open: opened the app from an alert; error: a crash or screen error
 - replay pictures: small screenshots during app sessions, so a session can be watched like a video
 - GM usage: questions to the Front Office AI, with topic and cost
+- finer signals (signals tool): whether each tap did something or nothing, rage taps, how far down each page people
+  scroll and how long each part of a page stays on screen (attention, no camera), page load times, failed/offline
+  loads, searches, links that leave the app, alerts sent vs opened, live-game refreshes and box scores watched,
+  whether owners act on GM advice, how fast owners find features, and owner feedback (weekly check-in + notes)
 A session is one owner's activity on one platform with no gap over 30 minutes. Times are in the viewer's time zone.
 
 Tools: overview (headline numbers), count_events (any breakdown), list_events (raw rows), page_table, flows,
@@ -92,6 +96,9 @@ TOOLS = [
      "input_schema": {"type": "object", "properties": {}}},
     {"name": "owner_profile", "description": "Everything about one owner: totals, device, build, top pages and actions, usual first move, weekday/hour habits, GM questions, recent sessions.",
      "input_schema": {"type": "object", "properties": {"owner": {"type": "string"}}, "required": ["owner"]}},
+    {"name": "signals", "description": "The finer signals. heatmap (one page: taps that did something vs dead taps, rage taps, scrolls, how far down people get, attention = seconds each tenth of the page was on screen, where scrolling stops), speed (page load times, and leaving after slow loads), failures (failed or offline loads), searches (terms, ones with no results), outbound (links that leave the app, e.g. Open in Sleeper), alerts (sent vs opened by kind, what owners do next), live (refreshes by hour, most watched box scores), gm_follow_through (GM question then the matching move within 24h; GM moves taken/dismissed), discovery (how long until each owner first used each page or action), feedback (weekly check-in ratings, skips, every note with its session key).",
+     "input_schema": {"type": "object", "properties": {"name": {"type": "string", "enum": ["heatmap", "speed", "failures", "searches", "outbound", "alerts", "live", "gm_follow_through", "discovery", "feedback"]},
+                                                       "page": {"type": "string", "description": "For heatmap: the page name"}, "owner": {"type": "string"}}, "required": ["name"]}},
     {"name": "find_sessions", "description": "Sessions that match (newest first): by owner, a page visited, an action done, weekday, dates, platform, length, or having replay pictures.",
      "input_schema": {"type": "object", "properties": {"owner": {"type": "string"}, "page": {"type": "string"}, "action": {"type": "string"}, "weekday": {"type": "string"},
                                                        "since": {"type": "string"}, "until": {"type": "string"}, "source": {"type": "string", "enum": ["app", "website"]},
@@ -156,7 +163,13 @@ class Analyst:
         first = min((e["date"] for e in self.events), default=None)
         return (f"Totals: {json.dumps(t)}\nData from {first or 'nothing yet'} to today.\n"
                 f"Pages seen (views): {json.dumps(pages.most_common(40))}\nActions seen: {json.dumps(acts.most_common(40))}\n"
-                f"Report metrics: {', '.join(usage_console.METRICS)}. Groups: {', '.join(usage_console.GROUPS)}.")
+                f"Report metrics: {', '.join(usage_console.METRICS)}. Groups: {', '.join(usage_console.GROUPS)}.\n"
+                f"Owner feedback: {self._feedback_line()} (signals name=feedback has every note and its session).")
+
+    def _feedback_line(self) -> str:
+        notes = [a for a in self.ai_rows if a.get("feature") == "feedback"]
+        rated = [a["rating"] for a in notes if a.get("rating")]
+        return (f"{len(notes)} notes/check-ins" + (f", average check-in rating {sum(rated) / len(rated):.1f}/5" if rated else "")) if notes else "none yet"
 
     def run_tool(self, name: str, a: dict[str, Any]) -> Any:
         if name == "overview":
@@ -267,6 +280,8 @@ class Analyst:
                     "by_hour": Counter(e["hour"] for e in es if e["kind"] in ("screen", "action")),
                     "gm_topics": Counter(str(r.get("topic") or "other") for r in self.ai_rows if str(r.get("user_id")) == uid and r.get("feature") == "chat").most_common(8),
                     "recent_sessions": usage_console.find_sessions(self.data, owner=self.data.names[uid], limit=8)["sessions"]}
+        if name == "signals":
+            return signals(self, str(a.get("name") or ""), page=a.get("page"), owner=a.get("owner"))
         if name == "find_sessions":
             return usage_console.find_sessions(self.data, **{k: a[k] for k in ("owner", "page", "action", "weekday", "since", "until", "source",
                                                                                "min_minutes", "has_pictures") if a.get(k) not in (None, "")},
@@ -290,6 +305,126 @@ class Analyst:
             self.shown_title = str(a.get("title") or "")[:80]
             return {"shown": len(self.shown)}
         return {"error": f"unknown tool {name}"}
+
+
+FOLLOW = {"lineup": ("Set a lineup",), "start_sit": ("Set a lineup",), "trade": ("Sent a trade offer", "Trade builder"),
+          "waivers": ("Placed a waiver bid", "Added a free agent"), "waiver": ("Placed a waiver bid", "Added a free agent")}
+WENT_NAMES = {"none": "did nothing", "press": "hit a button", "page": "opened a page", "input": "opened the keyboard"}
+
+
+def _med(values: list[float]) -> float:
+    v = sorted(values)
+    return v[len(v) // 2] if v else 0
+
+
+def signals(an: "Analyst", name: str, *, page: str | None = None, owner: str | None = None) -> Any:
+    """The console's Heatmap, Signals and Feedback numbers, for the analyst."""
+    es = an._owner_events(owner)
+    det = lambda e: e.get("detail") or {}  # noqa: E731
+    if name == "heatmap":
+        pages = Counter(e["label"] for e in es if e["kind"] == "screen")
+        if not page:
+            return {"pages": pages.most_common(30), "note": "Pass page= one of these."}
+        want = page.lower()
+        mine = [e for e in es if e["label"].lower() == want] or [e for e in es if want in e["label"].lower()]
+        views = [e for e in mine if e["kind"] == "screen"]
+        taps = [e for e in mine if e["kind"] == "tap"]
+        went = Counter(WENT_NAMES.get(str(det(e).get("went")), "unknown (older build)") for e in taps)
+        scr = [det(e) for e in views if det(e).get("depth") is not None]
+        attn = [0.0] * 10
+        stops = [0] * 10
+        for d in scr:
+            for i, v in enumerate(str(d.get("attn") or "").split(",")[:10]):
+                attn[i] += float(v or 0)
+            for i, v in enumerate(str(d.get("stops") or "").split(",")[:10]):
+                stops[i] += int(v or 0)
+        n = max(1, len(scr))
+        dead = [e for e in taps if det(e).get("went") == "none"]
+        spots = Counter((round(float(det(e).get("x", 0)), 1), round(float(det(e).get("py") if det(e).get("py") is not None else det(e).get("y", 0)), 1)) for e in dead)
+        return {"page": views[0]["label"] if views else page, "views": len(views), "taps": len(taps), "what_taps_did": dict(went),
+                "rage_bursts": sum(1 for e in mine if e["kind"] == "rage"), "scrolls": sum(1 for e in mine if e["kind"] == "swipe"),
+                "avg_scrolled_to_pct": round(sum(d["depth"] for d in scr) / n) if scr else None,
+                "pct_views_reaching_each_tenth": [round(100 * sum(1 for d in scr if d["depth"] >= i * 10 + 5) / n) for i in range(10)] if scr else None,
+                "avg_seconds_each_tenth_on_screen": [round(x / n, 1) for x in attn] if scr else None, "scroll_stops_each_tenth": stops if scr else None,
+                "dead_tap_hotspots_x_y": [{"x": x, "y": y, "taps": c} for (x, y), c in spots.most_common(5)],
+                "note": "x and y are 0-1 across and down; y is down the whole page when known."}
+    if name == "speed":
+        loads = defaultdict(list)
+        for e in es:
+            if e["kind"] == "load":
+                loads[e["label"]].append(int(det(e).get("ms") or 0))
+        return {"pages": sorted(({"page": p, "loads": len(v), "typical_ms": _med(v), "slowest_10pct_ms": sorted(v)[int(len(v) * .9)] if v else 0,
+                                  "over_2s_pct": round(100 * sum(1 for m in v if m > 2000) / len(v))} for p, v in loads.items()), key=lambda r: -r["typical_ms"])}
+    if name == "failures":
+        f = [e for e in es if e["kind"] == "fail"]
+        return {"failed": len(f), "offline": sum(1 for e in f if det(e).get("offline")), "by_page": Counter(e["label"] for e in f).most_common(10),
+                "by_owner": Counter(e["owner"] for e in f).most_common(12)}
+    if name == "searches":
+        s = [e for e in es if e["kind"] == "search"]
+        terms = Counter(str(det(e).get("q") or "").lower() for e in s)
+        none = Counter(str(det(e).get("q") or "").lower() for e in s if det(e).get("found") == 0)
+        return {"searches": len(s), "top": terms.most_common(25), "no_results": none.most_common(15), "by_owner": Counter(e["owner"] for e in s).most_common(12)}
+    if name == "outbound":
+        o = [e for e in es if e["kind"] == "outbound"]
+        return {"links": len(o), "where": Counter(str(det(e).get("to")) for e in o).most_common(10), "from_page": Counter(e["label"] for e in o).most_common(10),
+                "by_owner": Counter(e["owner"] for e in o).most_common(12)}
+    if name == "alerts":
+        sent = Counter(str(a.get("topic")) for a in an.ai_rows if a.get("feature") == "alert_sent")
+        opens = [e for e in es if e["kind"] == "push_open"]
+        opened = Counter(str(det(e).get("alert") or "(older build)") for e in opens)
+        nxt = Counter()
+        for e in opens:
+            later = [x for x in an.events if x["sess"] == e["sess"] and x["unix"] > e["unix"] and x["kind"] in ("screen", "action")]
+            act = next((x for x in later if x["kind"] == "action"), later[1] if len(later) > 1 else None)
+            nxt[act["name"] if act else "left the app"] += 1
+        return {"by_kind": [{"alert": k, "sent": sent.get(k, 0), "opened": opened.get(k, 0)} for k in set(sent) | set(opened)], "after_opening": nxt.most_common(10)}
+    if name == "live":
+        r = [e for e in es if e["kind"] == "refresh"]
+        games = Counter(det(e).get("path") for e in es if e["kind"] == "screen" and "game" in str(det(e).get("path") or ""))
+        return {"refreshes": len(r), "by_hour": Counter(e["hour"] for e in r), "by_weekday": Counter(e["weekday"] for e in r),
+                "by_owner": Counter(e["owner"] for e in r).most_common(12), "most_watched_games (/game/week/matchup)": games.most_common(10)}
+    if name == "gm_follow_through":
+        out = defaultdict(lambda: {"questions": 0, "acted": 0})
+        names = {u: an.data.names.get(u, "") for u in an.data.ids}
+        for a in an.ai_rows:
+            if a.get("feature") != "chat" or (owner and owner.lower() not in names.get(str(a.get("user_id")), "").lower()):
+                continue
+            topic = str(a.get("topic") or "other")
+            t = usage_console._unix(a.get("created_at"))
+            out[topic]["questions"] += 1
+            want = FOLLOW.get(topic)
+            if want and any(e["uid"] == str(a.get("user_id")) and t < e["unix"] < t + 86400 and e["label"] in want for e in an.events):
+                out[topic]["acted"] += 1
+        moves = Counter(e["label"] for e in es if e["kind"] == "action" and "GM move" in e["label"])
+        return {"by_topic": dict(out), "matching_moves": {k: list(v) for k, v in FOLLOW.items()}, "gm_moves": dict(moves)}
+    if name == "discovery":
+        first: dict[str, int] = {}
+        mine: dict[tuple[str, str], int] = {}
+        for e in an.events:
+            if e["kind"] in ("screen", "action"):
+                first[e["label"]] = min(first.get(e["label"], e["unix"]), e["unix"])
+                k = (e["label"], e["owner"])
+                mine[k] = min(mine.get(k, e["unix"]), e["unix"])
+        rows = []
+        for label, t0 in first.items():
+            waits = {o: round((t - t0) / 86400, 1) for (lab, o), t in mine.items() if lab == label}
+            rows.append({"feature": label, "found_by": len(waits), "of": len(an.data.ids), "typical_days": _med(list(waits.values())),
+                         "not_yet": sorted(set(an.data.names.values()) - set(waits))[:12]})
+        return {"features": sorted(rows, key=lambda r: r["found_by"])}
+    if name == "feedback":
+        fb = [e for e in es if e["kind"] == "feedback"]
+        notes = [a for a in an.ai_rows if a.get("feature") == "feedback"]
+        rated = [a["rating"] for a in notes if a.get("rating")]
+        keyed = []
+        for a in notes:
+            t = usage_console._unix(a.get("created_at"))
+            e = next((x for x in fb if x["uid"] == str(a.get("user_id")) and abs(x["unix"] - t) < 120), None)
+            keyed.append({"owner": an.data.names.get(str(a.get("user_id")), "?"), "when": a.get("created_at"), "kind": a.get("kind"), "rating": a.get("rating"),
+                          "text": a.get("text"), "session_key": an.data.session_row(e["sess"])["key"] if e else None})
+        kinds = Counter(str(det(e).get("kind")) for e in fb)
+        return {"check_ins_shown": kinds.get("pulse_shown", 0), "answered": kinds.get("pulse", 0), "skipped": kinds.get("pulse_skipped", 0),
+                "avg_rating": round(sum(rated) / len(rated), 2) if rated else None, "notes": keyed[-40:]}
+    return {"error": "Unknown signal."}
 
 
 def _group(events: list[dict[str, Any]], key: str) -> dict[Any, list[dict[str, Any]]]:

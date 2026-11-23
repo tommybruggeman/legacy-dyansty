@@ -1,6 +1,7 @@
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Modal, StyleSheet, Text, View } from 'react-native';
+import { Pressable } from '../Pressable';
 
 import { type ActivityFeed, type ActivityItem, type Draft, type Move, type MovePlayer, type Trade, type TradeSide, type WaiverBid, useApi } from '../../lib/api';
 import { colors } from '../../lib/theme';

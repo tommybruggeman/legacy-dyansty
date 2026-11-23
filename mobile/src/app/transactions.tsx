@@ -1,6 +1,7 @@
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
-import { Alert, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Modal, StyleSheet, Text, View } from 'react-native';
+import { Pressable } from '../components/Pressable';
 
 import { Avatar, Headshot } from '../components/Pictures';
 import { ErrorState, Loading } from '../components/ScreenState';

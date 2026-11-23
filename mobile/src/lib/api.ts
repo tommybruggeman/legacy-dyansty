@@ -144,6 +144,12 @@ export const LIVE_POLL_MS = 10_000;
 
 // refreshEvery (ms) quietly re-fetches while the screen is open and the app
 // is in front, e.g. live scores. Pass 0 to stop.
+// Owner activity times each page's first wait for data (set by lib/telemetry; nothing here depends on it).
+let loadReporter: ((path: string, ms: number, failed?: string) => void) | null = null;
+export function setLoadReporter(fn: (path: string, ms: number, failed?: string) => void) {
+  loadReporter = fn;
+}
+
 export function useApi<T>(path: string, refreshEvery = 0) {
   const [data, setData] = useState<T | null>(() => (memory.get(path) as T | undefined) ?? null);
   const [error, setError] = useState<string | null>(null);
@@ -153,8 +159,16 @@ export function useApi<T>(path: string, refreshEvery = 0) {
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
+    const started = Date.now();
     try {
       const value = await apiGet<T>(path);
+      if (!quiet) {
+        try {
+          loadReporter?.(path, Date.now() - started);
+        } catch {
+          // timing is a nice-to-have
+        }
+      }
       // A refresh that brings back the same thing changes nothing on screen, so skip the redraw (live pages
       // poll every few seconds, and a whole bracket or roster redrawing mid-scroll or mid-tab-switch stutters).
       const same = shown.current != null && JSON.stringify(shown.current) === JSON.stringify(value);
@@ -163,6 +177,11 @@ export function useApi<T>(path: string, refreshEvery = 0) {
       setError(null);
     } catch (e: any) {
       if (!quiet) setError(e?.message ?? 'Something went wrong.');
+      try {
+        loadReporter?.(path, Date.now() - started, String(e?.message ?? 'error'));
+      } catch {
+        // timing is a nice-to-have
+      }
     } finally {
       if (!quiet) setLoading(false);
     }

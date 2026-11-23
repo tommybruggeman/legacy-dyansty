@@ -4,6 +4,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { View } from 'react-native';
 
+import { PulseHost } from '../components/Feedback';
 import { LaunchIntro } from '../components/LaunchIntro';
 import { AppLockProvider } from '../lib/appLock';
 import { listenForTaps, registerIfAllowed } from '../lib/push';
@@ -58,6 +59,7 @@ function RootStack() {
         <Stack.Screen name="sign-in" />
       </Stack.Protected>
     </Stack>
+    {signedIn ? <PulseHost /> : null}
     </View>
     </AppLockProvider>
   );

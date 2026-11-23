@@ -1,7 +1,8 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useFocusEffect } from 'expo-router';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable } from '../../components/Pressable';
 
 import { AlertsCard } from '../../components/home/AlertsCard';
 import { DraftBoard } from '../../components/home/DraftBoard';

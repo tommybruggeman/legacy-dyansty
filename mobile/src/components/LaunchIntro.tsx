@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
-import { Animated, Easing, Image, Pressable, StyleSheet, useWindowDimensions } from 'react-native';
+import { Animated, Easing, Image, StyleSheet, useWindowDimensions } from 'react-native';
+import { Pressable } from './Pressable';
 
 import { colors } from '../lib/theme';
 

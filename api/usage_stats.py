@@ -53,6 +53,11 @@ ACTIONS: dict[str, str] = {
 OWNER_ACTIONS = tuple(dict.fromkeys(v for k, v in ACTIONS.items() if not k.startswith("/commissioner") and "Commish" not in v))
 
 
+def page_label(screen: str) -> str:
+    """The page an event happened on, named like its page views ('My Team', 'Web: Free Agent')."""
+    return screen_label({"screen": screen, "kind": "screen"})
+
+
 def screen_label(row: dict[str, Any]) -> str:
     name = str(row.get("screen") or "/")
     kind = row.get("kind") or "screen"
@@ -70,6 +75,23 @@ def screen_label(row: dict[str, Any]) -> str:
         return "Left the app"
     if kind == "error":
         return f"Error on {SCREENS.get(name, name)}"
+    where = page_label(name) if kind in ("rage", "load", "refresh", "fail") else ""
+    if kind == "rage":
+        return f"Rage taps on {where}"
+    if kind == "load":
+        return f"Waited for {where}"
+    if kind == "search":
+        return "Searched"
+    if kind == "outbound":
+        return "Opened Sleeper" if (row.get("detail") or {}).get("to") == "sleeper" else "Left for a link"
+    if kind == "refresh":
+        return f"Refreshed {where}"
+    if kind == "feedback":
+        d = row.get("detail") or {}
+        return {"pulse": "Answered the weekly check-in", "pulse_shown": "Saw the weekly check-in",
+                "pulse_skipped": "Skipped the weekly check-in"}.get(str(d.get("kind")), "Sent feedback")
+    if kind == "fail":
+        return "Offline" if (row.get("detail") or {}).get("offline") else f"Failed to load {page_label(name)}"
     if name.startswith("web/"):
         return "Web: " + name[4:].split("_", 1)[-1].replace("_", " ")
     return SCREENS.get(name, name)
@@ -409,4 +431,18 @@ def load(client: Any, league_id: str, *, days: int) -> tuple[list[dict[str, Any]
                   .eq("league_id", league_id).gte("created_at", since).order("id"))
     except Exception:
         ai = []
+    # Alerts sent (for open rates) ride along with the AI rows as feature 'alert_sent', topic = the alert's kind.
+    try:
+        sent = _all(client.table("push_outbox").select("user_id,kind,sent_at").eq("league_id", league_id).eq("status", "sent")
+                    .gte("sent_at", since).order("sent_at"))
+        ai += [{"user_id": a["user_id"], "feature": "alert_sent", "topic": a.get("kind"), "cost_usd": 0, "created_at": a.get("sent_at")} for a in sent]
+    except Exception:
+        pass
+    # Owner feedback, whole notes (activity rows keep a short copy), as feature 'feedback'.
+    try:
+        notes = _all(client.table("app_feedback").select("user_id,kind,rating,text,screen,created_at").eq("league_id", league_id)
+                     .gte("created_at", since).order("id"))
+        ai += [{**n, "feature": "feedback", "topic": n.get("kind"), "cost_usd": 0} for n in notes]
+    except Exception:
+        pass
     return rows, ai

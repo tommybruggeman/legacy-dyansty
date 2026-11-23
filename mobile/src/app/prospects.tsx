@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
-import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Linking, StyleSheet, Text, View } from 'react-native';
+import { Pressable } from '../components/Pressable';
 
 import { Move, ProspectPhoto, editionDay } from '../components/home/ProspectCard';
 import { ErrorState, Loading } from '../components/ScreenState';

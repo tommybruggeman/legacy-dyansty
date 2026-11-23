@@ -1,6 +1,7 @@
 import { router, useFocusEffect } from 'expo-router';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
-import { Dimensions, Modal, Pressable, ScrollView, StyleSheet, Text, View, type ScrollViewInstance } from 'react-native';
+import { Dimensions, Modal, ScrollView, StyleSheet, Text, View, type ScrollViewInstance } from 'react-native';
+import { Pressable } from '../Pressable';
 
 import type { Pick, Player, TeamPage, TeamWeek, TeamWeekItem, WeekPlayer } from '../../lib/api';
 import { colors } from '../../lib/theme';

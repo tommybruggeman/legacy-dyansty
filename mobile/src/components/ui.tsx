@@ -1,6 +1,7 @@
 import { router, useNavigation } from 'expo-router';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { ActivityIndicator, Animated, Dimensions, Easing, PanResponder, Pressable, ScrollView, StyleSheet, Text, View, type ScrollViewInstance, type StyleProp, type ViewStyle } from 'react-native';
+import { ActivityIndicator, Animated, Dimensions, Easing, PanResponder, ScrollView, StyleSheet, Text, View, type ScrollViewInstance, type StyleProp, type ViewStyle } from 'react-native';
+import { Pressable } from './Pressable';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { colors } from '../lib/theme';

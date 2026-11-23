@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { Pressable } from '../Pressable';
 
 import { type MoveCard as Card, apiSend } from '../../lib/api';
 import { colors } from '../../lib/theme';

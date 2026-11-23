@@ -111,6 +111,17 @@ tr.click{cursor:pointer}tr.click:hover td{background:var(--panel2)}
 .x{border:0;background:none;color:var(--muted);font-size:18px;padding:6px 10px}
 .msg ul,.msg ol{margin:4px 0;padding-left:20px}.msg code{font:12px var(--mono);background:var(--panel2);padding:1px 4px;border-radius:4px}
 .msg .tbl{margin:6px 0}
+.heat{position:relative;width:100%;margin:0 auto;border:3px solid var(--line);border-radius:22px;overflow:hidden;background:#071A12}
+.hb{position:absolute;left:0;right:0;height:10%;background:var(--gold);pointer-events:none}
+.hf{position:absolute;left:0;right:0;border-top:1px dashed var(--ink2);pointer-events:none}.hf span{position:absolute;right:6px;top:-16px;font:10px var(--mono);color:var(--ink2)}
+.hd{position:absolute;width:9px;height:9px;margin:-4.5px;border-radius:5px;opacity:.6}
+.stack{display:flex;flex-direction:column;gap:12px;min-width:0}
+@media (max-width:1100px){.c8.stack{grid-column:span 12}}
+.hd.worked{background:#199e70}.hd.dead{background:#e66767}.hd.rage{background:none;border:3px solid #c98500;width:24px;height:24px;margin:-12px;border-radius:12px;opacity:.9}
+.ha{position:absolute;width:2px;margin-left:-1px;background:#9085e9;opacity:.5;transform-origin:top}
+.chip.lay{display:inline-flex;align-items:center;gap:6px;opacity:.55}.chip.lay.on{opacity:1;border-color:var(--ink2)}.chip.lay i{width:10px;height:10px;border-radius:5px;display:inline-block}
+.notes{display:grid;gap:10px}.fb{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--panel2)}.fb p{margin:6px 0}
+.score{font:600 12px var(--mono);color:var(--bg);background:var(--gold);border-radius:6px;padding:1px 6px}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head><body>
@@ -164,7 +175,7 @@ async function load(days){
   EV = await api(`/commissioner/activity/feed?days=${days}&tz=${encodeURIComponent(tz)}`); LOADED=days;
   K = Object.fromEntries(EV.kinds.map((k,i)=>[k,i])); L = EV.labels; NOW = EV.now;
   ev = EV.events.map(e=>{ const d=new Date(e[1]*1000); const parts=fmtH.formatToParts(d); const wd=parts.find(p=>p.type==='weekday').value; let h=+parts.find(p=>p.type==='hour').value; if(h===24)h=0;
-    const date=fmtD.format(d); return {o:e[0],t:e[1],k:e[2],l:e[3],s:e[4],web:e[5],sess:e[6],b:e[7],date,wd:DAYS.indexOf(wd),h,week:isoWeek(date),month:date.slice(0,7)}; });
+    const date=fmtD.format(d); return {o:e[0],t:e[1],k:e[2],l:e[3],s:e[4],web:e[5],sess:e[6],b:e[7],x:e[8],date,wd:DAYS.indexOf(wd),h,week:isoWeek(date),month:date.slice(0,7)}; });
   SWEB=[]; ev.forEach(e=>{ SWEB[e.sess]=e.web; });
   SIDX=Object.fromEntries(EV.sessions.map((s,i)=>[s[5],i]));
   const latest=new Map(); ev.forEach(e=>{ if(e.b && !e.web) latest.set(e.o,e.b); });
@@ -209,6 +220,12 @@ const METRICS = {
   'Taps': es => es.filter(e=>e.k===K.tap).length,
   'Minutes': es => Math.round(es.filter(e=>e.k===K.screen).reduce((a,e)=>a+e.s,0)/60),
   'Alert opens': es => es.filter(e=>e.k===K.push_open).length,
+  'Feedback sent': es => es.filter(e=>e.k===K.feedback&&e.x&&(e.x[0]==='pulse'||e.x[0]==='button')).length,
+  'Check-in rating': es => { const r=es.filter(e=>e.k===K.feedback&&e.x&&e.x[1]>0).map(e=>e.x[1]); return r.length? Math.round(10*r.reduce((a,b)=>a+b,0)/r.length)/10 : 0; },
+  'Dead taps': es => es.filter(e=>e.k===K.tap&&e.x&&e.x[3]===0).length,
+  'Rage taps': es => es.filter(e=>e.k===K.rage).length,
+  'Searches': es => es.filter(e=>e.k===K.search).length,
+  'Failed loads': es => es.filter(e=>e.k===K.fail).length,
 };
 const GROUPS = {
   'Day': e=>e.date, 'Week': e=>e.week, 'Month': e=>e.month, 'Weekday': e=>DAYS[e.wd], 'Hour': e=>String(e.h).padStart(2,'0')+':00',
@@ -223,7 +240,7 @@ function orderKeys(gname, keys){
 }
 
 // ---------- sections ----------
-const SECTIONS = ['Overview','Traffic','Pages','Flows','Funnels','Retention','Owners','Sessions','Reports','Ask AI'];
+const SECTIONS = ['Overview','Traffic','Pages','Heatmap','Flows','Funnels','Retention','Signals','Owners','Sessions','Feedback','Reports','Ask AI'];
 function rail(){ document.getElementById('rail').innerHTML = SECTIONS.map(s=>`<button class="${S.sec===s?'on':''}" data-sec="${s}">${s}${s==='Reports'?`<small>${S.reports.length}</small>`:''}</button>`).join(''); }
 function askBtn(q){ return `<button class="ask" data-askq="${esc(q)}">Ask AI ↗</button>`; }
 function panel(cls,title,sub,body,q){ return `<section class="p ${cls}"><div class="ph"><b>${esc(title)}${sub?`<span class="sub">${esc(sub)}</span>`:''}</b>${q?askBtn(q):''}</div>${body}</section>`; }
@@ -284,23 +301,182 @@ function traffic(){
     chart('ch-push',{xAxis:xCat(ks.map(short)),yAxis:yVal(),series:[barS('Alert opens',ks.map(k=>METRICS['Alert opens'](g.get(k)||[])),5)]});
   }];
 }
+// ---------- per-page facts shared by Pages, Heatmap and Signals ----------
+function top(m,n=1){ return [...m].sort((a,b)=>b[1]-a[1]).slice(0,n); }
+function countBy(es,f){ const m=new Map(); es.forEach(e=>{const k=f(e); if(k!=null) m.set(k,(m.get(k)||0)+1);}); return m; }
+const median = a => { if(!a.length) return 0; const s=[...a].sort((x,y)=>x-y); return s[Math.floor(s.length/2)]; };
+const pct = (a,b) => b? Math.round(100*a/b) : 0;
+const WENT = ['did nothing','hit a button','opened a page','opened the keyboard'];
+function bySession(es){ const m=new Map(); es.forEach(e=>{ if(!m.has(e.sess)) m.set(e.sess,[]); m.get(e.sess).push(e); }); for(const v of m.values()) v.sort((a,b)=>a.t-b.t); return m; }
+function quickBacks(cur){ // a page left within 3 seconds for the page they came from
+  const out=new Map(); for(const v of bySession(cur.filter(e=>e.k===K.screen)).values()){ for(let i=1;i<v.length-1;i++){ if(v[i].s<3 && v[i+1].l===v[i-1].l){ out.set(L[v[i].l],(out.get(L[v[i].l])||0)+1); } } } return out; }
+function pageStats(cur){
+  const sess=bySession(cur.filter(e=>e.k===K.screen));
+  const entry=new Map(), exit=new Map(); for(const v of sess.values()){ const f=L[v.find(e=>L[e.l]!=='Home')?.l ?? v[0].l]; entry.set(f,(entry.get(f)||0)+1); const x=L[v[v.length-1].l]; exit.set(x,(exit.get(x)||0)+1); }
+  const qb=quickBacks(cur);
+  return [...groupBy(cur,'Page')].map(([p,v])=>{
+    const taps=cur.filter(e=>e.k===K.tap&&L[e.l]===p), known=taps.filter(e=>e.x&&e.x[3]>=0), dead=known.filter(e=>e.x[3]===0);
+    const loads=cur.filter(e=>e.k===K.load&&L[e.l]===p).map(e=>e.x?e.x[0]:0).filter(Boolean);
+    const depths=v.map(e=>e.x&&e.x[0]>=0?e.x[0]:null).filter(x=>x!=null);
+    return {p,views:v.length,owners:new Set(v.map(e=>e.o)).size,avg:Math.round(v.reduce((a,e)=>a+e.s,0)/v.length),min:Math.round(v.reduce((a,e)=>a+e.s,0)/60),
+      taps:taps.length,dead:known.length?pct(dead.length,known.length):null,rage:cur.filter(e=>e.k===K.rage&&L[e.l]===p).length,
+      depth:depths.length?Math.round(depths.reduce((a,b)=>a+b,0)/depths.length):null,load:loads.length?median(loads):null,
+      quick:pct(qb.get(p)||0,v.length),entry:entry.get(p)||0,exit:pct(exit.get(p)||0,v.length)};
+  });
+}
 function pagesSec(){
-  const cur=filtered(); const sess=new Map(); cur.forEach(e=>{ if(e.k!==K.screen) return; if(!sess.has(e.sess)) sess.set(e.sess,[]); sess.get(e.sess).push(e); });
-  const entry=new Map(), exit=new Map(); for(const v of sess.values()){ v.sort((a,b)=>a.t-b.t); const f=L[v.find(e=>L[e.l]!=='Home')?.l ?? v[0].l]; entry.set(f,(entry.get(f)||0)+1); const x=L[v[v.length-1].l]; exit.set(x,(exit.get(x)||0)+1); }
-  const rows=[...groupBy(cur,'Page')].map(([p,v])=>({p,views:v.length,owners:new Set(v.map(e=>e.o)).size,avg:Math.round(v.reduce((a,e)=>a+e.s,0)/v.length),min:Math.round(v.reduce((a,e)=>a+e.s,0)/60),
-    taps:cur.filter(e=>e.k===K.tap&&L[e.l]===p).length,entry:entry.get(p)||0,exit:Math.round(100*(exit.get(p)||0)/v.length)})).sort((a,b)=>b[S.sort||'views']-a[S.sort||'views']);
+  const cur=filtered(); const key=S.sort||'views';
+  const rows=pageStats(cur).sort((a,b)=>(b[key]??-1)-(a[key]??-1));
   const max=Math.max(1,...rows.map(r=>r.views));
-  const th=(k,t,n=true)=>`<th class="${n?'n':''}" data-sort="${k}">${t}${(S.sort||'views')===k?' ▾':''}</th>`;
-  const tbl=`<div class="tbl"><table><thead><tr><th>Page</th>${th('views','Views')}${th('owners','Owners')}${th('avg','Avg sec')}${th('min','Minutes')}${th('taps','Taps')}${th('entry','First stop')}${th('exit','Exit %')}</tr></thead><tbody>
-   ${rows.map(r=>`<tr><td>${esc(r.p)}</td><td class="n">${r.views}<span class="inbar" style="width:${Math.round(60*r.views/max)}px"></span></td><td class="n">${r.owners}</td><td class="n">${r.avg}</td><td class="n">${r.min}</td><td class="n">${r.taps}</td><td class="n">${r.entry}</td><td class="n">${r.exit}%</td></tr>`).join('')}</tbody></table></div>`;
-  const never = SUM.unused.screens, taps=SUM.taps.slice(0,6);
-  const html=`<h2>Pages</h2><p class="lede">Tap a column to sort. "First stop" is where a session goes after Home; "Exit %" is how often the page is the last one before leaving.</p><div class="grid">
+  const th=(k,t,tip)=>`<th class="n" data-sort="${k}" title="${esc(tip||'')}">${t}${key===k?' ▾':''}</th>`;
+  const na=v=>v==null?'<span class="note">—</span>':v;
+  const tbl=`<div class="tbl"><table><thead><tr><th>Page</th>${th('views','Views')}${th('owners','Owners')}${th('avg','Avg sec')}${th('min','Minutes')}${th('taps','Taps')}${th('dead','Dead taps','Taps that did nothing')}${th('rage','Rage','Bursts of quick repeated taps')}${th('depth','Scrolled','How far down the page, on average')}${th('load','Load ms','Typical wait for the page\'s data')}${th('quick','Quick back','Left within 3 seconds for the page before')}${th('entry','First stop')}${th('exit','Exit %')}</tr></thead><tbody>
+   ${rows.map(r=>`<tr class="click" data-heat="${esc(r.p)}"><td>${esc(r.p)}</td><td class="n">${r.views}<span class="inbar" style="width:${Math.round(60*r.views/max)}px"></span></td><td class="n">${r.owners}</td><td class="n">${r.avg}</td><td class="n">${r.min}</td><td class="n">${r.taps}</td><td class="n" style="${r.dead>=30?'color:var(--bad)':''}">${r.dead==null?na(null):r.dead+'%'}</td><td class="n" style="${r.rage?'color:var(--bad)':''}">${r.rage}</td><td class="n">${r.depth==null?na(null):r.depth+'%'}</td><td class="n" style="${r.load>2000?'color:var(--bad)':''}">${na(r.load)}</td><td class="n">${r.quick}%</td><td class="n">${r.entry}</td><td class="n">${r.exit}%</td></tr>`).join('')}</tbody></table></div>`;
+  const never = SUM.unused.screens;
+  const html=`<h2>Pages</h2><p class="lede">Tap a column to sort; tap a page to open its heat map. Dead taps did nothing; quick back means they left within 3 seconds for the page before.</p><div class="grid">
    ${panel('','Every page','',tbl,'Which pages should we cut or improve?')}
-   ${panel('c8','Where people tap','each dot is one tap, on that screen',`<div class="grid" style="gap:10px">${taps.map(t=>`<div class="c4" style="grid-column:span 2;min-width:90px"><div class="mini">${t.spots.map(([x,y])=>`<i style="left:${x*100}%;top:${y*100}%"></i>`).join('')}</div><div class="note" style="margin-top:4px">${esc(t.name)} · ${t.count}</div></div>`).join('')}</div>`)}
-   ${panel('c4','Never opened','in this range',`<p>${esc(never.join(', ')||'Every page has been opened.')}</p><b style="font-size:12px">Never done</b><p class="note">${esc(SUM.unused.actions.join(', '))}</p>`)}
+   ${panel('c6','Never opened','in this range',`<p>${esc(never.join(', ')||'Every page has been opened.')}</p>`)}
+   ${panel('c6','Never done','in this range',`<p class="note">${esc(SUM.unused.actions.join(', ')||'Everything has been done at least once.')}</p>`)}
   </div>`;
   return [html,()=>{}];
 }
+
+// ---------- Heatmap: one page at a time ----------
+// Layers: taps that worked (opened a page, hit a button, opened the keyboard), dead taps, rage taps, scrolls,
+// and attention (how long each tenth of the page was on screen; no camera, worked out from scrolling).
+const LAYERS=[['worked','Taps that worked','#199e70'],['dead','Dead taps','#e66767'],['rage','Rage taps','#c98500'],['scroll','Scrolls','#9085e9'],['attn','Attention','#C89B4A']];
+function heatmap(){
+  const cur=filtered(); const stats=pageStats(cur).sort((a,b)=>b.views-a.views);
+  if(!stats.length) return ['<h2>Heatmap</h2><p class="note">No page views in this range.</p>',()=>{}];
+  if(!S.heat||!stats.some(r=>r.p===S.heat)) S.heat=stats[0].p;
+  S.layers=S.layers||{worked:true,dead:true,rage:true,scroll:false,attn:true}; S.where=S.where||'page';
+  const p=S.heat, st=stats.find(r=>r.p===p);
+  const views=cur.filter(e=>e.k===K.screen&&L[e.l]===p);
+  const scr=views.filter(e=>e.x&&e.x[0]>=0);
+  const fold=median(scr.map(e=>e.x[1]).filter(x=>x>0))||100;           // % of the page one screen shows
+  const pageLen=Math.min(4,Math.max(1,100/fold));                         // page height in screens
+  const attn=Array(10).fill(0), stops=Array(10).fill(0), reach=Array(10).fill(0);
+  scr.forEach(e=>{ String(e.x[2]||'').split(',').forEach((v,i)=>{ if(i<10) attn[i]+=+v||0; }); String(e.x[3]||'').split(',').forEach((v,i)=>{ if(i<10) stops[i]+=+v||0; });
+    for(let i=0;i<10;i++) if(e.x[0]>=i*10+5) reach[i]++; });
+  const amax=Math.max(1e-9,...attn);
+  const taps=cur.filter(e=>(e.k===K.tap||e.k===K.rage||e.k===K.swipe)&&L[e.l]===p);
+  const usePage=S.where==='page'&&taps.some(e=>e.x&&(e.k===K.swipe?e.x[4]:e.x[2])>=0);
+  const H=Math.round(500*(usePage?Math.min(pageLen,2.2):1)), W=240;
+  const yOf=e=>{ const py=e.k===K.swipe?e.x[4]:e.x[2]; return usePage&&py>=0?py:(usePage?null:e.x[1]); };
+  const dots=[], arrows=[]; const op=Math.max(.25,Math.min(.75,40/Math.sqrt(Math.max(1,taps.length))/6));
+  for(const e of taps){ if(!e.x) continue; const y=yOf(e); if(y==null) continue; const x=e.x[0];
+    if(e.k===K.tap){ const w=e.x[3]; const kind=w===0?'dead':w>0?'worked':null; if(!kind||!S.layers[kind]) continue; dots.push(`<i class="hd ${kind}" style="left:${x*100}%;top:${y*100}%;opacity:${op.toFixed(2)}" title="${esc(EV.owners[e.o])} · ${WENT[w]}"></i>`); }
+    else if(e.k===K.rage){ if(S.layers.rage) dots.push(`<i class="hd rage" style="left:${x*100}%;top:${y*100}%" title="${esc(EV.owners[e.o])} · ${e.x[3]} quick taps"></i>`); }
+    else if(S.layers.scroll){ const dy=(e.x[3]-e.x[1])/(usePage?pageLen:1); arrows.push(`<i class="ha" style="left:${x*100}%;top:${y*100}%;height:${Math.min(40,Math.abs(dy)*H/1)}px;transform:${dy<0?'none':'rotate(180deg)'}"></i>`); } }
+  const bands=S.layers.attn&&usePage?attn.map((v,i)=>`<div class="hb" style="top:${i*10}%;opacity:${(0.06+0.5*v/amax).toFixed(2)}" title="${Math.round(v/Math.max(1,scr.length))}s average on screen"></div>`).join(''):'';
+  const foldLine=usePage?`<div class="hf" style="top:${Math.min(100,fold)}%"><span>first screen</span></div>`:'';
+  const chips=LAYERS.map(([k,t,c])=>`<button class="chip lay${S.layers[k]?' on':''}" data-layer="${k}"><i style="background:${c}"></i>${t}</button>`).join('');
+  const opts=stats.map(r=>`<option ${r.p===p?'selected':''}>${esc(r.p)}</option>`).join('');
+  const known=taps.filter(e=>e.k===K.tap&&e.x&&e.x[3]>=0), wentCounts=[0,1,2,3].map(w=>known.filter(e=>e.x[3]===w).length);
+  const html=`<h2>Heatmap</h2><p class="lede">One page at a time. Green taps did something, red taps did nothing, orange rings are rage taps. Attention shades each part of the page by how long it was on screen, worked out from scrolling (no camera).</p>
+   <div class="row" style="margin-bottom:12px"><select id="heat-page" aria-label="Page">${opts}</select>
+     <div class="seg" id="heat-where"><button data-where="page" class="${S.where==='page'?'on':''}">Whole page</button><button data-where="screen" class="${S.where==='screen'?'on':''}">Screen</button></div></div>
+   <div class="chips" style="margin-bottom:12px">${chips}</div>
+   <div class="grid">
+    ${panel('c4',p,usePage?`whole page · about ${pageLen.toFixed(1)} screens long`:'where on the screen',`<div class="heat" style="height:${H}px;max-width:${W}px">${bands}${foldLine}${arrows.join('')}${dots.join('')}</div>${usePage||!taps.length?'':'<p class="note">Whole-page positions start with build 112.</p>'}`, `What should we change on ${p}?`)}
+    <div class="c8 stack"><section class="p"><div class="kpis" style="margin-bottom:0">
+      ${[['Views',st.views],['Taps',st.taps],['Did something',known.length?pct(known.length-wentCounts[0],known.length)+'%':'—'],['Dead taps',st.dead==null?'—':st.dead+'%'],['Rage bursts',st.rage],
+         ['Scrolls',taps.filter(e=>e.k===K.swipe).length],['Scrolled to',st.depth==null?'—':st.depth+'%'],['Reached the bottom',scr.length?pct(reach[9],scr.length)+'%':'—']].map(([l,v])=>`<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('')}
+    </div></section>
+    <div class="grid">
+    ${panel('c6','How far down people get','% of views that reached each tenth of the page','<div class="chart short" id="ch-reach"></div>')}
+    ${panel('c6','Attention','average seconds each tenth was on screen','<div class="chart short" id="ch-attn"></div>')}
+    ${panel('c6','What taps did','',`<div class="chart short" id="ch-went"></div>`)}
+    ${panel('c6','Where scrolling stops','scroll pauses over a second, by tenth of the page','<div class="chart short" id="ch-stops"></div>')}
+    </div></div>
+   </div>`;
+  return [html,()=>{
+    const tenths=[...Array(10).keys()].map(i=>`${i*10}–${i*10+10}%`);
+    const hbar=(id,vals,color,fmtv)=>chart(id,{tooltip:{trigger:'item'},grid:{left:70,right:36,top:4,bottom:18},xAxis:yVal(),yAxis:xCat(tenths,{inverse:true,axisLabel:{color:INK2,fontSize:10}}),
+      series:[{type:'bar',barMaxWidth:10,data:vals,itemStyle:{color,borderRadius:[0,4,4,0]},label:{show:true,position:'right',color:MUTED,fontSize:10,formatter:fmtv}}]});
+    hbar('ch-reach',reach.map(v=>pct(v,scr.length)),C[0],p=>p.value+'%');
+    hbar('ch-attn',attn.map(v=>Math.round(v/Math.max(1,scr.length))),GOLD,p=>p.value+'s');
+    hbar('ch-stops',stops,C[5],p=>p.value);
+    chart('ch-went',{tooltip:{trigger:'item'},grid:{left:120,right:36,top:4,bottom:18},xAxis:yVal(),yAxis:xCat(WENT,{inverse:true,axisLabel:{color:INK2,fontSize:10}}),
+      series:[{type:'bar',barMaxWidth:12,data:wentCounts.map((v,i)=>({value:v,itemStyle:{color:i===0?'#e66767':'#199e70',borderRadius:[0,4,4,0]}})),label:{show:true,position:'right',color:MUTED,fontSize:10}}]});
+  }];
+}
+
+// ---------- Signals: speed, failures, searches, links out, alerts, live games, GM follow-through, discovery ----------
+const tableHTML=(head,rows,empty)=>rows.length?`<div class="tbl"><table><thead><tr>${head.map((h,i)=>`<th class="${i?'n':''}">${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map((c,i)=>`<td class="${i?'n':''}">${c}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`:`<p class="note">${esc(empty)}</p>`;
+const FOLLOW={lineup:['Set a lineup'],start_sit:['Set a lineup'],trade:['Sent a trade offer','Trade builder'],waivers:['Placed a waiver bid','Added a free agent'],waiver:['Placed a waiver bid','Added a free agent']};
+function signals(){
+  const cur=filtered(), lo=NOW-S.range*86400;
+  // speed + what slow pages cost: a view whose data took over 2s, left within 5s
+  const loads=cur.filter(e=>e.k===K.load&&e.x);
+  const byPage=new Map(); loads.forEach(e=>{ const p=L[e.l]; if(!byPage.has(p)) byPage.set(p,[]); byPage.get(p).push(e.x[0]); });
+  const speedRows=[...byPage].map(([p,ms])=>[p,ms.length,median(ms),ms.sort((a,b)=>a-b)[Math.floor(ms.length*.9)]||0,pct(ms.filter(m=>m>2000).length,ms.length)]).sort((a,b)=>b[2]-a[2]);
+  const views=cur.filter(e=>e.k===K.screen); const slowLeft=[0,0], fastLeft=[0,0];
+  loads.forEach(e=>{ const v=views.find(x=>x.sess===e.sess&&L[x.l]===L[e.l]&&x.t<=e.t+1&&e.t<=x.t+x.s+1); if(!v) return; const b=e.x[0]>2000?slowLeft:fastLeft; b[1]++; if(v.s<5) b[0]++; });
+  const fails=cur.filter(e=>e.k===K.fail); const offline=fails.filter(e=>e.x&&e.x[1]).length;
+  // searches
+  const searches=cur.filter(e=>e.k===K.search&&e.x); const terms=new Map(); searches.forEach(e=>{ const q=String(e.x[0]).toLowerCase(); const t=terms.get(q)||{n:0,found:0,who:new Set()}; t.n++; t.found=Math.max(t.found,e.x[1]); t.who.add(e.o); terms.set(q,t); });
+  const termRows=[...terms].sort((a,b)=>b[1].n-a[1].n).slice(0,15).map(([q,t])=>[esc(q),t.n,t.who.size,t.found<=0?'<span style="color:var(--bad)">none</span>':t.found]);
+  const missRows=[...terms].filter(([,t])=>t.found===0).slice(0,15).map(([q,t])=>[esc(q),t.n]);
+  // links out
+  const outs=cur.filter(e=>e.k===K.outbound&&e.x); const outBy=new Map(); outs.forEach(e=>{ const k=e.x[0]||'other'; const t=outBy.get(k)||{n:0,who:new Set(),from:new Map()}; t.n++; t.who.add(e.o); t.from.set(L[e.l],(t.from.get(L[e.l])||0)+1); outBy.set(k,t); });
+  const outRows=[...outBy].sort((a,b)=>b[1].n-a[1].n).map(([k,t])=>[esc(k==='sleeper'?'Sleeper':k),t.n,t.who.size,esc(top([...t.from])[0]?.[0]||'')]);
+  // alerts: sent vs opened, and what happens next
+  const sent=(EV.alerts_sent||[]).filter(a=>a[1]>lo&&(S.owner===''||String(a[0])===S.owner)); const opens=cur.filter(e=>e.k===K.push_open);
+  const kinds=new Set([...sent.map(a=>a[2]),...opens.map(e=>e.x&&e.x[0]||'(older build)')]);
+  const alertRows=[...kinds].map(k=>{ const s=sent.filter(a=>a[2]===k).length, o=opens.filter(e=>(e.x&&e.x[0]||'(older build)')===k).length; return [esc(k.replace(/_/g,' ').replace(/^./,c=>c.toUpperCase())),s||'—',o,s?pct(o,s)+'%':'—']; }).sort((a,b)=>b[2]-a[2]);
+  const nextAfter=new Map(); const sessEv=bySession(cur.filter(e=>e.k===K.screen||e.k===K.action||e.k===K.push_open));
+  for(const v of sessEv.values()) v.forEach((e,i)=>{ if(e.k!==K.push_open) return; const n=v.slice(i+1).find(x=>x.k===K.action)||v[i+2]; const k=n?L[n.l]:'Left the app'; nextAfter.set(k,(nextAfter.get(k)||0)+1); });
+  // live games
+  const refresh=cur.filter(e=>e.k===K.refresh); const gameViews=views.filter(e=>L[e.l]==='Box score');
+  const watched=new Map(); gameViews.forEach(e=>{ const p=e.x&&e.x[4]; if(!p) return; const m=p.match(/game\/(\d+)\/(\d+)/); const k=m?`Week ${m[1]} · game ${m[2]}`:p; const t=watched.get(k)||{n:0,who:new Set(),s:0}; t.n++; t.s+=e.s; t.who.add(e.o); watched.set(k,t); });
+  const watchRows=[...watched].sort((a,b)=>b[1].n-a[1].n).slice(0,10).map(([k,t])=>[esc(k),t.n,t.who.size,Math.round(t.s/60)]);
+  // GM follow-through: a GM question, then the matching move by that owner within 24 hours
+  const gm=(EV.gm||[]).filter(g=>g[1]>lo&&(S.owner===''||String(g[0])===S.owner)); const acts=ev.filter(e=>e.k===K.action||e.k===K.screen);
+  const fol=new Map(); gm.forEach(([o,t,topic])=>{ const want=FOLLOW[topic]; const r=fol.get(topic)||{n:0,did:0}; r.n++; if(want&&acts.some(e=>e.o===o&&e.t>t&&e.t<t+86400&&want.includes(L[e.l]))) r.did++; fol.set(topic,r); });
+  const folRows=[...fol].sort((a,b)=>b[1].n-a[1].n).map(([k,r])=>[esc(k),r.n,FOLLOW[k]?r.did:'—',FOLLOW[k]?pct(r.did,r.n)+'%':'<span class="note">no matching move</span>']);
+  const moves=cur.filter(e=>e.k===K.action&&/GM move/.test(L[e.l])); const took=moves.filter(e=>/Took/.test(L[e.l])).length;
+  // feature discovery: the first time anyone used a page or action, then how long until each owner found it
+  const first=new Map(), byOwner=new Map(); ev.filter(e=>e.k===K.screen||e.k===K.action).forEach(e=>{ const k=L[e.l]; if(!first.has(k)||e.t<first.get(k)) first.set(k,e.t); const ko=k+'|'+e.o; if(!byOwner.has(ko)||e.t<byOwner.get(ko)) byOwner.set(ko,e.t); });
+  const disc=[...first].map(([k,t0])=>{ const ds=EV.owners.map((_,o)=>byOwner.get(k+'|'+o)).filter(x=>x!=null).map(t=>(t-t0)/86400); return [k,ds.length,median(ds)]; }).filter(r=>!r[0].startsWith('Web:')).sort((a,b)=>a[1]-b[1]);
+  const discRows=disc.slice(0,14).map(([k,n,d])=>[esc(k),`${n} of ${EV.owners.length}`,d<1?'same day':Math.round(d)===1?'1 day':Math.round(d)+' days']);
+  const html=`<h2>Signals</h2><p class="lede">Speed, failures, searches, links that leave the app, alerts, live games, whether owners act on GM advice, and how fast they find features. Last ${S.range} days.</p><div class="grid">
+   ${panel('c8','Page speed','wait for each page\'s data the first time it opens',tableHTML(['Page','Loads','Typical ms','Slowest 10% ms','Over 2s'],speedRows.map(r=>[esc(r[0]),r[1],r[2],r[3],r[4]+'%']),'No timings yet (build 112 and later).'),'Which slow pages are costing us visits?')}
+   ${panel('c4','Slow pages cost visits','left within 5 seconds',`<div class="kpis" style="grid-template-columns:1fr 1fr"><div class="kpi"><div class="l">After a slow load</div><div class="v">${slowLeft[1]?pct(slowLeft[0],slowLeft[1])+'%':'—'}</div><div class="d flat">${slowLeft[1]} loads over 2s</div></div><div class="kpi"><div class="l">After a fast load</div><div class="v">${fastLeft[1]?pct(fastLeft[0],fastLeft[1])+'%':'—'}</div><div class="d flat">${fastLeft[1]} loads</div></div></div>
+     <b style="font-size:12px">Failed loads</b><p class="note">${fails.length} failed, ${offline} while offline${fails.length?' · most on '+esc(top([...countBy(fails,e=>L[e.l])])[0][0]):''}</p>`)}
+   ${panel('c6','What owners search for','app search and the website\'s player search',tableHTML(['Search','Times','Owners','Results'],termRows,'No searches yet.'),'What are owners searching for that we should surface?')}
+   ${panel('c6','Searches that found nothing','',tableHTML(['Search','Times'],missRows,'Every search found something.'))}
+   ${panel('c6','Leaving the app','links that open somewhere else',tableHTML(['Where','Times','Owners','Mostly from'],outRows,'Nobody has left the app through a link.'),'What do owners still go to Sleeper for?')}
+   ${panel('c6','Alerts','sent and opened, by kind of alert',tableHTML(['Alert','Sent','Opened','Open rate'],alertRows,'No alerts yet.')+`<b style="font-size:12px;display:block;margin-top:10px">After opening an alert</b><p class="note">${esc(top([...nextAfter],5).map(([k,v])=>`${k} (${v})`).join(', ')||'—')}</p>`,'Which alerts work, and which get ignored?')}
+   ${panel('c6','Live games','pull-down refreshes, by hour',`<div class="chart short" id="ch-refresh"></div><p class="note">${refresh.length} refreshes · ${gameViews.length} box score views</p>`)}
+   ${panel('c6','Most watched games','box scores opened',tableHTML(['Game','Views','Owners','Minutes'],watchRows,'No box scores opened yet.'))}
+   ${panel('c6','Do owners act on GM advice?','a GM question, then the matching move within 24 hours',tableHTML(['Topic','Questions','Acted','Rate'],folRows,'No GM questions in this range.')+`<p class="note">GM moves: ${took} taken, ${moves.length-took} dismissed.</p>`,'Do owners follow the GM\'s advice?')}
+   ${panel('c6','How fast owners find things','owners who have used it, and typical days from its first use in the league',tableHTML(['Feature','Found by','Typical wait'],discRows,'Nothing yet.'),'Which features are owners not finding?')}
+  </div>`;
+  return [html,()=>{ const hrs=Array(24).fill(0); refresh.forEach(e=>hrs[e.h]++); chart('ch-refresh',{xAxis:xCat([...Array(24).keys()].map(h=>h===0?'12a':h<12?h+'a':h===12?'12p':(h-12)+'p')),yAxis:yVal(),series:[barS('Refreshes',hrs,4)]}); }];
+}
+
+// ---------- Feedback: the weekly check-in and notes from Settings, each tied to its session ----------
+function feedbackSec(){
+  const lo=NOW-S.range*86400;
+  const notes=(EV.feedback||[]).filter(f=>f[1]>lo&&(S.owner===''||String(f[0])===S.owner)).sort((a,b)=>b[1]-a[1]);
+  const fbEv=ev.filter(e=>e.k===K.feedback&&e.t>lo&&(S.owner===''||String(e.o)===S.owner)&&e.x);
+  const shown=fbEv.filter(e=>e.x[0]==='pulse_shown').length, answered=fbEv.filter(e=>e.x[0]==='pulse').length, skipped=fbEv.filter(e=>e.x[0]==='pulse_skipped').length;
+  const ratings=notes.filter(n=>n[2]==='pulse'&&n[3]);
+  const weeks=[...new Set(ratings.map(n=>isoWeek(fmtD.format(new Date(n[1]*1000)))))].sort();
+  const sessOf=n=>{ const e=fbEv.find(x=>x.o===n[0]&&Math.abs(x.t-n[1])<120&&x.x[0]===n[2]); return e?EV.sessions[e.sess]?.[5]:null; };
+  const html=`<h2>Feedback</h2><p class="lede">The weekly check-in shows on an owner's 3rd visit of the week, after 5 seconds, during the season only. Notes from Settings › Send feedback come in any time. Each one opens the session it was sent from.</p><div class="grid">
+   <section class="p"><div class="kpis" style="margin-bottom:0">${[['Check-ins shown',shown],['Answered',shown?pct(answered,shown)+'%':answered],['Skipped',skipped],['Average rating',ratings.length?(ratings.reduce((a,n)=>a+n[3],0)/ratings.length).toFixed(1)+' / 5':'—'],['Notes',notes.filter(n=>n[4]).length]].map(([l,v])=>`<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('')}</div></section>
+   ${panel('c6','Weekly check-in rating','average, 1 to 5','<div class="chart short" id="ch-pulse"></div>','What are owners saying in their feedback?')}
+   ${panel('c6','Ratings','answers at each score','<div class="chart short" id="ch-scores"></div>')}
+   ${panel('','Every note','newest first',notes.length?`<div class="notes">${notes.map(n=>{ const k=sessOf(n); return `<div class="fb"><div><b>${esc(EV.owners[n[0]])}</b> <span class="note">${esc(when(n[1]))} · ${n[2]==='pulse'?'weekly check-in':'Send feedback'} · on ${esc(n[5])}</span>${n[3]?` <span class="score">${n[3]}/5</span>`:''}</div>${n[4]?`<p>${esc(n[4])}</p>`:''}${k?`<button class="btn ghost" data-replay="${esc(k)}">▶ Watch the session</button>`:''}</div>`; }).join('')}</div>`:'<p class="note">No feedback yet.</p>')}
+  </div>`;
+  return [html,()=>{
+    chart('ch-pulse',{xAxis:xCat(weeks),yAxis:yVal({min:1,max:5}),series:[lineS('Average',weeks.map(w=>{ const r=ratings.filter(n=>isoWeek(fmtD.format(new Date(n[1]*1000)))===w); return +(r.reduce((a,n)=>a+n[3],0)/r.length).toFixed(2); }),2,true)]});
+    chart('ch-scores',{xAxis:xCat(['1','2','3','4','5']),yAxis:yVal(),series:[barS('Owners',[1,2,3,4,5].map(s=>ratings.filter(n=>n[3]===s).length),0)]});
+  }];
+}
+
 function sessionPaths(){ const lo=NOW-S.range*86400; return EV.sessions.filter((s,i)=>s[1]>lo && (S.owner===''||String(s[0])===S.owner) && (S.src==='all'||String(SWEB[i])===S.src)).map(s=>s[3].map(i=>L[i])); }
 function flows(){
   const ps=sessionPaths();
@@ -479,6 +655,9 @@ function drawReport(id,r){
     xAxis:horiz?yVal():xCat(keys.map(k=>r.group==='Day'?k.slice(5):k)),yAxis:horiz?xCat(keys.slice().reverse(),{axisLabel:{color:INK2,fontSize:11}}):yVal(),series:ser});
 }
 const PRESETS=[
+  {name:'Feedback by owner, with sessions',metric:'Feedback sent',group:'Owner',split:'None',kind:'feedback',page:'',chart:'Bars',videos:true},
+  {name:'Check-in rating by week',metric:'Check-in rating',group:'Week',split:'None',kind:'feedback',page:'',chart:'Line',videos:true},
+  {name:'Dead taps by page',metric:'Dead taps',group:'Page',split:'None',kind:'',page:'',chart:'Bars'},
   {name:'Lineup sets by weekday',metric:'Actions',group:'Weekday',split:'None',kind:'action',page:'Set a lineup',chart:'Bars',videos:true},
   {name:'Page views by owner',metric:'Page views',group:'Owner',split:'None',kind:'',page:'',chart:'Bars'},
   {name:'Sessions by day, app vs web',metric:'Sessions',group:'Day',split:'Platform',kind:'',page:'',chart:'Bars'},
@@ -494,7 +673,7 @@ function reports(){
    ${panel('c4','Report builder','',`<div style="display:grid;gap:10px">
       <label class="field">Name<input type="text" id="rname" value="${esc(d.name||'')}" placeholder="My report"></label>
       ${opt('Metric',Object.keys(METRICS))}${opt('Group',Object.keys(GROUPS))}${opt('Split',['None','Platform','Owner','Page','Action','Build','Weekday'])}
-      ${opt('Page',pages)}${opt('Kind',['Any','screen','action','tap','swipe','push_open','app_open','error'])}${opt('Chart',['Bars','Line','Table'])}
+      ${opt('Page',pages)}${opt('Kind',['Any','screen','action','tap','swipe','rage','search','feedback','load','fail','outbound','refresh','push_open','app_open','error'])}${opt('Chart',['Bars','Line','Table'])}
       <label class="note"><input type="checkbox" data-rv="1" ${d.videos?'checked':''}> Show the sessions as videos</label>
       <div class="row"><button class="btn" id="rsave">Save report</button><button class="btn ghost" data-askq="Explain this report and what stands out: ${esc(describe(d))}">Ask AI about it</button></div>
       <div class="note" id="rmsg">${esc(S.rmsg||'')}</div></div>`)}
@@ -512,8 +691,8 @@ async function saveReport(r){
 // ---------- Ask AI ----------
 // The analyst on the server reads every event and session (api/usage_ai.py). It can answer with a report
 // (drawn here, savable) and with sessions (playable here).
-const STARTERS=['How has daily activity changed this month?','Which pages should we improve first?','What do owners do on Thursdays vs Mondays?',
-  "Who hasn't set a lineup this week?",'Where do owners drop off on the way to a trade?','Build a report of GM questions by owner with videos','Show me the longest sessions this week'];
+const STARTERS=['What are owners saying in their feedback?','How has daily activity changed this month?','Which pages should we improve first?','What do owners do on Thursdays vs Mondays?',
+  "Who hasn't set a lineup this week?",'Where do owners drop off on the way to a trade?','Build a report of GM questions by owner with videos','Show me the longest sessions this week','Which pages have the most dead taps?'];
 function md(text){ // small markdown: paragraphs, bullets, numbered lists, tables, bold, code
   const inline=s=>esc(s).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/`([^`]+)`/g,'<code>$1</code>');
   const lines=String(text||'').split('\n'); let out='', list=null, table=[];
@@ -551,7 +730,7 @@ function aiSec(){
      <label class="note"><input type="checkbox" id="deep" ${S.deep?'checked':''}> Dig deeper (a stronger model, a few cents)</label></div>`)}</div>`;
   return [html,()=>{ S.chat.forEach((m,i)=>{ if(m.r) drawReport('ai'+i,m.r); }); document.getElementById('main').querySelector('.msg:last-of-type')?.scrollIntoView({block:'nearest'}); }];
 }
-const RENDER={Overview:overview,Traffic:traffic,Pages:pagesSec,Flows:flows,Funnels:funnels,Retention:retention,Owners:owners,Sessions:sessions,Reports:reports,'Ask AI':aiSec};
+const RENDER={Overview:overview,Traffic:traffic,Pages:pagesSec,Heatmap:heatmap,Signals:signals,Feedback:feedbackSec,Flows:flows,Funnels:funnels,Retention:retention,Owners:owners,Sessions:sessions,Reports:reports,'Ask AI':aiSec};
 function render(){ charts.splice(0).forEach(c=>c.dispose()); rail(); const [html,after]=RENDER[S.sec](); document.getElementById('main').innerHTML=html; after(); }
 function ownerSelect(){ const sel=document.getElementById('f-owner'); sel.innerHTML='<option value="">All owners</option>'+EV.owners.map((n,i)=>`<option value="${i}">${esc(n)}</option>`).join(''); sel.value=S.owner; }
 document.getElementById('f-owner').addEventListener('change',e=>{S.owner=e.target.value; render();});
@@ -564,7 +743,7 @@ function tick(){ const d=DET[S.playKey]; if(!S.playing||!d||d.loading) return; c
 document.addEventListener('input',e=>{ if(e.target.classList.contains('scrub')){ S.frame=+e.target.value; S.playing=false; clearTimeout(timer); paintPlayer(); } });
 document.addEventListener('keydown',e=>{ if(e.key==='Escape'&&S.modal) closeReplay(); });
 document.addEventListener('click',e=>{
-  const t=e.target.closest('[data-sec],[data-askq],[data-sort],[data-owner],[data-sess],[data-fr],[data-play],[data-funnel],[data-load],[data-saveai],[data-replay],[data-close],[data-delrep],#rsave,#aisend,#fab,#modal'); if(!t) return;
+  const t=e.target.closest('[data-heat],[data-layer],[data-where],[data-sec],[data-askq],[data-sort],[data-owner],[data-sess],[data-fr],[data-play],[data-funnel],[data-load],[data-saveai],[data-replay],[data-close],[data-delrep],#rsave,#aisend,#fab,#modal'); if(!t) return;
   const d=t.dataset;
   if(t.id==='modal'){ if(e.target===t) closeReplay(); return; }
   if(d.close){ closeReplay(); return; }
@@ -574,6 +753,9 @@ document.addEventListener('click',e=>{
     if(d.play){ S.playing=!S.playing; clearTimeout(timer); if(S.playing){ if(S.frame>=n-1) S.frame=0; tick(); } }
     paintPlayer(); return; }
   if(d.sess){ play(d.sess); document.querySelectorAll('[data-sess]').forEach(r=>r.style.background=r.dataset.sess===d.sess?'var(--panel2)':''); return; }
+  if(d.heat){ S.heat=d.heat; S.sec='Heatmap'; }
+  if(d.layer){ S.layers[d.layer]=!S.layers[d.layer]; }
+  if(d.where){ S.where=d.where; }
   if(t.id==='fab'){ S.sec='Ask AI'; }
   if(d.sec){ S.sec=d.sec; S.playing=false; clearTimeout(timer); }
   if(d.askq){ askAI(d.askq); return; }
@@ -591,6 +773,7 @@ document.addEventListener('change',e=>{
   const f=e.target.dataset.rf; if(f){ const v=e.target.value; S.draft=Object.assign({},S.draft,{[f]:v==='Any'?'':v}); render(); }
   if(e.target.dataset.rv){ S.draft=Object.assign({},S.draft,{videos:e.target.checked}); render(); }
   if(e.target.id==='deep') S.deep=e.target.checked;
+  if(e.target.id==='heat-page'){ S.heat=e.target.value; render(); }
   const fs=e.target.dataset.fstep; if(fs!=null){ const cur=(FUNNELS[S.funnel]||S.custom||[]).slice(); cur[+fs]=e.target.value; S.custom=cur; S.funnel=null; render(); }
 });
 document.addEventListener('keydown',e=>{ if(e.target.id==='aiq'&&e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); document.getElementById('aisend').click(); } });

@@ -478,7 +478,8 @@ def payload(row: Mapping[str, Any]) -> dict[str, Any]:
         alert["title"] = row["title"]
     url = row.get("url") or "/"
     # The app reads the page to open from "body" (where expo-notifications looks for an alert's data) or "url".
-    return {"aps": {"alert": alert, "sound": "default"}, "url": url, "body": {"url": url}}
+    # kind lets Owner activity count which alerts get opened.
+    return {"aps": {"alert": alert, "sound": "default"}, "url": url, "kind": row.get("kind"), "body": {"url": url, "kind": row.get("kind")}}
 
 
 # ---- the outbox -------------------------------------------------------------------------------------

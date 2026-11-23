@@ -71,6 +71,14 @@ function urlOf(response: Notifications.NotificationResponse | null): string | nu
   return typeof raw === 'string' && raw ? raw : null;
 }
 
+function kindOf(response: Notifications.NotificationResponse): string | null {
+  const { content, trigger } = response.notification.request;
+  const fromData = (content.data as { kind?: unknown } | undefined)?.kind;
+  const payload = (trigger as { payload?: { kind?: unknown; body?: { kind?: unknown } } } | null)?.payload;
+  const raw = fromData ?? payload?.kind ?? payload?.body?.kind;
+  return typeof raw === 'string' && raw ? raw.slice(0, 40) : null;
+}
+
 const seenResponses = new Set<string>();
 
 // Tapping an alert opens the page it's about (lineup, box score, Activity, Transactions...).
@@ -79,7 +87,7 @@ export function listenForTaps(): () => void {
     const url = urlOf(response);
     if (response && !seenResponses.has(response.notification.request.identifier)) {
       seenResponses.add(response.notification.request.identifier);
-      track('push_open', { to: url ?? null }, url ?? '/');
+      track('push_open', { to: url ?? null, alert: kindOf(response) }, url ?? '/');
     }
     if (url) router.push(url as never);
   };

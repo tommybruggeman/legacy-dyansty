@@ -1,6 +1,7 @@
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { Alert, Pressable, Share, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { Alert, Share, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { Pressable } from '../components/Pressable';
 
 import { Avatar } from '../components/Pictures';
 import { ErrorState, Loading } from '../components/ScreenState';

@@ -26,8 +26,9 @@ from zoneinfo import ZoneInfo
 
 from api import usage_stats
 
-KINDS = ["screen", "action", "tap", "swipe", "push_open", "app_open", "app_close", "error"]
-METRICS = ("Active owners", "Sessions", "Page views", "Actions", "Taps", "Minutes", "Alert opens")
+KINDS = ["screen", "action", "tap", "swipe", "push_open", "app_open", "app_close", "error", "load", "rage", "search", "outbound", "refresh", "feedback", "fail"]
+METRICS = ("Active owners", "Sessions", "Page views", "Actions", "Taps", "Minutes", "Alert opens", "Feedback sent", "Check-in rating",
+           "Dead taps", "Rage taps", "Searches", "Failed loads")
 GROUPS = ("Day", "Week", "Month", "Weekday", "Hour", "Page", "Action", "Owner", "Platform", "Build")
 SPLITS = ("None", "Platform", "Owner", "Page", "Action", "Build", "Weekday")
 CHARTS = ("Bars", "Line", "Table")
@@ -71,7 +72,7 @@ class Data:
                 on_screen = e["kind"] in ("screen", "action")
                 self.events.append({
                     "uid": s["user_id"], "owner": names[s["user_id"]], "kind": e["kind"],
-                    "label": usage_stats.screen_label(e) if on_screen else usage_stats.SCREENS.get(e["screen"], e["screen"]),
+                    "label": usage_stats.screen_label(e) if on_screen else usage_stats.page_label(e["screen"]),
                     "name": usage_stats.screen_label(e), "secs": int(e["secs"] or 0), "web": s["source"] == "website", "sess": si,
                     "build": e.get("build") or "", "unix": int(e["at"].timestamp()), "time": t.strftime("%Y-%m-%d %H:%M:%S"),
                     "date": t.date().isoformat(), "week": usage_stats.period_key(t, "week"), "month": t.strftime("%Y-%m"),
@@ -106,8 +107,13 @@ def feed(rows: list[dict[str, Any]], *, owners: dict[str, dict[str, Any]], ai_ro
             labels.append(label)
         return label_ix[label]
 
-    events = [[index[e["uid"]], e["unix"], KINDS.index(e["kind"]), li(e["label"]), e["secs"], 1 if e["web"] else 0, e["sess"], e["build"]]
-              for e in data.events]
+    events = []
+    for e in data.events:
+        row = [index[e["uid"]], e["unix"], KINDS.index(e["kind"]), li(e["label"]), e["secs"], 1 if e["web"] else 0, e["sess"], e["build"]]
+        extra = compact_detail(e["kind"], e.get("detail"))
+        if extra is not None:
+            row.append(extra)
+        events.append(row)
     sessions = [[index[s["user_id"]], int(s["start"].timestamp()), round(s["seconds"]), [li(x) for x in data.path(si)], data.frames[si],
                  session_key(s["user_id"], s["start"])] for si, s in enumerate(data.sessions)]
     summary = usage_stats.build(rows, owners=owners, ai_rows=ai_rows, days=days, tz=tz)
@@ -120,7 +126,64 @@ def feed(rows: list[dict[str, Any]], *, owners: dict[str, dict[str, Any]], ai_ro
         "labels": labels, "kinds": KINDS, "events": events, "sessions": sessions,
         "taps": [{"name": t["name"], "count": t["count"], "spots": t["spots"][-200:]} for t in summary["taps"]],
         "gm_topics": summary["gm_topics"], "unused": summary["unused"], "errors": summary["errors"],
+        "gm": [[index[str(a["user_id"])], _unix(a.get("created_at")), str(a.get("topic") or "other")] for a in ai_rows
+               if a.get("feature") == "chat" and str(a.get("user_id")) in index and _unix(a.get("created_at"))],
+        "feedback": [[index[str(a["user_id"])], _unix(a.get("created_at")), str(a.get("kind") or ""), a.get("rating"), str(a.get("text") or ""),
+                      usage_stats.page_label(str(a.get("screen") or "/"))] for a in ai_rows
+                     if a.get("feature") == "feedback" and str(a.get("user_id")) in index],
+        "alerts_sent": [[index[str(a["user_id"])], _unix(a.get("created_at")), str(a.get("topic") or "alert")] for a in ai_rows
+                        if a.get("feature") == "alert_sent" and str(a.get("user_id")) in index and _unix(a.get("created_at"))],
     }
+
+
+def _unix(value: Any) -> int:
+    try:
+        return int(datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp())
+    except (TypeError, ValueError):
+        return 0
+
+
+def _num(v: Any, default: float = -1) -> float:
+    try:
+        return round(float(v), 3)
+    except (TypeError, ValueError):
+        return default
+
+
+WENT = {"none": 0, "press": 1, "page": 2, "input": 3}
+
+
+def compact_detail(kind: str, d: dict[str, Any] | None) -> list[Any] | None:
+    """The few detail fields the console draws, as a short list (9th item of an event row):
+    tap [x, y, page y or -1, went: 0 nothing / 1 button / 2 new page / 3 keyboard / -1 unknown (older build)]
+    swipe [x, y, to x, to y, page y]   rage [x, y, page y, taps]   load [ms, data asked for]
+    screen [% of page reached, % that fits on one screen, seconds per tenth "a,b,...", stops per tenth, page path]
+    search [words, results]   outbound [where, link]   push_open [alert kind, page]"""
+    if not d:
+        return None
+    if kind == "tap":
+        return [_num(d.get("x")), _num(d.get("y")), _num(d.get("py")), WENT.get(str(d.get("went")), -1)]
+    if kind == "swipe":
+        return [_num(d.get("x")), _num(d.get("y")), _num(d.get("to_x")), _num(d.get("to_y")), _num(d.get("py"))]
+    if kind == "rage":
+        return [_num(d.get("x")), _num(d.get("y")), _num(d.get("py")), int(_num(d.get("n"), 3))]
+    if kind == "load":
+        return [int(_num(d.get("ms"), 0)), str(d.get("api") or "")]
+    if kind == "screen":
+        if d.get("depth") is None and not d.get("path"):
+            return None
+        return [int(_num(d.get("depth"), -1)), int(_num(d.get("fold"), -1)), str(d.get("attn") or ""), str(d.get("stops") or ""), str(d.get("path") or "")]
+    if kind == "search":
+        return [str(d.get("q") or "")[:60], int(_num(d.get("found"), -1))]
+    if kind == "outbound":
+        return [str(d.get("to") or ""), str(d.get("url") or "")]
+    if kind == "feedback":
+        return [str(d.get("kind") or ""), d.get("rating") if isinstance(d.get("rating"), int) else -1, str(d.get("text") or "")]
+    if kind == "fail":
+        return [str(d.get("api") or ""), 1 if d.get("offline") else 0, int(_num(d.get("status"), 0))]
+    if kind == "push_open":
+        return [str(d.get("alert") or ""), str(d.get("to") or "")]
+    return None
 
 
 def gz_json(payload: Any, accept_encoding: str) -> tuple[bytes, dict[str, str]]:
@@ -196,6 +259,11 @@ def clean_report(spec: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _avg_rating(es: list[dict[str, Any]]) -> float:
+    r = [int((e.get("detail") or {}).get("rating")) for e in es if e["kind"] == "feedback" and isinstance((e.get("detail") or {}).get("rating"), int)]
+    return round(sum(r) / len(r), 1) if r else 0
+
+
 _METRIC_FN: dict[str, Callable[[list[dict[str, Any]]], float]] = {
     "Active owners": lambda es: len({e["uid"] for e in es}),
     "Sessions": lambda es: len({e["sess"] for e in es}),
@@ -204,6 +272,12 @@ _METRIC_FN: dict[str, Callable[[list[dict[str, Any]]], float]] = {
     "Taps": lambda es: sum(1 for e in es if e["kind"] == "tap"),
     "Minutes": lambda es: round(sum(e["secs"] for e in es if e["kind"] == "screen") / 60),
     "Alert opens": lambda es: sum(1 for e in es if e["kind"] == "push_open"),
+    "Feedback sent": lambda es: sum(1 for e in es if e["kind"] == "feedback" and (e.get("detail") or {}).get("kind") in ("pulse", "button")),
+    "Check-in rating": lambda es: _avg_rating(es),
+    "Dead taps": lambda es: sum(1 for e in es if e["kind"] == "tap" and (e.get("detail") or {}).get("went") == "none"),
+    "Rage taps": lambda es: sum(1 for e in es if e["kind"] == "rage"),
+    "Searches": lambda es: sum(1 for e in es if e["kind"] == "search"),
+    "Failed loads": lambda es: sum(1 for e in es if e["kind"] == "fail"),
 }
 _GROUP_FN: dict[str, Callable[[dict[str, Any]], Any]] = {
     "Day": lambda e: e["date"], "Week": lambda e: e["week"], "Month": lambda e: e["month"], "Weekday": lambda e: e["weekday"],

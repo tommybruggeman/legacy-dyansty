@@ -901,6 +901,9 @@ with league_players_tab:
             owner=None if lp_owner == "Everyone" else lp_owner, salary=lp_salary, contract=lp_contract, sort=lp_sort,
             saved=lp_saved or (),
         )
+        if (lp_search or "").strip():
+            from services.account_web import log_event
+            log_event("search", "web/04_Free_Agent", {"q": lp_search.strip()[:60], "found": len(lp_rows)}, once_key=lp_search.strip().lower())
         lp_star = set(lp_saved or ())
         lp_rank = _season_label(league_players["season"] if league_players["season_started"] else league_players["last_season"])
 

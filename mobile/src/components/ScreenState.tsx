@@ -1,6 +1,7 @@
 import { router, usePathname, type ErrorBoundaryProps } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Animated, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Animated, StyleSheet, Text, View } from 'react-native';
+import { Pressable } from './Pressable';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { supabase } from '../lib/supabase';

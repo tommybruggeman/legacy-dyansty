@@ -278,6 +278,52 @@ def crash_report(body: CrashReport, owner: tuple[Client, Any] = Depends(owner_cl
     return {"ok": True}
 
 
+class Feedback(BaseModel):
+    kind: str = "button"  # button (Settings > Send feedback) or pulse (the weekly pop-up)
+    rating: int | None = None  # 1-5 for the pulse question
+    text: str = ""
+    screen: str | None = None
+    at: str | None = None
+
+
+@app.get("/me/feedback/pulse")
+def feedback_pulse(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """Whether the weekly feedback pop-up may show: during the season only (the app counts visits itself)."""
+    client, user = owner
+    if demo.is_demo(user):
+        return {"ask": False}
+    try:
+        phase, _ = _league_phase(_season_context(client, user))
+    except Exception:
+        return {"ask": False}
+    return {"ask": phase in ("game_day", "recap", "playoffs")}
+
+
+@app.post("/me/feedback")
+def send_feedback(body: Feedback, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """An owner's feedback: kept in app_feedback (only the league owner's account reads it) and marked in their
+    activity, so Owner activity shows it in the session and replay it came from."""
+    client, user = owner
+    text = (body.text or "").strip()[:2000]
+    rating = body.rating if body.rating in (1, 2, 3, 4, 5) else None
+    kind = body.kind if body.kind in ("button", "pulse") else "button"
+    if not text and rating is None:
+        raise HTTPException(status_code=400, detail="Add a rating or a note first.")
+    if demo.is_demo(user):
+        return {"ok": True}
+    try:
+        league_id = resolve_team(client, user).get("league_id")
+    except HTTPException:
+        league_id = None
+    screen = usage_log.screen_name(body.screen or "/")
+    client.table("app_feedback").insert({"user_id": str(user.id), "league_id": league_id, "kind": kind, "rating": rating,
+                                         "text": text or None, "screen": screen}).execute()
+    usage_log.save(client, user_id=str(user.id), league_id=league_id, build=None, source="app",
+                   views=[{"screen": screen, "seconds": 0, "at": body.at, "kind": "feedback",
+                           "detail": {"kind": kind, "rating": rating, "text": text[:110]}}])
+    return {"ok": True}
+
+
 class ScreenTime(BaseModel):
     screen: str
     seconds: int

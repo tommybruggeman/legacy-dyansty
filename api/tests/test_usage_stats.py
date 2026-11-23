@@ -66,7 +66,8 @@ def test_rows_keep_kind_and_small_detail():
     rows = usage_log.rows(user_id="u", league_id="l", build="112", source="app",
                           views=[{"screen": "/my-team", "seconds": 0, "kind": "tap", "detail": {"x": 0.1, "y": 0.2}},
                                  {"screen": "/", "seconds": 0, "kind": "nope"}, {"screen": "/", "seconds": 5}])
-    assert len(rows) == 2 and rows[0]["kind"] == "tap" and rows[0]["detail"] == {"x": 0.1, "y": 0.2} and "kind" not in rows[1]
+    assert len(rows) == 2 and rows[0]["kind"] == "tap" and rows[0]["detail"] == {"x": 0.1, "y": 0.2}
+    assert rows[1]["kind"] == "screen" and rows[1]["detail"] is None and set(rows[0]) == set(rows[1])  # one bulk insert needs one shape
 
 
 def test_periods_by_week():
@@ -144,7 +145,7 @@ def test_console_feed_is_compact_and_consistent():
     f = usage_console.feed(ROWS, owners=OWNERS, ai_rows=[], days=7, tz="America/Denver")
     assert f["owners"][:3] == ["Ann", "Bo", "Cy"] and len(f["sessions"]) == 3
     kinds = f["kinds"]
-    for o, t, k, l, secs, web, sess, build in f["events"]:
+    for o, t, k, l, secs, web, sess, build, *extra in f["events"]:
         assert f["sessions"][sess][0] == o and kinds[k] != "frame"
     lineup = [e for e in f["events"] if f["labels"][e[3]] == "Set a lineup"]
     assert len(lineup) == 1 and kinds[lineup[0][2]] == "action"
@@ -278,3 +279,30 @@ def test_console_endpoints(monkeypatch):
         assert t.get("/commissioner/activity/reports").json()["reports"] == []
     finally:
         main.app.dependency_overrides.pop(main.owner_client, None)
+
+
+def test_new_signals_reach_the_feed_and_the_analyst():
+    from api import usage_ai, usage_console
+    rows = ROWS + [
+        r("a", "2026-11-23T19:00:25Z", "/my-team", kind="tap", detail={"x": 0.8, "y": 0.2, "py": 0.1, "went": "none"}),
+        r("a", "2026-11-23T19:00:26Z", "/my-team", kind="rage", detail={"x": 0.8, "y": 0.2, "py": 0.1, "n": 4}),
+        r("a", "2026-11-23T19:00:21Z", "/my-team", kind="load", detail={"ms": 2400, "api": "/my-team"}),
+        r("a", "2026-11-23T19:01:25Z", "/player/[id]", kind="outbound", detail={"to": "sleeper", "url": "sleeper.com/x"}),
+        r("b", "2026-11-23T15:01:00Z", "web/04_Free_Agent", kind="search", source="website", build=None, detail={"q": "kicker", "found": 0}),
+        r("a", "2026-11-23T19:00:05Z", "/", kind="feedback", detail={"kind": "pulse", "rating": 4, "text": "nice"}),
+    ]
+    rows[2] = {**rows[2], "detail": {"depth": 80, "fold": 40, "attn": "5,5,4,3,2,1,0,0,0,0", "stops": "1,0,1,0,0,0,0,0,0,0"}}
+    ai = [{"user_id": "a", "feature": "feedback", "kind": "pulse", "rating": 4, "text": "nice", "screen": "/", "created_at": "2026-11-23T19:00:05Z"},
+          {"user_id": "a", "feature": "alert_sent", "topic": "lineup_reminder", "created_at": "2026-11-23T18:00:00Z"}]
+    f = usage_console.feed(rows, owners=OWNERS, ai_rows=ai, days=7, tz=None)
+    by_kind = {f["kinds"][e[2]]: e for e in f["events"] if len(e) > 8 and not (f["kinds"][e[2]] == "tap" and e[8][3] != 0)}
+    assert by_kind["tap"][8][3] == 0 and by_kind["rage"][8][3] == 4 and by_kind["load"][8][0] == 2400
+    assert by_kind["search"][8] == ["kicker", 0] and f["labels"][by_kind["search"][3]] == "Web: Free Agent"
+    assert by_kind["screen"][8][0] == 80 and f["feedback"][0][3] == 4 and f["alerts_sent"][0][2] == "lineup_reminder"
+    a = usage_ai.Analyst(rows, owners=OWNERS, ai_rows=ai, days=7, tz=None, now=NOW)
+    h = usage_ai.signals(a, "heatmap", page="My Team")
+    assert h["what_taps_did"]["did nothing"] == 1 and h["rage_bursts"] == 1 and h["avg_scrolled_to_pct"] == 80
+    assert usage_ai.signals(a, "searches")["no_results"] == [("kicker", 1)]
+    assert usage_ai.signals(a, "speed")["pages"][0]["typical_ms"] == 2400
+    fb = usage_ai.signals(a, "feedback")
+    assert fb["avg_rating"] == 4 and fb["notes"][0]["session_key"].startswith("a|")

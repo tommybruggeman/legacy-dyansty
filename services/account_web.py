@@ -61,3 +61,21 @@ def log_page_view(page_file: str) -> None:
                        views=[{"screen": name, "seconds": 0}], build=None, source="website")
     except Exception:
         pass
+
+
+def log_event(kind: str, page: str, detail: dict | None = None, *, once_key: str | None = None) -> None:
+    """One website event (a search, say) in app_screen_views, so Owner activity sees the website too.
+    once_key skips repeats of the same event while the page reruns. Never breaks the page."""
+    try:
+        if once_key is not None:
+            seen = st.session_state.setdefault("_events_logged", set())
+            if (kind, once_key) in seen:
+                return
+            seen.add((kind, once_key))
+        client, user_id, email = _client_and_user()
+        if not user_id or email.lower() == "applereview@legacydynasty.app":
+            return
+        usage_log.save(client, user_id=user_id, league_id=st.session_state.get("active_league_id"),
+                       views=[{"screen": page, "seconds": 0, "kind": kind, "detail": detail}], build=None, source="website")
+    except Exception:
+        pass
