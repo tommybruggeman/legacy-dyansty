@@ -163,3 +163,17 @@ def test_taxi_and_ir_come_from_our_database_not_sleeper(monkeypatch):
     assert [p["player_id"] for p in me["bench"]] == ["60"]
     assert [(p["player_id"], p["designation"]) for p in me["reserve"]] == [("40", "taxi"), ("70", "ir")]
     assert [(p["player_id"], p["designation"], p["name"]) for p in them["reserve"]] == [("80", "ir", "P80")]
+
+
+def test_red_zone_clears_once_the_drive_scores():
+    def board(last):
+        b = _board()
+        b["events"][0]["competitions"][0]["situation"]["lastPlay"] = last
+        return nfl_live.parse_scoreboard(b)["BUF"]
+    assert board({"type": {"text": "Rush"}, "scoreValue": 0})["red_zone"] is True               # still driving
+    assert board({"type": {"text": "Rushing Touchdown"}, "scoreValue": 6})["red_zone"] is False  # TD in
+    assert board({"type": {"text": "Extra Point Good"}, "scoreValue": 1})["red_zone"] is False   # PAT done
+    assert board({"type": {"text": "Field Goal Good"}, "scoreValue": 3})["red_zone"] is False
+    assert board({"type": {"text": "Pass Interception Return"}})["red_zone"] is False
+    assert board({"type": {"text": "Two-point Conversion"}})["red_zone"] is False                # failed try, 0 pts
+    assert board({"type": {"text": "Rushing Touchdown"}})["possession"] is True                  # ball stays theirs until the kickoff
