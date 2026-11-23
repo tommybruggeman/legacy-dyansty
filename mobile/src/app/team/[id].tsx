@@ -4,7 +4,7 @@ import { StyleSheet, Text } from 'react-native';
 import { Pressable } from '../../components/Pressable';
 
 import { ErrorState, Loading } from '../../components/ScreenState';
-import { LIVE_REFRESH_MS, TeamView, isLive } from '../../components/team/TeamView';
+import { TeamView, refreshEvery } from '../../components/team/TeamView';
 import { Back, Screen } from '../../components/ui';
 import { type TeamPage, useApi } from '../../lib/api';
 import { colors } from '../../lib/theme';
@@ -13,9 +13,9 @@ export { ScreenError as ErrorBoundary } from '../../components/ScreenState';
 
 export default function Team() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const [live, setLive] = useState(false);
-  const { data, error, loading, reload, refresh } = useApi<TeamPage>(`/teams/${id}`, live ? LIVE_REFRESH_MS : 0);
-  useEffect(() => setLive(isLive(data)), [data]);
+  const [every, setEvery] = useState(0);
+  const { data, error, loading, reload, refresh } = useApi<TeamPage>(`/teams/${id}`, every);
+  useEffect(() => setEvery(refreshEvery(data)), [data]);
 
   if (loading && !data) return <Loading />;
   if (error && !data) return <ErrorState message={error} onRetry={reload} />;

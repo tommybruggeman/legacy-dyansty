@@ -123,7 +123,7 @@ def live_weeks(games: dict[int, dict[str, Any]]) -> set[int]:
 
 def sleeper_rows(season: int, player_id: str, finished: dict[int, dict[str, Any]], nfl_rows: list[dict[str, Any]], lines_for: Any = None) -> list[dict[str, Any]]:
     """Stat rows for open-week games (live or final) the nightly nflverse load doesn't have yet, from Sleeper's weekly stats."""
-    lines_for = lines_for or (lambda w: projections.week_lines("stats", season, w, nfl_live.LIVE_TTL if finished.get(w, {}).get("state") == "in" else 120))
+    lines_for = lines_for or (lambda w: projections.week_lines("stats", season, w, 15 if finished.get(w, {}).get("state") == "in" else 120))
     have = {int(r["week"]) for r in nfl_rows if r.get("week") is not None}
     out = []
     for week, game in sorted(finished.items()):

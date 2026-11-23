@@ -140,7 +140,10 @@ export async function refreshPage() {
 }
 
 // How often a page with live games re-fetches while it's open (one number for every live page).
-export const LIVE_POLL_MS = 10_000;
+// The server rebuilds live points every few seconds from our own watcher, so 5 s keeps the page right behind it.
+export const LIVE_POLL_MS = 5_000;
+// A page whose games haven't kicked off yet checks this often, so it turns live on its own at kickoff.
+export const WAIT_POLL_MS = 60_000;
 
 // refreshEvery (ms) quietly re-fetches while the screen is open and the app
 // is in front, e.g. live scores. Pass 0 to stop.
@@ -157,7 +160,10 @@ export function useApi<T>(path: string, refreshEvery = 0) {
   const shown = useRef<T | null>(data); // what is on screen now, to skip redraws that change nothing
   shown.current = data;
 
+  const busy = useRef(false); // a slow answer never stacks a second quiet refresh behind it
   const load = useCallback(async (quiet = false) => {
+    if (quiet && busy.current) return;
+    busy.current = true;
     if (!quiet) setLoading(true);
     const started = Date.now();
     try {
@@ -183,6 +189,7 @@ export function useApi<T>(path: string, refreshEvery = 0) {
         // timing is a nice-to-have
       }
     } finally {
+      busy.current = false;
       if (!quiet) setLoading(false);
     }
   }, [path]);
@@ -390,7 +397,7 @@ export type TeamPage = {
   current_week?: number;
 };
 
-// This week on a team page, refreshed every 15 seconds while games are on: each player's projection, live points,
+// This week on a team page, refreshed every 5 seconds while games are on: each player's projection, live points,
 // live projection (points so far + projection for the game time left), game and stat line.
 export type WeekPlayer = { points: number; proj?: number | null; live_proj?: number | null; status?: BoxPlayer['status']; game?: NflGame | null; line?: BoxPlayer['line']; kickoff?: string | null };
 export type TeamWeek = {

@@ -194,7 +194,7 @@ def _league_context(client: Client, user: Any) -> tuple[str, dict[int, str], int
 
 def _sync_own_league(client: Client, league_id: str, sleeper_id: str) -> None:
     """Refresh the app's own scores (live watcher overlay, or the weeks the app runs itself) before any page reads
-    matchups. Shared and cached 15 s in api.own_league, so pages like Matchups and Standings never show a frozen copy."""
+    matchups. Shared and cached 5 s in api.own_league, so pages like Matchups and Standings never show a frozen copy."""
     projections.remember_league(client, league_id, sleeper_id)  # projections and ranks score with our saved rules
     try:
         season = cache.cached(("season", league_id), 600, lambda: SeasonResolver(client).get_active_season(league_id))
@@ -745,7 +745,7 @@ def _add_card_owners(client: Client, league_id: str, sleeper_id: str, names: dic
                 team["record"] = f"{rec['wins']}-{rec['losses']}" + (f"-{rec['ties']}" if rec["ties"] else "")
 
 
-CARD_PROJ_TTL = 15
+CARD_PROJ_TTL = 5
 
 
 def _week_projections(client: Client, user: Any, week: int) -> dict[int, dict[str, float]]:
@@ -1016,7 +1016,7 @@ def _team_weeks(client: Client, ctx: dict[str, Any], roster_id: int | None) -> l
     return cache.cached(("team_weeks", sid, ctx["season"], roster_id), 600, load)["weeks"]
 
 
-TEAM_WEEK_TTL = 15
+TEAM_WEEK_TTL = 5
 
 
 def _team_week(client: Client, ctx: dict[str, Any], roster_id: int | None, pick: int | None = None) -> dict[str, Any] | None:

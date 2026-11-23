@@ -3,7 +3,7 @@ import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 import { Dimensions, Modal, ScrollView, StyleSheet, Text, View, type ScrollViewInstance } from 'react-native';
 import { Pressable } from '../Pressable';
 
-import type { Pick, Player, TeamPage, TeamWeek, TeamWeekItem, WeekPlayer } from '../../lib/api';
+import { LIVE_POLL_MS, WAIT_POLL_MS, type Pick, type Player, type TeamPage, type TeamWeek, type TeamWeekItem, type WeekPlayer } from '../../lib/api';
 import { colors } from '../../lib/theme';
 import { PlayerFace } from '../PlayerFace';
 import { LineupSheet, type Picking, SlotChip } from './LineupSheet';
@@ -19,9 +19,19 @@ function go(path: Parameters<typeof router.push>[0]) {
   router.push(path);
 }
 
-// While any of this team's players is on the field, the page refreshes this often (10 s, same as every live page).
+// While any of this team's players is on the field, the page refreshes this often (5 s, same as every live page).
 export { LIVE_POLL_MS as LIVE_REFRESH_MS } from '../../lib/api';
 export const isLive = (team: TeamPage | null) => !!team?.week && !team.week.is_final && Object.values(team.week.players).some((p) => p.status === 'playing');
+// How often a team page refreshes itself: every few seconds while a player is on the field (or his kickoff has
+// passed), once a minute while players are still to kick off (so the page goes live on its own, no pull needed).
+export function refreshEvery(team: TeamPage | null): number {
+  if (!team?.week || team.week.is_final) return 0;
+  const players = Object.values(team.week.players);
+  const now = Date.now();
+  const started = (p: WeekPlayer) => p.status === 'playing' || (p.status === 'waiting' && !!p.kickoff && Date.parse(p.kickoff) <= now);
+  if (players.some(started)) return LIVE_POLL_MS;
+  return players.some((p) => p.status === 'waiting') ? WAIT_POLL_MS : 0;
+}
 
 // One owner's team with the same three tabs as My Team (league activity lives on League > Teams). Other owners' teams
 // are read only apart from the Trade pill next to the name.

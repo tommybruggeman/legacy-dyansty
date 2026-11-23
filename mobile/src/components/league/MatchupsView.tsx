@@ -12,7 +12,7 @@ import { PlayoffsView } from './PlayoffsView';
 
 const first = (name: string) => name.split(' ')[0];
 
-// Live games refresh every 30 seconds while this screen is open.
+// Live games refresh every 5 seconds while this screen is open.
 const LIVE_REFRESH_MS = LIVE_POLL_MS;
 
 
