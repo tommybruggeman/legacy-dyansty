@@ -17,7 +17,7 @@ from api import cache
 from scoring import engine
 
 TABLE = "live_stat_lines"
-TTL = 10  # one read per server instance per 10 s, shared by every owner
+TTL = 3  # one read per server instance per 3 s, shared by every owner (the watcher saves every 2 s)
 STALE = 20 * 60  # lines older than this (watcher down) stop overriding live points
 
 

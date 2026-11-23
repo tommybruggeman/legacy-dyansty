@@ -13,7 +13,7 @@ from typing import Any
 from api import sleeper
 
 ESPN_SCOREBOARD = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"
-LIVE_TTL = 15
+LIVE_TTL = 5
 DONE_TTL = 3600
 ESPN_TEAMS = {"WSH": "WAS", "LA": "LAR", "JAC": "JAX"}  # ESPN code -> Sleeper's
 REGULAR_WEEKS = 18

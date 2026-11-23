@@ -324,6 +324,11 @@ def mark_auto_losses(rows: list[dict[str, Any]], roster_ids: set[int]) -> list[d
             for r in rows]
 
 
+# How long one rebuild of the league's weeks is shared. Kept short because page caches stack on top of it (live points
+# would otherwise lag the watcher by 30+ s); a rebuild is a few cached reads plus rescoring, so 5 s stays cheap.
+SYNC_TTL = 5
+
+
 def sync(client: Any, league_id: str, sleeper_id: str, season: int) -> None:
     """Rebuild the app's weeks for one league and hand them to api.sleeper (shared by every owner for LIVE_TTL)."""
     from api import cache, league, sleeper  # here, not at import time: api.league reads api.sleeper too
@@ -394,4 +399,4 @@ def sync(client: Any, league_id: str, sleeper_id: str, season: int) -> None:
             sleeper.put(f"league/{sleeper_id}/losers_bracket", result["losers_bracket"])
         return {"weeks": sorted(result["weeks"])}
 
-    cache.cached(("own_league", league_id, sleeper_id), 15, load)
+    cache.cached(("own_league", league_id, sleeper_id), SYNC_TTL, load)

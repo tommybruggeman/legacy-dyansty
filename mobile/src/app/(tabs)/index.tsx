@@ -30,7 +30,7 @@ const pts = (n: number) => n.toFixed(1);
 
 export default function Home() {
   const [live, setLive] = useState(false);
-  // Game days refresh every 10 seconds while Home is open.
+  // Game days refresh every 5 seconds while Home is open.
   const { data, error, loading, reload, refresh } = useApi<HomeData>('/home', live ? LIVE_POLL_MS : 0);
   const isLive = data?.phase === 'game_day' || data?.phase === 'playoffs';
   useEffect(() => setLive(isLive), [isLive]);
