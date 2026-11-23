@@ -155,6 +155,7 @@ jobs:
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
           SUBMIT: ${{ inputs.submit }}
           REVIEW_PHONE: ${{ secrets.REVIEW_PHONE }}
+          SKIP_SCREENSHOTS: ${{ !inputs.screenshots }}
         run: |
           if [ -z "$REVIEW_PHONE" ]; then echo "::error::Add the REVIEW_PHONE secret (+1 ...): Apple requires a review contact phone"; exit 1; fi
           mkdir -p store/screenshots
