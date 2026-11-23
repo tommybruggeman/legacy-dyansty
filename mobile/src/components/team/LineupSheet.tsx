@@ -1,5 +1,6 @@
 import { type ReactNode, useState } from 'react';
-import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Modal, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable } from '../Pressable';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { apiSend, type Lineup, type Player } from '../../lib/api';

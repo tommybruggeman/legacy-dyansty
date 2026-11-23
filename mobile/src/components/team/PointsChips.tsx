@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
-import { Animated, Dimensions, Easing, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Animated, Dimensions, Easing, Modal, StyleSheet, Text, View } from 'react-native';
+import { Pressable } from '../Pressable';
 
 import type { TeamPoints } from '../../lib/api';
 import { colors } from '../../lib/theme';

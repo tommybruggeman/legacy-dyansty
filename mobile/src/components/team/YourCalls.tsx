@@ -1,6 +1,7 @@
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { Alert, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Linking, StyleSheet, Text, View } from 'react-native';
+import { Pressable } from '../Pressable';
 
 import { apiSend, type Expiring, type RookieDeal } from '../../lib/api';
 import { colors } from '../../lib/theme';

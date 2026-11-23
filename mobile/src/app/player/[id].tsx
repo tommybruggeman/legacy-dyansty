@@ -1,6 +1,7 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Alert, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Linking, StyleSheet, Text, View } from 'react-native';
+import { Pressable } from '../../components/Pressable';
 
 import { Headshot } from '../../components/Pictures';
 import { InjuryReport } from '../../components/player/InjuryReport';

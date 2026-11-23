@@ -1,8 +1,7 @@
 import { router, useLocalSearchParams, useNavigation } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import {
-  ActivityIndicator, Alert, AppState, Image, Keyboard, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, type ScrollViewInstance, StyleSheet, Text, TextInput, View,
-} from 'react-native';
+import { ActivityIndicator, Alert, AppState, Image, Keyboard, KeyboardAvoidingView, Linking, Platform, ScrollView, type ScrollViewInstance, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable } from '../../components/Pressable';
 import ImageCropPicker from 'react-native-image-crop-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -292,11 +291,14 @@ export default function FrontOfficeScreen() {
       <ScrollView
         ref={scroll}
         contentContainerStyle={[styles.content, { paddingTop: insets.top + 8 }]}
-        onContentSizeChange={() => messages.length && scroll.current?.scrollToEnd({ animated: true })}
         keyboardShouldPersistTaps="handled"
         // Dragging the chat (a swipe down) puts the keyboard away, like Messages.
         keyboardDismissMode="on-drag"
         {...pull.scrollProps}
+        onContentSizeChange={(w: number, h: number) => {
+          pull.scrollProps.onContentSizeChange(w, h);
+          if (messages.length) scroll.current?.scrollToEnd({ animated: true });
+        }}
       >
         {pull.spacer}
         <View style={styles.header}>

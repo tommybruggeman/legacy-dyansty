@@ -2,12 +2,14 @@ import { useEffect, useState } from 'react';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
+import { View } from 'react-native';
 
+import { PulseHost } from '../components/Feedback';
 import { LaunchIntro } from '../components/LaunchIntro';
 import { AppLockProvider } from '../lib/appLock';
 import { listenForTaps, registerIfAllowed } from '../lib/push';
 import { SessionProvider, useSession } from '../lib/session';
-import { installCrashReporter, useScreenTime } from '../lib/telemetry';
+import { installCrashReporter, touchLogger, useScreenTime } from '../lib/telemetry';
 import { colors } from '../lib/theme';
 
 export { ScreenError as ErrorBoundary } from '../components/ScreenState';
@@ -29,6 +31,7 @@ function RootStack() {
 
   return (
     <AppLockProvider active={signedIn}>
+    <View style={{ flex: 1 }} onTouchStart={signedIn ? touchLogger.onTouchStart : undefined} onTouchEnd={signedIn ? touchLogger.onTouchEnd : undefined}>
     <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.bg } }}>
       <Stack.Protected guard={!!session}>
         <Stack.Screen name="(tabs)" />
@@ -49,12 +52,15 @@ function RootStack() {
         <Stack.Screen name="commish-team" />
         <Stack.Screen name="commish-add" />
         <Stack.Screen name="commish-rules" />
+        <Stack.Screen name="owner-activity" />
         <Stack.Screen name="search" options={{ animation: 'fade_from_bottom' }} />
       </Stack.Protected>
       <Stack.Protected guard={!session}>
         <Stack.Screen name="sign-in" />
       </Stack.Protected>
     </Stack>
+    {signedIn ? <PulseHost /> : null}
+    </View>
     </AppLockProvider>
   );
 }

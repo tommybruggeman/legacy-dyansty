@@ -1,6 +1,7 @@
 import { router, useFocusEffect } from 'expo-router';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
-import { Dimensions, Modal, Pressable, ScrollView, StyleSheet, Text, View, type ScrollViewInstance } from 'react-native';
+import { Dimensions, Modal, ScrollView, StyleSheet, Text, View, type ScrollViewInstance } from 'react-native';
+import { Pressable } from '../Pressable';
 
 import type { Pick, Player, TeamPage, TeamWeek, TeamWeekItem, WeekPlayer } from '../../lib/api';
 import { colors } from '../../lib/theme';
@@ -228,10 +229,14 @@ function PlayerRow({ p, first, showSlot, chip, onEmpty, w, season }: { p: Player
   );
   const label = showSlot && p.slot ? p.slot : p.pos;
   const live = w?.status === 'playing';
+  // Yet to play: his game hasn't kicked off. Ruled out (OUT, IR, suspended) before kickoff = red edge and 0 instead.
+  const waiting = !!w && w.status === 'waiting' && !kickedOff(w);
+  const ruledOut = waiting && ruledOutTag(injury);
   return (
     // A hurt player opens straight to the Health section of his page.
     <Pressable onPress={() => go(injury ? `/player/${p.player_id}?section=health` : `/player/${p.player_id}`)}>
-      <View style={[styles.prow, first && styles.prowFirst, live && styles.prowLive]}>
+      <View style={[styles.prow, first && styles.prowFirst, live && styles.prowLive, waiting && styles.prowWait, ruledOut && styles.prowOut]}>
+        {waiting && !ruledOut ? <WaitEdge /> : null}
         <View style={styles.pmain}>
           {chip}
           <Face p={p} label={chip ? p.pos : label} hurt={!!injury} />
@@ -240,7 +245,7 @@ function PlayerRow({ p, first, showSlot, chip, onEmpty, w, season }: { p: Player
               <Text style={[ui.name, styles.shrink]} numberOfLines={1}>{p.name}</Text>
               {tag}
             </View>
-            <GameText p={p} w={w} season={season} />
+            <GameText p={p} w={w} season={season} out={ruledOut} />
             {season != null && !kickedOff(w) && w?.status !== 'bye' ? <Text style={styles.deal} numberOfLines={1}>{contractText(p, season)}</Text> : null}
             {w?.line?.length ? (
               <Text style={styles.statLine}>
@@ -250,7 +255,7 @@ function PlayerRow({ p, first, showSlot, chip, onEmpty, w, season }: { p: Player
               </Text>
             ) : null}
           </View>
-          <Points p={p} w={w} />
+          <Points p={p} w={w} out={ruledOut} />
         </View>
       </View>
     </Pressable>
@@ -260,7 +265,7 @@ function PlayerRow({ p, first, showSlot, chip, onEmpty, w, season }: { p: Player
 // Line 1, the game: kickoff time before, the clock and score (with a football when his team has the ball) during,
 // the result after. The contract sits on its own second line until kickoff (Tommy, 2026-11-17).
 // On a bye the contract stays on the same line as BYE (Tommy, 2026-11-17).
-function GameText({ p, w, season }: { p: Player; w?: WeekPlayer; season?: number }) {
+function GameText({ p, w, season, out }: { p: Player; w?: WeekPlayer; season?: number; out?: boolean }) {
   const g = w?.game;
   if (!w) return <Text style={ui.sub}>{p.nfl_team || 'FA'}</Text>;
   if (w.status === 'bye') return <Text style={styles.game}><Text style={styles.byeWord}>BYE</Text>{season != null ? <Text style={styles.byeDeal}> · {contractText(p, season)}</Text> : null}</Text>;
@@ -281,6 +286,7 @@ function GameText({ p, w, season }: { p: Player; w?: WeekPlayer; season?: number
     return <Text style={styles.game} numberOfLines={1}><Text style={styles.finalWord}>Final</Text> {res} {g.score}-{g.opp_score} {vs}</Text>;
   }
   if (w.status === 'final') return <Text style={styles.game}>Final</Text>;
+  if (out) return <Text style={styles.game} numberOfLines={1}><Text style={styles.byeWord}>OUT</Text> · won't play {vs}</Text>;
   return <Text style={styles.game} numberOfLines={1}>{[w.kickoff ? kickoffText(w.kickoff) : null, vs].filter(Boolean).join(' ')}</Text>;
 }
 
@@ -289,7 +295,7 @@ const kickedOff = (w?: WeekPlayer) => !!w && (w.status === 'playing' || w.status
 
 // Before kickoff his projection; during the game live points with the projection that follows the game;
 // after it his final points with the projection he started the day with.
-function Points({ p, w }: { p: Player; w?: WeekPlayer }) {
+function Points({ p, w, out }: { p: Player; w?: WeekPlayer; out?: boolean }) {
   if (!w) {
     return (
       <View style={ui.right}>
@@ -314,10 +320,33 @@ function Points({ p, w }: { p: Player; w?: WeekPlayer }) {
       </View>
     );
   }
+  // Before kickoff (and on a bye) the big spot is a dash, so a big number always means real points
+  // (Tommy, 2026-11-22). The projection sits underneath; a player ruled out shows 0.0 / proj 0.
+  if (out) {
+    return (
+      <View style={ui.right}>
+        <Text style={[styles.big, styles.bigPre]}>0.0</Text>
+        <Text style={styles.under}>proj 0</Text>
+      </View>
+    );
+  }
   return (
     <View style={ui.right}>
-      <Text style={[styles.big, styles.bigPre]}>{w.status === 'bye' ? '—' : w.proj != null ? w.proj.toFixed(1) : '—'}</Text>
-      {w.status !== 'bye' && w.proj != null ? <Text style={styles.projTag}>proj</Text> : null}
+      <Text style={[styles.big, styles.bigPre]}>—</Text>
+      {w.status === 'bye' ? <Text style={styles.under}>0 pts</Text> : w.proj != null ? <Text style={styles.under}>proj {w.proj.toFixed(1)}</Text> : null}
+    </View>
+  );
+}
+
+// Injury tags that mean he won't play at all.
+const ruledOutTag = (tag: string | null) => tag === 'OUT' || tag === 'IR' || tag === 'SUS' || tag === 'PUP';
+
+// The dashed gold left edge on a starter who hasn't played yet. iOS can't dash one side of a border,
+// so it's a stack of short dashes clipped to the row's height.
+function WaitEdge() {
+  return (
+    <View style={styles.waitEdge} pointerEvents="none">
+      {Array.from({ length: 24 }, (_, i) => <View key={i} style={styles.waitDash} />)}
     </View>
   );
 }
@@ -740,6 +769,10 @@ const styles = StyleSheet.create({
   tabTextOn: { color: colors.text },
   prow: { paddingVertical: 10, paddingHorizontal: 4, borderTopWidth: 1, borderTopColor: '#22352B' },
   prowFirst: { borderTopWidth: 0 },
+  prowWait: { paddingLeft: 7, backgroundColor: 'rgba(200,155,74,0.05)', borderRadius: 6 },
+  prowOut: { borderLeftWidth: 3, borderLeftColor: '#EF7A7A', borderRadius: 6 },
+  waitEdge: { position: 'absolute', left: 0, top: 0, bottom: 0, width: 3, overflow: 'hidden', gap: 3 },
+  waitDash: { width: 3, height: 5, borderRadius: 1, backgroundColor: colors.gold },
   prowLive: { borderLeftWidth: 3, borderLeftColor: colors.live, backgroundColor: 'rgba(76,195,138,0.08)', borderRadius: 6 },
   pmain: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   game: { color: colors.muted, fontSize: 11.5, marginTop: 3 },
@@ -753,15 +786,13 @@ const styles = StyleSheet.create({
   statLine: { color: '#D9D0BD', fontSize: 11.5, fontWeight: '600', marginTop: 3, lineHeight: 15 },
   good: { color: colors.live, fontWeight: '800' },
   bad: { color: '#EF7A7A', fontWeight: '800' },
-  big: { color: colors.text, fontSize: 21, fontWeight: '800' },
+  big: { color: colors.text, fontSize: 19, fontWeight: '800' },
   bigLive: { color: colors.live },
   bigPre: { color: '#CFC6B4' },
   salaryWhite: { color: colors.text },
   under: { color: colors.muted, fontSize: 10, fontWeight: '700', marginTop: 2 },
   expiring: { color: '#E8A25C', letterSpacing: 0.4 },
   option: { color: '#7FC3E8', letterSpacing: 0.4 },
-  // The small "proj" under a player's points before kickoff (Tommy, 2026-11-17).
-  projTag: { color: colors.muted, fontSize: 9, fontWeight: '600', marginTop: 1 },
   foot: { flexDirection: 'row', justifyContent: 'space-between', gap: 8, backgroundColor: '#0B1D15', borderRadius: 8, paddingVertical: 4, paddingHorizontal: 8, marginTop: 8 },
   footText: { color: colors.muted, fontSize: 10.5, flexShrink: 1 },
   footGold: { color: colors.gold, fontWeight: '800' },

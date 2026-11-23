@@ -53,7 +53,29 @@ def owner_client(request: Request, authorization: str = Header(default="")) -> t
     if demo.blocked(user, request.method, request.url.path):
         raise HTTPException(status_code=403, detail=demo.MESSAGE)
     client.postgrest.auth(token)
+    request.state.owner = (client, user)  # lets the activity log below record what the owner did
     return client, user
+
+
+@app.middleware("http")
+async def log_owner_actions(request: Request, call_next):
+    """After a successful POST/DELETE, one 'action' row in our own activity table (never slows or breaks the reply)."""
+    response = await call_next(request)
+    owner = getattr(request.state, "owner", None)
+    if owner and response.status_code < 400 and usage_log.action_name(request.method, request.url.path):
+        client, user = owner
+        if not demo.is_demo(user):
+            import asyncio
+
+            def save() -> None:
+                try:
+                    league_id = resolve_team(client, user).get("league_id")
+                except Exception:
+                    league_id = None
+                usage_log.save_action(client, user_id=str(user.id), league_id=league_id, method=request.method, path=request.url.path)
+
+            asyncio.get_running_loop().run_in_executor(None, save)
+    return response
 
 
 def _first(rows: list[dict] | None) -> dict | None:
@@ -245,8 +267,60 @@ class CrashReport(BaseModel):
 @app.post("/me/crash")
 def crash_report(body: CrashReport, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
     """A crash or screen error from someone's phone, written to the server log (free, no extra service)."""
-    _, user = owner
+    client, user = owner
     print(account.crash_line(str(user.id), body.model_dump()), flush=True)
+    if not demo.is_demo(user):
+        try:
+            league_id = resolve_team(client, user).get("league_id")
+        except HTTPException:
+            league_id = None
+        usage_log.save_error(client, user_id=str(user.id), league_id=league_id, screen=body.screen, build=body.build)
+    return {"ok": True}
+
+
+class Feedback(BaseModel):
+    kind: str = "button"  # button (Settings > Send feedback) or pulse (the weekly pop-up)
+    rating: int | None = None  # 1-5 for the pulse question
+    text: str = ""
+    screen: str | None = None
+    at: str | None = None
+
+
+@app.get("/me/feedback/pulse")
+def feedback_pulse(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """Whether the weekly feedback pop-up may show: during the season only (the app counts visits itself)."""
+    client, user = owner
+    if demo.is_demo(user):
+        return {"ask": False}
+    try:
+        phase, _ = _league_phase(_season_context(client, user))
+    except Exception:
+        return {"ask": False}
+    return {"ask": phase in ("game_day", "recap", "playoffs")}
+
+
+@app.post("/me/feedback")
+def send_feedback(body: Feedback, owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """An owner's feedback: kept in app_feedback (only the league owner's account reads it) and marked in their
+    activity, so Owner activity shows it in the session and replay it came from."""
+    client, user = owner
+    text = (body.text or "").strip()[:2000]
+    rating = body.rating if body.rating in (1, 2, 3, 4, 5) else None
+    kind = body.kind if body.kind in ("button", "pulse") else "button"
+    if not text and rating is None:
+        raise HTTPException(status_code=400, detail="Add a rating or a note first.")
+    if demo.is_demo(user):
+        return {"ok": True}
+    try:
+        league_id = resolve_team(client, user).get("league_id")
+    except HTTPException:
+        league_id = None
+    screen = usage_log.screen_name(body.screen or "/")
+    client.table("app_feedback").insert({"user_id": str(user.id), "league_id": league_id, "kind": kind, "rating": rating,
+                                         "text": text or None, "screen": screen}).execute()
+    usage_log.save(client, user_id=str(user.id), league_id=league_id, build=None, source="app",
+                   views=[{"screen": screen, "seconds": 0, "at": body.at, "kind": "feedback",
+                           "detail": {"kind": kind, "rating": rating, "text": text[:110]}}])
     return {"ok": True}
 
 
@@ -254,6 +328,8 @@ class ScreenTime(BaseModel):
     screen: str
     seconds: int
     at: str | None = None
+    kind: str | None = None  # screen (default), tap, swipe, push_open, app_open, app_close
+    detail: dict[str, Any] | None = None
 
 
 class ActivityBatch(BaseModel):
@@ -1137,7 +1213,163 @@ def _after_commish_change(league_id: str) -> None:
 def commissioner_home(owner: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
     client, user = owner
     ctx = _commissioner_ctx(client, user)
-    return {"season": ctx["season"], **_commish_call(commissioner.overview, client, ctx["league_id"])}
+    try:
+        viewer = bool(client.table("app_activity_viewers").select("user_id").eq("user_id", str(user.id)).limit(1).execute().data)
+    except Exception:
+        viewer = False
+    return {"season": ctx["season"], "activity": viewer, **_commish_call(commissioner.overview, client, ctx["league_id"])}
+
+
+def _activity_viewer(client: Client, user: Any) -> dict[str, Any]:
+    """Activity is only for the accounts in app_activity_viewers (the league owner), not every commissioner."""
+    ctx = _commissioner_ctx(client, user)
+    try:
+        ok = bool(client.table("app_activity_viewers").select("user_id").eq("user_id", str(user.id)).limit(1).execute().data)
+    except Exception:
+        ok = False
+    if not ok:
+        raise HTTPException(status_code=403, detail="Owner activity is private to the league owner's account.")
+    return ctx
+
+
+def _activity_data(client: Client, league_id: str, days: int) -> tuple[list[dict], list[dict], dict[str, dict]]:
+    from api import usage_stats
+    def load() -> tuple[list[dict], list[dict], dict[str, dict]]:
+        rows, ai = usage_stats.load(client, league_id, days=days)
+        owners = usage_stats.owners_from_teams(commissioner.overview(client, league_id)["teams"])
+        return rows, ai, owners
+    return cache.cached(("activity", league_id, days), 60, load)
+
+
+@app.get("/commissioner/activity")
+def commissioner_activity(days: int = Query(30, ge=1, le=365), by: str = "day", tz: str | None = None, owner: str | None = None,
+                          owner_auth: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """How owners use the app and website: pages, flows, sessions, timelines, by day/week/month (commissioner only)."""
+    from api import usage_stats
+    client, user = owner_auth
+    ctx = _activity_viewer(client, user)
+    rows, ai, owners = _activity_data(client, ctx["league_id"], days)
+    return usage_stats.build(rows, owners=owners, ai_rows=ai, days=days, tz=tz, owner=owner, by=by)
+
+
+@app.get("/commissioner/activity/feed")
+def commissioner_activity_feed(request: Request, days: int = Query(60, ge=1, le=365), tz: str | None = None,
+                               owner_auth: tuple[Client, Any] = Depends(owner_client)) -> Response:
+    """Every event of the range in the console's compact shape (api/usage_console.py), gzipped."""
+    from api import usage_console
+    client, user = owner_auth
+    ctx = _activity_viewer(client, user)
+    rows, ai, owners = _activity_data(client, ctx["league_id"], days)
+    body, headers = usage_console.gz_json(usage_console.feed(rows, owners=owners, ai_rows=ai, days=days, tz=tz),
+                                          request.headers.get("accept-encoding", ""))
+    return Response(body, media_type="application/json", headers=headers)
+
+
+@app.get("/commissioner/activity/session")
+def commissioner_activity_session(key: str, days: int = Query(60, ge=1, le=365), tz: str | None = None, authorization: str = Header(default=""),
+                                  owner_auth: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """One session's steps plus short-lived links to its replay pictures (signed as the viewer, so the bucket's rule applies)."""
+    from api import usage_console
+    client, user = owner_auth
+    ctx = _activity_viewer(client, user)
+    rows, _, owners = _activity_data(client, ctx["league_id"], days)
+    s = usage_console.session_detail(rows, owners=owners, key=key, tz=tz)
+    if not s:
+        raise HTTPException(status_code=404, detail="That session isn't in this range.")
+    try:
+        urls = usage_console.sign_frames(authorization.partition(" ")[2], [f["path"] for f in s["frames"]])
+    except Exception as exc:
+        print(f"REPLAY_SIGN_FAILED {type(exc).__name__}", flush=True)
+        urls = {}
+    s.pop("user_id", None)
+    s["frames"] = [{"at": f["at"], "url": urls.get(f["path"])} for f in s["frames"] if urls.get(f["path"])]
+    return s
+
+
+class ActivityReport(BaseModel):
+    spec: dict[str, Any]
+
+
+@app.get("/commissioner/activity/reports")
+def activity_reports(owner_auth: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """The viewer's saved console reports (activity_reports: each account reads and writes only its own)."""
+    client, user = owner_auth
+    _activity_viewer(client, user)
+    rows = client.table("activity_reports").select("id,spec,created_at").eq("user_id", str(user.id)).order("created_at").execute().data or []
+    return {"reports": [{"id": r["id"], **(r.get("spec") or {})} for r in rows]}
+
+
+@app.post("/commissioner/activity/reports")
+def save_activity_report(body: ActivityReport, owner_auth: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    from api import usage_console
+    client, user = owner_auth
+    _activity_viewer(client, user)
+    spec = usage_console.clean_report(body.spec)
+    mine = client.table("activity_reports").select("id,spec").eq("user_id", str(user.id)).execute().data or []
+    same = next((r for r in mine if (r.get("spec") or {}).get("name") == spec["name"]), None)
+    if same:
+        client.table("activity_reports").update({"spec": spec}).eq("id", same["id"]).eq("user_id", str(user.id)).execute()
+        return {"id": same["id"], **spec}
+    if len(mine) >= 100:
+        raise HTTPException(status_code=400, detail="That's 100 saved reports. Delete one first.")
+    row = client.table("activity_reports").insert({"user_id": str(user.id), "spec": spec}).execute().data or [{}]
+    return {"id": row[0].get("id"), **spec}
+
+
+@app.delete("/commissioner/activity/reports/{report_id}")
+def delete_activity_report(report_id: str, owner_auth: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner_auth
+    _activity_viewer(client, user)
+    client.table("activity_reports").delete().eq("id", report_id).eq("user_id", str(user.id)).execute()
+    return {"ok": True}
+
+
+class ActivityQuestion(BaseModel):
+    question: str
+    days: int = 30
+    tz: str | None = None
+    deep: bool = False
+    history: list[dict[str, str]] = []
+
+
+@app.post("/commissioner/activity/ask")
+def commissioner_activity_ask(body: ActivityQuestion, owner_auth: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """The Activity analyst: Claude answers usage questions from our own activity rows, and can hand back a
+    report for the console to draw and sessions for it to play."""
+    from api import usage_ai
+    from league_ai import usage
+    client, user = owner_auth
+    ctx = _activity_viewer(client, user)
+    question = body.question.strip()[:1000]
+    if not question:
+        raise HTTPException(status_code=400, detail="Ask a question first.")
+    days = max(1, min(int(body.days or 30), 365))
+    rows, ai, owners = _activity_data(client, ctx["league_id"], days)
+    try:
+        out = usage_ai.ask(question, rows=rows, owners=owners, ai_rows=ai, days=days, tz=body.tz, deep=body.deep, history=body.history)
+    except Exception as exc:
+        print(f"USAGE_ANALYST_FAILED {type(exc).__name__}", flush=True)
+        raise HTTPException(status_code=502, detail="The analyst couldn't answer just now. Try again in a minute.")
+    u = out["usage"]
+    usage.record(client, usage.usage_row(league_id=ctx["league_id"], user_id=str(user.id), feature="usage_analyst", model=out["model"],
+                                         input_tokens=u.get("input_tokens", 0), output_tokens=u.get("output_tokens", 0),
+                                         cache_read_tokens=u.get("cache_read_tokens", 0), cache_write_tokens=u.get("cache_write_tokens", 0),
+                                         tool_calls=out["tools"], latency_ms=out["latency_ms"]))
+    cost = usage.cost_usd(out["model"], input_tokens=u.get("input_tokens", 0), output_tokens=u.get("output_tokens", 0),
+                          cache_read_tokens=u.get("cache_read_tokens", 0), cache_write_tokens=u.get("cache_write_tokens", 0))
+    return {"answer": out["answer"], "report": out["report"], "sessions": out["sessions"], "sessions_title": out["sessions_title"],
+            "model": out["model"], "cost": cost}
+
+
+_CONSOLE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "console", "console.html")
+
+
+@app.get("/console")
+def activity_console() -> Response:
+    """The Owner activity console page (no data in it; it asks the endpoints above with the viewer's sign-in)."""
+    with open(_CONSOLE, encoding="utf-8") as f:
+        return Response(f.read(), media_type="text/html; charset=utf-8",
+                        headers={"Cache-Control": "no-cache", "Content-Security-Policy": "frame-ancestors *"})
 
 
 @app.post("/commissioner/add")

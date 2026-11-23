@@ -1,6 +1,7 @@
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { Alert, Pressable, Share, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { Alert, Share, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { Pressable } from '../components/Pressable';
 
 import { Avatar } from '../components/Pictures';
 import { ErrorState, Loading } from '../components/ScreenState';
@@ -41,6 +42,17 @@ export default function Commissioner() {
           <Text style={ui.link}>›</Text>
         </Row>
       </Card>
+      {data.activity ? (
+        <Card title="Owner activity" gold>
+          <Row first onPress={() => router.push('/owner-activity')}>
+            <View style={ui.flex}>
+              <Text style={ui.value}>How owners use the app</Text>
+              <Text style={ui.sub}>Pages, flows, sessions, replays, and an analyst you can ask. Only you see this.</Text>
+            </View>
+            <Text style={ui.link}>›</Text>
+          </Row>
+        </Card>
+      ) : null}
       <Card title="Rules">
         <Row first onPress={() => router.push('/commish-rules')}>
           <View style={ui.flex}>

@@ -1,0 +1,789 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Owner activity</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/echarts/5.5.0/echarts.min.js"></script>
+<style>
+/* Layout: an analytics console. Sticky filter bar, section rail on the left (tabs on a phone), chart panels in a 12-column grid. Dark, in the app's green and gold. */
+:root{
+  --bg:#06140E; --panel:#0D1F17; --panel2:#112A1F; --line:#1E3A2D; --grid:#183226;
+  --ink:#F2EBDD; --ink2:#B9C4BC; --muted:#7F948A; --gold:#C89B4A; --gold2:#E3BC74;
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --s5:#d55181; --s6:#9085e9;
+  --good:#0ca30c; --bad:#e66767;
+  --sans:Inter,-apple-system,"Segoe UI",Roboto,sans-serif; --mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{background:var(--bg)}
+body{color:var(--ink);font:14px/1.45 var(--sans);margin:0}
+button,select,input,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:rgba(6,20,14,.96);backdrop-filter:blur(6px);border-bottom:1px solid var(--line);
+  padding-block:12px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:30;background:var(--bg)}
+.toprow{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.brand{display:flex;flex-direction:column;margin-right:auto;min-width:0}
+.brand .k{font-size:10px;letter-spacing:1.4px;font-weight:800;color:var(--gold)}
+.brand .t{font-size:19px;font-weight:800}
+.badge{font:600 10px var(--mono);letter-spacing:.8px;color:var(--bg);background:var(--gold);padding:3px 8px;border-radius:6px}
+.filters{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.seg{display:inline-flex;background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:2px}
+.seg button{border:0;background:none;padding:5px 10px;border-radius:7px;color:var(--ink2);font-size:12px;font-weight:600}
+.seg button.on{background:var(--gold);color:var(--bg)}
+select,input[type=text],textarea{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:6px 10px;font-size:12px}
+.shell{display:grid;grid-template-columns:190px minmax(0,1fr);gap:0}
+.rail{position:sticky;top:120px;align-self:start;padding:14px 8px 14px max(12px,env(safe-area-inset-left,0px));display:flex;flex-direction:column;gap:2px}
+.rail button{text-align:left;border:0;background:none;padding:8px 12px;border-radius:8px;color:var(--ink2);font-weight:600;font-size:13px;display:flex;justify-content:space-between}
+.rail button.on{background:var(--panel2);color:var(--gold2)}
+.rail button small{font:11px var(--mono);color:var(--muted)}
+main{min-width:0;padding-block:16px 60px;padding-left:16px;padding-right:max(16px,env(safe-area-inset-right,0px))}
+@media (max-width:820px){.shell{grid-template-columns:1fr}.rail{position:static;flex-direction:row;overflow-x:auto;padding:10px 16px 0;padding-left:max(16px,env(safe-area-inset-left,0px))}
+  .rail button{white-space:nowrap;border:1px solid var(--line)}.rail button small{display:none}main{padding-left:max(16px,env(safe-area-inset-left,0px))}}
+h2{font-size:18px;margin:0 0 2px;text-wrap:balance}.lede{color:var(--muted);font-size:13px;margin:0 0 14px}
+.grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:12px}
+.p{grid-column:span 12;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;min-width:0}
+.c6{grid-column:span 6}.c4{grid-column:span 4}.c8{grid-column:span 8}.c3{grid-column:span 3}
+@media (max-width:1100px){.c4,.c3{grid-column:span 6}.c8{grid-column:span 12}}
+@media (max-width:700px){.c6,.c4,.c3,.c8{grid-column:span 12}}
+.ph{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:6px}
+.ph b{font-size:13px}.ph .sub{color:var(--muted);font-size:11px;display:block;font-weight:400;margin-top:1px}
+.ask{border:1px solid var(--line);background:none;border-radius:7px;padding:3px 8px;font-size:11px;color:var(--gold2);white-space:nowrap}
+.chart{width:100%;height:260px}.chart.tall{height:360px}.chart.short{height:200px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-bottom:12px}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 12px 6px}
+.kpi .l{font-size:11px;color:var(--muted);font-weight:600}
+.kpi .v{font:600 24px var(--mono);margin-top:2px;font-variant-numeric:tabular-nums}
+.kpi .d{font:11px var(--mono)}.up{color:var(--good)}.down{color:var(--bad)}.flat{color:var(--muted)}
+.kpi .sp{height:34px;margin-top:4px}
+.tbl{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{text-align:left;color:var(--muted);font-weight:600;padding:7px 8px;border-bottom:1px solid var(--line);white-space:nowrap;cursor:pointer;user-select:none}
+th.n,td.n{text-align:right}
+td{padding:7px 8px;border-bottom:1px solid var(--grid);white-space:nowrap}
+td.n{font-family:var(--mono);font-variant-numeric:tabular-nums}
+tr.click{cursor:pointer}tr.click:hover td{background:var(--panel2)}
+.inbar{display:inline-block;height:6px;border-radius:3px;background:var(--gold);vertical-align:middle;margin-left:6px;opacity:.8}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.btn{border:1px solid var(--gold);background:var(--gold);color:var(--bg);border-radius:8px;padding:6px 12px;font-weight:700;font-size:12px}
+.btn.ghost{background:none;color:var(--gold2)}
+.field{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--muted);font-weight:600}
+.saved{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
+.sv{border:1px solid var(--line);border-radius:10px;padding:10px;background:var(--panel2);text-align:left}
+.sv b{display:block;font-size:13px}.sv span{font-size:11px;color:var(--muted)}
+.chat{display:flex;flex-direction:column;gap:10px}
+.msg{max-width:780px;border-radius:12px;padding:10px 12px;font-size:13px}
+.msg.q{align-self:flex-end;background:var(--panel2);border:1px solid var(--line)}
+.msg.a{background:var(--panel);border:1px solid var(--line)}
+.msg.a p{margin:4px 0}.msg .meta{font:11px var(--mono);color:var(--muted);margin-top:6px}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:5px 10px;font-size:12px;color:var(--ink2)}
+.fab{position:fixed;right:max(16px,env(safe-area-inset-right,0px));bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:40;border:0;border-radius:999px;background:var(--gold);color:var(--bg);font-weight:800;padding:12px 18px;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+.screen{position:relative;width:230px;max-width:100%;aspect-ratio:9/19;margin:0 auto;border:3px solid var(--line);border-radius:22px;overflow:hidden;background:#071A12}
+.ring{position:absolute;width:28px;height:28px;margin:-14px;border-radius:14px;border:3px solid #FF5A5A;background:rgba(255,90,90,.25)}
+.ms{padding:12px 10px;font-size:9px}.ms .mt{font-size:15px;font-weight:800;margin:4px 0 8px}.ms .mb{background:#0E201A;border:1px solid #3A3524;border-radius:8px;height:34px;margin-bottom:6px}.ms .mb.big{height:70px}
+.ms .tb{position:absolute;bottom:0;left:0;right:0;height:32px;border-top:1px solid #3A3524;display:flex;justify-content:space-around;align-items:center;color:var(--muted);font-size:8px}
+.steps{max-height:430px;overflow:auto;font-size:12px;position:relative}
+.st{display:flex;gap:10px;padding:5px 0;border-bottom:1px solid var(--grid)}.st .t{font:11px var(--mono);color:var(--muted);width:78px;flex:none}
+.st.minor{color:var(--muted)}.st.act{color:var(--gold2)}.st.now{background:var(--panel2)}
+.mini{position:relative;width:100%;aspect-ratio:9/19;border:2px solid var(--line);border-radius:14px;background:#071A12;overflow:hidden}
+.mini i{position:absolute;width:10px;height:10px;margin:-5px;border-radius:5px;background:var(--gold);opacity:.35}
+.note{color:var(--muted);font-size:12px}
+.legend{display:flex;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--ink2);margin-top:4px}.legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+.modal{position:fixed;inset:0;z-index:60;background:rgba(3,10,7,.78);display:flex;align-items:flex-start;justify-content:center;overflow:auto;padding:calc(20px + env(safe-area-inset-top,0px)) 16px 20px}
+.modal[hidden]{display:none}
+.mbox{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;width:min(900px,100%)}
+.mbox .steps{max-height:520px}
+@media (max-width:700px){.mbox .grid>div{grid-column:span 12!important}}
+.screen img{width:100%;height:100%;object-fit:cover;display:block}
+.scrub{width:100%;margin-top:8px;accent-color:var(--gold)}
+.vids{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px;margin-top:8px}
+.vid{display:flex;gap:10px;align-items:flex-start;text-align:left;border:1px solid var(--line);background:var(--panel2);border-radius:10px;padding:8px 10px}
+.vid .pl{flex:none;width:26px;height:26px;border-radius:13px;background:var(--gold);color:var(--bg);display:grid;place-items:center;font-size:11px}
+.path{white-space:normal;max-width:300px}
+.list td{white-space:normal}
+.list{max-height:520px;overflow:auto}
+.sv{display:flex;gap:6px;align-items:flex-start;padding:0}
+.svb{flex:1;border:0;background:none;text-align:left;padding:10px;min-width:0}
+.svb b{display:block;font-size:13px}.svb span{font-size:11px;color:var(--muted)}
+.x{border:0;background:none;color:var(--muted);font-size:18px;padding:6px 10px}
+.msg ul,.msg ol{margin:4px 0;padding-left:20px}.msg code{font:12px var(--mono);background:var(--panel2);padding:1px 4px;border-radius:4px}
+.msg .tbl{margin:6px 0}
+.heat{position:relative;width:100%;margin:0 auto;border:3px solid var(--line);border-radius:22px;overflow:hidden;background:#071A12}
+.hb{position:absolute;left:0;right:0;height:10%;background:var(--gold);pointer-events:none}
+.hf{position:absolute;left:0;right:0;border-top:1px dashed var(--ink2);pointer-events:none}.hf span{position:absolute;right:6px;top:-16px;font:10px var(--mono);color:var(--ink2)}
+.hd{position:absolute;width:9px;height:9px;margin:-4.5px;border-radius:5px;opacity:.6}
+.stack{display:flex;flex-direction:column;gap:12px;min-width:0}
+@media (max-width:1100px){.c8.stack{grid-column:span 12}}
+.hd.worked{background:#199e70}.hd.dead{background:#e66767}.hd.rage{background:none;border:3px solid #c98500;width:24px;height:24px;margin:-12px;border-radius:12px;opacity:.9}
+.ha{position:absolute;width:2px;margin-left:-1px;background:#9085e9;opacity:.5;transform-origin:top}
+.chip.lay{display:inline-flex;align-items:center;gap:6px;opacity:.55}.chip.lay.on{opacity:1;border-color:var(--ink2)}.chip.lay i{width:10px;height:10px;border-radius:5px;display:inline-block}
+.notes{display:grid;gap:10px}.fb{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--panel2)}.fb p{margin:6px 0}
+.score{font:600 12px var(--mono);color:var(--bg);background:var(--gold);border-radius:6px;padding:1px 6px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head><body>
+
+<div class="top">
+  <div class="toprow">
+    <div class="brand"><span class="k">LEGACY DYNASTY · ONLY YOUR ACCOUNT</span><span class="t">Owner activity</span></div>
+    <span class="badge" id="status">LOADING</span>
+  </div>
+  <div class="filters">
+    <div class="seg" id="f-range"><button data-v="7">7D</button><button data-v="14">14D</button><button data-v="30" class="on">30D</button><button data-v="90">90D</button></div>
+    <div class="seg" id="f-by"><button data-v="day" class="on">Day</button><button data-v="week">Week</button><button data-v="weekday">Weekday</button></div>
+    <div class="seg" id="f-src"><button data-v="all" class="on">App + web</button><button data-v="0">App</button><button data-v="1">Website</button></div>
+    <select id="f-owner" aria-label="Owner"><option value="">All owners</option></select>
+  </div>
+</div>
+<div class="shell">
+  <nav class="rail" id="rail"></nav>
+  <main id="main"></main>
+</div>
+<button class="fab" id="fab">Ask AI</button>
+<div class="modal" id="modal" hidden></div>
+
+<script>
+(async function(){
+const H = new URLSearchParams(location.hash.slice(1));
+const CFG = window.LEGACY || {};
+let TOKEN = CFG.token || H.get('t') || '';
+if (H.get('t')) { try { history.replaceState(null,'',location.pathname); } catch(_){} }
+const BASE = CFG.api || location.origin;
+const tz = CFG.tz || H.get('tz') || Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Denver';
+window.legacySetToken = t => { TOKEN = t; if (window.LEGACY) window.LEGACY.token = t; };  // the app hands over a fresh sign-in
+async function api(path, opts={}){
+  const tok=(window.LEGACY&&window.LEGACY.token)||TOKEN; if(!tok) throw new Error('Sign in to see owner activity.');
+  const r=await fetch(BASE+path,{...opts,headers:{'Authorization':'Bearer '+tok,'Content-Type':'application/json',...(opts.headers||{})}});
+  if(r.status===401) throw new Error('Your sign-in expired. Close Owner activity and open it again.');
+  if(r.status===403) throw new Error("Owner activity is private to the league owner's account.");
+  const body=await r.json().catch(()=>({})); if(!r.ok) throw new Error(body.detail||'Something went wrong. Try again.'); return body;
+}
+function fail(msg){ document.getElementById('main').innerHTML=`<section class="p"><b>${esc(msg)}</b></section>`; document.getElementById('status').textContent='NOT LOADED'; }
+const C = ['#3987e5','#d95926','#199e70','#c98500','#d55181','#9085e9'];
+const INK='#F2EBDD', INK2='#B9C4BC', MUTED='#7F948A', GRID='#183226', LINE='#1E3A2D', GOLD='#C89B4A', PANEL='#0D1F17';
+const SEQ = ['#173126','#3d4a2b','#6b6430','#9b7f37','#C89B4A','#e9c98a'];
+const DAYS=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+const fmtD = new Intl.DateTimeFormat('en-CA',{timeZone:tz,year:'numeric',month:'2-digit',day:'2-digit'});
+const fmtH = new Intl.DateTimeFormat('en-US',{timeZone:tz,hour:'numeric',hour12:false,weekday:'short'});
+const isoWeek = ds => { const d=new Date(ds+'T12:00:00Z'); const day=(d.getUTCDay()+6)%7; d.setUTCDate(d.getUTCDate()-day+3); const y=d.getUTCFullYear(); const w1=new Date(Date.UTC(y,0,4)); return `${y}-W${String(1+Math.round(((d-w1)/864e5-3+((w1.getUTCDay()+6)%7))/7)).padStart(2,'0')}`; };
+let EV, SUM, K, L, ev, NOW, SWEB, SIDX, LOADED=0;
+async function load(days){
+  document.getElementById('status').textContent='LOADING';
+  EV = await api(`/commissioner/activity/feed?days=${days}&tz=${encodeURIComponent(tz)}`); LOADED=days;
+  K = Object.fromEntries(EV.kinds.map((k,i)=>[k,i])); L = EV.labels; NOW = EV.now;
+  ev = EV.events.map(e=>{ const d=new Date(e[1]*1000); const parts=fmtH.formatToParts(d); const wd=parts.find(p=>p.type==='weekday').value; let h=+parts.find(p=>p.type==='hour').value; if(h===24)h=0;
+    const date=fmtD.format(d); return {o:e[0],t:e[1],k:e[2],l:e[3],s:e[4],web:e[5],sess:e[6],b:e[7],x:e[8],date,wd:DAYS.indexOf(wd),h,week:isoWeek(date),month:date.slice(0,7)}; });
+  SWEB=[]; ev.forEach(e=>{ SWEB[e.sess]=e.web; });
+  SIDX=Object.fromEntries(EV.sessions.map((s,i)=>[s[5],i]));
+  const latest=new Map(); ev.forEach(e=>{ if(e.b && !e.web) latest.set(e.o,e.b); });
+  const bc=new Map(); latest.forEach(b=>bc.set(b,(bc.get(b)||0)+1));
+  SUM={unused:EV.unused, taps:EV.taps, gm_topics:EV.gm_topics, builds:[...bc].sort((x,y)=>String(y[0]).localeCompare(String(x[0]))).map(([build,owners])=>({build,owners}))};
+  ownerSelect();
+  document.getElementById('status').textContent='LIVE · '+new Date().toLocaleTimeString([], {timeZone:tz,hour:'numeric',minute:'2-digit'});
+}
+const S = {range:30, by:'day', src:'all', owner:'', sec:'Overview', reports:[], chat:[], session:null, frame:0, playing:false};
+const esc = s => String(s??'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmt = n => n>=1000? (n/1000).toFixed(n>=10000?0:1)+'k' : String(Math.round(n*10)/10);
+
+function filtered(offsetDays=0){
+  const hi = NOW - offsetDays*86400, lo = hi - S.range*86400;
+  return ev.filter(e=>e.t>lo && e.t<=hi && (S.src==='all'||String(e.web)===S.src) && (S.owner===''||String(e.o)===S.owner));
+}
+function periods(){ // ordered period keys for the range
+  const out=[]; for(let i=S.range-1;i>=0;i--){ const ds=fmtD.format(new Date((NOW-i*86400)*1000)); const k=S.by==='week'?isoWeek(ds):S.by==='weekday'?null:ds; if(k && !out.includes(k)) out.push(k); }
+  return S.by==='weekday'? DAYS.slice() : out;
+}
+const keyOf = e => S.by==='week'?e.week:S.by==='weekday'?DAYS[e.wd]:e.date;
+const short = k => S.by==='day'? k.slice(5) : k;
+
+// ---------- chart helpers (one axis, thin marks, recessive grid, tooltips on) ----------
+const charts=[];
+function chart(id, opt){ const el=document.getElementById(id); if(!el) return; const c=echarts.init(el,null,{renderer:'svg'}); c.setOption(Object.assign({
+  animation:false, textStyle:{fontFamily:'Inter',color:INK2}, grid:{left:40,right:14,top:22,bottom:28,containLabel:false},
+  tooltip:{trigger:'axis',backgroundColor:'#0A1A13',borderColor:LINE,textStyle:{color:INK,fontSize:12},axisPointer:{type:'line',lineStyle:{color:MUTED}}},
+},opt)); charts.push(c); return c; }
+const xCat = (data,extra={}) => Object.assign({type:'category',data,axisLine:{lineStyle:{color:LINE}},axisTick:{show:false},axisLabel:{color:MUTED,fontSize:10,hideOverlap:true}},extra);
+const yVal = (extra={}) => Object.assign({type:'value',splitLine:{lineStyle:{color:GRID}},axisLabel:{color:MUTED,fontSize:10},minInterval:1},extra);
+const lineS = (name,data,i=0,area=false) => ({name,type:'line',data,smooth:false,symbol:'circle',symbolSize:5,showSymbol:false,lineStyle:{width:2,color:C[i]},itemStyle:{color:C[i]},areaStyle:area?{color:C[i],opacity:.12}:undefined});
+const barS = (name,data,i=0,stack) => ({name,type:'bar',data,stack,barMaxWidth:22,itemStyle:{color:C[i],borderRadius:stack?0:[4,4,0,0],borderColor:PANEL,borderWidth:stack?1:0}});
+window.addEventListener('resize',()=>charts.forEach(c=>c.resize()));
+
+// ---------- metrics ----------
+const METRICS = {
+  'Active owners': es => new Set(es.map(e=>e.o)).size,
+  'Sessions': es => new Set(es.map(e=>e.sess)).size,
+  'Page views': es => es.filter(e=>e.k===K.screen).length,
+  'Actions': es => es.filter(e=>e.k===K.action).length,
+  'Taps': es => es.filter(e=>e.k===K.tap).length,
+  'Minutes': es => Math.round(es.filter(e=>e.k===K.screen).reduce((a,e)=>a+e.s,0)/60),
+  'Alert opens': es => es.filter(e=>e.k===K.push_open).length,
+  'Feedback sent': es => es.filter(e=>e.k===K.feedback&&e.x&&(e.x[0]==='pulse'||e.x[0]==='button')).length,
+  'Check-in rating': es => { const r=es.filter(e=>e.k===K.feedback&&e.x&&e.x[1]>0).map(e=>e.x[1]); return r.length? Math.round(10*r.reduce((a,b)=>a+b,0)/r.length)/10 : 0; },
+  'Dead taps': es => es.filter(e=>e.k===K.tap&&e.x&&e.x[3]===0).length,
+  'Rage taps': es => es.filter(e=>e.k===K.rage).length,
+  'Searches': es => es.filter(e=>e.k===K.search).length,
+  'Failed loads': es => es.filter(e=>e.k===K.fail).length,
+};
+const GROUPS = {
+  'Day': e=>e.date, 'Week': e=>e.week, 'Month': e=>e.month, 'Weekday': e=>DAYS[e.wd], 'Hour': e=>String(e.h).padStart(2,'0')+':00',
+  'Page': e=>e.k===K.screen?L[e.l]:null, 'Action': e=>e.k===K.action?L[e.l]:null, 'Owner': e=>EV.owners[e.o],
+  'Platform': e=>e.web?'Website':'App', 'Build': e=>e.b||'(web)',
+};
+function groupBy(es, gname){ const g=GROUPS[gname], m=new Map(); for(const e of es){ const k=g(e); if(k==null) continue; if(!m.has(k)) m.set(k,[]); m.get(k).push(e);} return m; }
+function orderKeys(gname, keys){
+  if (gname==='Weekday') return DAYS.filter(d=>keys.includes(d));
+  if (['Day','Week','Month','Hour','Build'].includes(gname)) return keys.sort();
+  return keys;
+}
+
+// ---------- sections ----------
+const SECTIONS = ['Overview','Traffic','Pages','Heatmap','Flows','Funnels','Retention','Signals','Owners','Sessions','Feedback','Reports','Ask AI'];
+function rail(){ document.getElementById('rail').innerHTML = SECTIONS.map(s=>`<button class="${S.sec===s?'on':''}" data-sec="${s}">${s}${s==='Reports'?`<small>${S.reports.length}</small>`:''}</button>`).join(''); }
+function askBtn(q){ return `<button class="ask" data-askq="${esc(q)}">Ask AI ↗</button>`; }
+function panel(cls,title,sub,body,q){ return `<section class="p ${cls}"><div class="ph"><b>${esc(title)}${sub?`<span class="sub">${esc(sub)}</span>`:''}</b>${q?askBtn(q):''}</div>${body}</section>`; }
+
+function overview(){
+  const cur=filtered(), prev=filtered(S.range), ks=periods();
+  const kp = ['Active owners','Sessions','Page views','Actions','Minutes','Taps'].map((m,i)=>{
+    const a=METRICS[m](cur), b=METRICS[m](prev), d=b? Math.round(100*(a-b)/b):null;
+    return `<div class="kpi"><div class="l">${m}</div><div class="v">${fmt(a)}</div><div class="d ${d==null?'flat':d>0?'up':d<0?'down':'flat'}">${d==null?'no earlier data to compare':`${d>0?'▲':d<0?'▼':'■'} ${Math.abs(d)}% vs prior ${S.range}d`}</div><div class="sp" id="sp${i}"></div></div>`; }).join('');
+  const html = `<h2>Overview</h2><p class="lede">Last ${S.range} days${S.owner?` · ${esc(EV.owners[+S.owner])}`:''}. Every chart follows the filters above.</p>
+   <div class="kpis">${kp}</div>
+   <div class="grid">
+    ${panel('c8','Active owners and sessions',`by ${S.by}`,'<div class="chart" id="ch-dau"></div><div class="legend"><span><i style="background:'+C[0]+'"></i>Active owners</span><span><i style="background:'+C[1]+'"></i>Sessions</span></div>','How has daily activity changed this month?')}
+    ${panel('c4','Platform','share of page views','<div class="chart" id="ch-plat"></div>')}
+    ${panel('c6','Top pages','page views','<div class="chart" id="ch-top"></div>','Which pages should we improve first?')}
+    ${panel('c6','When owners show up','page views and actions by weekday and hour','<div class="chart" id="ch-heat"></div>','What do owners do on Thursdays vs Mondays?')}
+   </div>`;
+  return [html, ()=>{
+    ['Active owners','Sessions','Page views','Actions','Minutes','Taps'].forEach((m,i)=>{ const g=groupBy(cur,'Day'); const days=periods().length&&S.by==='day'?periods():[...g.keys()].sort();
+      chart('sp'+i,{grid:{left:0,right:0,top:2,bottom:2},xAxis:{type:'category',show:false,data:days},yAxis:{type:'value',show:false},tooltip:{show:false},series:[{type:'line',data:days.map(d=>METRICS[m](g.get(d)||[])),symbol:'none',lineStyle:{width:1.5,color:GOLD},areaStyle:{color:GOLD,opacity:.1}}]}); });
+    const g=new Map(); cur.forEach(e=>{const k=keyOf(e); if(!g.has(k))g.set(k,[]); g.get(k).push(e);});
+    chart('ch-dau',{xAxis:xCat(ks.map(short)),yAxis:yVal(),series:[lineS('Active owners',ks.map(k=>METRICS['Active owners'](g.get(k)||[])),0,true),lineS('Sessions',ks.map(k=>METRICS['Sessions'](g.get(k)||[])),1)]});
+    const pv=cur.filter(e=>e.k===K.screen), app=pv.filter(e=>!e.web).length, web=pv.length-app;
+    chart('ch-plat',{tooltip:{trigger:'item'},grid:{left:70,right:30,top:10,bottom:20},xAxis:yVal(),yAxis:xCat(['Website','App']),series:[{type:'bar',barMaxWidth:26,data:[{value:web,itemStyle:{color:C[1],borderRadius:[0,4,4,0]}},{value:app,itemStyle:{color:C[0],borderRadius:[0,4,4,0]}}],label:{show:true,position:'right',color:INK2,formatter:p=>Math.round(100*p.value/Math.max(1,pv.length))+'%'}}]});
+    const tp=[...groupBy(cur,'Page')].map(([k,v])=>[k,v.length]).sort((a,b)=>b[1]-a[1]).slice(0,8).reverse();
+    chart('ch-top',{tooltip:{trigger:'item'},grid:{left:130,right:30,top:6,bottom:20},xAxis:yVal(),yAxis:xCat(tp.map(x=>x[0]),{axisLabel:{color:INK2,fontSize:11}}),series:[{type:'bar',barMaxWidth:14,data:tp.map(x=>x[1]),itemStyle:{color:C[0],borderRadius:[0,4,4,0]},label:{show:true,position:'right',color:MUTED,fontSize:10}}]});
+    heat('ch-heat',cur);
+  }];
+}
+function heat(id,cur){
+  const m=Array.from({length:7},()=>Array(24).fill(0)); cur.filter(e=>e.k===K.screen||e.k===K.action).forEach(e=>m[e.wd][e.h]++);
+  const data=[]; m.forEach((r,d)=>r.forEach((v,h)=>data.push([h,d,v]))); const max=Math.max(1,...data.map(x=>x[2]));
+  chart(id,{tooltip:{trigger:'item',formatter:p=>`${DAYS[p.value[1]]} ${p.value[0]}:00 · <b>${p.value[2]}</b> events`},grid:{left:40,right:10,top:6,bottom:44},
+    xAxis:xCat([...Array(24).keys()].map(h=>h===0?'12a':h<12?h+'a':h===12?'12p':(h-12)+'p'),{splitArea:{show:false}}),yAxis:xCat(DAYS,{inverse:true}),
+    visualMap:{min:0,max,calculable:false,orient:'horizontal',left:'center',bottom:0,itemHeight:120,itemWidth:10,textStyle:{color:MUTED,fontSize:10},inRange:{color:SEQ}},
+    series:[{type:'heatmap',data,itemStyle:{borderColor:PANEL,borderWidth:2,borderRadius:3}}]});
+}
+function traffic(){
+  const cur=filtered(), ks=periods();
+  const pages=[...groupBy(cur,'Page')].sort((a,b)=>b[1].length-a[1].length); const top=pages.slice(0,5).map(x=>x[0]);
+  const html=`<h2>Traffic</h2><p class="lede">Page visits broken out by ${S.by}. Switch Day, Week or Weekday at the top.</p><div class="grid">
+   ${panel('','Page visits by page',`stacked, top 5 pages + other, by ${S.by}`,'<div class="chart tall" id="ch-stack"></div>','Which page grew the most this week?')}
+   ${panel('c6','Minutes in the app',`by ${S.by}`,'<div class="chart" id="ch-min"></div>')}
+   ${panel('c6','Hour of day','page views + actions, all days','<div class="chart" id="ch-hour"></div>','When should alerts go out?')}
+   ${panel('c6','Actions by type',`by ${S.by}`,'<div class="chart" id="ch-act"></div>','Who hasn\'t set a lineup this week?')}
+   ${panel('c6','Alert opens',`by ${S.by}`,'<div class="chart" id="ch-push"></div>')}
+  </div>`;
+  return [html,()=>{
+    const g=new Map(); cur.forEach(e=>{const k=keyOf(e); if(!g.has(k))g.set(k,[]); g.get(k).push(e);});
+    const series=[...top,'Other'].map((p,i)=>barS(p,ks.map(k=>(g.get(k)||[]).filter(e=>e.k===K.screen&&(p==='Other'?!top.includes(L[e.l]):L[e.l]===p)).length),i,'a'));
+    series[series.length-1].itemStyle.color='#4a5a52';
+    chart('ch-stack',{legend:{top:0,textStyle:{color:INK2,fontSize:11},icon:'roundRect',itemWidth:10,itemHeight:10},grid:{left:40,right:14,top:40,bottom:28},xAxis:xCat(ks.map(short)),yAxis:yVal(),series});
+    chart('ch-min',{xAxis:xCat(ks.map(short)),yAxis:yVal(),series:[lineS('Minutes',ks.map(k=>METRICS.Minutes(g.get(k)||[])),2,true)]});
+    const hrs=Array(24).fill(0); cur.filter(e=>e.k===K.screen||e.k===K.action).forEach(e=>hrs[e.h]++);
+    chart('ch-hour',{xAxis:xCat([...Array(24).keys()].map(h=>h===0?'12a':h<12?h+'a':h===12?'12p':(h-12)+'p')),yAxis:yVal(),series:[barS('Events',hrs,0)]});
+    const acts=[...groupBy(cur,'Action')].sort((a,b)=>b[1].length-a[1].length).slice(0,5).map(x=>x[0]);
+    chart('ch-act',{legend:{top:0,textStyle:{color:INK2,fontSize:10},icon:'roundRect',itemWidth:9,itemHeight:9},grid:{left:36,right:10,top:44,bottom:28},xAxis:xCat(ks.map(short)),yAxis:yVal(),series:acts.map((a,i)=>barS(a,ks.map(k=>(g.get(k)||[]).filter(e=>e.k===K.action&&L[e.l]===a).length),i,'b'))});
+    chart('ch-push',{xAxis:xCat(ks.map(short)),yAxis:yVal(),series:[barS('Alert opens',ks.map(k=>METRICS['Alert opens'](g.get(k)||[])),5)]});
+  }];
+}
+// ---------- per-page facts shared by Pages, Heatmap and Signals ----------
+function top(m,n=1){ return [...m].sort((a,b)=>b[1]-a[1]).slice(0,n); }
+function countBy(es,f){ const m=new Map(); es.forEach(e=>{const k=f(e); if(k!=null) m.set(k,(m.get(k)||0)+1);}); return m; }
+const median = a => { if(!a.length) return 0; const s=[...a].sort((x,y)=>x-y); return s[Math.floor(s.length/2)]; };
+const pct = (a,b) => b? Math.round(100*a/b) : 0;
+const WENT = ['did nothing','hit a button','opened a page','opened the keyboard'];
+function bySession(es){ const m=new Map(); es.forEach(e=>{ if(!m.has(e.sess)) m.set(e.sess,[]); m.get(e.sess).push(e); }); for(const v of m.values()) v.sort((a,b)=>a.t-b.t); return m; }
+function quickBacks(cur){ // a page left within 3 seconds for the page they came from
+  const out=new Map(); for(const v of bySession(cur.filter(e=>e.k===K.screen)).values()){ for(let i=1;i<v.length-1;i++){ if(v[i].s<3 && v[i+1].l===v[i-1].l){ out.set(L[v[i].l],(out.get(L[v[i].l])||0)+1); } } } return out; }
+function pageStats(cur){
+  const sess=bySession(cur.filter(e=>e.k===K.screen));
+  const entry=new Map(), exit=new Map(); for(const v of sess.values()){ const f=L[v.find(e=>L[e.l]!=='Home')?.l ?? v[0].l]; entry.set(f,(entry.get(f)||0)+1); const x=L[v[v.length-1].l]; exit.set(x,(exit.get(x)||0)+1); }
+  const qb=quickBacks(cur);
+  return [...groupBy(cur,'Page')].map(([p,v])=>{
+    const taps=cur.filter(e=>e.k===K.tap&&L[e.l]===p), known=taps.filter(e=>e.x&&e.x[3]>=0), dead=known.filter(e=>e.x[3]===0);
+    const loads=cur.filter(e=>e.k===K.load&&L[e.l]===p).map(e=>e.x?e.x[0]:0).filter(Boolean);
+    const depths=v.map(e=>e.x&&e.x[0]>=0?e.x[0]:null).filter(x=>x!=null);
+    return {p,views:v.length,owners:new Set(v.map(e=>e.o)).size,avg:Math.round(v.reduce((a,e)=>a+e.s,0)/v.length),min:Math.round(v.reduce((a,e)=>a+e.s,0)/60),
+      taps:taps.length,dead:known.length?pct(dead.length,known.length):null,rage:cur.filter(e=>e.k===K.rage&&L[e.l]===p).length,
+      depth:depths.length?Math.round(depths.reduce((a,b)=>a+b,0)/depths.length):null,load:loads.length?median(loads):null,
+      quick:pct(qb.get(p)||0,v.length),entry:entry.get(p)||0,exit:pct(exit.get(p)||0,v.length)};
+  });
+}
+function pagesSec(){
+  const cur=filtered(); const key=S.sort||'views';
+  const rows=pageStats(cur).sort((a,b)=>(b[key]??-1)-(a[key]??-1));
+  const max=Math.max(1,...rows.map(r=>r.views));
+  const th=(k,t,tip)=>`<th class="n" data-sort="${k}" title="${esc(tip||'')}">${t}${key===k?' ▾':''}</th>`;
+  const na=v=>v==null?'<span class="note">—</span>':v;
+  const tbl=`<div class="tbl"><table><thead><tr><th>Page</th>${th('views','Views')}${th('owners','Owners')}${th('avg','Avg sec')}${th('min','Minutes')}${th('taps','Taps')}${th('dead','Dead taps','Taps that did nothing')}${th('rage','Rage','Bursts of quick repeated taps')}${th('depth','Scrolled','How far down the page, on average')}${th('load','Load ms','Typical wait for the page\'s data')}${th('quick','Quick back','Left within 3 seconds for the page before')}${th('entry','First stop')}${th('exit','Exit %')}</tr></thead><tbody>
+   ${rows.map(r=>`<tr class="click" data-heat="${esc(r.p)}"><td>${esc(r.p)}</td><td class="n">${r.views}<span class="inbar" style="width:${Math.round(60*r.views/max)}px"></span></td><td class="n">${r.owners}</td><td class="n">${r.avg}</td><td class="n">${r.min}</td><td class="n">${r.taps}</td><td class="n" style="${r.dead>=30?'color:var(--bad)':''}">${r.dead==null?na(null):r.dead+'%'}</td><td class="n" style="${r.rage?'color:var(--bad)':''}">${r.rage}</td><td class="n">${r.depth==null?na(null):r.depth+'%'}</td><td class="n" style="${r.load>2000?'color:var(--bad)':''}">${na(r.load)}</td><td class="n">${r.quick}%</td><td class="n">${r.entry}</td><td class="n">${r.exit}%</td></tr>`).join('')}</tbody></table></div>`;
+  const never = SUM.unused.screens;
+  const html=`<h2>Pages</h2><p class="lede">Tap a column to sort; tap a page to open its heat map. Dead taps did nothing; quick back means they left within 3 seconds for the page before.</p><div class="grid">
+   ${panel('','Every page','',tbl,'Which pages should we cut or improve?')}
+   ${panel('c6','Never opened','in this range',`<p>${esc(never.join(', ')||'Every page has been opened.')}</p>`)}
+   ${panel('c6','Never done','in this range',`<p class="note">${esc(SUM.unused.actions.join(', ')||'Everything has been done at least once.')}</p>`)}
+  </div>`;
+  return [html,()=>{}];
+}
+
+// ---------- Heatmap: one page at a time ----------
+// Layers: taps that worked (opened a page, hit a button, opened the keyboard), dead taps, rage taps, scrolls,
+// and attention (how long each tenth of the page was on screen; no camera, worked out from scrolling).
+const LAYERS=[['worked','Taps that worked','#199e70'],['dead','Dead taps','#e66767'],['rage','Rage taps','#c98500'],['scroll','Scrolls','#9085e9'],['attn','Attention','#C89B4A']];
+function heatmap(){
+  const cur=filtered(); const stats=pageStats(cur).sort((a,b)=>b.views-a.views);
+  if(!stats.length) return ['<h2>Heatmap</h2><p class="note">No page views in this range.</p>',()=>{}];
+  if(!S.heat||!stats.some(r=>r.p===S.heat)) S.heat=stats[0].p;
+  S.layers=S.layers||{worked:true,dead:true,rage:true,scroll:false,attn:true}; S.where=S.where||'page';
+  const p=S.heat, st=stats.find(r=>r.p===p);
+  const views=cur.filter(e=>e.k===K.screen&&L[e.l]===p);
+  const scr=views.filter(e=>e.x&&e.x[0]>=0);
+  const fold=median(scr.map(e=>e.x[1]).filter(x=>x>0))||100;           // % of the page one screen shows
+  const pageLen=Math.min(4,Math.max(1,100/fold));                         // page height in screens
+  const attn=Array(10).fill(0), stops=Array(10).fill(0), reach=Array(10).fill(0);
+  scr.forEach(e=>{ String(e.x[2]||'').split(',').forEach((v,i)=>{ if(i<10) attn[i]+=+v||0; }); String(e.x[3]||'').split(',').forEach((v,i)=>{ if(i<10) stops[i]+=+v||0; });
+    for(let i=0;i<10;i++) if(e.x[0]>=i*10+5) reach[i]++; });
+  const amax=Math.max(1e-9,...attn);
+  const taps=cur.filter(e=>(e.k===K.tap||e.k===K.rage||e.k===K.swipe)&&L[e.l]===p);
+  const usePage=S.where==='page'&&taps.some(e=>e.x&&(e.k===K.swipe?e.x[4]:e.x[2])>=0);
+  const H=Math.round(500*(usePage?Math.min(pageLen,2.2):1)), W=240;
+  const yOf=e=>{ const py=e.k===K.swipe?e.x[4]:e.x[2]; return usePage&&py>=0?py:(usePage?null:e.x[1]); };
+  const dots=[], arrows=[]; const op=Math.max(.25,Math.min(.75,40/Math.sqrt(Math.max(1,taps.length))/6));
+  for(const e of taps){ if(!e.x) continue; const y=yOf(e); if(y==null) continue; const x=e.x[0];
+    if(e.k===K.tap){ const w=e.x[3]; const kind=w===0?'dead':w>0?'worked':null; if(!kind||!S.layers[kind]) continue; dots.push(`<i class="hd ${kind}" style="left:${x*100}%;top:${y*100}%;opacity:${op.toFixed(2)}" title="${esc(EV.owners[e.o])} · ${WENT[w]}"></i>`); }
+    else if(e.k===K.rage){ if(S.layers.rage) dots.push(`<i class="hd rage" style="left:${x*100}%;top:${y*100}%" title="${esc(EV.owners[e.o])} · ${e.x[3]} quick taps"></i>`); }
+    else if(S.layers.scroll){ const dy=(e.x[3]-e.x[1])/(usePage?pageLen:1); arrows.push(`<i class="ha" style="left:${x*100}%;top:${y*100}%;height:${Math.min(40,Math.abs(dy)*H/1)}px;transform:${dy<0?'none':'rotate(180deg)'}"></i>`); } }
+  const bands=S.layers.attn&&usePage?attn.map((v,i)=>`<div class="hb" style="top:${i*10}%;opacity:${(0.06+0.5*v/amax).toFixed(2)}" title="${Math.round(v/Math.max(1,scr.length))}s average on screen"></div>`).join(''):'';
+  const foldLine=usePage?`<div class="hf" style="top:${Math.min(100,fold)}%"><span>first screen</span></div>`:'';
+  const chips=LAYERS.map(([k,t,c])=>`<button class="chip lay${S.layers[k]?' on':''}" data-layer="${k}"><i style="background:${c}"></i>${t}</button>`).join('');
+  const opts=stats.map(r=>`<option ${r.p===p?'selected':''}>${esc(r.p)}</option>`).join('');
+  const known=taps.filter(e=>e.k===K.tap&&e.x&&e.x[3]>=0), wentCounts=[0,1,2,3].map(w=>known.filter(e=>e.x[3]===w).length);
+  const html=`<h2>Heatmap</h2><p class="lede">One page at a time. Green taps did something, red taps did nothing, orange rings are rage taps. Attention shades each part of the page by how long it was on screen, worked out from scrolling (no camera).</p>
+   <div class="row" style="margin-bottom:12px"><select id="heat-page" aria-label="Page">${opts}</select>
+     <div class="seg" id="heat-where"><button data-where="page" class="${S.where==='page'?'on':''}">Whole page</button><button data-where="screen" class="${S.where==='screen'?'on':''}">Screen</button></div></div>
+   <div class="chips" style="margin-bottom:12px">${chips}</div>
+   <div class="grid">
+    ${panel('c4',p,usePage?`whole page · about ${pageLen.toFixed(1)} screens long`:'where on the screen',`<div class="heat" style="height:${H}px;max-width:${W}px">${bands}${foldLine}${arrows.join('')}${dots.join('')}</div>${usePage||!taps.length?'':'<p class="note">Whole-page positions start with build 112.</p>'}`, `What should we change on ${p}?`)}
+    <div class="c8 stack"><section class="p"><div class="kpis" style="margin-bottom:0">
+      ${[['Views',st.views],['Taps',st.taps],['Did something',known.length?pct(known.length-wentCounts[0],known.length)+'%':'—'],['Dead taps',st.dead==null?'—':st.dead+'%'],['Rage bursts',st.rage],
+         ['Scrolls',taps.filter(e=>e.k===K.swipe).length],['Scrolled to',st.depth==null?'—':st.depth+'%'],['Reached the bottom',scr.length?pct(reach[9],scr.length)+'%':'—']].map(([l,v])=>`<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('')}
+    </div></section>
+    <div class="grid">
+    ${panel('c6','How far down people get','% of views that reached each tenth of the page','<div class="chart short" id="ch-reach"></div>')}
+    ${panel('c6','Attention','average seconds each tenth was on screen','<div class="chart short" id="ch-attn"></div>')}
+    ${panel('c6','What taps did','',`<div class="chart short" id="ch-went"></div>`)}
+    ${panel('c6','Where scrolling stops','scroll pauses over a second, by tenth of the page','<div class="chart short" id="ch-stops"></div>')}
+    </div></div>
+   </div>`;
+  return [html,()=>{
+    const tenths=[...Array(10).keys()].map(i=>`${i*10}–${i*10+10}%`);
+    const hbar=(id,vals,color,fmtv)=>chart(id,{tooltip:{trigger:'item'},grid:{left:70,right:36,top:4,bottom:18},xAxis:yVal(),yAxis:xCat(tenths,{inverse:true,axisLabel:{color:INK2,fontSize:10}}),
+      series:[{type:'bar',barMaxWidth:10,data:vals,itemStyle:{color,borderRadius:[0,4,4,0]},label:{show:true,position:'right',color:MUTED,fontSize:10,formatter:fmtv}}]});
+    hbar('ch-reach',reach.map(v=>pct(v,scr.length)),C[0],p=>p.value+'%');
+    hbar('ch-attn',attn.map(v=>Math.round(v/Math.max(1,scr.length))),GOLD,p=>p.value+'s');
+    hbar('ch-stops',stops,C[5],p=>p.value);
+    chart('ch-went',{tooltip:{trigger:'item'},grid:{left:120,right:36,top:4,bottom:18},xAxis:yVal(),yAxis:xCat(WENT,{inverse:true,axisLabel:{color:INK2,fontSize:10}}),
+      series:[{type:'bar',barMaxWidth:12,data:wentCounts.map((v,i)=>({value:v,itemStyle:{color:i===0?'#e66767':'#199e70',borderRadius:[0,4,4,0]}})),label:{show:true,position:'right',color:MUTED,fontSize:10}}]});
+  }];
+}
+
+// ---------- Signals: speed, failures, searches, links out, alerts, live games, GM follow-through, discovery ----------
+const tableHTML=(head,rows,empty)=>rows.length?`<div class="tbl"><table><thead><tr>${head.map((h,i)=>`<th class="${i?'n':''}">${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map((c,i)=>`<td class="${i?'n':''}">${c}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`:`<p class="note">${esc(empty)}</p>`;
+const FOLLOW={lineup:['Set a lineup'],start_sit:['Set a lineup'],trade:['Sent a trade offer','Trade builder'],waivers:['Placed a waiver bid','Added a free agent'],waiver:['Placed a waiver bid','Added a free agent']};
+function signals(){
+  const cur=filtered(), lo=NOW-S.range*86400;
+  // speed + what slow pages cost: a view whose data took over 2s, left within 5s
+  const loads=cur.filter(e=>e.k===K.load&&e.x);
+  const byPage=new Map(); loads.forEach(e=>{ const p=L[e.l]; if(!byPage.has(p)) byPage.set(p,[]); byPage.get(p).push(e.x[0]); });
+  const speedRows=[...byPage].map(([p,ms])=>[p,ms.length,median(ms),ms.sort((a,b)=>a-b)[Math.floor(ms.length*.9)]||0,pct(ms.filter(m=>m>2000).length,ms.length)]).sort((a,b)=>b[2]-a[2]);
+  const views=cur.filter(e=>e.k===K.screen); const slowLeft=[0,0], fastLeft=[0,0];
+  loads.forEach(e=>{ const v=views.find(x=>x.sess===e.sess&&L[x.l]===L[e.l]&&x.t<=e.t+1&&e.t<=x.t+x.s+1); if(!v) return; const b=e.x[0]>2000?slowLeft:fastLeft; b[1]++; if(v.s<5) b[0]++; });
+  const fails=cur.filter(e=>e.k===K.fail); const offline=fails.filter(e=>e.x&&e.x[1]).length;
+  // searches
+  const searches=cur.filter(e=>e.k===K.search&&e.x); const terms=new Map(); searches.forEach(e=>{ const q=String(e.x[0]).toLowerCase(); const t=terms.get(q)||{n:0,found:0,who:new Set()}; t.n++; t.found=Math.max(t.found,e.x[1]); t.who.add(e.o); terms.set(q,t); });
+  const termRows=[...terms].sort((a,b)=>b[1].n-a[1].n).slice(0,15).map(([q,t])=>[esc(q),t.n,t.who.size,t.found<=0?'<span style="color:var(--bad)">none</span>':t.found]);
+  const missRows=[...terms].filter(([,t])=>t.found===0).slice(0,15).map(([q,t])=>[esc(q),t.n]);
+  // links out
+  const outs=cur.filter(e=>e.k===K.outbound&&e.x); const outBy=new Map(); outs.forEach(e=>{ const k=e.x[0]||'other'; const t=outBy.get(k)||{n:0,who:new Set(),from:new Map()}; t.n++; t.who.add(e.o); t.from.set(L[e.l],(t.from.get(L[e.l])||0)+1); outBy.set(k,t); });
+  const outRows=[...outBy].sort((a,b)=>b[1].n-a[1].n).map(([k,t])=>[esc(k==='sleeper'?'Sleeper':k),t.n,t.who.size,esc(top([...t.from])[0]?.[0]||'')]);
+  // alerts: sent vs opened, and what happens next
+  const sent=(EV.alerts_sent||[]).filter(a=>a[1]>lo&&(S.owner===''||String(a[0])===S.owner)); const opens=cur.filter(e=>e.k===K.push_open);
+  const kinds=new Set([...sent.map(a=>a[2]),...opens.map(e=>e.x&&e.x[0]||'(older build)')]);
+  const alertRows=[...kinds].map(k=>{ const s=sent.filter(a=>a[2]===k).length, o=opens.filter(e=>(e.x&&e.x[0]||'(older build)')===k).length; return [esc(k.replace(/_/g,' ').replace(/^./,c=>c.toUpperCase())),s||'—',o,s?pct(o,s)+'%':'—']; }).sort((a,b)=>b[2]-a[2]);
+  const nextAfter=new Map(); const sessEv=bySession(cur.filter(e=>e.k===K.screen||e.k===K.action||e.k===K.push_open));
+  for(const v of sessEv.values()) v.forEach((e,i)=>{ if(e.k!==K.push_open) return; const n=v.slice(i+1).find(x=>x.k===K.action)||v[i+2]; const k=n?L[n.l]:'Left the app'; nextAfter.set(k,(nextAfter.get(k)||0)+1); });
+  // live games
+  const refresh=cur.filter(e=>e.k===K.refresh); const gameViews=views.filter(e=>L[e.l]==='Box score');
+  const watched=new Map(); gameViews.forEach(e=>{ const p=e.x&&e.x[4]; if(!p) return; const m=p.match(/game\/(\d+)\/(\d+)/); const k=m?`Week ${m[1]} · game ${m[2]}`:p; const t=watched.get(k)||{n:0,who:new Set(),s:0}; t.n++; t.s+=e.s; t.who.add(e.o); watched.set(k,t); });
+  const watchRows=[...watched].sort((a,b)=>b[1].n-a[1].n).slice(0,10).map(([k,t])=>[esc(k),t.n,t.who.size,Math.round(t.s/60)]);
+  // GM follow-through: a GM question, then the matching move by that owner within 24 hours
+  const gm=(EV.gm||[]).filter(g=>g[1]>lo&&(S.owner===''||String(g[0])===S.owner)); const acts=ev.filter(e=>e.k===K.action||e.k===K.screen);
+  const fol=new Map(); gm.forEach(([o,t,topic])=>{ const want=FOLLOW[topic]; const r=fol.get(topic)||{n:0,did:0}; r.n++; if(want&&acts.some(e=>e.o===o&&e.t>t&&e.t<t+86400&&want.includes(L[e.l]))) r.did++; fol.set(topic,r); });
+  const folRows=[...fol].sort((a,b)=>b[1].n-a[1].n).map(([k,r])=>[esc(k),r.n,FOLLOW[k]?r.did:'—',FOLLOW[k]?pct(r.did,r.n)+'%':'<span class="note">no matching move</span>']);
+  const moves=cur.filter(e=>e.k===K.action&&/GM move/.test(L[e.l])); const took=moves.filter(e=>/Took/.test(L[e.l])).length;
+  // feature discovery: the first time anyone used a page or action, then how long until each owner found it
+  const first=new Map(), byOwner=new Map(); ev.filter(e=>e.k===K.screen||e.k===K.action).forEach(e=>{ const k=L[e.l]; if(!first.has(k)||e.t<first.get(k)) first.set(k,e.t); const ko=k+'|'+e.o; if(!byOwner.has(ko)||e.t<byOwner.get(ko)) byOwner.set(ko,e.t); });
+  const disc=[...first].map(([k,t0])=>{ const ds=EV.owners.map((_,o)=>byOwner.get(k+'|'+o)).filter(x=>x!=null).map(t=>(t-t0)/86400); return [k,ds.length,median(ds)]; }).filter(r=>!r[0].startsWith('Web:')).sort((a,b)=>a[1]-b[1]);
+  const discRows=disc.slice(0,14).map(([k,n,d])=>[esc(k),`${n} of ${EV.owners.length}`,d<1?'same day':Math.round(d)===1?'1 day':Math.round(d)+' days']);
+  const html=`<h2>Signals</h2><p class="lede">Speed, failures, searches, links that leave the app, alerts, live games, whether owners act on GM advice, and how fast they find features. Last ${S.range} days.</p><div class="grid">
+   ${panel('c8','Page speed','wait for each page\'s data the first time it opens',tableHTML(['Page','Loads','Typical ms','Slowest 10% ms','Over 2s'],speedRows.map(r=>[esc(r[0]),r[1],r[2],r[3],r[4]+'%']),'No timings yet (build 112 and later).'),'Which slow pages are costing us visits?')}
+   ${panel('c4','Slow pages cost visits','left within 5 seconds',`<div class="kpis" style="grid-template-columns:1fr 1fr"><div class="kpi"><div class="l">After a slow load</div><div class="v">${slowLeft[1]?pct(slowLeft[0],slowLeft[1])+'%':'—'}</div><div class="d flat">${slowLeft[1]} loads over 2s</div></div><div class="kpi"><div class="l">After a fast load</div><div class="v">${fastLeft[1]?pct(fastLeft[0],fastLeft[1])+'%':'—'}</div><div class="d flat">${fastLeft[1]} loads</div></div></div>
+     <b style="font-size:12px">Failed loads</b><p class="note">${fails.length} failed, ${offline} while offline${fails.length?' · most on '+esc(top([...countBy(fails,e=>L[e.l])])[0][0]):''}</p>`)}
+   ${panel('c6','What owners search for','app search and the website\'s player search',tableHTML(['Search','Times','Owners','Results'],termRows,'No searches yet.'),'What are owners searching for that we should surface?')}
+   ${panel('c6','Searches that found nothing','',tableHTML(['Search','Times'],missRows,'Every search found something.'))}
+   ${panel('c6','Leaving the app','links that open somewhere else',tableHTML(['Where','Times','Owners','Mostly from'],outRows,'Nobody has left the app through a link.'),'What do owners still go to Sleeper for?')}
+   ${panel('c6','Alerts','sent and opened, by kind of alert',tableHTML(['Alert','Sent','Opened','Open rate'],alertRows,'No alerts yet.')+`<b style="font-size:12px;display:block;margin-top:10px">After opening an alert</b><p class="note">${esc(top([...nextAfter],5).map(([k,v])=>`${k} (${v})`).join(', ')||'—')}</p>`,'Which alerts work, and which get ignored?')}
+   ${panel('c6','Live games','pull-down refreshes, by hour',`<div class="chart short" id="ch-refresh"></div><p class="note">${refresh.length} refreshes · ${gameViews.length} box score views</p>`)}
+   ${panel('c6','Most watched games','box scores opened',tableHTML(['Game','Views','Owners','Minutes'],watchRows,'No box scores opened yet.'))}
+   ${panel('c6','Do owners act on GM advice?','a GM question, then the matching move within 24 hours',tableHTML(['Topic','Questions','Acted','Rate'],folRows,'No GM questions in this range.')+`<p class="note">GM moves: ${took} taken, ${moves.length-took} dismissed.</p>`,'Do owners follow the GM\'s advice?')}
+   ${panel('c6','How fast owners find things','owners who have used it, and typical days from its first use in the league',tableHTML(['Feature','Found by','Typical wait'],discRows,'Nothing yet.'),'Which features are owners not finding?')}
+  </div>`;
+  return [html,()=>{ const hrs=Array(24).fill(0); refresh.forEach(e=>hrs[e.h]++); chart('ch-refresh',{xAxis:xCat([...Array(24).keys()].map(h=>h===0?'12a':h<12?h+'a':h===12?'12p':(h-12)+'p')),yAxis:yVal(),series:[barS('Refreshes',hrs,4)]}); }];
+}
+
+// ---------- Feedback: the weekly check-in and notes from Settings, each tied to its session ----------
+function feedbackSec(){
+  const lo=NOW-S.range*86400;
+  const notes=(EV.feedback||[]).filter(f=>f[1]>lo&&(S.owner===''||String(f[0])===S.owner)).sort((a,b)=>b[1]-a[1]);
+  const fbEv=ev.filter(e=>e.k===K.feedback&&e.t>lo&&(S.owner===''||String(e.o)===S.owner)&&e.x);
+  const shown=fbEv.filter(e=>e.x[0]==='pulse_shown').length, answered=fbEv.filter(e=>e.x[0]==='pulse').length, skipped=fbEv.filter(e=>e.x[0]==='pulse_skipped').length;
+  const ratings=notes.filter(n=>n[2]==='pulse'&&n[3]);
+  const weeks=[...new Set(ratings.map(n=>isoWeek(fmtD.format(new Date(n[1]*1000)))))].sort();
+  const sessOf=n=>{ const e=fbEv.find(x=>x.o===n[0]&&Math.abs(x.t-n[1])<120&&x.x[0]===n[2]); return e?EV.sessions[e.sess]?.[5]:null; };
+  const html=`<h2>Feedback</h2><p class="lede">The weekly check-in shows on an owner's 3rd visit of the week, after 5 seconds, during the season only. Notes from Settings › Send feedback come in any time. Each one opens the session it was sent from.</p><div class="grid">
+   <section class="p"><div class="kpis" style="margin-bottom:0">${[['Check-ins shown',shown],['Answered',shown?pct(answered,shown)+'%':answered],['Skipped',skipped],['Average rating',ratings.length?(ratings.reduce((a,n)=>a+n[3],0)/ratings.length).toFixed(1)+' / 5':'—'],['Notes',notes.filter(n=>n[4]).length]].map(([l,v])=>`<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('')}</div></section>
+   ${panel('c6','Weekly check-in rating','average, 1 to 5','<div class="chart short" id="ch-pulse"></div>','What are owners saying in their feedback?')}
+   ${panel('c6','Ratings','answers at each score','<div class="chart short" id="ch-scores"></div>')}
+   ${panel('','Every note','newest first',notes.length?`<div class="notes">${notes.map(n=>{ const k=sessOf(n); return `<div class="fb"><div><b>${esc(EV.owners[n[0]])}</b> <span class="note">${esc(when(n[1]))} · ${n[2]==='pulse'?'weekly check-in':'Send feedback'} · on ${esc(n[5])}</span>${n[3]?` <span class="score">${n[3]}/5</span>`:''}</div>${n[4]?`<p>${esc(n[4])}</p>`:''}${k?`<button class="btn ghost" data-replay="${esc(k)}">▶ Watch the session</button>`:''}</div>`; }).join('')}</div>`:'<p class="note">No feedback yet.</p>')}
+  </div>`;
+  return [html,()=>{
+    chart('ch-pulse',{xAxis:xCat(weeks),yAxis:yVal({min:1,max:5}),series:[lineS('Average',weeks.map(w=>{ const r=ratings.filter(n=>isoWeek(fmtD.format(new Date(n[1]*1000)))===w); return +(r.reduce((a,n)=>a+n[3],0)/r.length).toFixed(2); }),2,true)]});
+    chart('ch-scores',{xAxis:xCat(['1','2','3','4','5']),yAxis:yVal(),series:[barS('Owners',[1,2,3,4,5].map(s=>ratings.filter(n=>n[3]===s).length),0)]});
+  }];
+}
+
+function sessionPaths(){ const lo=NOW-S.range*86400; return EV.sessions.filter((s,i)=>s[1]>lo && (S.owner===''||String(s[0])===S.owner) && (S.src==='all'||String(SWEB[i])===S.src)).map(s=>s[3].map(i=>L[i])); }
+function flows(){
+  const ps=sessionPaths();
+  const html=`<h2>Flows</h2><p class="lede">How owners move through the app. Each column is a step in the session; band width is the number of sessions.</p><div class="grid">
+   ${panel('','Session flow','first 4 steps of every session',`<div class="chart" id="ch-sankey" style="height:440px"></div>`,'What do owners do right after opening the app?')}
+   ${panel('c6','First move each day','first page or action that isn\'t Home','<div class="chart" id="ch-first"></div>')}
+   ${panel('c6','Most common next step','page → next page or action','<div class="tbl" id="pairs"></div>')}
+  </div>`;
+  return [html,()=>{
+    const links=new Map(), nodes=new Set();
+    ps.forEach(p=>{ const steps=p.slice(0,innerWidth<700?3:4); for(let i=0;i<steps.length-1;i++){ const a=`${i+1}. ${steps[i]}`, b=`${i+2}. ${steps[i+1]}`; nodes.add(a); nodes.add(b); const k=a+'|'+b; links.set(k,(links.get(k)||0)+1);} });
+    const lk=[...links].filter(([,v])=>v>=2).map(([k,v])=>{const [s,t]=k.split('|'); return {source:s,target:t,value:v};}); const used=new Set(lk.flatMap(l=>[l.source,l.target]));
+    const names=[...new Set(ps.flat())]; const color=n=>C[names.indexOf(n.replace(/^\d+\. /,''))%6];
+    chart('ch-sankey',{tooltip:{trigger:'item'},series:[{type:'sankey',left:4,right:110,top:10,bottom:10,nodeGap:8,nodeWidth:10,draggable:false,
+      data:[...used].map(n=>({name:n,itemStyle:{color:color(n),borderWidth:0}})),links:lk,lineStyle:{color:'gradient',opacity:.28,curveness:.5},label:{color:INK2,fontSize:10},emphasis:{focus:'adjacency'}}]});
+    const first=new Map(), seen=new Set(); filtered().filter(e=>(e.k===K.screen&&L[e.l]!=='Home')||e.k===K.action).sort((a,b)=>a.t-b.t).forEach(e=>{const k=e.o+e.date; if(seen.has(k))return; seen.add(k); first.set(L[e.l],(first.get(L[e.l])||0)+1);});
+    const fm=[...first].sort((a,b)=>b[1]-a[1]).slice(0,8).reverse();
+    chart('ch-first',{tooltip:{trigger:'item'},grid:{left:140,right:30,top:6,bottom:20},xAxis:yVal(),yAxis:xCat(fm.map(x=>x[0]),{axisLabel:{color:INK2,fontSize:11}}),series:[{type:'bar',barMaxWidth:14,data:fm.map(x=>x[1]),itemStyle:{color:C[2],borderRadius:[0,4,4,0]},label:{show:true,position:'right',color:MUTED,fontSize:10}}]});
+    const pairs=new Map(); ps.forEach(p=>{for(let i=0;i<p.length-1;i++){const k=p[i]+' → '+p[i+1]; pairs.set(k,(pairs.get(k)||0)+1);}});
+    document.getElementById('pairs').innerHTML=`<table><thead><tr><th>Step</th><th class="n">Times</th></tr></thead><tbody>${[...pairs].sort((a,b)=>b[1]-a[1]).slice(0,10).map(([k,v])=>`<tr><td>${esc(k)}</td><td class="n">${v}</td></tr>`).join('')}</tbody></table>`;
+  }];
+}
+const FUNNELS = {'Set a lineup':['Home','My Team','Set a lineup'],'Make a trade':['League','Another team','Trade builder','Sent a trade offer'],'Waiver bid':['Market','Player page','Placed a waiver bid'],'Ask the GM':['Home','Front Office (GM)','Asked the GM']};
+function funnels(){
+  if (S.funnel === undefined) S.funnel = 'Set a lineup'; const steps=FUNNELS[S.funnel] || S.custom;
+  const opts=[...new Set(EV.labels)].filter(x=>x && !x.startsWith('/')).sort();
+  const sel=(i)=>`<select data-fstep="${i}" aria-label="Step ${i+1}"><option value="">—</option>${opts.map(o=>`<option ${steps[i]===o?'selected':''}>${esc(o)}</option>`).join('')}</select>`;
+  const html=`<h2>Funnels</h2><p class="lede">How many sessions get from the first step to the last, in order. Pick a preset or build your own.</p><div class="grid">
+   ${panel('c4','Build a funnel','',`<div class="chips" style="margin-bottom:10px">${Object.keys(FUNNELS).map(f=>`<button class="chip" data-funnel="${f}" style="${S.funnel===f?'border-color:var(--gold);color:var(--gold2)':''}">${f}</button>`).join('')}</div>
+     <div style="display:flex;flex-direction:column;gap:6px">${[0,1,2,3].map(sel).join('')}</div>`)}
+   ${panel('c8',S.funnel||'Custom funnel','sessions reaching each step, in order','<div class="chart" id="ch-funnel"></div>','Where do owners drop off on the way to a trade?')}
+  </div>`;
+  return [html,()=>{
+    const ps=sessionPaths(); const st=steps.filter(Boolean); const counts=st.map((_,i)=>ps.filter(p=>{let j=0; for(const x of p){ if(x===st[j]) j++; if(j>i) return true;} return false;}).length);
+    chart('ch-funnel',{tooltip:{trigger:'item',formatter:p=>`${esc(p.name)}<br><b>${p.value}</b> sessions · ${counts[0]?Math.round(100*p.value/counts[0]):0}% of start`},grid:{left:150,right:90,top:10,bottom:20},
+      xAxis:yVal(),yAxis:xCat(st,{inverse:true,axisLabel:{color:INK2,fontSize:11}}),series:[{type:'bar',barMaxWidth:28,data:counts.map((v,i)=>({value:v,itemStyle:{color:C[0],opacity:1-i*.15,borderRadius:[0,4,4,0]}})),
+      label:{show:true,position:'right',color:INK2,fontSize:11,formatter:p=>`${p.value} · ${counts[0]?Math.round(100*p.value/counts[0]):0}%${p.dataIndex?` (−${Math.round(100*(counts[p.dataIndex-1]-p.value)/Math.max(1,counts[p.dataIndex-1]))}%)`:''}`}}]});
+  }];
+}
+function retention(){
+  const lo=NOW-S.range*86400; const weeks=[...new Set(ev.filter(e=>e.t>lo).map(e=>e.week))].sort();
+  const firstWeek=new Map(); ev.forEach(e=>{ if(!firstWeek.has(e.o)||e.week<firstWeek.get(e.o)) firstWeek.set(e.o,e.week); });
+  const activeBy=new Map(weeks.map(w=>[w,new Set(ev.filter(e=>e.week===w).map(e=>e.o))]));
+  const html=`<h2>Retention</h2><p class="lede">Who keeps coming back. Weekly active owners, and of the owners active one week, how many came back the next.</p><div class="grid">
+   ${panel('c6','Weekly active owners',`out of ${EV.owners.length}`,'<div class="chart" id="ch-wau"></div>')}
+   ${panel('c6','Came back next week','% of the week before\'s active owners · finished weeks only','<div class="chart" id="ch-back"></div>','Who is at risk of going quiet?')}
+   ${panel('c6','Stickiness','average daily active ÷ weekly active','<div class="chart" id="ch-stick"></div>')}
+   ${panel('c6','Days active per owner',`last ${S.range} days`,'<div class="chart" id="ch-days"></div>')}
+  </div>`;
+  return [html,()=>{
+    chart('ch-wau',{xAxis:xCat(weeks),yAxis:yVal({max:EV.owners.length}),series:[barS('Active owners',weeks.map(w=>activeBy.get(w).size),0)]});
+    const done=weeks.slice(0,-1); // the current week is still in progress
+    chart('ch-back',{xAxis:xCat(done.slice(1)),yAxis:yVal({max:100,axisLabel:{color:MUTED,fontSize:10,formatter:'{value}%'}}),series:[lineS('Came back',done.slice(1).map((w,i)=>{const p=activeBy.get(done[i]); return p.size?Math.round(100*[...p].filter(o=>activeBy.get(w).has(o)).length/p.size):0;}),2,true)]});
+    chart('ch-stick',{xAxis:xCat(weeks),yAxis:yVal({max:100,axisLabel:{color:MUTED,fontSize:10,formatter:'{value}%'}}),series:[lineS('Stickiness',weeks.map(w=>{const days=[...new Set(ev.filter(e=>e.week===w).map(e=>e.date))]; const avg=days.reduce((a,d)=>a+new Set(ev.filter(e=>e.date===d).map(e=>e.o)).size,0)/Math.max(1,days.length); return Math.round(100*avg/Math.max(1,activeBy.get(w).size));}),3)]});
+    const da=EV.owners.map((n,o)=>[n,new Set(ev.filter(e=>e.o===o&&e.t>lo).map(e=>e.date)).size]).sort((a,b)=>a[1]-b[1]);
+    chart('ch-days',{tooltip:{trigger:'item'},grid:{left:80,right:30,top:6,bottom:20},xAxis:yVal({max:S.range}),yAxis:xCat(da.map(x=>x[0]),{axisLabel:{color:INK2,fontSize:11}}),series:[{type:'bar',barMaxWidth:12,data:da.map(x=>({value:x[1],itemStyle:{color:x[1]<3?'#e66767':C[0],borderRadius:[0,4,4,0]}})),label:{show:true,position:'right',color:MUTED,fontSize:10}}]});
+  }];
+}
+function owners(){
+  const cur=filtered(); const lo=NOW-S.range*86400;
+  const rows=EV.owners.map((n,o)=>{ const es=cur.filter(e=>e.o===o); const s=EV.owner_info[o]||{}; const last=Math.max(0,...ev.filter(e=>e.o===o).map(e=>e.t));
+    return {o,n,days:new Set(es.map(e=>e.date)).size,sess:new Set(es.map(e=>e.sess)).size,min:METRICS.Minutes(es),acts:METRICS.Actions(es),taps:METRICS.Taps(es),gm:s.gm_questions||0,cost:s.gm_cost||0,
+      ago:last?Math.floor((NOW-last)/86400):null,dev:(s.device||{}).os||'—',build:s.build||'—',first:s.favorite_first_move||'—'}; }).sort((a,b)=>b.min-a.min);
+  const html=`<h2>Owners</h2><p class="lede">Tap an owner to filter every chart to them, or open their sessions.</p><div class="grid">
+   ${panel('','Every owner','',`<div class="tbl"><table><thead><tr><th>Owner</th><th class="n">Last seen</th><th class="n">Days</th><th class="n">Sessions</th><th class="n">Minutes</th><th class="n">Actions</th><th class="n">Taps</th><th class="n">GM asks</th><th class="n">GM $</th><th>Usually starts with</th><th>Device</th><th>Build</th><th>Activity</th></tr></thead><tbody>
+    ${rows.map(r=>`<tr class="click" data-owner="${r.o}"><td><b>${esc(r.n)}</b></td><td class="n" style="color:${r.ago>=7?'#e66767':'inherit'}">${r.ago==null?'never':r.ago===0?'today':r.ago+'d ago'}</td><td class="n">${r.days}</td><td class="n">${r.sess}</td><td class="n">${r.min}</td><td class="n">${r.acts}</td><td class="n">${r.taps}</td><td class="n">${r.gm}</td><td class="n">${r.cost.toFixed(2)}</td><td>${esc(r.first)}</td><td>${esc(r.dev)}</td><td>${esc(r.build)}</td><td><div id="os${r.o}" style="width:110px;height:26px"></div></td></tr>`).join('')}</tbody></table></div>`,'Who are my most and least engaged owners?')}
+   ${panel('c6','GM questions by topic','Front Office AI','<div class="chart short" id="ch-gm"></div>')}
+   ${panel('c6','Builds in use','owners on each app build','<div class="chart short" id="ch-build"></div>')}
+  </div>`;
+  return [html,()=>{
+    const days=[...new Set(ev.filter(e=>e.t>lo).map(e=>e.date))].sort();
+    rows.forEach(r=>{ const g=groupBy(cur.filter(e=>e.o===r.o),'Day'); chart('os'+r.o,{grid:{left:0,right:0,top:2,bottom:2},xAxis:{type:'category',show:false,data:days},yAxis:{type:'value',show:false},tooltip:{show:false},series:[{type:'bar',data:days.map(d=>(g.get(d)||[]).filter(e=>e.k===K.screen).length),itemStyle:{color:GOLD},barWidth:'70%'}]}); });
+    chart('ch-gm',{tooltip:{trigger:'item'},grid:{left:70,right:30,top:6,bottom:20},xAxis:yVal(),yAxis:xCat(SUM.gm_topics.map(t=>t.topic).reverse(),{axisLabel:{color:INK2}}),series:[{type:'bar',barMaxWidth:14,data:SUM.gm_topics.map(t=>t.count).reverse(),itemStyle:{color:C[5],borderRadius:[0,4,4,0]},label:{show:true,position:'right',color:MUTED,fontSize:10}}]});
+    chart('ch-build',{tooltip:{trigger:'item'},grid:{left:70,right:30,top:6,bottom:20},xAxis:yVal(),yAxis:xCat(SUM.builds.map(b=>'Build '+b.build),{axisLabel:{color:INK2}}),series:[{type:'bar',barMaxWidth:14,data:SUM.builds.map(b=>b.owners),itemStyle:{color:C[2],borderRadius:[0,4,4,0]},label:{show:true,position:'right',color:MUTED,fontSize:10}}]});
+  }];
+}
+function mockScreen(name){ const big=/Home|My Team|Box|Front/.test(name); return `<div class="ms"><div style="color:var(--gold);font-weight:800;font-size:8px;letter-spacing:1px">LEGACY DYNASTY</div><div class="mt">${esc(name)}</div><div class="mb${big?' big':''}"></div><div class="mb"></div><div class="mb"></div><div class="mb${big?'':' big'}"></div><div class="mb"></div><div class="tb"><span>Home</span><span>My Team</span><span>League</span><span>Market</span><span>GM</span></div></div>`; }
+// ---------- sessions & replays ----------
+// A session's "video": its replay pictures from the owner's phone in time order, with red rings where they
+// tapped. Website sessions (and older app builds) have no pictures, so they play as a page-by-page stand-in.
+const DET = {};
+function sessList(){
+  const lo=NOW-S.range*86400;
+  return EV.sessions.map((s,i)=>({i,o:s[0],start:s[1],secs:s[2],path:s[3],pics:s[4],key:s[5],web:SWEB[i]}))
+    .filter(s=>s.start>lo&&(S.owner===''||String(s.o)===S.owner)&&(S.src==='all'||String(s.web)===S.src)).reverse();
+}
+function sessRow(s){ const p=s.path.slice(0,5).map(i=>L[i]).join(' → ');
+  return `<div><b>${esc(EV.owners[s.o])}</b> <span class="note">${s.web?'website':'app'}</span><div class="note">${esc(when(s.start))} · ${fmtMin(s.secs)}${s.pics?` · ${s.pics} pictures`:''}</div><div class="note path">${esc(p)}</div></div>`; }
+const when = t => new Date(t*1000).toLocaleString([], {timeZone:tz,weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
+const fmtMin = s => s<60? `${s}s` : `${Math.round(s/6)/10} min`;
+async function loadSession(key){
+  if(DET[key]) return DET[key];
+  DET[key]={loading:true};
+  try { DET[key]=await api(`/commissioner/activity/session?key=${encodeURIComponent(key)}&days=${LOADED}&tz=${encodeURIComponent(tz)}`); }
+  catch(e){ DET[key]={error:e.message}; }
+  return DET[key];
+}
+function framesOf(d){
+  if(d.frames&&d.frames.length) return d.frames.map(f=>({at:Date.parse(f.at),url:f.url}));
+  return (d.steps||[]).filter(x=>x.kind==='screen').map(x=>({at:Date.parse(x.t),name:x.name}));
+}
+function playerHTML(d){
+  if(!d||d.loading) return '<p class="note">Loading the session…</p>';
+  if(d.error) return `<p class="note">${esc(d.error)}</p>`;
+  const fr=framesOf(d); if(!fr.length) return '<p class="note">Nothing to replay in this session.</p>';
+  const k=Math.min(S.frame,fr.length-1), f=fr[k], at=f.at;
+  const scr=(d.steps||[]).filter(x=>x.kind==='screen'&&Date.parse(x.t)<=at).pop()?.name||f.name||'Home';
+  const taps=(d.steps||[]).filter(x=>x.kind==='tap'&&x.detail&&Date.parse(x.t)<=at&&Date.parse(x.t)>at-2000);
+  const real=!!f.url;
+  return `<div class="screen">${real?`<img src="${esc(f.url)}" alt="${esc(d.owner)}'s screen: ${esc(scr)}">`:mockScreen(f.name||scr)}${taps.map(t=>`<div class="ring" style="left:${t.detail.x*100}%;top:${t.detail.y*100}%"></div>`).join('')}</div>
+    <div class="row" style="justify-content:center;margin-top:10px"><button class="btn ghost" data-fr="-1" aria-label="Previous">‹</button><button class="btn" data-play="1">${S.playing?'Pause':'Play'}</button><button class="btn ghost" data-fr="1" aria-label="Next">›</button></div>
+    <input type="range" class="scrub" min="0" max="${fr.length-1}" value="${k}" aria-label="Scrub through the session">
+    <div class="note" style="text-align:center;margin-top:4px">${real?'Picture':'Page'} ${k+1} of ${fr.length} · ${new Date(at).toLocaleTimeString([], {timeZone:tz,hour:'numeric',minute:'2-digit',second:'2-digit'})}${real?'':' · no pictures (website or an older build)'}</div>`;
+}
+function stepsHTML(d){
+  if(!d||d.loading||d.error) return '';
+  const fr=framesOf(d), at=fr.length?fr[Math.min(S.frame,fr.length-1)].at:0;
+  return d.steps.map(x=>{const now=Math.abs(Date.parse(x.t)-at)<1500; return `<div class="st${x.kind==='tap'||x.kind==='swipe'?' minor':x.kind==='action'?' act':''}${now?' now':''}"><span class="t">${esc(x.at)}</span><span>${esc(x.name)}${x.secs?` <span class="note">${x.secs}s</span>`:''}</span></div>`;}).join('');
+}
+function paintPlayer(){ // only the player and step list change while a session plays
+  const root=S.modal?document.getElementById('modal'):document.getElementById('main'); if(!root) return;
+  const d=DET[S.playKey]; const p=root.querySelector('.player'), st=root.querySelector('.steps');
+  if(p) p.innerHTML=playerHTML(d); if(st){ st.innerHTML=stepsHTML(d); const n=st.querySelector('.now'); if(n) st.scrollTop=Math.max(0,n.offsetTop-80); }
+}
+function play(key){ S.playKey=key; S.frame=0; S.playing=false; clearTimeout(timer); loadSession(key).then(paintPlayer); }
+function sessions(){
+  const list=sessList();
+  if(!S.playKey||!list.some(s=>s.key===S.playKey)){ if(list[0]) play(list[0].key); }
+  const cur=list.find(s=>s.key===S.playKey);
+  const html=`<h2>Sessions</h2><p class="lede">Every session, step by step, as a video. App sessions play the real pictures from the owner's phone; red rings are taps.</p><div class="grid">
+   ${panel('c4','Sessions',`${list.length} in range · newest first`,list.length?`<div class="tbl list"><table><tbody>${list.slice(0,300).map(x=>`<tr class="click" data-sess="${esc(x.key)}" style="${x.key===S.playKey?'background:var(--panel2)':''}"><td>${sessRow(x)}</td><td class="n">▶</td></tr>`).join('')}</tbody></table></div>`:'<p class="note">No sessions in this range.</p>')}
+   ${panel('c4','Replay',cur?`${esc(EV.owners[cur.o])} · ${esc(when(cur.start))}`:'','<div class="player"></div>')}
+   ${panel('c4','Step by step','','<div class="steps"></div>')}
+  </div>`;
+  return [html,paintPlayer];
+}
+function openReplay(key){ S.modal=key; play(key); const m=document.getElementById('modal'); const s=EV.sessions.find(x=>x[5]===key);
+  m.innerHTML=`<div class="mbox" role="dialog" aria-modal="true" aria-label="Session replay"><div class="ph"><b>${s?esc(EV.owners[s[0]])+' · '+esc(when(s[1])):'Session'}<span class="sub">${s?fmtMin(s[2]):''}</span></b><button class="btn ghost" data-close="1">Close</button></div>
+    <div class="grid"><div class="c6 player" style="grid-column:span 6"></div><div class="c6 steps" style="grid-column:span 6"></div></div></div>`;
+  m.hidden=false; paintPlayer(); }
+function closeReplay(){ S.modal=null; S.playing=false; clearTimeout(timer); const m=document.getElementById('modal'); m.hidden=true; m.innerHTML=''; }
+function videoList(keys, title){
+  if(!keys.length) return '<p class="note">No sessions match.</p>';
+  return `${title?`<b style="display:block;font-size:12px;margin-top:12px">${esc(title)}</b>`:''}<div class="vids">${keys.map(k=>{const i=SIDX[k]; if(i==null) return ''; const s=EV.sessions[i];
+    return `<button class="vid" data-replay="${esc(k)}"><span class="pl">▶</span>${sessRow({o:s[0],start:s[1],secs:s[2],path:s[3],pics:s[4],web:SWEB[i]})}</button>`;}).join('')}</div>`;
+}
+
+// ---------- report builder ----------
+function reportEvents(r){
+  const range=+r.days||S.range, lo=NOW-range*86400;
+  let es=ev.filter(e=>e.t>lo&&(S.src==='all'||String(e.web)===S.src)&&(S.owner===''||String(e.o)===S.owner));
+  if(r.owner) es=es.filter(e=>EV.owners[e.o].toLowerCase().includes(String(r.owner).toLowerCase()));
+  if(r.page) es=es.filter(e=>L[e.l]===r.page); if(r.kind) es=es.filter(e=>e.k===K[r.kind]);
+  return es;
+}
+function runReport(r){
+  const es=reportEvents(r), M=METRICS[r.metric]||METRICS['Page views'], grp=GROUPS[r.group]?r.group:'Day';
+  const g=groupBy(es,grp); let keys=orderKeys(grp,[...g.keys()]);
+  if(['Page','Action','Owner','Platform'].includes(grp)) keys.sort((a,b)=>M(g.get(b))-M(g.get(a)));
+  keys=keys.slice(0,grp==='Day'?60:20);
+  const sess=[...new Set(es.map(e=>e.sess))].sort((a,b)=>b-a).map(i=>EV.sessions[i][5]);
+  if(r.split && r.split!=='None' && GROUPS[r.split]){ const sg=groupBy(es,r.split); const top=[...sg].sort((a,b)=>M(b[1])-M(a[1])).slice(0,5).map(x=>x[0]);
+    return {keys, sess, series:top.map(sv=>({name:sv,data:keys.map(k=>M((g.get(k)||[]).filter(e=>GROUPS[r.split](e)===sv)))}))}; }
+  return {keys, sess, series:[{name:r.metric,data:keys.map(k=>M(g.get(k)||[]))}]};
+}
+function drawReport(id,r){
+  const {keys,series,sess}=runReport(r); const el=document.getElementById(id); if(!el) return;
+  const vid=document.getElementById(id+'-v'); if(vid) vid.innerHTML=r.videos?`<div class="ph" style="margin-top:12px"><b>Sessions in this report<span class="sub">${sess.length} sessions · newest first · tap one to watch it</span></b></div>${videoList(sess.slice(0,12))}`:'';
+  if(!keys.length){ el.innerHTML='<p class="note">Nothing matches in this range.</p>'; el.style.height='auto'; return; }
+  if(r.chart==='Table'){ el.innerHTML=`<div class="tbl"><table><thead><tr><th>${esc(r.group)}</th>${series.map(s=>`<th class="n">${esc(s.name)}</th>`).join('')}</tr></thead><tbody>${keys.map((k,i)=>`<tr><td>${esc(k)}</td>${series.map(s=>`<td class="n">${s.data[i]}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`; el.style.height='auto'; return; }
+  const horiz=r.chart==='Bars'&&['Page','Action','Owner'].includes(r.group);
+  const ser=series.map((s,i)=>r.chart==='Line'?lineS(s.name,s.data,i,series.length===1):barS(s.name,s.data,i,series.length>1?'x':undefined));
+  if(horiz){ ser.forEach(s=>{ s.itemStyle.borderRadius=series.length>1?0:[0,4,4,0]; s.data=s.data.slice().reverse(); }); }
+  chart(id,{legend:series.length>1?{top:0,textStyle:{color:INK2,fontSize:11},icon:'roundRect',itemWidth:10,itemHeight:10}:undefined,
+    grid:horiz?{left:140,right:20,top:series.length>1?34:8,bottom:20}:{left:40,right:14,top:series.length>1?34:14,bottom:28},
+    xAxis:horiz?yVal():xCat(keys.map(k=>r.group==='Day'?k.slice(5):k)),yAxis:horiz?xCat(keys.slice().reverse(),{axisLabel:{color:INK2,fontSize:11}}):yVal(),series:ser});
+}
+const PRESETS=[
+  {name:'Feedback by owner, with sessions',metric:'Feedback sent',group:'Owner',split:'None',kind:'feedback',page:'',chart:'Bars',videos:true},
+  {name:'Check-in rating by week',metric:'Check-in rating',group:'Week',split:'None',kind:'feedback',page:'',chart:'Line',videos:true},
+  {name:'Dead taps by page',metric:'Dead taps',group:'Page',split:'None',kind:'',page:'',chart:'Bars'},
+  {name:'Lineup sets by weekday',metric:'Actions',group:'Weekday',split:'None',kind:'action',page:'Set a lineup',chart:'Bars',videos:true},
+  {name:'Page views by owner',metric:'Page views',group:'Owner',split:'None',kind:'',page:'',chart:'Bars'},
+  {name:'Sessions by day, app vs web',metric:'Sessions',group:'Day',split:'Platform',kind:'',page:'',chart:'Bars'},
+  {name:'Trade builder visits',metric:'Page views',group:'Owner',split:'None',kind:'screen',page:'Trade builder',chart:'Bars',videos:true},
+  {name:'Minutes by hour',metric:'Minutes',group:'Hour',split:'None',kind:'',page:'',chart:'Line'},
+];
+const describe = r => `${r.metric} by ${r.group}${r.split&&r.split!=='None'?', split by '+r.split:''}${r.page?' · '+r.page:''}${r.owner?' · '+r.owner:''}${r.videos?' · with videos':''}`;
+function reports(){
+  S.draft = S.draft || Object.assign({}, PRESETS[0]);
+  const d=S.draft, opt=(name,vals)=>{const key=name.toLowerCase(); return `<label class="field">${name}<select data-rf="${key}">${vals.map(v=>`<option ${String(d[key]??'')===v||(v==='Any'&&!d[key])?'selected':''}>${esc(v)}</option>`).join('')}</select></label>`;};
+  const pages=['Any',...new Set(ev.filter(e=>e.k===K.screen||e.k===K.action).map(e=>L[e.l]))].sort((a,b)=>a==='Any'?-1:b==='Any'?1:a.localeCompare(b));
+  const html=`<h2>Reports</h2><p class="lede">Build any breakdown: what to count, how to group it, an optional split, filters and a chart. Turn on videos to list every matching session as a replay. Saved reports are kept on your account.</p><div class="grid">
+   ${panel('c4','Report builder','',`<div style="display:grid;gap:10px">
+      <label class="field">Name<input type="text" id="rname" value="${esc(d.name||'')}" placeholder="My report"></label>
+      ${opt('Metric',Object.keys(METRICS))}${opt('Group',Object.keys(GROUPS))}${opt('Split',['None','Platform','Owner','Page','Action','Build','Weekday'])}
+      ${opt('Page',pages)}${opt('Kind',['Any','screen','action','tap','swipe','rage','search','feedback','load','fail','outbound','refresh','push_open','app_open','error'])}${opt('Chart',['Bars','Line','Table'])}
+      <label class="note"><input type="checkbox" data-rv="1" ${d.videos?'checked':''}> Show the sessions as videos</label>
+      <div class="row"><button class="btn" id="rsave">Save report</button><button class="btn ghost" data-askq="Explain this report and what stands out: ${esc(describe(d))}">Ask AI about it</button></div>
+      <div class="note" id="rmsg">${esc(S.rmsg||'')}</div></div>`)}
+   ${panel('c8',d.name||'Untitled report',`${esc(describe(d))} · last ${+d.days||S.range} days`,'<div class="chart tall" id="ch-report"></div><div id="ch-report-v"></div>')}
+   ${panel('','Saved reports',`${S.reports.length} saved · starter reports after them`,`<div class="saved">${[...S.reports.map(r=>({r,mine:true})),...PRESETS.map(r=>({r}))].map(({r,mine})=>`<div class="sv"><button class="svb" data-load='${esc(JSON.stringify(r))}'><b>${esc(r.name)}</b><span>${esc(describe(r))} · ${esc(r.chart)}${mine?'':' · starter'}</span></button>${mine&&r.id?`<button class="x" data-delrep="${esc(r.id)}" aria-label="Delete ${esc(r.name)}">×</button>`:''}</div>`).join('')}</div>`)}
+  </div>`;
+  return [html,()=>drawReport('ch-report',d)];
+}
+async function saveReport(r){
+  try { const out=await api('/commissioner/activity/reports',{method:'POST',body:JSON.stringify({spec:r})}); S.reports=S.reports.filter(x=>x.name!==out.name).concat(out); S.draft=out; S.rmsg='Saved.'; }
+  catch(e){ S.rmsg=e.message; }
+  if(S.sec==='Reports') render();
+}
+
+// ---------- Ask AI ----------
+// The analyst on the server reads every event and session (api/usage_ai.py). It can answer with a report
+// (drawn here, savable) and with sessions (playable here).
+const STARTERS=['What are owners saying in their feedback?','How has daily activity changed this month?','Which pages should we improve first?','What do owners do on Thursdays vs Mondays?',
+  "Who hasn't set a lineup this week?",'Where do owners drop off on the way to a trade?','Build a report of GM questions by owner with videos','Show me the longest sessions this week','Which pages have the most dead taps?'];
+function md(text){ // small markdown: paragraphs, bullets, numbered lists, tables, bold, code
+  const inline=s=>esc(s).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/`([^`]+)`/g,'<code>$1</code>');
+  const lines=String(text||'').split('\n'); let out='', list=null, table=[];
+  const flushList=()=>{ if(list){ out+=`</${list}>`; list=null; } };
+  const flushTable=()=>{ if(!table.length) return; const rows=table.filter(r=>!/^\|?\s*:?-{2,}/.test(r)).map(r=>r.replace(/^\||\|$/g,'').split('|').map(c=>c.trim()));
+    out+=`<div class="tbl"><table><thead><tr>${rows[0].map(c=>`<th>${inline(c)}</th>`).join('')}</tr></thead><tbody>${rows.slice(1).map(r=>`<tr>${r.map(c=>`<td>${inline(c)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`; table=[]; };
+  for(const raw of lines){ const l=raw.trim();
+    if(l.startsWith('|')){ flushList(); table.push(l); continue; } flushTable();
+    let m;
+    if((m=l.match(/^[-*•]\s+(.*)/))){ if(list!=='ul'){ flushList(); out+='<ul>'; list='ul'; } out+=`<li>${inline(m[1])}</li>`; continue; }
+    if((m=l.match(/^\d+[.)]\s+(.*)/))){ if(list!=='ol'){ flushList(); out+='<ol>'; list='ol'; } out+=`<li>${inline(m[1])}</li>`; continue; }
+    flushList();
+    if((m=l.match(/^#{1,4}\s+(.*)/))){ out+=`<p><b>${inline(m[1])}</b></p>`; continue; }
+    if(l) out+=`<p>${inline(l)}</p>`;
+  }
+  flushList(); flushTable(); return out;
+}
+async function askAI(q){
+  const deep=!!document.getElementById('deep')?.checked;
+  const history=S.chat.filter(m=>m.text).slice(-3).flatMap(m=>[{role:'user',content:m.q},{role:'assistant',content:m.text}]);
+  const m={q,pending:true}; S.chat.push(m); S.sec='Ask AI'; render();
+  try { const out=await api('/commissioner/activity/ask',{method:'POST',body:JSON.stringify({question:q,days:S.range,tz,deep,history})});
+    Object.assign(m,{text:out.answer,a:md(out.answer),r:out.report||null,sess:(out.sessions||[]).map(s=>s.key),stitle:out.sessions_title||'',meta:`${out.model} · $${(+out.cost||0).toFixed(3)}`}); }
+  catch(e){ Object.assign(m,{a:`<p>${esc(e.message)}</p>`}); }
+  m.pending=false; if(S.sec==='Ask AI') render();
+}
+function aiSec(){
+  const html=`<h2>Ask AI</h2><p class="lede">Ask anything about how owners use the app and the website. The analyst reads every page, tap, action and session, then answers. Ask it to build a report (you can save it) or to show you sessions (you can watch them).</p>
+   <div class="grid">${panel('','','',`<div class="chat">${S.chat.map((m,i)=>`<div class="msg q">${esc(m.q)}</div><div class="msg a">${m.pending?'<p class="note">Looking through the activity…</p>':m.a}
+       ${m.r?`<div class="ph" style="margin-top:10px"><b>${esc(m.r.name)}<span class="sub">${esc(describe(m.r))}</span></b><button class="btn ghost" data-saveai="${i}">Save as report</button></div><div class="chart" id="ai${i}" style="height:240px"></div><div id="ai${i}-v"></div>`:''}
+       ${m.sess&&m.sess.length?videoList(m.sess,m.stitle||'Sessions to watch'):''}
+       ${m.meta?`<div class="meta">${esc(m.meta)}</div>`:''}</div>`).join('')}
+     <div class="chips">${STARTERS.map(q=>`<button class="chip" data-askq="${esc(q)}">${esc(q)}</button>`).join('')}</div>
+     <div class="row"><textarea id="aiq" rows="2" style="flex:1;min-width:0" placeholder="e.g. Which owners only use the website?"></textarea><button class="btn" id="aisend">Ask</button></div>
+     <label class="note"><input type="checkbox" id="deep" ${S.deep?'checked':''}> Dig deeper (a stronger model, a few cents)</label></div>`)}</div>`;
+  return [html,()=>{ S.chat.forEach((m,i)=>{ if(m.r) drawReport('ai'+i,m.r); }); document.getElementById('main').querySelector('.msg:last-of-type')?.scrollIntoView({block:'nearest'}); }];
+}
+const RENDER={Overview:overview,Traffic:traffic,Pages:pagesSec,Heatmap:heatmap,Signals:signals,Feedback:feedbackSec,Flows:flows,Funnels:funnels,Retention:retention,Owners:owners,Sessions:sessions,Reports:reports,'Ask AI':aiSec};
+function render(){ charts.splice(0).forEach(c=>c.dispose()); rail(); const [html,after]=RENDER[S.sec](); document.getElementById('main').innerHTML=html; after(); }
+function ownerSelect(){ const sel=document.getElementById('f-owner'); sel.innerHTML='<option value="">All owners</option>'+EV.owners.map((n,i)=>`<option value="${i}">${esc(n)}</option>`).join(''); sel.value=S.owner; }
+document.getElementById('f-owner').addEventListener('change',e=>{S.owner=e.target.value; render();});
+for (const [id,key] of [['f-range','range'],['f-by','by'],['f-src','src']]) document.getElementById(id).addEventListener('click',async e=>{ const b=e.target.closest('button'); if(!b) return;
+  document.querySelectorAll(`#${id} button`).forEach(x=>x.classList.toggle('on',x===b)); S[key]= key==='range'? +b.dataset.v : b.dataset.v;
+  if(key==='range' && S.range*2>LOADED){ await load(Math.min(365,S.range*2)); } render(); });
+let timer=null;
+function tick(){ const d=DET[S.playKey]; if(!S.playing||!d||d.loading) return; const fr=framesOf(d); if(S.frame>=fr.length-1){S.playing=false; paintPlayer(); return;}
+  const gap=fr[S.frame+1].at-fr[S.frame].at; timer=setTimeout(()=>{S.frame++; paintPlayer(); tick();},Math.max(450,Math.min(gap,1600))); }
+document.addEventListener('input',e=>{ if(e.target.classList.contains('scrub')){ S.frame=+e.target.value; S.playing=false; clearTimeout(timer); paintPlayer(); } });
+document.addEventListener('keydown',e=>{ if(e.key==='Escape'&&S.modal) closeReplay(); });
+document.addEventListener('click',e=>{
+  const t=e.target.closest('[data-heat],[data-layer],[data-where],[data-sec],[data-askq],[data-sort],[data-owner],[data-sess],[data-fr],[data-play],[data-funnel],[data-load],[data-saveai],[data-replay],[data-close],[data-delrep],#rsave,#aisend,#fab,#modal'); if(!t) return;
+  const d=t.dataset;
+  if(t.id==='modal'){ if(e.target===t) closeReplay(); return; }
+  if(d.close){ closeReplay(); return; }
+  if(d.replay){ openReplay(d.replay); return; }
+  if(d.fr||d.play){ const det=DET[S.playKey]; if(!det||det.loading) return; const n=framesOf(det).length;
+    if(d.fr){ S.frame=Math.max(0,Math.min(n-1,S.frame+(+d.fr))); S.playing=false; clearTimeout(timer); }
+    if(d.play){ S.playing=!S.playing; clearTimeout(timer); if(S.playing){ if(S.frame>=n-1) S.frame=0; tick(); } }
+    paintPlayer(); return; }
+  if(d.sess){ play(d.sess); document.querySelectorAll('[data-sess]').forEach(r=>r.style.background=r.dataset.sess===d.sess?'var(--panel2)':''); return; }
+  if(d.heat){ S.heat=d.heat; S.sec='Heatmap'; }
+  if(d.layer){ S.layers[d.layer]=!S.layers[d.layer]; }
+  if(d.where){ S.where=d.where; }
+  if(t.id==='fab'){ S.sec='Ask AI'; }
+  if(d.sec){ S.sec=d.sec; S.playing=false; clearTimeout(timer); }
+  if(d.askq){ askAI(d.askq); return; }
+  if(d.sort){ S.sort=d.sort; }
+  if(d.owner!=null){ S.owner=d.owner; document.getElementById('f-owner').value=d.owner; S.sec='Overview'; }
+  if(d.funnel){ S.funnel=d.funnel; }
+  if(d.load){ S.draft=JSON.parse(d.load); S.rmsg=''; }
+  if(d.delrep){ const id=d.delrep; api(`/commissioner/activity/reports/${encodeURIComponent(id)}`,{method:'DELETE'}).then(()=>{ S.reports=S.reports.filter(r=>r.id!==id); render(); }).catch(err=>{ S.rmsg=err.message; render(); }); return; }
+  if(t.id==='rsave'){ saveReport(Object.assign({},S.draft,{name:document.getElementById('rname').value.trim()||S.draft.name||'My report'})); return; }
+  if(d.saveai!=null){ const r=S.chat[+d.saveai].r; S.draft=Object.assign({},r); S.sec='Reports'; saveReport(r); return; }
+  if(t.id==='aisend'){ const q=document.getElementById('aiq').value.trim(); S.deep=!!document.getElementById('deep')?.checked; if(q){ askAI(q); return; } }
+  render();
+});
+document.addEventListener('change',e=>{
+  const f=e.target.dataset.rf; if(f){ const v=e.target.value; S.draft=Object.assign({},S.draft,{[f]:v==='Any'?'':v}); render(); }
+  if(e.target.dataset.rv){ S.draft=Object.assign({},S.draft,{videos:e.target.checked}); render(); }
+  if(e.target.id==='deep') S.deep=e.target.checked;
+  if(e.target.id==='heat-page'){ S.heat=e.target.value; render(); }
+  const fs=e.target.dataset.fstep; if(fs!=null){ const cur=(FUNNELS[S.funnel]||S.custom||[]).slice(); cur[+fs]=e.target.value; S.custom=cur; S.funnel=null; render(); }
+});
+document.addEventListener('keydown',e=>{ if(e.target.id==='aiq'&&e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); document.getElementById('aisend').click(); } });
+
+// ---------- start ----------
+try {
+  await load(Math.max(60,S.range*2));
+  api('/commissioner/activity/reports').then(out=>{ S.reports=out.reports||[]; rail(); if(S.sec==='Reports') render(); }).catch(()=>{});
+  render();
+} catch(e) { fail(e.message); }
+})();
+</script>
+</body></html>
