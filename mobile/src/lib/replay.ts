@@ -19,6 +19,12 @@ let timer: ReturnType<typeof setTimeout> | null = null;
 let busy = false;
 let report: ((path: string) => void) | null = null;
 let userId: string | null = null;
+let paused = false;
+
+// The Owner activity console turns pictures off while it's open, so it never records itself.
+export function pauseReplays(on: boolean) {
+  paused = on;
+}
 
 export function setFrameReporter(fn: (path: string) => void) {
   report = fn;
@@ -43,7 +49,7 @@ export function replaySoon(delayMs = 600) {
 }
 
 async function capture() {
-  if (busy || !userId || !session || count >= MAX_PER_SESSION) return;
+  if (paused || busy || !userId || !session || count >= MAX_PER_SESSION) return;
   if (Date.now() - lastAt < MIN_GAP_MS) {
     replaySoon(MIN_GAP_MS - (Date.now() - lastAt));
     return;

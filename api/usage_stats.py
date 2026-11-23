@@ -127,6 +127,19 @@ def _session(user_id: str, source: str, events: list[dict[str, Any]]) -> dict[st
     return {"user_id": user_id, "source": source, "start": start, "end": end, "seconds": (end - start).total_seconds(), "events": events}
 
 
+def timeline(s: dict[str, Any], owner_name: str, zone: ZoneInfo) -> dict[str, Any]:
+    """One session for the replay player: its steps (taps keep their spot) and replay picture paths."""
+    return {
+        "owner": owner_name, "user_id": s["user_id"], "source": s["source"], "start": s["start"].astimezone(zone).isoformat(),
+        "minutes": _round(s["seconds"] / 60),
+        "frames": [{"at": e["at"].isoformat(), "path": (e.get("detail") or {}).get("path")} for e in s["events"]
+                   if e["kind"] == "frame" and (e.get("detail") or {}).get("path")][:300],
+        "steps": [{"at": e["at"].astimezone(zone).strftime("%-I:%M:%S %p"), "name": screen_label(e), "kind": e["kind"], "secs": e["secs"],
+                   "t": e["at"].isoformat(), **({"detail": e["detail"]} if e.get("detail") and e["kind"] in ("tap", "swipe") else {})}
+                  for e in [e for e in s["events"] if e["kind"] != "frame"][:400]],
+    }
+
+
 def period_key(t: datetime, by: str) -> str:
     """'2026-11-23' (day), '2026-W48' (week, Monday start) or '2026-11' (month)."""
     if by == "week":
@@ -349,17 +362,7 @@ def build(rows: list[dict[str, Any]], *, owners: dict[str, dict[str, Any]], ai_r
 
     # --- session timelines (newest first; one owner when asked)
     picked = [s for s in all_sessions if not owner or s["user_id"] == owner]
-    timelines = []
-    for s in reversed(picked[-25:]):
-        timelines.append({
-            "owner": who(s["user_id"]), "user_id": s["user_id"], "source": s["source"], "start": local(s["start"]).isoformat(),
-            "minutes": _round(s["seconds"] / 60),
-            "frames": [{"at": e["at"].isoformat(), "path": (e.get("detail") or {}).get("path")} for e in s["events"]
-                       if e["kind"] == "frame" and (e.get("detail") or {}).get("path")][:300],
-            "steps": [{"at": local(e["at"]).strftime("%-I:%M:%S %p"), "name": screen_label(e), "kind": e["kind"], "secs": e["secs"],
-                       "t": e["at"].isoformat(), **({"detail": e["detail"]} if e.get("detail") and e["kind"] in ("tap", "swipe") else {})}
-                      for e in [e for e in s["events"] if e["kind"] != "frame"][:150]],
-        })
+    timelines = [timeline(s, who(s["user_id"]), zone) for s in reversed(picked[-25:])]
 
     return {
         "days": days, "tz": str(zone), "by": by, "periods": periods, "totals": totals, "daily": daily_rows, "screens": screen_rows, "actions": action_rows,

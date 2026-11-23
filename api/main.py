@@ -1206,6 +1206,78 @@ def commissioner_activity(days: int = Query(30, ge=1, le=365), by: str = "day", 
     return usage_stats.build(rows, owners=owners, ai_rows=ai, days=days, tz=tz, owner=owner, by=by)
 
 
+@app.get("/commissioner/activity/feed")
+def commissioner_activity_feed(request: Request, days: int = Query(60, ge=1, le=365), tz: str | None = None,
+                               owner_auth: tuple[Client, Any] = Depends(owner_client)) -> Response:
+    """Every event of the range in the console's compact shape (api/usage_console.py), gzipped."""
+    from api import usage_console
+    client, user = owner_auth
+    ctx = _activity_viewer(client, user)
+    rows, ai, owners = _activity_data(client, ctx["league_id"], days)
+    body, headers = usage_console.gz_json(usage_console.feed(rows, owners=owners, ai_rows=ai, days=days, tz=tz),
+                                          request.headers.get("accept-encoding", ""))
+    return Response(body, media_type="application/json", headers=headers)
+
+
+@app.get("/commissioner/activity/session")
+def commissioner_activity_session(key: str, days: int = Query(60, ge=1, le=365), tz: str | None = None, authorization: str = Header(default=""),
+                                  owner_auth: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """One session's steps plus short-lived links to its replay pictures (signed as the viewer, so the bucket's rule applies)."""
+    from api import usage_console
+    client, user = owner_auth
+    ctx = _activity_viewer(client, user)
+    rows, _, owners = _activity_data(client, ctx["league_id"], days)
+    s = usage_console.session_detail(rows, owners=owners, key=key, tz=tz)
+    if not s:
+        raise HTTPException(status_code=404, detail="That session isn't in this range.")
+    try:
+        urls = usage_console.sign_frames(authorization.partition(" ")[2], [f["path"] for f in s["frames"]])
+    except Exception as exc:
+        print(f"REPLAY_SIGN_FAILED {type(exc).__name__}", flush=True)
+        urls = {}
+    s.pop("user_id", None)
+    s["frames"] = [{"at": f["at"], "url": urls.get(f["path"])} for f in s["frames"] if urls.get(f["path"])]
+    return s
+
+
+class ActivityReport(BaseModel):
+    spec: dict[str, Any]
+
+
+@app.get("/commissioner/activity/reports")
+def activity_reports(owner_auth: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """The viewer's saved console reports (activity_reports: each account reads and writes only its own)."""
+    client, user = owner_auth
+    _activity_viewer(client, user)
+    rows = client.table("activity_reports").select("id,spec,created_at").eq("user_id", str(user.id)).order("created_at").execute().data or []
+    return {"reports": [{"id": r["id"], **(r.get("spec") or {})} for r in rows]}
+
+
+@app.post("/commissioner/activity/reports")
+def save_activity_report(body: ActivityReport, owner_auth: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    from api import usage_console
+    client, user = owner_auth
+    _activity_viewer(client, user)
+    spec = usage_console.clean_report(body.spec)
+    mine = client.table("activity_reports").select("id,spec").eq("user_id", str(user.id)).execute().data or []
+    same = next((r for r in mine if (r.get("spec") or {}).get("name") == spec["name"]), None)
+    if same:
+        client.table("activity_reports").update({"spec": spec}).eq("id", same["id"]).eq("user_id", str(user.id)).execute()
+        return {"id": same["id"], **spec}
+    if len(mine) >= 100:
+        raise HTTPException(status_code=400, detail="That's 100 saved reports. Delete one first.")
+    row = client.table("activity_reports").insert({"user_id": str(user.id), "spec": spec}).execute().data or [{}]
+    return {"id": row[0].get("id"), **spec}
+
+
+@app.delete("/commissioner/activity/reports/{report_id}")
+def delete_activity_report(report_id: str, owner_auth: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    client, user = owner_auth
+    _activity_viewer(client, user)
+    client.table("activity_reports").delete().eq("id", report_id).eq("user_id", str(user.id)).execute()
+    return {"ok": True}
+
+
 class ActivityQuestion(BaseModel):
     question: str
     days: int = 30
@@ -1216,7 +1288,8 @@ class ActivityQuestion(BaseModel):
 
 @app.post("/commissioner/activity/ask")
 def commissioner_activity_ask(body: ActivityQuestion, owner_auth: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
-    """The Activity analyst: Claude answers usage questions from our own activity rows."""
+    """The Activity analyst: Claude answers usage questions from our own activity rows, and can hand back a
+    report for the console to draw and sessions for it to play."""
     from api import usage_ai
     from league_ai import usage
     client, user = owner_auth
@@ -1238,7 +1311,19 @@ def commissioner_activity_ask(body: ActivityQuestion, owner_auth: tuple[Client, 
                                          tool_calls=out["tools"], latency_ms=out["latency_ms"]))
     cost = usage.cost_usd(out["model"], input_tokens=u.get("input_tokens", 0), output_tokens=u.get("output_tokens", 0),
                           cache_read_tokens=u.get("cache_read_tokens", 0), cache_write_tokens=u.get("cache_write_tokens", 0))
-    return {"answer": out["answer"], "model": out["model"], "cost": cost}
+    return {"answer": out["answer"], "report": out["report"], "sessions": out["sessions"], "sessions_title": out["sessions_title"],
+            "model": out["model"], "cost": cost}
+
+
+_CONSOLE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "console", "console.html")
+
+
+@app.get("/console")
+def activity_console() -> Response:
+    """The Owner activity console page (no data in it; it asks the endpoints above with the viewer's sign-in)."""
+    with open(_CONSOLE, encoding="utf-8") as f:
+        return Response(f.read(), media_type="text/html; charset=utf-8",
+                        headers={"Cache-Control": "no-cache", "Content-Security-Policy": "frame-ancestors *"})
 
 
 @app.post("/commissioner/add")

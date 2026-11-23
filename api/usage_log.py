@@ -27,7 +27,7 @@ KINDS = ("screen", "action", "tap", "swipe", "push_open", "app_open", "app_close
 MAX_DETAIL = 600  # characters of JSON per event (tap spots, device info)
 
 # Requests that are plumbing, not something the owner chose to do.
-SKIP_ACTIONS = ("/me/activity", "/me/crash", "/me/push-token", "/me/live-activity", "/front-office/chat/resume")
+SKIP_ACTIONS = ("/me/activity", "/me/crash", "/me/push-token", "/me/live-activity", "/front-office/chat/resume", "/commissioner/activity")
 
 # Ids in paths become placeholders, so /player/4046 and /player/6794 count as one screen.
 _ID = re.compile(r"/(?:[0-9a-f]{8}-[0-9a-f-]{27,}|\d+)(?=/|$)")

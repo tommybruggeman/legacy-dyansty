@@ -42,5 +42,18 @@ drop policy if exists replays_viewer_read on storage.objects;
 create policy replays_viewer_read on storage.objects for select to authenticated
   using (bucket_id = 'replays' and exists (select 1 from public.app_activity_viewers v where v.user_id = auth.uid()));
 
+-- 5. Saved console reports: each account sees and changes only its own.
+create table if not exists public.activity_reports (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid(),
+  spec jsonb not null,
+  created_at timestamptz not null default now()
+);
+alter table public.activity_reports enable row level security;
+drop policy if exists activity_reports_own on public.activity_reports;
+create policy activity_reports_own on public.activity_reports for all to authenticated
+  using (user_id = auth.uid()) with check (user_id = auth.uid());
+grant select, insert, update, delete on public.activity_reports to authenticated;
+
 -- 4. Add the viewer (run once, with the account that should see Activity):
 -- insert into public.app_activity_viewers (user_id) select id from auth.users where email = 'YOUR SIGN-IN EMAIL' on conflict do nothing;
