@@ -40,3 +40,8 @@ def test_candidates_keep_last_weeks_board():
     rows = ROWS + [_row("9", "Deep Sleeper", "TE")]
     cands = pr.candidates(rows, {"9"})
     assert {c["cfbd_athlete_id"] for c in cands} >= {"1", "2", "3", "9"}
+
+
+def test_waits_for_first_edition():
+    from datetime import date
+    assert pr.run(object(), object(), today=date(2026, 11, 24)) == {"skipped": "first edition is 2026-12-15"}

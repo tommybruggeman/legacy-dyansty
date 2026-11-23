@@ -10,6 +10,10 @@ on:
         description: "Only build the candidate list, call nothing"
         type: boolean
         default: false
+      force:
+        description: "Write an edition before the first-edition date (Dec 15, playoff week 1)"
+        type: boolean
+        default: false
 
 jobs:
   write:
@@ -33,4 +37,5 @@ jobs:
         run: |
           ARGS=""
           if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then ARGS="--dry-run"; fi
+          if [ "${{ github.event.inputs.force }}" = "true" ]; then ARGS="$ARGS --force"; fi
           python -m league_ai.prospect_rankings $ARGS
