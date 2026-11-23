@@ -1,10 +1,11 @@
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { Animated, Easing, StyleSheet, Text, View, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 
 import { refreshPage } from '../lib/api';
-import { noteScroll, track } from '../lib/telemetry';
+import { pageShot } from '../lib/replay';
+import { currentPage, noteScroll, track } from '../lib/telemetry';
 import { colors } from '../lib/theme';
 
 // Pulling down on a page, in two stages:
@@ -24,13 +25,36 @@ const BALL_H = 19;
 
 type Hint = null | 'pull' | 'ready';
 
-export function usePullDown({ search = true, top = 0 }: { search?: boolean; top?: number } = {}) {
+const SHOT_SETTLE_MS = 2500;
+
+// shot: the page's scroll view, for one whole-page picture once it has loaded and settled (lib/replay.ts pageShot).
+export function usePullDown({ search = true, top = 0, shot, ready = true }: { search?: boolean; top?: number; shot?: RefObject<unknown>; ready?: boolean } = {}) {
   const y = useRef(new Animated.Value(0)).current;
   const spin = useRef(new Animated.Value(0)).current;
   const hold = useRef(new Animated.Value(0)).current;
   const s = useRef({ armed: false, refreshReady: false, searchReady: false, lastMove: 0, busy: false });
   const [hint, setHint] = useState<Hint>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const size = useRef({ contentH: 0, viewH: 0, timer: null as ReturnType<typeof setTimeout> | null, ready });
+  size.current.ready = ready && !refreshing;
+  const shotSoon = useCallback(() => {
+    if (!shot) return;
+    const z = size.current;
+    if (z.timer) clearTimeout(z.timer);
+    const screen = currentPage();
+    z.timer = setTimeout(() => {
+      z.timer = null;
+      if (!z.ready) return;
+      pageShot(shot.current, screen, z.contentH, z.viewH, () => currentPage() === screen && size.current.ready);
+    }, SHOT_SETTLE_MS);
+  }, [shot]);
+  useEffect(() => {
+    if (ready) shotSoon();
+    const z = size.current;
+    return () => {
+      if (z.timer) clearTimeout(z.timer);
+    };
+  }, [ready, shotSoon]);
 
   const refresh = useCallback(async () => {
     if (s.current.busy) return;
@@ -57,8 +81,15 @@ export function usePullDown({ search = true, top = 0 }: { search?: boolean; top?
   const scrollProps = useMemo(() => ({
     scrollEventThrottle: 16,
     // Page height and screen height for Owner activity's attention map, even on pages nobody scrolls.
-    onContentSizeChange: (_w: number, h: number) => noteScroll({ contentH: h }),
-    onLayout: (e: LayoutChangeEvent) => noteScroll({ viewH: e.nativeEvent.layout.height }),
+    onContentSizeChange: (_w: number, h: number) => {
+      noteScroll({ contentH: h });
+      size.current.contentH = h;
+      shotSoon();
+    },
+    onLayout: (e: LayoutChangeEvent) => {
+      noteScroll({ viewH: e.nativeEvent.layout.height });
+      size.current.viewH = e.nativeEvent.layout.height;
+    },
     onScrollBeginDrag: (e: NativeSyntheticEvent<NativeScrollEvent>) => {
       const st = s.current;
       st.armed = search && e.nativeEvent.contentOffset.y <= 1 && Date.now() - st.lastMove > STILL_MS;
@@ -95,7 +126,7 @@ export function usePullDown({ search = true, top = 0 }: { search?: boolean; top?
       st.searchReady = false;
       setHint(null);
     },
-  }), [y, search, refresh]);
+  }), [y, search, refresh, shotSoon]);
 
   // The football rides in the middle of the gap the pull opens above the page.
   const rise = y.interpolate({ inputRange: [-HOLD * 2, 0], outputRange: [HOLD - BALL_H / 2, -BALL_H / 2], extrapolate: 'clamp' });

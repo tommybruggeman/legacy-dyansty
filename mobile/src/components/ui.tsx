@@ -27,7 +27,7 @@ export function Screen({ children, loading, scrollTo, jumpTo }: { children: Reac
   useEffect(() => {
     if (jumpTo) scroll.current?.scrollTo({ y: Math.max(0, jumpTo.y - 8), animated: true });
   }, [jumpTo?.n]); // eslint-disable-line react-hooks/exhaustive-deps
-  const pull = usePullDown({ top: insets.top + 8 });
+  const pull = usePullDown({ top: insets.top + 8, shot: scroll, ready: !loading });
   const slow = useSlow(!!loading || pull.refreshing);
   return (
     <View style={styles.screen}>

@@ -5,7 +5,7 @@ import { AppState, Dimensions, type GestureResponderEvent, Keyboard, Linking, Pi
 
 import { apiSend, setLoadReporter } from './api';
 import { noteVisit } from './pulse';
-import { newReplaySession, replaySoon, setFrameReporter } from './replay';
+import { newReplaySession, replaySoon, setFrameReporter, setPageShotReporter } from './replay';
 
 // Our own usage numbers and crash reports. Both go to the Legacy API (stored in our database / server log);
 // no outside analytics or crash service. Nothing here may ever block or break the app.
@@ -254,6 +254,7 @@ export function useScreenTime(enabled: boolean) {
     const openedAt = { t: Date.now() };
     const closedAt = { t: Date.now() };
     setFrameReporter((p) => track('frame', { path: p }));
+    setPageShotReporter((p, screen, h) => track('frame', { path: p, full: 1, screens: h }, screen));
     setLoadReporter(trackLoad);
     newReplaySession();
     noteVisit();
