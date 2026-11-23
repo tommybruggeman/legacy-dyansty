@@ -1,6 +1,7 @@
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image, StyleSheet, Text, View } from 'react-native';
+import { Pressable } from '../Pressable';
 
 import { type Prospect, type ProspectPage, useApi } from '../../lib/api';
 import { colors } from '../../lib/theme';

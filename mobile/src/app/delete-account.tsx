@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { ActivityIndicator, Alert, Linking, Pressable, StyleSheet, Text, TextInput } from 'react-native';
+import { ActivityIndicator, Alert, Linking, StyleSheet, Text, TextInput } from 'react-native';
+import { Pressable } from '../components/Pressable';
 
 import { Back, Card, Note, Screen, Title } from '../components/ui';
 import { apiSend, clearApiCache } from '../lib/api';

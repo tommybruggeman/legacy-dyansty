@@ -42,6 +42,13 @@ jobs:
       - name: Install dependencies
         run: pip install supabase requests pandas anthropic && pip install -r api/requirements.txt  # api.projections for the weekly start/sit scorecard
 
+      - name: Delete session replays older than 14 days (keeps storage free)
+        continue-on-error: true
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python -m scripts.prune_replays
+
       - name: Grade calls and update the playbook
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}

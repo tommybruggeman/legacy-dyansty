@@ -1,6 +1,7 @@
 import { router, useLocalSearchParams, useNavigation } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Modal, PanResponder, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Modal, PanResponder, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable } from '../../components/Pressable';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { PlayerFace } from '../../components/PlayerFace';

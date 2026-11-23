@@ -1,6 +1,7 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable } from '../../components/Pressable';
 
 import { PlayerFace } from '../../components/PlayerFace';
 import { ErrorState, Loading } from '../../components/ScreenState';

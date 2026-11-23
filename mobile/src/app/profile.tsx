@@ -1,7 +1,8 @@
 import ImageCropPicker from 'react-native-image-crop-picker';
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable } from '../components/Pressable';
 
 import { Avatar } from '../components/Pictures';
 import { ErrorState, Loading } from '../components/ScreenState';

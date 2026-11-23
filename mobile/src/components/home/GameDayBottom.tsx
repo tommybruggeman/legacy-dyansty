@@ -1,7 +1,8 @@
 import { router } from 'expo-router';
 import { useState } from 'react';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable } from '../Pressable';
 
 import { type HomeBottom, type Riser, type ShotgunRow } from '../../lib/api';
 import { colors } from '../../lib/theme';

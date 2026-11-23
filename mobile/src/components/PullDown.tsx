@@ -1,9 +1,10 @@
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { Animated, Easing, StyleSheet, Text, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
+import { Animated, Easing, StyleSheet, Text, View, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 
 import { refreshPage } from '../lib/api';
+import { noteScroll, track } from '../lib/telemetry';
 import { colors } from '../lib/theme';
 
 // Pulling down on a page, in two stages:
@@ -34,6 +35,7 @@ export function usePullDown({ search = true, top = 0 }: { search?: boolean; top?
   const refresh = useCallback(async () => {
     if (s.current.busy) return;
     s.current.busy = true;
+    track('refresh');
     setRefreshing(true);
     Animated.timing(hold, { toValue: HOLD, duration: 180, useNativeDriver: false }).start();
     spin.setValue(0);
@@ -54,6 +56,9 @@ export function usePullDown({ search = true, top = 0 }: { search?: boolean; top?
 
   const scrollProps = useMemo(() => ({
     scrollEventThrottle: 16,
+    // Page height and screen height for Owner activity's attention map, even on pages nobody scrolls.
+    onContentSizeChange: (_w: number, h: number) => noteScroll({ contentH: h }),
+    onLayout: (e: LayoutChangeEvent) => noteScroll({ viewH: e.nativeEvent.layout.height }),
     onScrollBeginDrag: (e: NativeSyntheticEvent<NativeScrollEvent>) => {
       const st = s.current;
       st.armed = search && e.nativeEvent.contentOffset.y <= 1 && Date.now() - st.lastMove > STILL_MS;
@@ -65,6 +70,8 @@ export function usePullDown({ search = true, top = 0 }: { search?: boolean; top?
       listener: (e: NativeSyntheticEvent<NativeScrollEvent>) => {
         const st = s.current;
         st.lastMove = Date.now();
+        const ne = e.nativeEvent;
+        noteScroll({ y: ne.contentOffset.y, contentH: ne.contentSize?.height, viewH: ne.layoutMeasurement?.height });
         const pulled = -e.nativeEvent.contentOffset.y;
         if (st.busy) return;
         const refreshReady = pulled >= REFRESH_AT;

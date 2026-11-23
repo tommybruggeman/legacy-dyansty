@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
+import { Pressable } from '../Pressable';
 
 import { type DraftBoardData, type DraftPickOwner } from '../../lib/api';
 import { colors } from '../../lib/theme';

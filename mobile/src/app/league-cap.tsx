@@ -1,6 +1,7 @@
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
+import { Pressable } from '../components/Pressable';
 
 import { ErrorState, Loading } from '../components/ScreenState';
 import { Back, Card, Screen, Title, money, ui } from '../components/ui';

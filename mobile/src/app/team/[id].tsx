@@ -1,6 +1,7 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text } from 'react-native';
+import { StyleSheet, Text } from 'react-native';
+import { Pressable } from '../../components/Pressable';
 
 import { ErrorState, Loading } from '../../components/ScreenState';
 import { LIVE_REFRESH_MS, TeamView, isLive } from '../../components/team/TeamView';

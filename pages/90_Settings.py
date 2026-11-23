@@ -1352,7 +1352,11 @@ elif section == "League Tools":
         show_commissioner_gate()
         st.stop()
 
-    picked = render_tool_picker()
+    from services.owner_activity_ui import is_viewer, render_owner_activity
+
+    _viewer_id = str((current_user() or {}).get("id") or "")
+    _activity_ok = is_viewer(sb_client, _viewer_id)
+    picked = render_tool_picker(hide=() if _activity_ok else ("activity",))
     legacy_names = {
         "rules": "League Rules",
         "ai": "League AI",
@@ -1371,6 +1375,9 @@ elif section == "League Tools":
             label_visibility="collapsed",
         ) or "Add player"
         tool = "Manual Add" if add_or_drop == "Add player" else "Manual Drop"
+
+    if picked == "activity" and _activity_ok:
+        render_owner_activity(sb_client, active_league_id, _viewer_id)
 
     if picked == "lineups":
         from services.commissioner_lineups_ui import render_commissioner_lineups
