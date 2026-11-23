@@ -100,8 +100,14 @@ jobs:
           xcrun simctl status_bar "$UDID" override --time 9:41 --dataNetwork wifi --wifiBars 3 --cellularBars 4 --batteryState charged --batteryLevel 100
           xcrun simctl install "$UDID" "$(find "$RUNNER_TEMP/sim" -maxdepth 3 -name '*.app' | head -1)"
           mkdir -p store/screenshots/en-US && cd store/screenshots/en-US
+          touch "$RUNNER_TEMP/shots-start"
           maestro --device "$UDID" test -e REVIEW_EMAIL="$REVIEW_EMAIL" -e REVIEW_PASSWORD="$REVIEW_PASSWORD" ../../maestro/screenshots.yaml
+          # Maestro may save next to the flow file or in its own folder rather than here: gather them.
+          find "$GITHUB_WORKSPACE" "$HOME/.maestro" -name '0[1-5]-*.png' -newer "$RUNNER_TEMP/shots-start" -not -path "$PWD/*" -exec mv {} . \; 2>/dev/null || true
           ls -la
+          n=$(ls 0[1-5]-*.png 2>/dev/null | wc -l | tr -d ' ')
+          if [ "$n" -lt 5 ]; then echo "::error::Only $n of 5 screenshots were saved"; exit 1; fi
+          sips -g pixelWidth -g pixelHeight 01-*.png
 
       # On a failed run, say which known screen it's stuck on. Public log: only fixed phrases and
       # sign-in error lines are printed, never team or player names.
