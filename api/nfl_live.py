@@ -31,6 +31,21 @@ def _int(value: Any) -> int:
         return 0
 
 
+# Plays that end a possession: once one of these is ESPN's last play, the team is no longer driving,
+# even though ESPN keeps "possession" and "isRedZone" on the scoring team until the kickoff.
+_DRIVE_OVER = ("touchdown", "extra point", "two-point", "two point", "field goal", "safety", "kickoff",
+               "punt", "interception", "turnover", "end of half", "end of game")
+
+
+def _drive_over(situation: dict[str, Any]) -> bool:
+    """True when ESPN's last play scored or ended the drive (TD, PAT, 2-pt try, FG, pick, punt)."""
+    last = situation.get("lastPlay") or {}
+    if _int(last.get("scoreValue")) > 0:
+        return True
+    kind = str((last.get("type") or {}).get("text") or "").lower()
+    return any(word in kind for word in _DRIVE_OVER)
+
+
 def parse_scoreboard(board: Any) -> dict[str, dict[str, Any]]:
     """NFL team -> {state (pre/in/post), quarter, clock, team, opp, home, score, opp_score, possession, red_zone, down}."""
     out: dict[str, dict[str, Any]] = {}
@@ -43,6 +58,7 @@ def parse_scoreboard(board: Any) -> dict[str, dict[str, Any]]:
             continue
         situation = comp.get("situation") or {}
         ball_id = str(situation.get("possession") or "")
+        red_zone = bool(situation.get("isRedZone")) and not _drive_over(situation)
         for me, them in ((sides[0], sides[1]), (sides[1], sides[0])):
             team, opp = _code(me.get("team") or {}), _code(them.get("team") or {})
             if not team:
@@ -59,7 +75,7 @@ def parse_scoreboard(board: Any) -> dict[str, dict[str, Any]]:
                 "score": _int(me.get("score")),
                 "opp_score": _int(them.get("score")),
                 "possession": has_ball,
-                "red_zone": has_ball and bool(situation.get("isRedZone")),
+                "red_zone": has_ball and red_zone,
                 "down": str(situation.get("shortDownDistanceText") or situation.get("downDistanceText") or "") if has_ball else "",
             }
     return out
