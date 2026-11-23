@@ -1,5 +1,5 @@
 import { Dimensions, Keyboard } from 'react-native';
-import { captureScreen } from 'react-native-view-shot';
+import { captureRef, captureScreen } from 'react-native-view-shot';
 
 import { supabase } from './supabase';
 
@@ -18,6 +18,7 @@ let lastAt = 0;
 let timer: ReturnType<typeof setTimeout> | null = null;
 let busy = false;
 let report: ((path: string) => void) | null = null;
+let reportPage: ((path: string, screen: string, h: number) => void) | null = null;
 let userId: string | null = null;
 let paused = false;
 
@@ -28,6 +29,10 @@ export function pauseReplays(on: boolean) {
 
 export function setFrameReporter(fn: (path: string) => void) {
   report = fn;
+}
+
+export function setPageShotReporter(fn: (path: string, screen: string, h: number) => void) {
+  reportPage = fn;
 }
 
 export function newReplaySession() {
@@ -65,6 +70,40 @@ async function capture() {
     const path = `${userId}/${session}/${String(count).padStart(3, '0')}.jpg`;
     const { error } = await supabase.storage.from('replays').upload(path, bytes, { contentType: 'image/jpeg', upsert: true });
     if (!error && report) report(path);
+  } catch {
+    // no picture this time
+  } finally {
+    busy = false;
+  }
+}
+
+// One picture of a whole page, top to bottom (the scroll view's full content), so the Owner activity heat map can
+// lay taps and scrolling over the real page. At most once a week per page, a few per visit, never with the keyboard up.
+const PAGE_SHOTS_PER_VISIT = 6;
+const MAX_SCREENS_TALL = 8;
+const WEEK_MS = 7 * 24 * 3600 * 1000;
+const shotAt = new Map<string, number>();
+let shotsThisVisit = 0;
+
+export async function pageShot(view: unknown, screen: string, contentH: number, viewH: number, stillOn: () => boolean) {
+  if (paused || busy || !userId || !session || !view || !contentH || !viewH) return;
+  if (shotsThisVisit >= PAGE_SHOTS_PER_VISIT || contentH / viewH > MAX_SCREENS_TALL) return;
+  if (Date.now() - (shotAt.get(screen) ?? 0) < WEEK_MS) return;
+  if (Keyboard.isVisible() || !stillOn()) return;
+  busy = true;
+  try {
+    shotAt.set(screen, Date.now());
+    shotsThisVisit += 1;
+    const { width } = Dimensions.get('window');
+    const base64 = await captureRef(view as never, {
+      format: 'jpg', quality: 0.35, result: 'base64', snapshotContentContainer: true,
+      width: WIDTH, height: Math.round((WIDTH * contentH) / Math.max(1, width)),
+    });
+    if (!stillOn()) return;
+    const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+    const path = `${userId}/pages/${Date.now()}.jpg`;
+    const { error } = await supabase.storage.from('replays').upload(path, bytes, { contentType: 'image/jpeg', upsert: true });
+    if (!error && reportPage) reportPage(path, screen, Math.round((contentH / viewH) * 100) / 100);
   } catch {
     // no picture this time
   } finally {

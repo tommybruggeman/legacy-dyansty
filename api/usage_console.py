@@ -214,6 +214,37 @@ def session_detail(rows: list[dict[str, Any]], *, owners: dict[str, dict[str, An
     return None
 
 
+def backdrops(rows: list[dict[str, Any]], page: str, *, keep: int = 4) -> dict[str, Any]:
+    """Real pictures of one page for its heat map, newest first: 'screen' are replay pictures taken just after
+    the page opened (so it's at the top, as most taps see it); 'page' is the newest whole-page picture (top to
+    bottom, from build 113) with how many screens tall it is."""
+    screen: list[tuple[float, str]] = []
+    full: tuple[float, str, float] | None = None
+    for s in usage_stats.sessions(rows):
+        opened: datetime | None = None
+        for e in s["events"]:
+            kind = e["kind"]
+            if kind == "screen" and usage_stats.page_label(e["screen"]) == page:
+                opened = e["at"]
+                continue
+            if kind != "frame":
+                continue
+            d = e.get("detail") or {}
+            path = d.get("path")
+            if not path or usage_stats.page_label(e["screen"]) != page:
+                continue
+            at = e["at"].timestamp()
+            if d.get("full"):
+                if full is None or at > full[0]:
+                    full = (at, path, float(d.get("screens") or 0))
+            elif opened is not None and 0 <= (e["at"] - opened).total_seconds() <= 4:
+                screen.append((at, path))
+                opened = None
+    screen.sort(reverse=True)
+    newest = list(dict.fromkeys(p for _, p in screen))[:keep]
+    return {"screen": newest, "page": {"path": full[1], "screens": full[2]} if full else None}
+
+
 def sign_frames(token: str, paths: list[str], *, expires: int = 3600, post: Callable[..., Any] | None = None) -> dict[str, str]:
     """Short-lived links to replay pictures, signed AS the signed-in viewer, so the bucket's own rule
     (only app_activity_viewers may read) decides. Returns {path: url}."""

@@ -1286,6 +1286,26 @@ def commissioner_activity_session(key: str, days: int = Query(60, ge=1, le=365),
     return s
 
 
+@app.get("/commissioner/activity/backdrop")
+def commissioner_activity_backdrop(page: str, days: int = Query(60, ge=1, le=365), authorization: str = Header(default=""),
+                                   owner_auth: tuple[Client, Any] = Depends(owner_client)) -> dict[str, Any]:
+    """Real pictures of one page for the heat map (from replays), as short-lived links signed as the viewer."""
+    from api import usage_console
+    client, user = owner_auth
+    ctx = _activity_viewer(client, user)
+    rows, _, _ = _activity_data(client, ctx["league_id"], days)
+    b = usage_console.backdrops(rows, page)
+    paths = b["screen"] + ([b["page"]["path"]] if b["page"] else [])
+    try:
+        urls = usage_console.sign_frames(authorization.partition(" ")[2], paths)
+    except Exception as exc:
+        print(f"REPLAY_SIGN_FAILED {type(exc).__name__}", flush=True)
+        urls = {}
+    page_shot = b["page"]
+    return {"screen": [urls[p] for p in b["screen"] if urls.get(p)],
+            "page": {"url": urls[page_shot["path"]], "screens": page_shot["screens"]} if page_shot and urls.get(page_shot["path"]) else None}
+
+
 class ActivityReport(BaseModel):
     spec: dict[str, Any]
 

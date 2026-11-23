@@ -306,3 +306,24 @@ def test_new_signals_reach_the_feed_and_the_analyst():
     assert usage_ai.signals(a, "speed")["pages"][0]["typical_ms"] == 2400
     fb = usage_ai.signals(a, "feedback")
     assert fb["avg_rating"] == 4 and fb["notes"][0]["session_key"].startswith("a|")
+
+
+def test_backdrops_pick_top_of_page_pictures_and_newest_whole_page():
+    from api import usage_console
+
+    def row(at, kind, screen, detail=None, secs=0):
+        return {"user_id": "u1", "viewed_at": f"2026-11-20T18:00:{at:02d}+00:00", "screen": screen, "seconds": secs,
+                "kind": kind, "source": "app", "detail": detail}
+
+    rows = [
+        row(0, "screen", "/my-team", secs=20),
+        row(1, "frame", "/my-team", {"path": "u1/s/001.jpg"}),   # just after it opened: top of the page
+        row(9, "frame", "/my-team", {"path": "u1/s/002.jpg"}),   # later, scrolled: not used
+        row(12, "frame", "/my-team", {"path": "u1/pages/1.jpg", "full": 1, "screens": 3.2}),
+        row(30, "screen", "/league", secs=5),
+        row(31, "frame", "/league", {"path": "u1/s/003.jpg"}),
+    ]
+    b = usage_console.backdrops(rows, "My Team")
+    assert b["screen"] == ["u1/s/001.jpg"]
+    assert b["page"] == {"path": "u1/pages/1.jpg", "screens": 3.2}
+    assert usage_console.backdrops(rows, "League")["page"] is None
