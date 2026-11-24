@@ -202,7 +202,7 @@ AccuracySec=30s
 WantedBy=timers.target
 UNIT
 
-# Practice reports every 10 minutes, Sep-Jan (Tommy, 2026-11-20: "take every day into account"). GitHub's three daily
+# Practice reports every 5 minutes, Sep-Jan (10 until 2026-11-24) (Tommy, 2026-11-20: "take every day into account"). GitHub's three daily
 # practice runs were mostly skipped or hours late, so Thursday's line could miss the app until Friday afternoon.
 # Each pass fetches ESPN's injury notes and the official report file and stops right there when neither changed
 # (fingerprint in /var/lib/legacy-practice.state), so a pass with nothing new is one small download and no writes.
@@ -225,10 +225,10 @@ MemoryMax=400M
 UNIT
 cat > /etc/systemd/system/legacy-practice.timer <<UNIT
 [Unit]
-Description=Practice reports every 10 minutes, September to January
+Description=Practice reports every 5 minutes, September to January
 
 [Timer]
-OnCalendar=*-01,09..12-* *:04/10:00
+OnCalendar=*-01,09..12-* *:02/5:00
 AccuracySec=30s
 Persistent=false
 

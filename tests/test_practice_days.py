@@ -40,6 +40,18 @@ class ReportDayTests(unittest.TestCase):
         self.assertEqual(pd_.game_for_report(SCHEDULE, "CIN", date(2026, 11, 4)), (date(2026, 11, 5), 9))  # Wed before Thursday game
         self.assertEqual(pd_.game_for_report(SCHEDULE, "CIN", date(2026, 11, 2)), (date(2026, 11, 5), 9))  # Mon before Thursday game
 
+    def test_short_week_games_report_the_three_days_before(self):
+        games = [{"season": 2026, "week": 12, "gameday": "2026-11-25", "home_team": "LA", "away_team": "GB"},  # Wednesday
+                 {"season": 2026, "week": 12, "gameday": "2026-11-26", "home_team": "BUF", "away_team": "KC"},  # Thanksgiving
+                 {"season": 2026, "week": 16, "gameday": "2026-12-19", "home_team": "DEN", "away_team": "LV"}]  # Saturday
+        sched = pd_.upcoming_games(games, 2026)
+        self.assertEqual(pd_.game_for_report(sched, "GB", date(2026, 11, 22)), (date(2026, 11, 25), 12))  # Sun before Wed
+        self.assertEqual(pd_.game_for_report(sched, "GB", date(2026, 11, 24)), (date(2026, 11, 25), 12))  # Tue
+        self.assertEqual(pd_.game_for_report(sched, "KC", date(2026, 11, 23)), (date(2026, 11, 26), 12))  # Mon before Thu
+        self.assertIsNone(pd_.game_for_report(sched, "KC", date(2026, 11, 22)))
+        self.assertEqual(pd_.game_for_report(sched, "DEN", date(2026, 12, 16)), (date(2026, 12, 19), 16))  # Wed before Sat
+        self.assertEqual(pd_.game_for_report(sched, "DEN", date(2026, 12, 18)), (date(2026, 12, 19), 16))  # Fri
+
 
 class NflverseDayTests(unittest.TestCase):
     def test_only_this_weeks_report_on_a_report_day_is_kept(self):
@@ -155,6 +167,16 @@ class ReaderTests(unittest.TestCase):
         self.assertEqual(h["this_week"]["practice"], "Limited practice")
         self.assertEqual(h["this_week"]["days"], [{"day": "Wed", "practice": "Limited"}])
         self.assertIsNone(h["this_week"]["game_status"])  # last week's Out doesn't carry over
+
+
+class NewsSummaryTests(unittest.TestCase):
+    def test_newest_headline_leads(self):
+        from api.player_cards import news_summary
+        got = news_summary({"short_comment": "Reid said Walker will practice Tuesday.", "long_comment": "Walker was a non-participant Monday.",
+                            "reported_at": "2026-11-24T18:03:00+00:00"})
+        self.assertEqual(got["text"], "Reid said Walker will practice Tuesday.\n\nWalker was a non-participant Monday.")
+        self.assertEqual(news_summary({"long_comment": "Only the long one."})["text"], "Only the long one.")
+        self.assertEqual(news_summary({"short_comment": "Same.", "long_comment": "Same. And more."})["text"], "Same. And more.")
 
 
 class FrequentCheckTests(unittest.TestCase):
