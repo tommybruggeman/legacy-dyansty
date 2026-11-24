@@ -498,8 +498,20 @@ def load_owner_display_map() -> dict:
     return mapping
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+def _our_week() -> dict | None:
+    """Our own game week (api.game_week: the week flips when its last game ends), shared with the iOS app."""
+    try:
+        from api import game_week
+        return game_week.state(get_sb())
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=20, show_spinner=False)
 def current_nfl_week() -> int:
+    ours = _our_week()
+    if ours:
+        return max(1, min(int(ours["current"]), 25))
     try:
         state = get_json("https://api.sleeper.app/v1/state/nfl")
         wk = int(state.get("week") or 1)
@@ -530,8 +542,11 @@ def roster_id_to_name(sleeper_league_id: str) -> dict:
     return out
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=30, show_spinner=False)
 def last_scored_week(sleeper_league_id: str) -> int:
+    ours = _our_week()
+    if ours:
+        return min(int(ours["last_final"]), 25)
     try:
         league = get_json(f"https://api.sleeper.app/v1/league/{sleeper_league_id}")
     except Exception:
@@ -585,6 +600,7 @@ def build_standings_from_sleeper(sleeper_league_id: str) -> pd.DataFrame:
                 by_mid.setdefault(mid, []).append(row)
 
         results = []
+        auto_loss: set[str] = set()
 
         for pair in by_mid.values():
             if len(pair) < 2:
@@ -613,6 +629,8 @@ def build_standings_from_sleeper(sleeper_league_id: str) -> pd.DataFrame:
 
             results.append((na, pa, pb))
             results.append((nb, pb, pa))
+            # Over the cap at Sunday's first kickoff: a loss and no top 5, same as the app's standings.
+            auto_loss.update(n for n, r in ((na, a), (nb, b)) if r.get("auto_loss"))
 
         if not results:
             continue
@@ -620,7 +638,7 @@ def build_standings_from_sleeper(sleeper_league_id: str) -> pd.DataFrame:
         if all(score == 0 and opp == 0 for _, score, opp in results):
             continue
 
-        week_frame = pd.DataFrame(score_week(results))
+        week_frame = pd.DataFrame(score_week(results, auto_loss))
         week_frame["week"] = week
         frames.append(week_frame)
 

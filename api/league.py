@@ -61,6 +61,11 @@ def roster_names(client: Any, league_id: str, sleeper_id: str) -> dict[int, str]
 
 
 def last_scored_week(sleeper_id: str) -> int:
+    """The newest final week: ours (api.game_week, the moment the week's last game ends); Sleeper's only as a fallback."""
+    from api import game_week
+    ours = game_week.state()
+    if ours:
+        return min(int(ours["last_final"]), 25)
     try:
         league = sleeper.get(f"league/{sleeper_id}")
     except Exception:
@@ -73,6 +78,11 @@ def last_scored_week(sleeper_id: str) -> int:
 
 
 def current_week() -> int:
+    """The week being played: ours (api.game_week, moves on when the last game of a week ends); Sleeper's as a fallback."""
+    from api import game_week
+    ours = game_week.state()
+    if ours:
+        return max(1, min(int(ours["current"]), 25))
     try:
         week = int((sleeper.get("state/nfl") or {}).get("week") or 1)
     except Exception:
