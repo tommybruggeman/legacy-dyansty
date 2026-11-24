@@ -48,7 +48,7 @@ jobs:
             # where owners spend time in the app and website (numbers only, owners unnamed)
             # our own player status feed (ESPN report) vs the app's nightly Sleeper status; saves nothing
             status_probe) python -m scripts.status_probe ;;
-            practice_probe) python -m scripts.practice_probe ;;
+            practice_probe) PROBE_GSIS="${{ inputs.minutes }}" python -m scripts.practice_probe ;;
             app_usage) python -m scripts.app_usage_report --days "${{ inputs.minutes == '230' && '7' || inputs.minutes }}" ;;
             odds_trial) python -m league_ai.odds_trial ;;
             # one time: today's team names and Sleeper pictures become each owner's default profile, stored by us

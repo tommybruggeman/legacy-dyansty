@@ -18,7 +18,8 @@ from pipeline.nfl_data.run import current_nfl_season  # noqa: E402
 def main() -> int:
     client = service_client()
     season = current_nfl_season()
-    gsis = os.environ.get("PROBE_GSIS", "00-0031408")
+    gsis = os.environ.get("PROBE_GSIS", "").strip()
+    gsis = gsis if gsis.startswith("00-") else "00-0031408"
     rows = (client.table("nfl_practice_days").select("week").eq("season", season).order("week", desc=True).limit(1).execute().data or [])
     if not rows:
         print("no practice days this season")
@@ -37,6 +38,11 @@ def main() -> int:
         print("  ", {k: r.get(k) for k in ("week", "practice_date", "day", "source", "practice_status", "game_status", "refreshed_at")},
               "sleeper_id set" if r.get("sleeper_id") else "NO sleeper_id")
     sid = next((r["sleeper_id"] for r in mine if r.get("sleeper_id")), None)
+    if sid:
+        espn = (client.table("nfl_injuries").select("status,reported_at,short_comment,long_comment").eq("sleeper_id", sid).limit(1).execute().data or [])
+        print("ESPN note:", espn[0] if espn else None)
+    last = (client.table("nfl_practice_days").select("refreshed_at").order("refreshed_at", desc=True).limit(1).execute().data or [])
+    print("newest practice write:", last[0]["refreshed_at"] if last else None)
     if sid:
         from api.player import health, load_practice, load_practice_days
 
