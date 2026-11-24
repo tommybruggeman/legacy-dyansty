@@ -310,6 +310,11 @@ class JobTests(unittest.TestCase):
         self.assertEqual(job.waiver_runs(tx, now), {"2026-11-15": 2})
         self.assertFalse(job.week_over({"A": at(2026, 11, 9, 20, 15)}, at(2026, 11, 9, 23, 0)))
         self.assertTrue(job.week_over({"A": at(2026, 11, 9, 20, 15)}, at(2026, 11, 10, 0, 20)))
+        # Our feed saw week 10's last game end: out right away, even before the 4-hour mark.
+        self.assertTrue(job.week_over({"A": at(2026, 11, 9, 20, 15)}, at(2026, 11, 9, 23, 0), final_week=10, week=10))
+        # Our feed is running but hasn't seen it end: wait (6-hour backstop instead of 4).
+        self.assertFalse(job.week_over({"A": at(2026, 11, 9, 20, 15)}, at(2026, 11, 10, 0, 20), final_week=9, week=10))
+        self.assertTrue(job.week_over({"A": at(2026, 11, 9, 20, 15)}, at(2026, 11, 10, 2, 20), final_week=9, week=10))
 
     def test_fits_is_the_lineup_rule(self):
         self.assertEqual(alerts.best_sub("FLEX", self.bench, lineups.fits)["name"], "Jauan Jennings")

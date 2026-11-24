@@ -281,7 +281,10 @@ def week_lines(client: Any, season: int, week: int, current: int) -> Mapping[str
     if official:
         return official
     fallback = stat_lines(season, week, get_json=lambda url: sleeper.get_url(url, ttl=league.LIVE_TTL if week == current else 3600))
-    return {**fallback, **(live_stats.fresh_lines(client, season, week) if week == current else {})}
+    # The week being played takes the watcher's lines while it's saving; a week that already ended keeps the watcher's
+    # final box scores (ESPN) until the official copy lands the next morning, so Sleeper's stats stay only a backup.
+    ours = live_stats.fresh_lines(client, season, week) if week == current else live_stats.lines(client, season, week)
+    return {**fallback, **ours}
 
 
 def own_scores(season: int, current: int, scoring: Mapping[str, Any], *,
@@ -331,7 +334,8 @@ SYNC_TTL = 5
 
 def sync(client: Any, league_id: str, sleeper_id: str, season: int) -> None:
     """Rebuild the app's weeks for one league and hand them to api.sleeper (shared by every owner for LIVE_TTL)."""
-    from api import cache, league, sleeper  # here, not at import time: api.league reads api.sleeper too
+    from api import cache, game_week, league, sleeper  # here, not at import time: api.league reads api.sleeper too
+    game_week.remember(client)  # the game week is read from our own schedule with this client
 
     def load() -> dict[str, Any]:
         switch = (client.table("league_app_transactions").select("enabled,own_from_week")

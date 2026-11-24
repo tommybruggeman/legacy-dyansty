@@ -38,7 +38,9 @@ def render_lineup_editor(sb: Any, *, league_id: str, season: int, team_id: str, 
         return
     settings = _rows(sb, "league_ai_settings", "roster_positions", league_id=league_id)
     slots = lineups.starter_slots((settings[0].get("roster_positions") if settings else None) or [])
-    week = int(((_sleeper("state/nfl") or {}).get("week")) or 1)
+    from api import game_week  # our own game week (moves on when the week's last game ends), same as the app
+    ours = game_week.state(sb)
+    week = int(ours["current"]) if ours else int(((_sleeper("state/nfl") or {}).get("week")) or 1)
 
     players = {str(r.get("sleeper_id")): r for r in roster
                if r.get("sleeper_id") and str(r.get("roster_designation") or "").lower() not in {"taxi", "ir"}}

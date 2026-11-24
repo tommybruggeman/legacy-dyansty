@@ -1,6 +1,7 @@
 """Weekly player write-ups: a short recap paragraph for every NFL QB/RB/WR/TE who mattered this week.
 
-Runs on Tuesday after the stats lock (.github/workflows/player-writeups.yml):
+Runs every morning in season (.github/workflows/player-writeups.yml), so each player's recap is written the morning
+after his own game, once his team's box score is in our stats (teams that haven't played yet are skipped):
 
     python -m league_ai.writeups              # newest week with stats
     python -m league_ai.writeups --week 9     # a given week

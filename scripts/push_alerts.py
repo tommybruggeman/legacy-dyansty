@@ -4,7 +4,7 @@ everything due straight to Apple (api.alerts.deliver).
 Producers, each safe to run again and again (every alert has a key, so it is queued once per owner):
   game day   lineup problems (IR/suspended/bye starter, empty slot) from 24 hours before the game, a starter ruled out
              as soon as we see it, and "inactive" 30 minutes before kickoff
-  results    each owner's score once the week's last NFL game is over (playoff rounds when the round ends)
+  results    each owner's score as soon as our feed sees the week's last NFL game end (playoff rounds when the round ends)
   waivers    one line to everyone after a waiver run
   deadlines  taxi pick after the rookie draft and 24 hours before the season, team option 7 days and 24 hours before
              the rollover deadline, trade deadline 7 days and 12 hours out
@@ -44,6 +44,7 @@ NOT_HEALTHY = OUT | set(OFF_ROSTER) | {"doubtful"}
 INACTIVE_LEAD = timedelta(minutes=35)
 LINEUP_LEAD = timedelta(hours=24)
 GAME_LENGTH = timedelta(hours=4)
+BACKSTOP = timedelta(hours=6)
 RECENT = timedelta(days=3)
 
 
@@ -70,6 +71,9 @@ class League:
         self.sid = season.sleeper_league_id
         self.sleeper_league = (league.sleeper.get(f"league/{self.sid}") or {}) if self.sid else {}
         self.name = _text(self.sleeper_league.get("name")) or "Legacy Dynasty"
+        from api import game_week
+        game_week.remember(client)  # our own game week: it moves on when the week's last game ends
+        self.final_week = (game_week.state(client, self.season) or {}).get("last_final")
         self.week = league.current_week()
         teams = client.table("league_teams").select("id,sleeper_roster_id,owner_name,team_name").eq("league_id", league_id).execute().data or []
         self.roster_of = {str(t["id"]): _int(t.get("sleeper_roster_id")) for t in teams}
@@ -286,8 +290,14 @@ def status_alerts(lg: League) -> None:
 
 # ---- results, playoffs ------------------------------------------------------------------------------
 
-def week_over(starts: Mapping[str, datetime], now: datetime) -> bool:
-    return bool(starts) and now >= max(starts.values()) + GAME_LENGTH
+def week_over(starts: Mapping[str, datetime], now: datetime, final_week: int | None = None, week: int = 0) -> bool:
+    """The week's last game is over: our feed says so (api.game_week), the moment it ends. Without our feed, 4 hours
+    after the last kickoff; with it but no final yet (watcher down), a 6-hour backstop so the alert still goes out."""
+    if not starts:
+        return False
+    if final_week is not None and week and week <= final_week:
+        return True
+    return now >= max(starts.values()) + (GAME_LENGTH if final_week is None else BACKSTOP)
 
 
 def results(lg: League) -> None:
@@ -296,7 +306,7 @@ def results(lg: League) -> None:
     start = int(lg.rules["playoff_week_start"])
     last = playoffs.last_week(lg.rules)
     for week in sorted({max(lg.week - 1, 1), lg.week}):
-        if week > last or not week_over(lg.kickoffs(week), lg.now):
+        if week > last or not week_over(lg.kickoffs(week), lg.now, getattr(lg, "final_week", None), week):
             continue
         raw = league.sleeper.get(f"league/{lg.sid}/matchups/{week}", ttl=300) or []
         expires = lg.now + timedelta(days=2)
