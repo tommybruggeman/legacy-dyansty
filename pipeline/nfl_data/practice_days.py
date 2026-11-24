@@ -31,10 +31,11 @@ KEEP_POSITIONS = {"QB", "RB", "WR", "TE", "K"}
 # Teams post the day's report after practice, usually 4-6pm Eastern. A file rebuilt before this
 # hour still holds the previous day's report.
 REPORT_POSTED_HOUR_ET = 17
-# Report days before a game: Wed-Fri for Sunday (and Monday/Saturday: Thu-Sat, Tue-Thu) games,
-# Mon-Wed for a Thursday game, Tue-Thu for a Friday game.
+# Report days before a game: Wed-Fri for a Sunday game, Thu-Sat for a Monday game (2-4 days out). Any short-week game
+# reports the three days right before it: Mon-Wed for Thursday (Thanksgiving), Tue-Thu for Friday, Sun-Tue for a
+# Wednesday (Christmas) game, Wed-Fri for a late-season Saturday game.
 def report_window(gameday: date) -> tuple[int, int]:
-    return (1, 3) if gameday.weekday() in (3, 4) else (2, 4)
+    return (2, 4) if gameday.weekday() in (6, 0) else (1, 3)
 WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 DAY_ABBR = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 

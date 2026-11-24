@@ -85,9 +85,11 @@ def play_call(h: dict[str, Any], pos: str, espn: dict[str, Any] | None, rates: d
 
 
 def news_summary(espn: dict[str, Any] | None) -> dict[str, Any] | None:
-    """The 'Where he's at' paragraph: ESPN's full write-up when there is one, else the short note."""
+    """The 'Where he's at' paragraph: ESPN's newest headline (the short note, e.g. a coach's update today) first, then
+    the full write-up when it adds something; either one alone when that's all there is."""
     espn = espn or {}
-    text = str(espn.get("long_comment") or "").strip() or str(espn.get("short_comment") or "").strip()
+    short, long = str(espn.get("short_comment") or "").strip(), str(espn.get("long_comment") or "").strip()
+    text = f"{short}\n\n{long}" if short and long and short not in long else long or short
     if not text:
         return None
     return {"text": text, "date": (str(espn.get("reported_at") or "")[:10]) or None, "source": "ESPN news"}
