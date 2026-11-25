@@ -157,7 +157,7 @@ class TradeSimTests(unittest.TestCase):
 class RegistryTests(unittest.TestCase):
     def test_registry_runs_tools_through_json(self):
         reg = build_registry(FakeClient(), league_state=fixture_state())
-        self.assertEqual(len(reg), 12)
+        self.assertEqual(len(reg), 13)
         out = json.loads(reg.call("get_player_profile", {"name": "Josh Allen"}))
         self.assertEqual(out["nfl_team"], "BUF")
         self.assertIn("error", json.loads(reg.call("get_player_stats", {})))  # bad args reported, not raised
@@ -211,7 +211,7 @@ class InjuryToolTests(unittest.TestCase):
     def test_registry_has_injury_tool(self):
         reg = build_registry(FakeClient(), league_state=fixture_state())
         self.assertIn("get_injury_report", reg.tools)
-        self.assertEqual(len(reg), 12)
+        self.assertEqual(len(reg), 13)
 
 
 PROSPECTS = [
@@ -269,3 +269,31 @@ class NflMovesTests(unittest.TestCase):
         FakeClient.TABLES.pop("nfl_player_moves", None)
         out = tool_get_player_profile(_data(), "Josh Allen")
         self.assertNotIn("recent_team_move", out)
+
+
+class LeagueLeadersTests(unittest.TestCase):
+    def test_leaders_rank_by_league_scoring_with_contracts(self):
+        from unittest import mock
+        from league_ai.tools.nfl import tool_get_league_leaders
+        lines = {
+            1: {"4866": {"pos": "RB", "stats": {"gp": 1, "rush_yd": 100}}, "9001": {"pos": "RB", "stats": {"gp": 1, "rush_yd": 60}},
+                "DEN": {"pos": "DEF", "stats": {"gp": 1}}},
+            2: {"4866": {"pos": "RB", "stats": {"gp": 1, "rush_yd": 20}}, "9001": {"pos": "RB", "stats": {"gp": 1, "rush_yd": 90}}},
+        }
+        data = _data()
+        data.league_state = {**data.league_state, "league_id": "L1", "season": 2026}
+        with mock.patch("league_ai.league_points._season_lines", return_value=lines), \
+             mock.patch("league_ai.league_points.league_scoring", return_value={"rush_yd": 0.1}):
+            out = tool_get_league_leaders(data, ["RB"], limit=5)
+            recent = tool_get_league_leaders(data, ["RB"], last_weeks=1)
+        rb = out["leaders"]["RB"]
+        self.assertEqual([r[3] for r in rb], [15.0, 12.0])
+        self.assertEqual(out["weeks"], "1-2")
+        self.assertEqual(recent["leaders"]["RB"][0][3], 9.0)
+        self.assertEqual(recent["weeks"], "2")
+
+    def test_leaders_without_rules_says_so(self):
+        from unittest import mock
+        from league_ai.tools.nfl import tool_get_league_leaders
+        with mock.patch("league_ai.league_points.league_scoring", return_value={}):
+            self.assertIn("error", tool_get_league_leaders(_data()))
