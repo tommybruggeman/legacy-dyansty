@@ -4,11 +4,24 @@
 default_platform(:ios)
 
 platform :ios do
+  # The .p8 key as pasted into the secret: with or without the BEGIN/END lines, with real or literal "\n"
+  # newlines, spaces, or base64 of the whole file. Rebuilt into a clean PEM either way.
+  def p8_text
+    require "base64"
+    raw = ENV.fetch("ASC_KEY_P8").to_s.gsub("\\n", "\n")
+    unless raw.include?("PRIVATE KEY")
+      decoded = (Base64.decode64(raw) rescue "").to_s
+      raw = decoded if decoded.include?("PRIVATE KEY")
+    end
+    body = raw.gsub(/-----(BEGIN|END) PRIVATE KEY-----/, "").gsub(/\s+/, "")
+    "-----BEGIN PRIVATE KEY-----\n#{body.scan(/.{1,64}/).join("\n")}\n-----END PRIVATE KEY-----\n"
+  end
+
   def asc_key
     app_store_connect_api_key(
-      key_id: ENV.fetch("ASC_KEY_ID"),
-      issuer_id: ENV.fetch("ASC_ISSUER_ID"),
-      key_content: ENV.fetch("ASC_KEY_P8"),
+      key_id: ENV.fetch("ASC_KEY_ID").strip,
+      issuer_id: ENV.fetch("ASC_ISSUER_ID").strip,
+      key_content: p8_text,
       in_house: false
     )
   end
@@ -25,9 +38,18 @@ platform :ios do
       metadata_path: "store/metadata",
       screenshots_path: "store/screenshots",
       overwrite_screenshots: true,
+      # Without fresh screenshots, leave the ones already on App Store Connect alone.
+      skip_screenshots: ENV["SKIP_SCREENSHOTS"] == "true",
       skip_binary_upload: true,
       skip_app_version_update: false,
       app_rating_config_path: "store/age_rating.json",
+      # Apple's reviewers' contact. The phone comes from the REVIEW_PHONE secret, so it never sits in this public repo.
+      app_review_information: {
+        first_name: "Tommy",
+        last_name: "Bruggeman",
+        email_address: "tommybruggeman1@gmail.com",
+        phone_number: ENV.fetch("REVIEW_PHONE", "").strip
+      },
       submit_for_review: submit,
       automatic_release: true,
       reject_if_possible: false,

@@ -1,1 +1,1 @@
-dynasty,fantasy football,salary cap,contracts,league,GM,trades,start sit,rookie draft,cap space,waivers
+dynasty,fantasy football,salary cap,contracts,league,GM,trades,start sit,rookie draft,waivers
