@@ -44,6 +44,7 @@ TOOL_STATUS = {
     "get_prospects": "Scouting the prospects",
     "get_market_values": "Checking market values",
     "search_players": "Searching the player pool",
+    "get_league_leaders": "Pulling the league scoring leaders",
     "simulate_trade": "Running the trade through the cap",
     "evaluate_trade": "Weighing the trade from both sides",
     "get_league_history": "Digging through league history",

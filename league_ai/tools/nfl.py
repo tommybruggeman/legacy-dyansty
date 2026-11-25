@@ -1054,6 +1054,78 @@ def tool_search_players(data: NflData, position: str | None = None, nfl_team: st
     return {"players": out, "note": "search_rank is Sleeper's popularity rank (lower = more relevant)."}
 
 
+LEADER_POSITIONS = ("QB", "RB", "WR", "TE")
+
+
+def tool_get_league_leaders(data: NflData, positions: list[str] | None = None, limit: int = 10, last_weeks: int | None = None,
+                            sort: str = "total", season: int | None = None) -> dict[str, Any]:
+    """Top scorers per position in THIS league's scoring, from our own saved official stat lines, with league contracts. No model call."""
+    from league_ai.league_points import _played, _season_lines, league_scoring
+
+    state = data.league_state if isinstance(data.league_state, Mapping) else {}
+    league_id = state.get("league_id")
+    season = int(season or state.get("season") or data.schedule_season() or 0)
+    rules = league_scoring(data.client, league_id)
+    if not rules:
+        return {"error": "No scoring rules are saved for this league yet (Settings > League AI > Scoring), so there are no league points to rank."}
+    weeks = _season_lines(data.client, season) if season else {}
+    if not weeks:
+        return {"error": f"No finished {season} weeks are saved yet."}
+    wk = sorted(weeks)
+    if last_weeks:
+        wk = wk[-max(1, int(last_weeks)):]
+    wanted = [str(p).upper().replace("DST", "DEF") for p in (positions or LEADER_POSITIONS)][:6]
+    limit = max(1, min(int(limit or 10), 25))
+    from scoring.engine import player_points
+
+    agg: dict[str, dict[str, Any]] = {}
+    for w in wk:
+        for pid, line in (weeks[w] or {}).items():
+            if not isinstance(line, Mapping):
+                continue
+            pos = str(line.get("pos") or "").upper()
+            stats = line.get("stats") or {}
+            if pos not in wanted or not _played(stats):
+                continue
+            a = agg.setdefault(str(pid), {"pos": pos, "pts": 0.0, "gp": 0})
+            a["pts"] += float(player_points(stats, rules, line.get("pos")))
+            a["gp"] += 1
+    min_gp = max(1, round(len(wk) / 2)) if sort == "ppg" else 1
+    by_pos: dict[str, list[tuple[str, dict[str, Any]]]] = {p: [] for p in wanted}
+    for pid, a in agg.items():
+        if a["gp"] >= min_gp:
+            by_pos.setdefault(a["pos"], []).append((pid, a))
+    key = (lambda x: x[1]["pts"] / x[1]["gp"]) if sort == "ppg" else (lambda x: x[1]["pts"])
+    top = {p: sorted(rows, key=key, reverse=True)[:limit] for p, rows in by_pos.items()}
+    ids = [pid for rows in top.values() for pid, _ in rows if not pid.isalpha()]
+    names: dict[str, dict[str, Any]] = {}
+    if ids:
+        try:
+            for r in data.client.table("nfl_players").select("sleeper_id, full_name, team").in_("sleeper_id", ids).execute().data or []:
+                names[str(r.get("sleeper_id"))] = r
+        except Exception:
+            pass
+    out: dict[str, Any] = {}
+    for p, rows in top.items():
+        lst = []
+        for i, (pid, a) in enumerate(rows, 1):
+            r = names.get(pid) or {}
+            name = r.get("full_name") or (f"{pid} D/ST" if pid.isalpha() else pid)
+            c = data.league_contract(pid, r.get("full_name"))
+            if not c:
+                status = "FA"
+            elif c.get("note"):
+                status = f"{c['owner']}, no contract entered"
+            else:
+                yrs = c.get("years_left")
+                status = f"{c['owner']} ${c['cap_hit']:g}" + (f" x{yrs}yr" if yrs else "") + (f" ({c['designation']})" if c.get("designation") else "")
+            lst.append([i, name, r.get("team") or (pid if pid.isalpha() else None), round(a["pts"], 1), a["gp"], round(a["pts"] / a["gp"], 1), status])
+        out[p] = lst
+    return {"season": season, "weeks": f"{wk[0]}-{wk[-1]}" if len(wk) > 1 else str(wk[0]), "sort": "ppg" if sort == "ppg" else "total",
+            "columns": ["rank", "name", "nfl_team", "pts", "games", "ppg", "league_contract (owner $cap_hit x years_left, or FA)"],
+            "leaders": out, "source": "league scoring on our saved official stat lines"}
+
+
 def tool_get_schedule_outlook(data: NflData, names: list[str], through_week: int | None = None, playoff_start_week: int | None = 15) -> dict[str, Any]:
     """Rest-of-season matchup strength for up to 6 players, from this week on."""
     season = data.schedule_season()
@@ -1199,6 +1271,18 @@ def build_registry(client: Any, *, league_state: Mapping[str, Any], salary_cap: 
         "Find NFL players by position, NFL team and age range, with their status in this league. Use league_free_agents_only to find pickup or auction targets.",
         {"type": "object", "properties": {"position": {"type": "string"}, "nfl_team": {"type": "string"}, "max_age": {"type": "number"}, "min_age": {"type": "number"}, "league_free_agents_only": {"type": "boolean"}, "limit": {"type": "integer"}}},
         lambda position=None, nfl_team=None, max_age=None, min_age=None, league_free_agents_only=False, limit=25: tool_search_players(data, position, nfl_team, max_age, min_age, league_free_agents_only, limit),
+    ))
+    reg.register(ToolSpec(
+        "get_league_leaders",
+        "League-wide scoring leaderboard in THIS league's scoring: the top N players at each position (default QB/RB/WR/TE, top 10) for the season or the last N weeks, "
+        "with points, games, PPG and each player's league contract (owner, cap hit, years left) or FA. One call covers every position. "
+        "Use for 'who are the top scorers', 'best TEs this year', 'top 10 at each position and their contracts', and to find who is quietly producing.",
+        {"type": "object", "properties": {"positions": {"type": "array", "items": {"type": "string"}, "description": "QB/RB/WR/TE/K/DEF (default QB, RB, WR, TE)"},
+                                          "limit": {"type": "integer", "description": "players per position (default 10, max 25)"},
+                                          "last_weeks": {"type": "integer", "description": "only the last N finished weeks (omit for the whole season)"},
+                                          "sort": {"type": "string", "enum": ["total", "ppg"], "description": "rank by total points (default) or PPG (min half the weeks played)"},
+                                          "season": {"type": "integer"}}},
+        lambda positions=None, limit=10, last_weeks=None, sort="total", season=None: tool_get_league_leaders(data, positions, limit, last_weeks, sort, season),
     ))
     reg.register(ToolSpec(
         "simulate_trade",
