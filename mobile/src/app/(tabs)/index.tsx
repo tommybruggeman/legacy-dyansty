@@ -4,7 +4,6 @@ import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 import { Alert, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Pressable } from '../../components/Pressable';
 
-import { AlertsCard } from '../../components/home/AlertsCard';
 import { DraftBoard } from '../../components/home/DraftBoard';
 import { ProspectCard } from '../../components/home/ProspectCard';
 import { GameDayBottom, Scoreboard } from '../../components/home/GameDayBottom';
@@ -13,6 +12,7 @@ import { ErrorState, Loading } from '../../components/ScreenState';
 import { Bar, Card, Pill, Screen, firstName, money, teamLabel, ordinal, record, ui } from '../../components/ui';
 import { type BoxScore, type ByeSide, type HomeData, type HomeSide, type LivePlayer, type HomePlayoffGame, type PlayoffSide, type RaceRow, type RookieDeal, type TableRow, apiSend, LIVE_POLL_MS, prefetch, useApi } from '../../lib/api';
 import { syncLiveActivity } from '../../lib/liveActivity';
+import { askForAlertsOnHome } from '../../lib/push';
 import { colors } from '../../lib/theme';
 
 // Home changes with the calendar: last week's recap (Tuesday), a preview
@@ -46,6 +46,17 @@ export default function Home() {
     prefetch(['/my-team', '/standings', '/matchups', '/teams', '/league/activity', '/front-office', '/market/players', '/my-team/calls']);
   }, [data]);
 
+  // Apple's notification popup, a moment after Home first shows (not over the loading screen).
+  const asked = useRef(false);
+  useEffect(() => {
+    if (!data || asked.current) return;
+    const t = setTimeout(() => {
+      asked.current = true;
+      askForAlertsOnHome();
+    }, 1200);
+    return () => clearTimeout(t);
+  }, [data]);
+
   const seen = useRef(false);
   useFocusEffect(useCallback(() => {
     if (seen.current) refresh();
@@ -72,7 +83,6 @@ export default function Home() {
         </Pressable>
       </View>
 
-      <AlertsCard />
       {data.phase === 'recap' ? <Recap data={data} /> : null}
       {data.phase === 'game_day' ? <GameDay data={data} /> : null}
       {data.phase === 'playoffs' ? <Playoffs data={data} /> : null}
