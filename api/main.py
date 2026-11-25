@@ -317,7 +317,7 @@ def send_feedback(body: Feedback, owner: tuple[Client, Any] = Depends(owner_clie
         league_id = None
     screen = usage_log.screen_name(body.screen or "/")
     client.table("app_feedback").insert({"user_id": str(user.id), "league_id": league_id, "kind": kind, "rating": rating,
-                                         "text": text or None, "screen": screen}).execute()
+                                         "text": text or None, "screen": screen}, returning="minimal").execute()  # owners can't read it back
     usage_log.save(client, user_id=str(user.id), league_id=league_id, build=None, source="app",
                    views=[{"screen": screen, "seconds": 0, "at": body.at, "kind": "feedback",
                            "detail": {"kind": kind, "rating": rating, "text": text[:110]}}])

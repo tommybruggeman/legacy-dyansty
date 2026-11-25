@@ -327,3 +327,25 @@ def test_backdrops_pick_top_of_page_pictures_and_newest_whole_page():
     assert b["screen"] == ["u1/s/001.jpg"]
     assert b["page"] == {"path": "u1/pages/1.jpg", "screens": 3.2}
     assert usage_console.backdrops(rows, "League")["page"] is None
+
+
+def test_activity_inserts_never_read_rows_back():
+    # Owners may insert activity but only the league owner may read it, so an insert that asks for the rows back
+    # fails for everyone else. Every insert must use returning='minimal'.
+    from api import usage_log
+
+    calls = []
+
+    class Q:
+        def insert(self, rows, **kw):
+            calls.append(kw.get("returning"))
+            return self
+
+        def execute(self):
+            return None
+
+    client = type("C", (), {"table": lambda self, name: Q()})()
+    assert usage_log.save(client, user_id="u", league_id="L", views=[{"screen": "/", "seconds": 3}], build="113", source="app") == 1
+    assert usage_log.save_action(client, user_id="u", league_id="L", method="POST", path="/lineup")
+    assert usage_log.save_error(client, user_id="u", league_id="L", screen="/", build="113")
+    assert calls == ["minimal", "minimal", "minimal"]
