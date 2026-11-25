@@ -68,7 +68,7 @@ async function capture() {
     const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
     count += 1;
     const path = `${userId}/${session}/${String(count).padStart(3, '0')}.jpg`;
-    const { error } = await supabase.storage.from('replays').upload(path, bytes, { contentType: 'image/jpeg', upsert: true });
+    const { error } = await supabase.storage.from('replays').upload(path, bytes, { contentType: 'image/jpeg' });
     if (!error && report) report(path);
   } catch {
     // no picture this time
@@ -102,7 +102,7 @@ export async function pageShot(view: unknown, screen: string, contentH: number, 
     if (!stillOn()) return;
     const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
     const path = `${userId}/pages/${Date.now()}.jpg`;
-    const { error } = await supabase.storage.from('replays').upload(path, bytes, { contentType: 'image/jpeg', upsert: true });
+    const { error } = await supabase.storage.from('replays').upload(path, bytes, { contentType: 'image/jpeg' });
     if (!error && reportPage) reportPage(path, screen, Math.round((contentH / viewH) * 100) / 100);
   } catch {
     // no picture this time

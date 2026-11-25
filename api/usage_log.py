@@ -21,6 +21,10 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
+# Inserts never ask for the new rows back: owners may add rows but only the league owner's account may read
+# them (owner-activity.sql), and asking for them back needs read access, so every other owner's insert failed.
+MINIMAL = "minimal"
+
 MAX_SECONDS = 30 * 60  # a screen left open longer than this counts as 30 minutes
 MAX_VIEWS = 400
 KINDS = ("screen", "action", "tap", "swipe", "push_open", "app_open", "app_close", "error", "frame", "load", "rage", "search", "outbound", "refresh", "feedback", "fail")
@@ -80,8 +84,9 @@ def save(client: Any, *, user_id: str, league_id: str | None, views: list[dict[s
     if not batch:
         return 0
     try:
-        client.table("app_screen_views").insert(batch).execute()
-    except Exception:
+        client.table("app_screen_views").insert(batch, returning=MINIMAL).execute()
+    except Exception as exc:
+        print(f"ACTIVITY_SAVE_FAILED {type(exc).__name__} rows={len(batch)}", flush=True)
         return 0
     return len(batch)
 
@@ -105,7 +110,7 @@ def save_action(client: Any, *, user_id: str, league_id: str | None, method: str
         return False
     try:
         client.table("app_screen_views").insert({"user_id": user_id, "league_id": league_id, "screen": name, "seconds": 0,
-                                                 "kind": "action", "build": (build or "")[:20] or None, "source": "app"}).execute()
+                                                 "kind": "action", "build": (build or "")[:20] or None, "source": "app"}, returning=MINIMAL).execute()
     except Exception:
         return False
     return True
@@ -115,7 +120,7 @@ def save_error(client: Any, *, user_id: str, league_id: str | None, screen: str 
     """One 'error' row (screen only; the message stays in the server log). Never raises."""
     try:
         client.table("app_screen_views").insert({"user_id": user_id, "league_id": league_id, "screen": screen_name(screen or "/"),
-                                                 "seconds": 0, "kind": "error", "build": (build or "")[:20] or None, "source": "app"}).execute()
+                                                 "seconds": 0, "kind": "error", "build": (build or "")[:20] or None, "source": "app"}, returning=MINIMAL).execute()
     except Exception:
         return False
     return True

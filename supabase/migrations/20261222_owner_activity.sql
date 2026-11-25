@@ -83,3 +83,12 @@ create policy push_outbox_viewer_read on public.push_outbox for select to authen
 
 -- 4. Add the viewer (run once, with the account that should see Activity):
 -- insert into public.app_activity_viewers (user_id) select id from auth.users where email = 'YOUR SIGN-IN EMAIL' on conflict do nothing;
+-- Let every owner's phone finish saving its own replay pictures.
+-- Saving a picture "over" an existing one needs the owner to be able to see and update their OWN folder.
+-- Nobody can see anyone else's pictures; only your account still sees everyone's (in Owner activity).
+drop policy if exists replays_owner_own_read on storage.objects;
+create policy replays_owner_own_read on storage.objects for select to authenticated
+  using (bucket_id = 'replays' and (storage.foldername(name))[1] = auth.uid()::text);
+drop policy if exists replays_owner_own_update on storage.objects;
+create policy replays_owner_own_update on storage.objects for update to authenticated
+  using (bucket_id = 'replays' and (storage.foldername(name))[1] = auth.uid()::text);
