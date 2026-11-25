@@ -37,7 +37,7 @@ export async function registerForPush(): Promise<void> {
 }
 
 // On every launch: refresh the token only if the owner already said yes. Never shows Apple's prompt;
-// that comes from the "Turn on alerts" card on Home, where the owner sees what the alerts are first.
+// that comes from askForAlertsOnHome, once Home has loaded.
 export async function registerIfAllowed(): Promise<void> {
   if (await alertsAllowed()) await registerForPush();
 }
@@ -51,6 +51,12 @@ export async function canAskForAlerts(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+// Home, once it has loaded: show Apple's "Allow notifications?" popup if the owner hasn't answered it yet.
+// Apple only ever shows it once; after that, alerts are turned on or off in iPhone Settings.
+export async function askForAlertsOnHome(): Promise<void> {
+  if (await canAskForAlerts()) await registerForPush();
 }
 
 export async function alertsAllowed(): Promise<boolean> {
